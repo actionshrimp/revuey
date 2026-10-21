@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded PR runs are cancelled; every push to main gets a complete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -26,7 +27,9 @@ env:
   LC_ALL: C.UTF-8
   TERM: xterm-256color
   # Main-loop responsiveness budget for screen_spec (50ms by default); shared runners are slower.
-  REVUEY_TEST_MAX_GAP_MS: 150
+  REVUEY_TEST_MAX_GAP_MS: 100
+  # sha256 of nvim-linux-x86_64.tar.gz for NVIM_VERSION (from the GitHub release asset digest).
+  NVIM_SHA256: 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
 
 jobs:
   test:
@@ -50,9 +53,11 @@ jobs:
       - name: Download Neovim
         if: steps.nvim-cache.outputs.cache-hit != 'true'
         run: |
+          curl -fsSL -o "$RUNNER_TEMP/nvim.tar.gz" \
+            "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz"
+          echo "${NVIM_SHA256}  $RUNNER_TEMP/nvim.tar.gz" | sha256sum -c -
           mkdir -p ~/nvim
-          curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz" \
-            | tar -xz -C ~/nvim --strip-components=1
+          tar -xzf "$RUNNER_TEMP/nvim.tar.gz" -C ~/nvim --strip-components=1
 
       - name: Add Neovim to PATH
         run: echo "$HOME/nvim/bin" >> "$GITHUB_PATH"
@@ -78,11 +83,13 @@ jobs:
       - name: Summarise skipped tests
         if: always()
         run: |
+          # tests/helpers.lua prints skips as `  skip <spec> :: <test> — <reason>`.
+          pattern='^  skip [^ ]+_spec\.lua :: .+ — .+$'
           {
             echo '### Skipped tests'
-            if [ -f test-output.log ] && grep -i 'skip' test-output.log >/dev/null; then
+            if [ -f test-output.log ] && grep -E "$pattern" test-output.log >/dev/null; then
               echo '```'
-              grep -i 'skip' test-output.log
+              grep -E "$pattern" test-output.log
               echo '```'
             else
               echo 'None.'

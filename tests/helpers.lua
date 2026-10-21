@@ -133,12 +133,39 @@ function M.ok(cond, msg)
   end
 end
 
+-- Skips are printed as `  skip <spec> :: <test> — <reason>` (CI's job summary matches this form).
+local function skip_line(file, name, reason)
+  io.write('  skip ' .. file .. ' :: ' .. name .. ' — ' .. reason .. '\n')
+end
+
+---Skip the current test (call inside h.test).
+function M.skip(reason)
+  error({ revuey_skip = reason }, 0)
+end
+
+---Skip a whole spec file before any test runs (call at top level); exits the process.
+function M.skip_spec(reason)
+  local file = vim.fn.fnamemodify(debug.getinfo(2, 'S').source:sub(2), ':t')
+  skip_line(file, '(all tests)', reason)
+  io.flush()
+  os.exit(0)
+end
+
+local function on_error(err)
+  if type(err) == 'table' and err.revuey_skip then
+    return err
+  end
+  return debug.traceback(tostring(err), 2)
+end
+
 function M.run()
   local file = vim.fn.fnamemodify(debug.getinfo(2, 'S').source:sub(2), ':t')
   for _, t in ipairs(tests) do
-    local ok, err = xpcall(t.fn, debug.traceback)
+    local ok, err = xpcall(t.fn, on_error)
     if ok then
       io.write('  ok   ' .. file .. ' :: ' .. t.name .. '\n')
+    elseif type(err) == 'table' and err.revuey_skip then
+      skip_line(file, t.name, err.revuey_skip)
     else
       failures = failures + 1
       io.write('  FAIL ' .. file .. ' :: ' .. t.name .. '\n' .. tostring(err) .. '\n')

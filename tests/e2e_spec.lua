@@ -123,8 +123,7 @@ end)
 h.test('projected tree-sitter highlights for ts, tsx and old side', function()
   local syntax = require('revuey.syntax')
   if not syntax.lang_for_path('a.ts') then
-    io.write('  (skipped: no typescript parser installed, or no typescript highlights query bundled with Neovim)\n')
-    return
+    h.skip('no typescript parser installed, or no typescript highlights query bundled with Neovim')
   end
   local found = {}
   for _, f in ipairs(s.review.files) do
@@ -358,13 +357,13 @@ h.test('closing the review mid-parse is clean', function()
   end
   local repo = h.repo('midparse', { ['x.lua'] = 'local x = 1\n' }, { ['big.lua'] = table.concat(parts, '\n') .. '\n' })
   local function active_timers()
-    local n = 0
+    local set = {}
     vim.uv.walk(function(hd)
       if hd:get_type() == 'timer' and hd:is_active() then
-        n = n + 1
+        set[hd] = true
       end
     end)
-    return n
+    return set
   end
   local before = active_timers()
   local ms = h.open_review({ cwd = repo })
@@ -392,9 +391,14 @@ h.test('closing the review mid-parse is clean', function()
   h.eq('', vim.v.errmsg)
   h.eq(0, syntax.cache_size())
   h.eq(0, syntax.pending())
-  -- No new timers left running. (A timer from an earlier test may finish meanwhile, so <=.)
-  local after = active_timers()
-  h.ok(after <= before, ('active timers: %d before, %d after'):format(before, after))
+  -- No timer started during the test is still running (older timers may finish meanwhile).
+  local leaked = 0
+  for hd in pairs(active_timers()) do
+    if not before[hd] then
+      leaked = leaked + 1
+    end
+  end
+  h.eq(0, leaked, 'timers started during the test are still active')
 end)
 
 h.test('origin/main and main share review state', function()

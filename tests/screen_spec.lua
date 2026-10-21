@@ -144,7 +144,7 @@ h.test('decoration provider draws syntax and word-diff attrs', function()
 end)
 
 -- Regression (review 2, high 1): highlighting a large visible file must not freeze the UI.
-h.test('large visible file: main loop never blocked for more than 50ms', function()
+h.test('large visible file: main loop never blocked beyond the gap budget', function()
   local repo = h.repo('screen-big', { ['a.lua'] = 'local x = 1\n' }, { ['a.lua'] = 'local x = 2\n', ['big.lua'] = big_lua(20000) })
   start(repo, 'main', 30, 120, { collapse_large_files = 1000000, max_file_bytes = 10 * 1024 * 1024 })
   h.ok(wait_syntax(3), 'big.lua highlights did not load')
