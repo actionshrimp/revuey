@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/nvim
-          key: nvim-${{ env.NVIM_VERSION }}-linux-x86_64
+          key: nvim-${{ env.NVIM_VERSION }}-linux-x86_64-${{ env.NVIM_SHA256 }}
 
       - name: Download Neovim
         if: steps.nvim-cache.outputs.cache-hit != 'true'
