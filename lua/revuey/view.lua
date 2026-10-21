@@ -10,6 +10,8 @@ local highlights = require('revuey.highlights')
 local panel = require('revuey.panel')
 local lsp = require('revuey.lsp')
 local linemap = require('revuey.linemap')
+local stack_mod = require('revuey.stack')
+local state_mod = require('revuey.state')
 
 local M = {}
 
@@ -448,7 +450,29 @@ function M.open_file()
   end
   local lnum = e.new_lnum or e.anchor_lnum or 1
   local col = (e.kind == 'add' or e.kind == 'ctx') and api.nvim_win_get_cursor(s.diff_win)[2] or 0
-  open_path(s, vim.fs.joinpath(s.review.root, f.path), lnum, col)
+  local abs = vim.fs.joinpath(s.review.root, f.path)
+  if not f.worktree then
+    -- committed side (committed mode, or a layer that isn't HEAD): the file on disk may differ,
+    -- so map the line through a diff of the reviewed text against it
+    lnum = M.map_to_disk(M.head_text(s, f), git.read_file(abs), lnum)
+  end
+  open_path(s, abs, lnum, col)
+end
+
+---Map a line of `text` (the reviewed new side) to the same line in `disk` (the working-tree
+---file); a changed line maps to the nearest unchanged line above it, shifted.
+function M.map_to_disk(text, disk, lnum)
+  if not text or not disk or text == disk then
+    return lnum
+  end
+  local fwd = linemap.new(text, disk)
+  for d = 0, 500 do
+    local m = lnum - d >= 1 and fwd(lnum - d)
+    if m then
+      return m + d
+    end
+  end
+  return lnum
 end
 
 ---HEAD content of a file in the review (cached per session).
@@ -650,6 +674,17 @@ local function map(buf, lhs, fn, desc)
   end
 end
 
+local function stack_keymaps(buf)
+  local k = config.options.keymaps
+  map(buf, k.next_layer, function()
+    M.next_layer(1)
+  end, 'next stack layer')
+  map(buf, k.prev_layer, function()
+    M.next_layer(-1)
+  end, 'previous stack layer')
+  map(buf, k.toggle_stack, M.toggle_full, 'toggle full stack / layer scope')
+end
+
 local function diff_keymaps(s)
   local k = config.options.keymaps
   local buf = s.diff_buf
@@ -676,6 +711,7 @@ local function diff_keymaps(s)
   end, 'refresh review')
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
   map(buf, k.close, M.close, 'close review')
+  stack_keymaps(buf)
   map(buf, k.focus_panel, function()
     if api.nvim_win_is_valid(s.panel_win) then
       api.nvim_set_current_win(s.panel_win)
@@ -703,8 +739,13 @@ local function panel_keymaps(s)
     end
   end
   map(buf, { '<CR>', 'o', '<2-LeftMouse>' }, function()
+    local layer = s.panel_layers and s.panel_layers[api.nvim_win_get_cursor(0)[1]]
+    if layer then
+      return M.set_scope(layer == 'full' and { kind = 'full' } or { kind = 'layer', index = layer })
+    end
     jump(true)
-  end, 'open file in diff')
+  end, 'open file in diff / select stack layer')
+  stack_keymaps(buf)
   map(buf, k.toggle_reviewed, function()
     local fi = file_under_cursor()
     if fi then
@@ -862,8 +903,25 @@ local function restore_view(s, saved)
   end)
 end
 
+---Name the diff buffer after what it shows (revuey://<branch>..<base>); renaming leaves an
+---unlisted buffer holding the old name behind, which is wiped.
+local function set_diff_name(s)
+  local name = 'revuey://' .. s.review.branch .. '..' .. s.review.base
+  local old = api.nvim_buf_get_name(s.diff_buf)
+  if old:sub(-#name) == name then
+    return
+  end
+  if pcall(api.nvim_buf_set_name, s.diff_buf, name) and old ~= '' then
+    local alt = vim.fn.bufnr(old)
+    if alt > 0 and alt ~= s.diff_buf and not vim.bo[alt].buflisted and api.nvim_buf_line_count(alt) <= 1 then
+      pcall(api.nvim_buf_delete, alt, { force = true })
+    end
+  end
+end
+
 local function render(s, saved)
   s.render_count = (s.render_count or 0) + 1
+  set_diff_name(s)
   s.layout = layout_mod.compose(s.review.files)
   if #s.review.files == 0 then
     local r = s.review
@@ -915,6 +973,7 @@ local function render(s, saved)
   end
   s.stat_sig = M.stat_signature(s)
   panel.render(s)
+  M.load_stats(s)
 end
 
 ---Cheap fingerprint of the working tree as far as this review is concerned: size+mtime of every
@@ -985,6 +1044,8 @@ function M.show(review, opts)
     pcall(vim.cmd, 'tabonly')
   end
   local s = { review = review, opts = opts, tab = api.nvim_get_current_tabpage(), header_marks = {} } ---@type revuey.Session
+  -- the user's mode preference; a committed-only layer must not overwrite it
+  s.target_mode = opts.mode or (config.options.uncommitted and 'worktree' or 'committed')
   local scratch = api.nvim_get_current_buf()
   s.diff_win = api.nvim_get_current_win()
   s.diff_buf = api.nvim_create_buf(false, true)
@@ -1130,6 +1191,7 @@ function M.show(review, opts)
       if M.stat_signature(s) ~= s.stat_sig then
         return M.refresh()
       end
+      M.check_refs(s)
       if s.review.mode ~= 'worktree' or s.refreshing then
         return
       end
@@ -1150,18 +1212,292 @@ function M.show(review, opts)
   return s
 end
 
----Open a review. opts: {cwd?, base?, standalone?, on_ready?}
+-- ---------------------------------------------------------------------------
+-- Stacks
+-- ---------------------------------------------------------------------------
+
+---Should this review look for a stack? Yes unless an explicit base was given without --stack.
+local function wants_stack(opts)
+  return opts.scope == 'full' or not opts.base or opts.base == ''
+end
+
+---Detect the stack for a review (inside git.async). Returns stack (or nil) and the trunk.
+local function stack_trunk(root, opts)
+  local trunk = (opts.base ~= '' and opts.base) or config.options.default_branch or git.default_branch(root)
+  if trunk and git.rev_parse(trunk, root) then
+    return trunk
+  end
+end
+
+---@return revuey.Stack?, string[]? notes for a plain review when there is no stack
+local function detect_stack(root, opts, cache)
+  local trunk = stack_trunk(root, opts)
+  if not trunk then
+    return nil
+  end
+  return stack_mod.detect(root, trunk, cache)
+end
+
+---BufEnter: refresh when branches/overrides changed elsewhere (another terminal, no focus event).
+function M.check_refs(s)
+  if not wants_stack(s.opts) or s.refreshing then
+    return
+  end
+  git.async(function()
+    local trunk = stack_trunk(s.review.root, s.opts)
+    local key = trunk and stack_mod.fingerprint(s.review.root, trunk)
+    if M.session == s and key and s.stack_cache and key ~= s.stack_cache.key then
+      M.refresh()
+    end
+  end, function() end)
+end
+
+---Keep the scope on the same layer (by name) when the stack is re-detected.
+local function rescope(old_stack, new_stack, scope)
+  if not new_stack then
+    return nil
+  end
+  if not scope then
+    return { kind = 'layer', index = new_stack.current }
+  end
+  if scope.kind == 'full' then
+    return scope
+  end
+  local name = old_stack and old_stack.layers[scope.index] and old_stack.layers[scope.index].name
+  for i, l in ipairs(new_stack.layers) do
+    if l.name == name then
+      return { kind = 'layer', index = i }
+    end
+  end
+  if name then
+    vim.notify(
+      ('revuey: layer %s is no longer in the stack; showing %s'):format(name, new_stack.layers[new_stack.current].name),
+      vim.log.levels.WARN
+    )
+  end
+  return { kind = 'layer', index = new_stack.current }
+end
+
+---Review load options for the session's current stack/scope.
+local function load_opts(base_opts, stack, scope)
+  local o = vim.tbl_extend('force', {}, base_opts)
+  if stack and scope then
+    o.target = stack_mod.target(stack, scope)
+  end
+  return o
+end
+
+---Per-layer stats (commits, files, reviewed) for the stack section, computed in the background
+---from committed history (`git diff --raw`, no patch parsing). The layer being reviewed shows
+---live numbers from the loaded review instead.
+function M.load_stats(s)
+  local stack = s.review.stack
+  if not stack then
+    return
+  end
+  local root = s.review.root
+  local dir = s.opts.state_dir or config.options.state_dir or state_mod.default_dir()
+  s.stats_gen = (s.stats_gen or 0) + 1
+  local gen = s.stats_gen
+  git.async(function()
+    local scopes = {}
+    for i in ipairs(stack.layers) do
+      scopes[#scopes + 1] = { kind = 'layer', index = i }
+    end
+    scopes[#scopes + 1] = { kind = 'full' }
+    local fns = {}
+    for i, sc in ipairs(scopes) do
+      fns[i] = function()
+        local t = stack_mod.target(stack, sc)
+        local tip = t.to or git.rev_parse('HEAD', root)
+        local mb = tip and review_mod.merge_base_for(root, t, tip)
+        if not mb then
+          return nil
+        end
+        local count = tonumber(vim.trim(git.git({ 'rev-list', '--count', mb .. '..' .. tip }, root) or ''))
+        local keys = review_mod.raw_keys(root, mb, tip, t.key_old) or {}
+        local st = state_mod.load(dir, t.state_repo or root, t.state_branch, t.state_base)
+        local files, reviewed = 0, 0
+        for path, key in pairs(keys) do
+          files = files + 1
+          if state_mod.is_reviewed(st, path, key) then
+            reviewed = reviewed + 1
+          end
+        end
+        return { commits = count, files = files, reviewed = reviewed }
+      end
+    end
+    local results = git.all(fns)
+    if M.session ~= s or s.review.stack ~= stack or s.stats_gen ~= gen then
+      return
+    end
+    for i, r in ipairs(results) do
+      local stats = r[1] and r[2] or nil
+      if i <= #stack.layers then
+        stack.layers[i].stats = stats
+      else
+        stack.full_stats = stats
+      end
+    end
+    panel.render(s)
+    if s.on_stats then
+      s.on_stats(s)
+    end
+  end, function() end)
+end
+
+---Switch the review to a scope: {kind='layer', index=i} or {kind='full'}.
+function M.set_scope(scope)
+  local s = M.session
+  if not s or not s.review.stack then
+    return vim.notify('revuey: no stack detected for this branch', vim.log.levels.INFO)
+  end
+  local cur = s.pending_scope or s.scope
+  if cur and cur.kind == scope.kind and cur.index == scope.index then
+    return
+  end
+  if scope.kind == 'layer' then
+    s.last_layer = scope.index
+  end
+  s.pending_scope = scope
+  M.refresh({ scope = scope, force = true })
+end
+
+---Move to the next/previous layer (from full scope: the bottom / top layer).
+function M.next_layer(dir)
+  local s = M.session
+  local stack = s and s.review.stack
+  if not stack then
+    return vim.notify('revuey: no stack detected for this branch', vim.log.levels.INFO)
+  end
+  local cur = s.pending_scope or s.scope
+  local idx
+  if cur.kind == 'full' then
+    idx = dir > 0 and 1 or #stack.layers
+  else
+    idx = cur.index + dir * vim.v.count1
+  end
+  if idx < 1 or idx > #stack.layers then
+    return vim.notify('revuey: no layer ' .. (dir > 0 and 'above' or 'below'), vim.log.levels.INFO)
+  end
+  M.set_scope({ kind = 'layer', index = idx })
+end
+
+---Toggle between full-stack scope and the last layer scope.
+function M.toggle_full()
+  local s = M.session
+  local stack = s and s.review.stack
+  if not stack then
+    return vim.notify('revuey: no stack detected for this branch', vim.log.levels.INFO)
+  end
+  local cur = s.pending_scope or s.scope
+  if cur.kind == 'full' then
+    M.set_scope({ kind = 'layer', index = math.min(s.last_layer or stack.current, #stack.layers) })
+  else
+    M.set_scope({ kind = 'full' })
+  end
+end
+
+---`:RevueyStackParent [branch]`: record an explicit stack parent (git config
+---`branch.<name>.revueyParent`) for the layer being reviewed, or else the current branch.
+---`parent = ''` clears it; nil picks from a list (vim.ui.select). Runs git synchronously (tiny).
+function M.stack_parent(parent)
+  local s = M.session
+  local root, branch, trunk
+  local stack = s and s.review.stack
+  if stack and stack.kind == 'local' and s.scope and s.scope.kind == 'layer' then
+    root, branch, trunk = s.review.root, stack.layers[s.scope.index].name, stack.trunk
+  else
+    root = git.root(vim.fn.getcwd())
+    branch = root and git.current_branch(root)
+    trunk = root and (config.options.default_branch or git.default_branch(root))
+  end
+  if not branch then
+    return vim.notify('revuey: no branch to set a stack parent for (detached HEAD or not in a repo?)', vim.log.levels.ERROR)
+  end
+  local key = 'branch.' .. branch .. '.revueyParent'
+  local function apply(p)
+    if p == '' or p == '--clear' then
+      local res = git.system({ 'git', 'config', '--unset', key }, { cwd = root, text = true })
+      if res.code == 5 then
+        return vim.notify('revuey: ' .. branch .. ' has no stack parent override to clear', vim.log.levels.WARN)
+      elseif res.code ~= 0 then
+        return vim.notify('revuey: could not clear the override: ' .. vim.trim(res.stderr or ''), vim.log.levels.ERROR)
+      end
+      vim.notify('revuey: cleared the stack parent of ' .. branch, vim.log.levels.INFO)
+    else
+      if p == branch then
+        return vim.notify('revuey: a branch cannot be its own parent', vim.log.levels.ERROR)
+      end
+      if p ~= trunk and not git.rev_parse('refs/heads/' .. p, root) then
+        return vim.notify('revuey: no local branch ' .. p, vim.log.levels.ERROR)
+      end
+      local _, err = git.git({ 'config', key, p }, root)
+      if err then
+        return vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
+      end
+      vim.notify(('revuey: stack parent of %s set to %s'):format(branch, p), vim.log.levels.INFO)
+    end
+    if M.session then
+      M.refresh({ force = true })
+    end
+  end
+  if parent then
+    return apply(parent)
+  end
+  local out = git.git({ 'for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads' }, root) or ''
+  local items = {}
+  if trunk then
+    items[#items + 1] = { label = trunk .. '  (trunk)', value = trunk }
+  end
+  for b in out:gmatch('[^\n]+') do
+    if b ~= branch and b ~= trunk then
+      items[#items + 1] = { label = b, value = b }
+    end
+  end
+  items[#items + 1] = { label = '(clear override: detect automatically)', value = '' }
+  vim.ui.select(items, {
+    prompt = 'Stack parent of ' .. branch .. ':',
+    format_item = function(it)
+      return it.label
+    end,
+  }, function(choice)
+    if choice then
+      apply(choice.value)
+    end
+  end)
+end
+
+---Open a review. opts: {cwd?, base?, scope?:'full', mode?, standalone?, on_ready?}
+---Without a base (or with scope='full') the local stack around HEAD is detected first; with no
+---stack the review is the plain single-branch one.
 function M.open(opts)
   opts = opts or {}
   git.async(function()
-    local cache = {}
-    local review, err = review_mod.load(vim.tbl_extend('force', opts, { cache = cache }))
+    local cache, stack_cache = {}, {}
+    local stack, scope, root, notes
+    if wants_stack(opts) then
+      root = git.root(opts.cwd or vim.fn.getcwd())
+      if root then
+        stack, notes = detect_stack(root, opts, stack_cache)
+      end
+      if stack then
+        scope = opts.scope == 'full' and { kind = 'full' } or { kind = 'layer', index = stack.current }
+      end
+    end
+    local lo = load_opts(vim.tbl_extend('force', opts, { cache = cache }), stack, scope)
+    local review, err = review_mod.load(lo)
     if not review then
       vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
       return
     end
+    review.stack, review.scope = stack, scope
+    review.notes = not stack and notes or nil
     local s = M.show(review, opts)
     s.load_cache = cache
+    s.stack_cache = stack_cache
+    s.scope = scope
+    s.last_layer = stack and (scope.kind == 'layer' and scope.index or stack.current) or nil
     if opts.on_ready then
       opts.on_ready(s)
     end
@@ -1184,6 +1520,9 @@ function M.refresh(o)
   end
   s.refreshing = true
   s.target_mode = o.mode or s.target_mode or s.review.mode
+  if o.scope then
+    s.pending_scope = nil
+  end
   local function finish()
     s.refreshing = false
     local pending = s.pending
@@ -1196,13 +1535,27 @@ function M.refresh(o)
   end
   git.async(function()
     local mode = s.target_mode
+    local old_stack, stack, scope, notes = s.review.stack, nil, nil, nil
+    if wants_stack(s.opts) then
+      -- cheap when refs are unchanged (fingerprint cache)
+      s.stack_cache = s.stack_cache or {}
+      stack, notes = detect_stack(s.review.root, s.opts, s.stack_cache)
+      scope = rescope(old_stack, stack, o.scope or s.scope)
+      if old_stack and not stack then
+        vim.notify('revuey: no stack detected any more; showing the plain branch review', vim.log.levels.WARN)
+      end
+    end
+    local scope_changed = not vim.deep_equal(scope, s.scope) or stack ~= old_stack
+    if scope_changed then
+      s.load_cache = {} -- different diff entirely
+    end
     s.load_cache = s.load_cache or {}
-    local review, err = review_mod.load(vim.tbl_extend('force', s.opts, {
+    local review, err = review_mod.load(load_opts(vim.tbl_extend('force', s.opts, {
       cwd = s.review.root,
-      base = s.review.base,
+      base = not stack and (s.opts.base or (not s.review.target and s.review.base)) or nil,
       mode = mode,
       cache = s.load_cache,
-    }))
+    }), stack, scope))
     if M.session ~= s or s.cleaned then
       return finish()
     end
@@ -1210,12 +1563,27 @@ function M.refresh(o)
       vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
       return finish()
     end
-    if o.force or review.signature ~= s.review.signature then
-      local saved = capture_view(s)
+    review.stack, review.scope = stack, scope
+    review.notes = not stack and notes or nil
+    if o.force or scope_changed or review.signature ~= s.review.signature then
+      local saved
+      if scope and s.scope and not vim.deep_equal(scope, s.scope) and old_stack then
+        -- switching scope: remember where we were, and return to where we left the new one
+        s.scope_views = s.scope_views or {}
+        s.scope_views[stack_mod.scope_key(old_stack, s.scope)] = capture_view(s)
+        saved = s.scope_views[stack_mod.scope_key(stack, scope)]
+      elseif not (scope and not vim.deep_equal(scope, s.scope)) then
+        saved = capture_view(s)
+      end
       s.review = review
+      s.scope = scope
       s.opts.mode = mode
       s.head_cache = nil
       render(s, saved)
+      if not saved then
+        goto_row(s, 1, 'top')
+        panel.set_current(s, 1)
+      end
       lsp.checktime() -- hidden LSP buffers follow the files on disk
     else
       s.stat_sig = M.stat_signature(s)
@@ -1237,6 +1605,9 @@ function M.toggle_mode()
   local s = M.session
   if not s then
     return
+  end
+  if s.review.mode_locked then
+    return vim.notify('revuey: this scope is committed-only (working-tree changes belong to the HEAD layer)', vim.log.levels.INFO)
   end
   -- toggle relative to where we're heading (a pending or in-flight switch), not the shown mode
   local current = (s.pending and s.pending.mode) or s.target_mode or s.review.mode

@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # Create a throwaway TypeScript repo for trying/testing revuey.
 #   scripts/make-fixture.sh /tmp/revuey-fixture
-# Produces branch `main` and a checked-out branch `feature/cart` with added, deleted, modified,
+#   scripts/make-fixture.sh --stack /tmp/revuey-stack
+# Default: branch `main` and a checked-out branch `feature/cart` with added, deleted, modified,
 # renamed and binary files, plus cross-file calls (so `gd` has somewhere to go).
+# --stack: a 3-layer local stack on `main`: stack/math -> stack/cart -> stack/ui, with the middle
+# layer (stack/cart) checked out.
 # No npm install needed: plain .ts files with relative imports work with typescript-language-server.
 set -euo pipefail
 
-dest=${1:?usage: make-fixture.sh <dir>}
+mode=default
+if [ "${1:-}" = "--stack" ]; then
+  mode=stack
+  shift
+fi
+dest=${1:?usage: make-fixture.sh [--stack] <dir>}
 if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
   echo "refusing to overwrite non-empty $dest" >&2
   exit 1
@@ -133,6 +141,127 @@ printf '# Fixture shop\n\nA tiny TypeScript project used to try revuey.\n' > REA
 
 g add -A
 g commit -q -m "Initial shop"
+
+if [ "$mode" = stack ]; then
+  # --- layer 1: stack/math ----------------------------------------------------
+  g checkout -q -b stack/math
+  cat > src/math.ts <<'EOF'
+/** Add two numbers. */
+export function add(a: number, b: number): number {
+  return a + b;
+}
+
+/** Subtract b from a. */
+export function subtract(a: number, b: number): number {
+  return a - b;
+}
+
+/** Multiply two numbers. */
+export function multiply(a: number, b: number): number {
+  return a * b;
+}
+
+/** Sum a list of numbers. */
+export function sum(values: readonly number[]): number {
+  return values.reduce((acc, v) => add(acc, v), 0);
+}
+
+export const PI_ISH = 3.14;
+
+export function circleArea(r: number): number {
+  return multiply(PI_ISH, r * r);
+}
+EOF
+  g commit -q -am "math: subtract, sum, faster multiply"
+
+  # --- layer 2: stack/cart ----------------------------------------------------
+  g checkout -q -b stack/cart
+  cat > src/cart.ts <<'EOF'
+import { multiply, sum } from "./math";
+
+export interface LineItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export class Cart {
+  private items: LineItem[] = [];
+
+  addItem(item: LineItem): this {
+    this.items.push(item);
+    return this;
+  }
+
+  total(): number {
+    return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+  }
+}
+EOF
+  g add -A
+  g commit -q -m "cart: Cart with total()"
+  cat > src/index.ts <<'EOF'
+import { add, circleArea } from "./math";
+import { formatCurrency } from "./format";
+import { capitalize } from "./utils/strings";
+import { oldTotal } from "./legacy";
+import { Cart } from "./cart";
+
+export function main(): void {
+  const cart = new Cart().addItem({ name: "apple", price: 0.5, quantity: 6 });
+  console.log(capitalize("total"), formatCurrency(cart.total()), oldTotal([1]));
+  console.log("area", circleArea(2));
+  console.log("sum", add(2, 3));
+}
+
+main();
+EOF
+  g commit -q -am "index: use Cart"
+
+  # --- layer 3: stack/ui ------------------------------------------------------
+  g checkout -q -b stack/ui
+  cat > src/components/Total.tsx <<'EOF'
+import { formatCurrency } from "../format";
+import { Cart } from "../cart";
+
+export function Total(props: { cart: Cart }) {
+  return <strong className="total">{formatCurrency(props.cart.total())}</strong>;
+}
+EOF
+  cat > src/cart.ts <<'EOF'
+import { multiply, sum } from "./math";
+import { capitalize } from "./utils/strings";
+
+export interface LineItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export class Cart {
+  private items: LineItem[] = [];
+
+  addItem(item: LineItem): this {
+    this.items.push(item);
+    return this;
+  }
+
+  total(): number {
+    return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+  }
+
+  names(): string {
+    return this.items.map((i) => capitalize(i.name)).join(", ");
+  }
+}
+EOF
+  g add -A
+  g commit -q -m "ui: Total component, Cart.names()"
+
+  g checkout -q stack/cart
+  echo "stack fixture ready: $dest (main <- stack/math <- stack/cart (checked out) <- stack/ui)"
+  exit 0
+fi
 
 g checkout -q -b feature/cart
 

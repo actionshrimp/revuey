@@ -40,12 +40,49 @@ are in `reports/Terminal code review tool landscape.md`.
    `git hash-object`. Committed-only (`merge-base..HEAD`) is a toggle. Working-tree reviews auto-refresh
    (BufWritePost debounced, FocusGained, re-entry when file stats changed), coalesce concurrent refreshes, skip
    re-rendering when the diff is unchanged, and preserve cursor/scroll/folds.
-7. **State** lives as JSON under `stdpath('data')/revuey/`, keyed by repo + review target; a pure-Lua data layer with
+7. **Local stacks** (`stack.lua`). A `revuey.Stack` is an ordered list of layers (bottom first), each with a
+   tip commit, a parent rev and a reviewed-state key (`state_branch`, `state_base`); a scope is a layer or the
+   full stack, turned into a `revuey.Target` (`from`, `to` or nil for HEAD/working tree, labels, state key) that
+   `review.load` diffs. Nothing in the model assumes layers are local branches, so a later PR-stack source only
+   has to build a `revuey.Stack`.
+   Detection is split into a pure resolver (`resolve`: branch tips + a first-parent graph of commits not
+   reachable from trunk + explicit parents -> layers, forks, notes, or a request for more history) and a gatherer
+   (`detect`): `for-each-ref` (heads and `refs/branch-metadata`), `config --get-regexp` for
+   `branch.*.revueyParent`, one `cat-file --batch` for Graphite blobs, `for-each-ref --contains HEAD` for
+   candidates above, and `rev-list --parents --stdin ^trunk` for the graph; all async, and skipped when a
+   fingerprint of refs/overrides/HEAD/trunk is unchanged. Heuristic parent = nearest other branch tip on the
+   first-parent line (merged side branches are never parents). Explicit parents (revuey config, then Graphite)
+   override it; a parent already in trunk becomes trunk. Upward we follow a single child and stop at forks.
+   **Moved parents:** reflogs of unmerged branches (creation and `reset:` entries excluded) map old tips to
+   their branch. If the first-parent walk hits an old tip of a branch that has since moved (amend, new commit,
+   rebase) before any current tip, that branch is the parent (`diverged`). The layer is diffed from the old tip,
+   which shows only the child's own commits, with a "not restacked" note. A parent whose tip *is* an ancestor
+   (merged into the child rather than rebased) is a normal parent; ancestry follows merge parents inside the
+   loaded graph. Upward candidates include branches containing old tips of stack branches. Without reflogs,
+   branches sharing the stack's root commit but not in the stack get a suggest-only note.
+   **Explicit parents that aren't ancestors** use an old tip of the parent if there is one, or else trunk
+   (`stale`), with a note. Every layer target carries `floor = trunk`, so `review.merge_base_for` never diffs
+   below `merge-base(trunk, tip)`.
+   **Landed layers:** bottom-up, a layer whose own changed files are identical in trunk
+   (`git diff --quiet trunk tip -- files`) is marked landed and dimmed. The check stops at the first unlanded
+   layer.
+   **Marks:** layers above another layer add the old blob to the content key (`key_old`), so a parent change to
+   the same file resets the mark. The bottom layer, full scope and plain reviews keep chunk 1's new-blob keys,
+   so they still share marks.
+   Ambiguity (duplicate tips, forks, unknown or cyclic parents) becomes panel notes; nothing inferred is
+   persisted (the child-branch trap is undetectable from the graph, so the user's explicit choice is the
+   fix). Layer diffs use `merge-base(parent tip, layer tip)`, which also covers a trunk that moved on and a
+   stack that was never rebased. Only the HEAD layer (and the full scope when HEAD is the top) can include the
+   working tree; other scopes are `mode_locked` committed-only. Reviewed state is per layer (layer + normalised
+   parent), so the bottom layer and full scope share files with the plain single-branch review of the same
+   diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
+   `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
+8. **State** lives as JSON under `stdpath('data')/revuey/`, keyed by repo + review target; a pure-Lua data layer with
    no UI calls so it can be tested headless.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`) free of window/buffer UI so it is testable with
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `stack.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
 - Shell out to `git`/`gh` with `vim.system`; never block the UI for long-running work.

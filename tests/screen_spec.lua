@@ -37,7 +37,7 @@ local function start(dir, base, lines, columns, extra)
       last = now
     end)
     local done = false
-    require('revuey').open({ base = base, on_ready = function() done = true end })
+    require('revuey').open({ base = base ~= '' and base or nil, on_ready = function() done = true end })
     vim.wait(10000, function() return done end, 10)
     assert(done, 'review did not open')
   ]],
@@ -198,6 +198,26 @@ h.test('noautoread: refresh reloads hidden buffers silently, leaves user buffers
   h.ok(not text:find('W11', 1, true) and not text:find('has changed', 1, true), text)
   h.eq({ 'local x = 3' }, child.lua_get('vim.api.nvim_buf_get_lines(_G.hidden, 0, -1, false)'))
   h.eq({ 'user edit' }, child.lua_get('vim.api.nvim_buf_get_lines(_G.user, 0, -1, false)'))
+end)
+
+h.test('stack: panel stack section at the HEAD layer, then full scope', function()
+  local d = h.tmpdir('screen-stack')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  start(d, '') -- no base: detect the stack
+  local function stats_loaded()
+    return child.lua([[
+      return vim.wait(5000, function()
+        local s = require('revuey.view').session
+        return s and not s.refreshing and s.review.stack and s.review.stack.full_stats ~= nil
+      end, 10)
+    ]])
+  end
+  h.ok(stats_loaded(), 'stack stats did not load')
+  screenshot('stack-layer')
+  child.type_keys('gs')
+  h.ok(stats_loaded(), 'stack stats did not load')
+  screenshot('stack-full')
 end)
 
 child.stop()
