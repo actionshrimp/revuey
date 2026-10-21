@@ -24,6 +24,9 @@ local function start(dir, base, lines, columns, extra)
     [[
     local root, dir, state, base, extra = ...
     vim.opt.rtp:prepend(root)
+    -- this child has no UI; its grid is read with screenstring() after mini.test's :redraw,
+    -- so let revuey redraw when highlights arrive
+    vim.g.revuey_headless_redraw = true
     vim.cmd('runtime plugin/revuey.lua')
     vim.cmd('cd ' .. vim.fn.fnameescape(dir))
     require('revuey').setup(vim.tbl_extend('force', { state_dir = state, lsp_warmup = false }, (extra ~= vim.NIL and extra) or {}))
@@ -218,6 +221,37 @@ h.test('stack: panel stack section at the HEAD layer, then full scope', function
   child.type_keys('gs')
   h.ok(stats_loaded(), 'stack stats did not load')
   screenshot('stack-full')
+end)
+
+-- AI guide view (fake `claude` from tests/bin): title, meta, prose, numbered sections with
+-- checkboxes, hunks rendered by the shared renderer, and the panel's section list.
+h.test('guide view and the panel section list', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude') .. '/calls.ndjson')
+  local d = h.tmpdir('screen-guide')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', d }):wait().code == 0)
+  start(d, 'main', 40, 130)
+  local function generate()
+    return child.lua([[
+      vim.notify = function() end
+      require('revuey.view').guide_command(true)
+      return vim.wait(20000, function()
+        local s = require('revuey.view').session
+        return next(require('revuey.guide_view').jobs) == nil and s.guide.resolved ~= nil and not s.refreshing
+      end, 20)
+    ]])
+  end
+  h.ok(generate(), 'guide did not generate')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-view')
+  -- ]] to the first section, mr: it folds with a check, the cursor moves on, the panel counts
+  child.type_keys(']]', 'mr')
+  screenshot('guide-section-reviewed')
+  -- a narrower window re-wraps the prose (WinResized)
+  child.o.columns = 100
+  child.lua('vim.cmd("redraw") vim.wait(200)')
+  child.type_keys('gg')
+  screenshot('guide-narrow')
 end)
 
 child.stop()

@@ -5,6 +5,7 @@ local M = {}
 
 local ns = vim.api.nvim_create_namespace('revuey.panel')
 local ns_cur = vim.api.nvim_create_namespace('revuey.panel.current')
+local ns_sec = vim.api.nvim_create_namespace('revuey.panel.section')
 
 local status_hl = {
   A = 'RevueyStatusAdded',
@@ -177,6 +178,7 @@ function M.render(s)
       add('')
     end
   end
+  require('revuey.guide_view').panel(s, add, add_virt, width)
   local total_add, total_del, reviewed = 0, 0, 0
   for _, f in ipairs(r.files) do
     total_add, total_del = total_add + f.added, total_del + f.removed
@@ -264,12 +266,23 @@ function M.render(s)
     s.panel_files[row] = fi
   end
   add('')
-  local help = {
-    ' <CR> show  mr reviewed  gp diff',
-    ' ]c [c hunk  ]f [f file  za fold',
-    ' gd def  K hover  go open  R refresh',
-    ' gu committed/working tree  q close',
-  }
+  local help
+  if s.view_mode == 'guide' then
+    help = {
+      ' ]] [[ section  mr section reviewed',
+      ' ]c [c hunk  za fold  gp diff',
+      ' gd def  K hover  go open  R refresh',
+      ' gG diff view  gR regenerate  q close',
+    }
+  else
+    help = {
+      ' <CR> show  mr reviewed  gp diff',
+      ' ]c [c hunk  ]f [f file  za fold',
+      ' gd def  K hover  go open  R refresh',
+      ' gu committed/working tree  q close',
+      ' gG AI guide',
+    }
+  end
   if r.stack then
     help[#help + 1] = ' ]s [s layer  gs full stack'
   end
@@ -289,7 +302,31 @@ function M.render(s)
       vim.api.nvim_buf_set_extmark(buf, ns, row - 1, 0, { virt_text = hls.virt, virt_text_pos = 'right_align' })
     end
   end
-  M.set_current(s, s.current_file or 1)
+  if s.view_mode == 'guide' then
+    M.set_current_section(s, s.current_section)
+  else
+    M.set_current(s, s.current_file or 1)
+  end
+end
+
+---Highlight the guide section the cursor is in (and move the panel cursor to it).
+function M.set_current_section(s, si)
+  s.current_section = si
+  local buf = s.panel_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, ns_sec, 0, -1)
+  for row, idx in pairs(s.panel_sections or {}) do
+    if idx == si then
+      vim.api.nvim_buf_set_extmark(buf, ns_sec, row - 1, 0, { line_hl_group = 'RevueyPanelCurrent', priority = 1 })
+      if s.panel_win and vim.api.nvim_win_is_valid(s.panel_win) and vim.api.nvim_get_current_win() ~= s.panel_win then
+        s.syncing = true
+        pcall(vim.api.nvim_win_set_cursor, s.panel_win, { row, 0 })
+        s.syncing = false
+      end
+    end
+  end
 end
 
 ---Highlight the file currently shown in the diff window.

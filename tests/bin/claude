@@ -1,0 +1,13 @@
+#!/bin/sh
+# Fake `claude` CLI for tests (never the real one). Put tests/bin first on PATH.
+#   REVUEY_FAKE_CLAUDE       scenario: good (default), fenced, invalid, missing, unknown, newlines,
+#                            error, notloggedin, crash, slow, hang, stubborn (ignores SIGTERM, as does its child),
+#                            kids (hang + a `sleep` child
+#                            whose pid goes to $REVUEY_FAKE_CLAUDE_LOG.kids)
+#   REVUEY_FAKE_CLAUDE_LOG   file to append {argv, stdin, cwd} to (one JSON object per line)
+#   REVUEY_FAKE_CLAUDE_OUTPUT  JSON file used as the structured output (scenario good)
+#   REVUEY_FAKE_NVIM         nvim binary that runs the Lua half (default: nvim)
+dir=$(cd "$(dirname "$0")" && pwd)
+stdin_file=$(mktemp "${TMPDIR:-/tmp}/revuey-fake-claude.XXXXXX")
+cat > "$stdin_file"
+exec "${REVUEY_FAKE_NVIM:-nvim}" --clean --headless -l "$dir/fake_claude.lua" "$stdin_file" "$@"

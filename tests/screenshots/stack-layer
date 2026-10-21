@@ -20,8 +20,8 @@
 19| ]c [c hunk  ]f [f file  za fold        │     15 +   }                                                                  
 20| gd def  K hover  go open  R refresh    │     16 +                                                                      
 21| gu committed/working tree  q close     │     17 +   total(): number {                                                  
-22| ]s [s layer  gs full stack             │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-23|~                                       │     19 +   }                                                                  
+22| gG AI guide                            │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+23| ]s [s layer  gs full stack             │     19 +   }                                                                  
 24|~                                       │     20 + }                                                                    
 25|~                                       │                                                                               
 26|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
@@ -52,8 +52,8 @@
 19|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
-22|AAAAAAAAAAAAAAAAAAAAAAAAAAA99999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
-23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+22|AAAAAAAAAAAA99999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+23|AAAAAAAAAAAAAAAAAAAAAAAAAAA99999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
 26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4??????????PPPPPPPPPPPP<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
