@@ -27,6 +27,14 @@ function M.add_parsers_rtp()
   return true
 end
 
+---Put the fake `claude` (tests/bin/claude) first on PATH; it appends each call to `log`.
+function M.use_fake_claude(log)
+  vim.env.PATH = M.root .. '/tests/bin:' .. vim.env.PATH
+  vim.env.REVUEY_FAKE_NVIM = vim.v.progpath
+  vim.env.REVUEY_FAKE_CLAUDE_LOG = log
+  vim.env.REVUEY_FAKE_CLAUDE = nil
+end
+
 function M.tmpdir(name)
   local base = os.getenv('REVUEY_TEST_TMP') or vim.fn.tempname()
   local d = vim.fs.joinpath(base, name)
@@ -172,6 +180,11 @@ function M.run()
     end
   end
   io.flush()
+  -- os.exit skips VimLeavePre: stop any AI CLI a test left running
+  local ai = package.loaded['revuey.ai']
+  if ai then
+    ai.kill_all()
+  end
   os.exit(failures == 0 and 0 or 1)
 end
 

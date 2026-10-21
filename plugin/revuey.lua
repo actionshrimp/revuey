@@ -45,3 +45,14 @@ end, {
     return list
   end,
 })
+
+vim.api.nvim_create_user_command('RevueyGuide', function(cmd)
+  require('revuey').guide(cmd.bang, cmd.args ~= '' and cmd.args or nil)
+end, {
+  nargs = '?',
+  bang = true,
+  desc = 'Toggle the AI guide view of the review (offers to generate one); ! regenerates; cancel stops a run',
+  complete = function(arg)
+    return vim.startswith('cancel', arg) and { 'cancel' } or {}
+  end,
+})

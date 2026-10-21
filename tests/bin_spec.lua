@@ -11,11 +11,19 @@ end
 local function capture()
   return tmux('capture-pane', '-p', '-t', 'smoke').stdout or ''
 end
-local function wait_for(pattern, ms)
+---Wait until the screen shows every pattern (one string or a list): a screen with only some of
+---them (the intro screen, a half-drawn review) is not the condition.
+local function wait_for(patterns, ms)
+  patterns = type(patterns) == 'table' and patterns or { patterns }
   local out = ''
-  vim.wait(ms or 10000, function()
+  vim.wait(ms or 30000, function()
     out = capture()
-    return out:find(pattern, 1, true) ~= nil
+    for _, p in ipairs(patterns) do
+      if not out:find(p, 1, true) then
+        return false
+      end
+    end
+    return true
   end, 100)
   return out
 end
@@ -38,7 +46,7 @@ h.test('bin/revuey opens the review, ignoring $NVIM, and q quits', function()
   }, ' ')
   local res = tmux('new-session', '-d', '-s', 'smoke', '-x', '120', '-y', '30', '-c', fixture, cmd)
   h.eq(0, res.code, res.stderr)
-  local out = wait_for('feature/cart → main')
+  local out = wait_for({ 'feature/cart → main', 'src/cart.ts', '+ import { multiply, sum } from "./math";' })
   h.ok(out:find('feature/cart → main', 1, true), out)
   h.ok(out:find('src/cart.ts', 1, true), out)
   h.ok(out:find('+ import { multiply, sum } from "./math";', 1, true), out)

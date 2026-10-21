@@ -58,4 +58,12 @@ function M.stack_parent(parent)
   require('revuey.view').stack_parent(parent)
 end
 
+---`:RevueyGuide[!] [cancel]`: toggle the AI guide view (offering to generate a guide when there is
+---none); `bang` generates a new one; `arg = 'cancel'` stops a running generation.
+---@param bang? boolean
+---@param arg? string
+function M.guide(bang, arg)
+  require('revuey.view').guide_command(bang, arg)
+end
+
 return M

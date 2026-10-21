@@ -14,6 +14,7 @@ M.VERSION = 1
 ---@field branch string
 ---@field base string
 ---@field files table<string, {key:string, reviewed_at:integer}>
+---@field sections table<string, {reviewed_at:integer}> guide sections, by section identity
 ---@field _path string
 
 function M.default_dir()
@@ -61,17 +62,17 @@ end
 
 local backup_seq = 0
 
----Read the files table from disk. Returns {} when missing; backs up undecodable files.
+---Read the files and sections tables from disk. Returns {} when missing; backs up undecodable files.
 local function read_files(path)
   local fd = io.open(path, 'r')
   if not fd then
-    return {}
+    return {}, {}
   end
   local text = fd:read('*a')
   fd:close()
   local ok, data = pcall(vim.json.decode, text)
   if ok and type(data) == 'table' and type(data.files) == 'table' then
-    return data.files
+    return data.files, type(data.sections) == 'table' and data.sections or {}
   end
   if text ~= '' then
     -- keep the unreadable file for inspection instead of silently overwriting it later
@@ -79,20 +80,23 @@ local function read_files(path)
     local backup = ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.fn.getpid(), backup_seq)
     os.rename(path, backup)
   end
-  return {}
+  return {}, {}
 end
 
 ---@return revuey.State
 function M.load(dir, repo, branch, base)
   local path = M.file_for(dir, repo, branch, base)
+  local files, sections = read_files(path)
   return {
     version = M.VERSION,
     repo = repo,
     branch = branch,
     base = base,
-    files = read_files(path),
+    files = files,
+    sections = sections,
     _path = path,
     _changes = {},
+    _section_changes = {},
   }
 end
 
@@ -105,7 +109,7 @@ end
 function M.save(st)
   local dir = vim.fs.dirname(st._path)
   vim.fn.mkdir(dir, 'p')
-  local files = read_files(st._path)
+  local files, sections = read_files(st._path)
   for path, ch in pairs(st._changes or {}) do
     if ch.entry then
       files[path] = ch.entry
@@ -113,9 +117,16 @@ function M.save(st)
       files[path] = nil
     end
   end
-  local data = { version = st.version, repo = st.repo, branch = st.branch, base = st.base, files = files }
+  -- guide sections: keyed by content identity, so a plain set/unset merges safely
+  for id, entry in pairs(st._section_changes or {}) do
+    sections[id] = entry or nil
+  end
+  local data = { version = st.version, repo = st.repo, branch = st.branch, base = st.base, files = files, sections = sections }
   if next(data.files) == nil then
     data.files = vim.empty_dict()
+  end
+  if next(data.sections) == nil then
+    data.sections = nil
   end
   local tmp = st._path .. '.tmp.' .. vim.fn.getpid()
   local fd, err = io.open(tmp, 'w')
@@ -134,7 +145,9 @@ function M.save(st)
     error('revuey: cannot write review state: ' .. tostring(rerr))
   end
   st._changes = {}
+  st._section_changes = {}
   st.files = vim.deepcopy(files)
+  st.sections = vim.deepcopy(sections)
 end
 
 ---@param st revuey.State
@@ -160,6 +173,29 @@ function M.toggle(st, path, key)
   local ok, err = pcall(M.save, st)
   if not ok then
     st.files[path] = v and { key = key, reviewed_at = os.time() } or nil
+    return v, err
+  end
+  return v
+end
+
+---Guide section reviewed state (see guide.section_id): separate from file marks.
+---@param st revuey.State
+function M.section_reviewed(st, id)
+  return id ~= nil and (st.sections or {})[id] ~= nil
+end
+
+---Toggle and persist a section's reviewed state. Returns the new value (+ error on save failure).
+---@param st revuey.State
+function M.toggle_section(st, id)
+  local v = not M.section_reviewed(st, id)
+  local entry = v and { reviewed_at = os.time() } or false
+  st.sections = st.sections or {}
+  st.sections[id] = entry or nil
+  st._section_changes = st._section_changes or {}
+  st._section_changes[id] = entry
+  local ok, err = pcall(M.save, st)
+  if not ok then
+    st.sections[id] = entry or nil
     return v, err
   end
   return v

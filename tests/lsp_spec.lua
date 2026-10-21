@@ -25,8 +25,8 @@ assert(s, 'review did not open')
 
 local function find_row(path, needle)
   for row, e in ipairs(s.layout.map) do
-    local f = s.review.files[e.file_idx]
-    if f.path == path and e.kind ~= 'del' and e.kind ~= 'meta' then
+    local f = s.review.files[e.file_idx or 0]
+    if f and f.path == path and (e.kind == 'add' or e.kind == 'ctx') then
       local col = s.layout.lines[row]:find(needle, 1, true)
       if col then
         return row, col - 1
@@ -153,6 +153,35 @@ h.test('gd on an uncommitted (untracked) line, and with unsaved buffer edits', f
   h.ok(s.layout.lines[r]:find('export function sum', 1, true), s.layout.lines[r])
   vim.api.nvim_buf_set_lines(mbuf, 0, 2, false, {})
   vim.bo[mbuf].modified = false
+end)
+
+h.test('gd inside the guide view jumps to a definition shown in the guide', function()
+  h.use_fake_claude(h.tmpdir('lsp-fake-claude') .. '/calls.ndjson')
+  local _, restore_notify = h.capture_notify()
+  view.guide_command(true)
+  assert(vim.wait(20000, function()
+    return next(require('revuey.guide_view').jobs) == nil and s.guide.resolved ~= nil
+  end, 20), 'guide generated')
+  restore_notify()
+  h.eq('guide', s.view_mode)
+  vim.api.nvim_set_current_win(s.diff_win)
+  local row, col = find_row('src/cart.ts', 'sum(this')
+  h.eq('guide', s.layout.kind)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, col })
+  view.definition()
+  wait_cursor_change(s.diff_win, s.diff_buf, row)
+  h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  local r = vim.api.nvim_win_get_cursor(s.diff_win)[1]
+  local e = s.layout.map[r]
+  h.eq('src/math.ts', s.review.files[e.file_idx].path)
+  h.ok(s.layout.lines[r]:find('export function sum', 1, true), s.layout.lines[r])
+  h.ok(e.section_idx, 'landed inside a guide section')
+  -- K on a prose line is refused politely, never an error
+  local msgs, restore = h.capture_notify()
+  vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
+  view.hover()
+  restore()
+  h.ok(msgs[1] and msgs[1].msg:find('added and context lines only', 1, true))
 end)
 
 h.run()

@@ -4,29 +4,33 @@
 
 Code review inside Neovim (>= 0.12). It shows a composed unified diff of the current branch
 against its base, or of one layer of a local branch stack (or the whole stack) before you push. Tree-sitter syntax is projected onto the diff lines, LSP go-to-definition and hover
-work from inside the diff, and "reviewed" marks persist. Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+work from inside the diff, and "reviewed" marks persist. An [AI guide](#ai-guide) (your own `claude`
+CLI) can reorganise the review into ordered, explained sections. Design notes:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install (lazy.nvim, local checkout)
 
 ```lua
 {
   dir = '~/dev/revuey/main',
-  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent' },
+  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyGuide' },
   opts = {
     -- default_branch = 'develop', -- default: origin/HEAD, else main, master, develop
+    -- ai = { model = 'sonnet' }, -- AI guide; default: Claude Code's default model
   },
 }
 ```
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
 (`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
-`lsp_settle_ms`, `word_diff`, `state_dir`, `keymaps`).
+`lsp_settle_ms`, `word_diff`, `state_dir`, `keymaps`, `ai`).
 
 Requirements:
 - `git`.
 - Tree-sitter parsers *and highlight queries* for the languages you review (for example
   typescript/tsx via nvim-treesitter). Without them the diff still works but has no syntax colours.
 - An LSP configured for the filetype (for example `ts_ls`) for `gd` and `K`.
+- For the AI guide only: [Claude Code](https://claude.com/claude-code) (`claude`) on `PATH`, logged in.
 
 ## Commands
 
@@ -37,6 +41,9 @@ Requirements:
 | `:Revuey <base>` | Single-branch review against `base`, exactly as before (no stack detection). `:Revuey <base> --stack` uses `base` as the stack's trunk. |
 | `:Revuey ... --committed` | Committed changes only (`merge-base..HEAD`). |
 | `:RevueyStackParent [branch]` | Set the stack parent of the layer being reviewed (or of the current branch). `--clear` removes the override. No argument: pick from a list, which also offers "clear override". |
+| `:RevueyGuide` | Switch between the diff and the [AI guide](#ai-guide) view. With no guide yet, offers to generate one. |
+| `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
+| `:RevueyGuide cancel` | Stop a running generation. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 
@@ -112,6 +119,86 @@ scope, then a **full stack** row. Notes about duplicate tips, forks and ignored 
 
 With a single branch and no stack, everything behaves exactly as before.
 
+## AI guide
+
+The guide is Claude's walk through the review. It splits the changes into a few ordered
+sections: the heart of the change first, then its consequences, then glue. Each section has a
+short explanation and the hunks it covers. A file's hunks can be spread over several sections.
+It is a reading order, not a bug hunt, but a section may carry an Important or Warning callout.
+
+`gG` (or `:RevueyGuide`) switches the diff window to the guide view; the panel and keys stay.
+With no guide for this review yet, it asks before generating one. Generation runs in the
+background: the panel shows a spinner, the elapsed time and what Claude is doing ("reading
+src/cart.ts"), and you can keep reviewing the diff with `gG`. A small stack layer takes about
+10 seconds; a 3,500-line branch about 35 seconds (Opus, $0.10 to $0.70 per guide in our runs).
+
+The guide view uses the same renderer as the diff: syntax, word diff, `gd`, `K`, `go`/`<CR>`,
+`]c`/`[c` and folds all work inside it. Each section is a fold with a heading, a reviewed
+checkbox and its hunk count, followed by the explanation and its hunks. Each hunk has a
+`path  @@ … @@` header and sometimes a one-line note from Claude. The prose is real buffer text
+(so you can search and yank it), wrapped to the window and re-wrapped when it is resized,
+with light markdown styling.
+
+- `]]` / `[[`: next / previous section.
+- `mr`: mark the section under the cursor reviewed. It folds, and the cursor moves to the next
+  section. The panel shows `✓` per section and "n/m reviewed".
+- Section marks are separate from file marks (both are shown: file marks appear on each hunk
+  header as "✓ file reviewed"). A section's identity is the set of its hunks' contents, so the
+  mark survives regenerating the guide when those hunks are unchanged, and resets when any of
+  them changes.
+
+**When the code changes** after the guide was generated, sections whose hunks are unchanged
+render as before. A section with changed or missing hunks gets an "outdated" chip and shows only
+the hunks that still exist. New hunks go to a final "Not in guide" section, and a banner offers
+`gR` to regenerate. The guide never re-runs by itself.
+
+**Per scope:** each review (branch and base, or a stack layer, or the full stack) has its own
+guide. Switching layers keeps a generation running for the layer it was started on.
+
+**What runs:** your own `claude` CLI, in the repository root, with the prompt on stdin:
+`claude -p --output-format stream-json --verbose --permission-mode dontAsk --tools Read,Grep,Glob,Bash
+--allowedTools Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)
+--disallowedTools 'Bash(git * --out*)' --restricted --safe-mode --strict-mcp-config …`. Claude can
+read files in the repo and run `git diff`/`log`/`show`, nothing else: `--restricted` and
+`--safe-mode` make it ignore settings files (yours and the repo's, so no extra allow rules or
+hooks), plugins and MCP servers. revuey never reads your credentials. The prompt contains the
+commit subjects, a file list and the diff, with each hunk marked by an id (`@@ h7 path @@`);
+Claude only refers to hunks by id, and revuey checks the answer (unknown ids are dropped, missed
+hunks go to an "Other changes" section). The whole prompt stays under `ai.max_prompt_chars`
+(150k characters): the largest hunks are sent as a short index entry, and if that is not
+enough, only the file list; a review too big even for that is refused (review one layer). The
+Claude session is kept (named "revuey guide: <branch>" in `claude --resume`) and its id is
+stored with the guide. Cancelling, a timeout or quitting Neovim stops the CLI and everything it
+started.
+
+Guides are saved as JSON under `stdpath('data')/revuey/guides/` (or `state_dir/guides`), with
+the model, time and commit they were made from; the newest `ai.keep_guides` (5) per review are
+kept. Errors (no `claude`, not logged in, timeout)
+are reported and shown in the guide view.
+
+```lua
+require('revuey').setup({
+  ai = {
+    model = nil,        -- e.g. 'sonnet', 'opus', a full model id; nil = Claude Code's default
+    effort = nil,       -- 'low' … 'max'; nil = default
+    timeout_ms = 600000,
+    max_prompt_chars = 150000,
+    cmd = nil,          -- path to the claude executable (default: `claude` on PATH)
+    keep_guides = 5,    -- saved guides kept per review
+    restricted = true,  -- see below before turning this off
+  },
+})
+```
+
+**`ai.restricted`** (default `true`) runs `claude` with `--restricted --safe-mode`, so it ignores
+every settings file, yours included. If you log in through settings (`env` or `apiKeyHelper`
+in `~/.claude/settings.json`, as with Bedrock, Vertex or a proxy), the run fails as "not logged
+in", and a default model set in your settings is not used (set `ai.model` instead). Setting
+`restricted = false` loads your user settings (`--setting-sources user`; the repo's settings
+still never load). **Warning:** your settings' permission allow rules and hooks then apply to a
+run that reads the repo's content, so a rule such as `Bash(make:*)` plus a prompt injection in
+the code could run commands. Only turn it off if your settings have no such allow rules or hooks.
+
 ## Layout
 
 The review opens in a new tab:
@@ -140,12 +227,16 @@ Diff buffer:
 | `R` | Refresh (re-runs git; also automatic in working-tree mode) |
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
+| `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
+| `gR` | Generate a new AI guide (asks first when one exists) |
+| `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 
 File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
-- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `gG`, `gR`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- In the guide view the panel also lists the guide's sections: `<CR>` jumps to one, `mr` marks it reviewed.
 
 Reviewed marks are stored in `stdpath('data')/revuey/*.json`. Each review is keyed by repo root,
 branch (or stack layer) and base (or parent layer), and each file by its new blob hash, so a mark
@@ -153,8 +244,10 @@ disappears when the branch changes that file.
 
 All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddText` and
 `RevueyDeleteText` (word diff), `RevueyFileHeader`, `RevueyHunkHeader`, `RevueyAddSign`,
-`RevueyDeleteSign`, `RevueyLineNr`, `RevueyAddLineNr`, `RevueyDeleteLineNr`, `RevueyReviewed`, and
-others (see `lua/revuey/highlights.lua`).
+`RevueyDeleteSign`, `RevueyLineNr`, `RevueyAddLineNr`, `RevueyDeleteLineNr`, `RevueyReviewed`,
+the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
+`RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, and others (see
+`lua/revuey/highlights.lua`).
 
 ## Try it
 
@@ -196,6 +289,24 @@ Things to try:
 - `:RevueyStackParent main` while on `stack/cart` drops `stack/math` from the stack; `:RevueyStackParent`
   and "clear override" restores it.
 
+### The AI guide
+
+Needs `claude` on `PATH` and logged in (each guide is one `claude -p` run).
+
+```sh
+scripts/make-fixture.sh --stack /tmp/revuey-guide
+cd /tmp/revuey-guide
+~/dev/revuey/main/bin/revuey --stack          # the full stack: 4 files
+```
+
+- `gG`, then pick "Generate a guide". Watch the spinner in the panel; `gG` goes back to the diff
+  while it runs. The guide appears after about 10 seconds.
+- `]]` / `[[` between sections, `]c` within them, `gd` on `sum(` or `K` on a call.
+- `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
+- Edit `src/cart.ts` and save: the section with that hunk turns "outdated", the edited hunk
+  appears under "Not in guide", and a banner offers `gR`.
+- `gs` for a layer: it has no guide of its own yet. `gs` again: the full-stack guide is back.
+
 ## Tests
 
 `make test` runs every spec in a fresh `nvim --headless --clean`, offline and without your config
@@ -204,10 +315,15 @@ Things to try:
   state persistence/merging/invalidation, async syntax projection (bundled Lua parser), stack
   resolution (ordering, forks, duplicate tips, Graphite metadata, overrides, trunk ahead, merged
   layers) plus `detect()` on real repos.
+- **Unit (guide):** hunk ids and anchors, prompt building and the size budget, the stream-json
+  parser, validation and JSON repair, section identity, staleness, guide storage, markdown prose.
 - **Integration:** real fixture repos opened headlessly (buffer text, extmarks, folds, keymaps,
   lifecycle cleanup, empty reviews, stack layer switching/full scope/per-layer marks/working tree
   on the HEAD layer only), plus LSP definition/hover when `typescript-language-server`
   is on PATH (skipped otherwise). TypeScript highlight checks skip without the TS parser/queries.
+  The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
+  and replays canned stream-json (good, invalid, missing hunks, unknown ids, errors, slow, hang),
+  so the tests never need the network or a subscription.
 - **Screen:** a child Neovim (vendored `mini.test`, `tests/vendor/mini`) renders the review and its
   screen grid, highlight attributes included, is compared to `tests/screenshots/*`. After an
   intended UI change, regenerate them with `REVUEY_UPDATE_SCREENSHOTS=1 make test` and review the
