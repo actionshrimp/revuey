@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch Neovim with a revuey review of the current branch (in the current directory).
-#   revuey [base]
+#   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
 # directory containing this script's parent (so it works straight from a checkout).
 # Pressing `q` in the review quits Neovim.
@@ -18,7 +18,10 @@ while [ -L "$script" ]; do
 done
 default_dir=$(cd "$(dirname "$script")/.." && pwd)
 export REVUEY_PLUGIN_DIR=${REVUEY_PLUGIN_DIR:-$default_dir}
-export REVUEY_BASE=${1:-}
+# arguments travel to Lua joined by the unit separator (\x1f), so spaces survive
+IFS=$'\x1f'
+export REVUEY_ARGS="$*"
+unset IFS
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "revuey: not inside a git repository" >&2
@@ -29,4 +32,4 @@ fi
 exec "${REVUEY_NVIM:-nvim}" \
   -c 'lua vim.opt.rtp:prepend(vim.env.REVUEY_PLUGIN_DIR)' \
   -c 'runtime plugin/revuey.lua' \
-  -c 'lua require("revuey").open({ base = vim.env.REVUEY_BASE ~= "" and vim.env.REVUEY_BASE or nil, standalone = true })'
+  -c 'lua require("revuey").open_args(vim.split(vim.env.REVUEY_ARGS or "", "\31", { trimempty = true }), { standalone = true })'

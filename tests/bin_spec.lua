@@ -88,5 +88,43 @@ h.test('noautoread: refresh after an outside change shows no W11 prompt', functi
   h.ok(out:find('local x = 3', 1, true), out)
 end)
 
+h.test('bin/revuey passes arguments through (--stack on the stack fixture)', function()
+  local d = h.tmpdir('bin-stack')
+  vim.fn.delete(d, 'rf')
+  h.eq(0, vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code)
+  local cmd = table.concat({
+    'env',
+    'XDG_CONFIG_HOME=' .. home .. '/config',
+    'XDG_DATA_HOME=' .. home .. '/data',
+    'XDG_STATE_HOME=' .. home .. '/state',
+    'XDG_CACHE_HOME=' .. home .. '/cache',
+    vim.fn.shellescape(h.root .. '/bin/revuey'),
+    '--stack',
+    '; echo REVUEY_EXIT=$?; sleep 30',
+  }, ' ')
+  h.eq(0, tmux('new-session', '-d', '-s', 'stack', '-x', '120', '-y', '30', '-c', d, cmd).code)
+  local function cap()
+    return tmux('capture-pane', '-p', '-t', 'stack').stdout or ''
+  end
+  local out
+  vim.wait(10000, function()
+    out = cap()
+    return out:find('full stack (3 layers)', 1, true) ~= nil
+  end, 100)
+  h.ok(out:find('stack/ui → main', 1, true), out)
+  h.ok(out:find('Stack: 3 layers on main', 1, true), out)
+  tmux('send-keys', '-t', 'stack', '[s')
+  vim.wait(5000, function()
+    out = cap()
+    return out:find('layer 3/3', 1, true) ~= nil
+  end, 100)
+  h.ok(out:find('stack/ui → stack/cart', 1, true), out)
+  tmux('send-keys', '-t', 'stack', 'q')
+  vim.wait(5000, function()
+    return cap():find('REVUEY_EXIT=0', 1, true) ~= nil
+  end, 100)
+  h.ok(cap():find('REVUEY_EXIT=0', 1, true), cap())
+end)
+
 tmux('kill-server')
 h.run()
