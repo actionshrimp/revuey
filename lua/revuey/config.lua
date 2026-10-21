@@ -38,6 +38,11 @@ M.defaults = {
     focus_panel = 'gp', -- not <Tab>: that is <C-i> (jumplist forward)
     refresh = 'R',
     toggle_mode = 'gu', -- working tree <-> committed only
+    -- stacks (only active when a stack is detected). ]s/[s shadow spell navigation, which is
+    -- off in review buffers.
+    next_layer = ']s',
+    prev_layer = '[s',
+    toggle_stack = 'gs', -- full stack <-> layer scope
     close = 'q',
   },
 }

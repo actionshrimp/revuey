@@ -17,6 +17,8 @@ local cap_large -- defined below
 ---@field state revuey.State
 ---@field dirty boolean        working tree has uncommitted changes to tracked files
 ---@field mode 'worktree'|'committed'
+---@field mode_locked boolean  committed only (a layer below HEAD, or a PR)
+---@field target? revuey.Target
 ---@field signature string     changes whenever the review content would change (refresh skips if equal)
 
 ---Replace a file's hunks with a placeholder when its diff is larger than `cap` bytes.
@@ -216,13 +218,43 @@ function M.full_new_side(root, mb, path)
   return table.concat(t, '\n') .. (no_eol and '' or '\n')
 end
 
----Load a review of the current branch against `base` (or the configured/detected default).
+---@class revuey.Target  what to diff, and the reviewed-state key (used for stack layers and PRs)
+---@field from string            old side: merge-base(from, to or HEAD)
+---@field floor? string          ...but never below merge-base(floor, to or HEAD) (trunk)
+---@field key_old? boolean       reviewed marks also key on the old blob (layers above a layer)
+---@field to? string             new-side commit; nil = HEAD (working tree allowed)
+---@field branch string          label of the new side
+---@field base string            label of the old side
+---@field state_repo? string     reviewed-state repo key (nil = repo root)
+---@field state_branch string
+---@field state_base string      already normalised
+---@field committed_only? boolean the new side is not HEAD: working-tree mode does not apply
+
+---Old side of a target: merge-base(from, head), but never below merge-base(floor, head), so a
+---parent that isn't an ancestor (stale override, landed parent) can't drag trunk commits into a
+---layer.
+---@param target revuey.Target
+---@param head string new-side commit
+function M.merge_base_for(root, target, head)
+  local mb = git.merge_base(target.from, head, root)
+  if mb and target.floor then
+    local fmb = git.merge_base(target.floor, head, root)
+    if fmb and fmb ~= mb and git.is_ancestor(mb, fmb, root) then
+      mb = fmb
+    end
+  end
+  return mb
+end
+
+---Load a review of the current branch against `base` (or the configured/detected default), or of
+---an explicit `target` (a stack layer or PR).
 ---Must run inside `git.async()` for non-blocking use; works synchronously otherwise.
 ---Modes:
 ---  worktree  (default) merge-base..working tree: committed, staged and unstaged changes to tracked
 ---            files, plus untracked non-ignored files as additions. New-side content is on disk.
 ---  committed merge-base..HEAD only.
----@param opts {cwd?:string, base?:string, state_dir?:string, context_lines?:integer, mode?:'worktree'|'committed', cache?:table}
+---A target with `committed_only` is always loaded in committed mode (`mode_locked`).
+---@param opts {cwd?:string, base?:string, target?:revuey.Target, state_dir?:string, context_lines?:integer, mode?:'worktree'|'committed', cache?:table}
 ---@return revuey.Review?, string? err
 function M.load(opts)
   local cwd = opts.cwd or vim.fn.getcwd()
@@ -230,25 +262,36 @@ function M.load(opts)
   if not root then
     return nil, 'not inside a git repository: ' .. cwd
   end
-  local base = opts.base
-  if not base or base == '' then
-    base = config.options.default_branch or git.default_branch(root)
+  local target = opts.target
+  local base = target and target.base or opts.base
+  if not target then
+    if not base or base == '' then
+      base = config.options.default_branch or git.default_branch(root)
+    end
+    if not base then
+      return nil, 'could not detect a default branch; pass one with :Revuey <base>'
+    end
+    if not git.rev_parse(base, root) then
+      return nil, 'unknown base revision: ' .. base
+    end
   end
-  if not base then
-    return nil, 'could not detect a default branch; pass one with :Revuey <base>'
-  end
-  if not git.rev_parse(base, root) then
-    return nil, 'unknown base revision: ' .. base
-  end
-  local head = git.rev_parse('HEAD', root)
+  local head = git.rev_parse(target and target.to or 'HEAD', root)
   if not head then
-    return nil, 'the current branch has no commits yet'
+    return nil, target and ('unknown revision: ' .. tostring(target.to)) or 'the current branch has no commits yet'
   end
-  local mb = git.merge_base(base, 'HEAD', root)
+  local from = target and target.from or base
+  local mb = target and M.merge_base_for(root, target, head) or git.merge_base(from, head, root)
   if not mb then
-    return nil, ('no common ancestor between %s and HEAD (unrelated histories?); pass another base: :Revuey <base>'):format(base)
+    return nil, ('no common ancestor between %s and %s (unrelated histories?); pass another base: :Revuey <base>'):format(
+      target and target.base or base,
+      target and target.branch or 'HEAD'
+    )
   end
   local mode = opts.mode or (config.options.uncommitted and 'worktree' or 'committed')
+  local mode_locked = target and target.committed_only or false
+  if mode_locked then
+    mode = 'committed'
+  end
   local worktree = mode == 'worktree'
   local text, derr = git.diff(mb, not worktree and head or nil, root, opts.context_lines or config.options.context_lines)
   if not text then
@@ -280,10 +323,16 @@ function M.load(opts)
       return a.path < b.path
     end)
   end
-  local branch = git.current_branch(root) or 'HEAD'
-  -- `origin/main` and `main` are the same review target for reviewed marks
-  local state_base = state.normalize_base(base, git.remotes(root))
-  local st = state.load(opts.state_dir or config.options.state_dir or state.default_dir(), root, branch, state_base)
+  local branch, st_repo, st_branch, st_base
+  if target then
+    branch = target.branch
+    st_repo, st_branch, st_base = target.state_repo or root, target.state_branch, target.state_base
+  else
+    branch = git.current_branch(root) or 'HEAD'
+    -- `origin/main` and `main` are the same review target for reviewed marks
+    st_repo, st_branch, st_base = root, branch, state.normalize_base(base, git.remotes(root))
+  end
+  local st = state.load(opts.state_dir or config.options.state_dir or state.default_dir(), st_repo, st_branch, st_base)
   return {
     root = root,
     branch = branch,
@@ -292,24 +341,65 @@ function M.load(opts)
     head = head,
     files = files,
     state = st,
-    dirty = git.is_dirty(root),
+    -- only the HEAD layer can have uncommitted work to warn about
+    dirty = not mode_locked and git.is_dirty(root),
     mode = mode,
+    mode_locked = mode_locked,
+    target = target,
+    key_old = target and target.key_old or nil,
     index_path = git.git_path('index', root),
     signature = table.concat(signature, '\0'),
     untracked_list = worktree and cache.untracked_list or nil,
   }
 end
 
+---Content keys of a committed diff `from..to` without parsing patches (`git diff --raw`), keyed
+---by path; they equal `state.content_key` of the parsed diff. Used for per-layer stats.
+---@return table<string, string>? keys
+function M.raw_keys(root, from, to, with_old)
+  local out = git.git({ 'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--no-ext-diff', '--no-textconv', '--submodule=short', from, to, '--' }, root)
+  if not out then
+    return nil
+  end
+  local t = vim.split(out, '\0', { plain = true })
+  local keys, i = {}, 1
+  while i <= #t do
+    local meta = t[i]
+    local om, nm, ob, nb, status = meta:match('^:(%d+) (%d+) (%x+) (%x+) (%a)')
+    if not om then
+      break
+    end
+    local path = t[i + 1]
+    i = i + 2
+    if status == 'R' or status == 'C' then
+      path = t[i]
+      i = i + 1
+    end
+    local f = { status = status }
+    if not nb:match('^0+$') then
+      f.new_blob = nb
+      if status == 'A' or om ~= nm then
+        f.new_mode = nm
+      end
+    end
+    if not ob:match('^0+$') then
+      f.old_blob = ob
+    end
+    keys[path] = state.content_key(f, with_old)
+  end
+  return keys
+end
+
 ---@param review revuey.Review
 ---@param f revuey.FileDiff
 function M.is_reviewed(review, f)
-  return state.is_reviewed(review.state, f.path, state.content_key(f))
+  return state.is_reviewed(review.state, f.path, state.content_key(f, review.key_old))
 end
 
 ---@param review revuey.Review
 ---@param f revuey.FileDiff
 function M.toggle_reviewed(review, f)
-  local v, err = state.toggle(review.state, f.path, state.content_key(f))
+  local v, err = state.toggle(review.state, f.path, state.content_key(f, review.key_old))
   if err then
     vim.notify(tostring(err), vim.log.levels.ERROR)
   end

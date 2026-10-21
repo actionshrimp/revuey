@@ -1,0 +1,63 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//s/c/math                                                                                              X
+02| Files                                  │ A src/cart.ts +20 −0                                                      1/2 
+03| Stack: 3 layers on main                │  A     ▾ src/cart.ts   +20 −0  added                                          
+04|    stack/math                1c 1f ✓0/1│          @@ -0,0 +1,20 @@                                                     
+05| ▶@ stack/cart                2c 2f ✓0/2│      1 + import { multiply, sum } from "./math";                              
+06|    stack/ui                  1c 2f ✓0/2│      2 +                                                                      
+07|    full stack                4c 4f ✓0/4│      3 + export interface LineItem {                                          
+08|                                        │      4 +   name: string;                                                      
+09| stack/cart → stack/math                │      5 +   price: number;                                                     
+10| 2 files  +23 −2  ✓ 0/2                 │      6 +   quantity: number;                                                  
+11| base 41f287d7  head d0242a9d           │      7 + }                                                                    
+12| layer 2/3                              │      8 +                                                                      
+13| working tree  ● uncommitted            │      9 + export class Cart {                                                  
+14|                                        │     10 +   private items: LineItem[] = [];                                    
+15|   A  cart.ts  src                +20 −0│     11 +                                                                      
+16|   M  index.ts  src                +3 −2│     12 +   addItem(item: LineItem): this {                                    
+17|                                        │     13 +     this.items.push(item);                                           
+18| <CR> show  mr reviewed  gp diff        │     14 +     return this;                                                     
+19| ]c [c hunk  ]f [f file  za fold        │     15 +   }                                                                  
+20| gd def  K hover  go open  R refresh    │     16 +                                                                      
+21| gu committed/working tree  q close     │     17 +   total(): number {                                                  
+22| ]s [s layer  gs full stack             │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+23|~                                       │     19 +   }                                                                  
+24|~                                       │     20 + }                                                                    
+25|~                                       │                                                                               
+26|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
+27|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
+28|~                                       │  2   2   import { formatCurrency } from "./format";                           
+29|revuey://files [-]    13,1           All revuey://stack/cart..stack/math [-]                          1,1            Top
+30|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777776666885555555555555555555555555555555555555555555555555555555555
+03|22222222222222222222222299999999999999994::::::::::;;;;;;;;;;;<<<===>>>=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9?@944444444449999999999999999AAAAAAAAAA4BBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+05|9?@922222222229999999999999999AAAAAAAAAA4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+06|9?@944444444999999999999999999AAAAAAAAAA4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+07|9?99AAAAAAAAAA9999999999999999AAAAAAAAAA4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+08|99999999999999999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+09|22222222222222222222222299999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+10|9999999999IIIJJJAAAAAAA999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+11|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+12|??????????9999999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+13|?????????????AAAAAAAAAAAAAAA9999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+14|99999999999999999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+15|KLKLMKNNNNNNNOOOOOKKKKKKKKKKKKKKKKIIIJJJ4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+16|9I9?@944444444AAAAA9999999999999999IIJJJ4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+17|99999999999999999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+18|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+19|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+22|AAAAAAAAAAAAAAAAAAAAAAAAAAA99999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
+26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4??????????PPPPPPPPPPPP<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCDDDDDDDDDD
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
+29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+30|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR

@@ -63,6 +63,45 @@ function M.resume(co, ...)
   end
 end
 
+---Run functions concurrently (each in its own coroutine) and wait for all of them. Returns a list
+---of `{ok, ...results}` per function (ok=false plus the error when it raised). Outside a
+---coroutine the functions simply run one after another.
+---@param fns (fun(): any)[]
+---@return table[]
+function M.all(fns)
+  local results = {}
+  local co = coroutine.running()
+  if not co then
+    for i, fn in ipairs(fns) do
+      results[i] = { pcall(fn) }
+    end
+    return results
+  end
+  local pending = #fns
+  if pending == 0 then
+    return results
+  end
+  local function done()
+    pending = pending - 1
+    if pending == 0 then
+      vim.schedule(function()
+        M.resume(co)
+      end)
+    end
+  end
+  for i, fn in ipairs(fns) do
+    M.async(function()
+      results[i] = { true, fn() }
+      done()
+    end, function(err)
+      results[i] = { false, err }
+      done()
+    end)
+  end
+  coroutine.yield()
+  return results
+end
+
 ---Run git in `cwd`. Returns stdout on success, or nil + stderr.
 ---@param args string[]
 ---@param cwd string
@@ -116,6 +155,12 @@ function M.default_branch(cwd)
     end
   end
   return nil
+end
+
+---Is `a` an ancestor of (or equal to) `b`?
+function M.is_ancestor(a, b, cwd)
+  local res = M.system({ 'git', 'merge-base', '--is-ancestor', a, b }, { cwd = cwd })
+  return res.code == 0
 end
 
 function M.merge_base(a, b, cwd)

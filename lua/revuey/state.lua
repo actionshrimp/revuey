@@ -28,8 +28,14 @@ function M.file_for(dir, repo, branch, base)
 end
 
 ---Content key for a file diff: identifies the reviewed version of the file.
+---With `with_old` the old side is part of the key too (stack layers above another layer: if the
+---parent layer changes the file, the child's diff changes even though its new side did not).
 ---@param f {status:string, old_blob?:string, new_blob?:string, old_mode?:string, new_mode?:string}
-function M.content_key(f)
+---@param with_old? boolean
+function M.content_key(f, with_old)
+  if with_old then
+    return M.content_key(f) .. '<' .. (f.old_blob or '-')
+  end
   if f.new_blob then
     return f.new_blob .. (f.new_mode and (':' .. f.new_mode) or '')
   end
