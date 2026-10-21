@@ -36,3 +36,17 @@ is available.
 - `make test` runs everything; each spec runs in a fresh `nvim --headless --clean` so specs cannot leak state.
 - Specs must not depend on the developer's own Neovim config, parsers excepted: tests that need a tree-sitter parser
   or query skip clearly when it is unavailable rather than failing obscurely.
+- Skip with `h.skip(reason)` inside a test, or `h.skip_spec(reason)` at the top of a spec to skip all of it. Both print
+  `  skip <spec> :: <test> — <reason>` (`<test>` is `(all tests)` for a whole spec).
+
+## CI
+`.github/workflows/test.yml` runs `make test` on `ubuntu-latest` for every push to `main` and every pull request
+(superseded PR runs on the same ref are cancelled; runs on `main` are not). It pins Neovim to the official v0.12.4
+release tarball (sha256-checked), because the screenshots depend on its rendering, and installs git, tmux,
+`typescript-language-server` and `typescript` (pinned npm versions), with a `C.UTF-8` locale and
+`TERM=xterm-256color`. The job summary lists the `  skip …` lines printed by the test harness, so skips must go
+through `h.skip`/`h.skip_spec` to appear there.
+- The TypeScript highlight check in `e2e_spec.lua` skips in CI, as it does locally: Neovim bundles no TypeScript
+  highlights query, so providing the parser alone would not enable it.
+- CI sets `REVUEY_TEST_MAX_GAP_MS=100` for the main-loop responsiveness check in `screen_spec.lua` (default 50ms),
+  because shared runners are slower and noisier than a laptop.
