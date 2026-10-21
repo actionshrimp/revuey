@@ -1,0 +1,63 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//f/cart..main                                                                                          X
+02| Files                                  │ A src/components/Total.tsx +5 −0                                          3/7 
+03| feature/cart → main                    │  A     ▾ src/components/Total.tsx   +5 −0  added                              
+04| 7 files  +57 −22  ✓ 1/7                │          @@ -0,0 +1,5 @@                                                      
+05| base ee2e6fcf  head 6b2be8a3           │      1 + import { formatCurrency } from "../format";                          
+06| working tree  ● uncommitted            │      2 +                                                                      
+07|                                        │      3 + export function Total(props: { amount: number }) {                   
+08|   M  logo.png  assets               bin│      4 +   return <strong className="total">{formatCurrency(props.amount)}</st
+09| ✓ A  cart.ts  src                +27 −0│      5 + }                                                                    
+10|   A  Total.tsx  src/components    +5 −0│                                                                               
+11|   M  index.ts  src                +9 −6│  M     ▾ src/index.ts   +9 −6                                                 
+12|   D  legacy.ts  src               +0 −6│          @@ -1,13 +1,16 @@                                                    
+13|   M  math.ts  src                +14 −8│  1     - import { add, circleArea } from "./math";                            
+14|   R  text.ts  src                 +2 −2│      1 + import { add, circleArea, subtract } from "./math";                  
+15|                                        │  2   2   import { formatCurrency } from "./format";                           
+16| <CR> show  mr reviewed  gp diff        │  3     - import { capitalize } from "./utils/strings";                        
+17| ]c [c hunk  ]f [f file  za fold        │  4     - import { oldTotal } from "./legacy";                                 
+18| gd def  K hover  go open  R refresh    │      3 + import { capitalize } from "./text";                                 
+19| gu committed/working tree  q close     │      4 + import { Cart } from "./cart";                                       
+20|~                                       │  5   5                                                                        
+21|~                                       │  6   6   export function main(): void {                                       
+22|~                                       │  7     -   const total = oldTotal([1, 2, 3]);                                 
+23|~                                       │  8     -   console.log(capitalize("total"), formatCurrency(total));           
+24|~                                       │      7 +   const cart = new Cart()                                            
+25|~                                       │      8 +     .addItem({ name: "apple", price: 0.5, quantity: 6 })             
+26|~                                       │      9 +     .addItem({ name: "pear", price: 0.75, quantity: 2 });            
+27|~                                       │     10 +   console.log(capitalize("total"), formatCurrency(cart.total()));    
+28|~                                       │     11 +   console.log(cart.describe());                                      
+29|revuey://files [-]    8,1            All revuey://feature/cart..main [-]                              34,1           34%
+30|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777777777777777777666885555555555555555555555555555555555555555555555
+03|22222222222222222222999999999999999999994::::::::::;;;;;;;;;;;;;;;;;;;;;;;;<<<==>>>=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9999999999???@@@@AAAAAAA99999999999999994BBBBBBBBBBCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+05|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+06|IIIIIIIIIIIIIAAAAAAAAAAAAAAA9999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+07|99999999999999999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+08|9?9IJ944444444AAAAAAAA999999999999999AAA4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+09|9?9?J9AAAAAAAAAAAA9999999999999999???@@@4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+10|KLKLMKNNNNNNNNNOOOOOOOOOOOOOOOOKKKK??@@@4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
+11|9?9IJ944444444AAAAA9999999999999999??@@@4IIIIIIIIIIPPPPPPPPPPPP<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+12|9?9@J9444444444AAAAA999999999999999??@@@4BBBBBBBBBBCCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+13|9?9IJ94444444AAAAA9999999999999999???@@@4QQQQQQQRRRSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+14|9?9IJ94444444AAAAA99999999999999999??@@@4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHTTTTTTTTTTHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+15|99999999999999999999999999999999999999994EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
+16|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994QQQQQQQRRRSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSUUUUUUUUUUUUUSSSSSSSSSSSSSSSSSSSSSSSSSS
+17|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994QQQQQQQRRRSSSSSSSSSUUUUUUUUSSSSSSSSSSSUUUUUUSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+18|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHTTTTHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+19|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEFFFGGGHHHHHHHHHTTTTHHHHHHHHHHHTTTTHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+20|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
+21|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
+22|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4QQQQQQQRRRSSSSSSSSUUUUUSSSUUUUUUUUSUUUUUUUUUSUSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4QQQQQQQRRRSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHTTTTHHHTTTTTTTTHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+29|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+30|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW

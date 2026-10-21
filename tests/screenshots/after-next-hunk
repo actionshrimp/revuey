@@ -1,0 +1,63 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//f/cart..main                                                                                          X
+02| Files                                  │ A src/cart.ts +27 −0                                                      2/7 
+03| feature/cart → main                    │  A     ▾ src/cart.ts   +27 −0  added                                          
+04| 7 files  +57 −22  ✓ 0/7                │          @@ -0,0 +1,27 @@                                                     
+05| base ee2e6fcf  head 6b2be8a3           │      1 + import { multiply, sum } from "./math";                              
+06| working tree  ● uncommitted            │      2 + import { formatCurrency } from "./format";                           
+07|                                        │      3 + import { capitalize } from "./text";                                 
+08|   M  logo.png  assets               bin│      4 +                                                                      
+09|   A  cart.ts  src                +27 −0│      5 + export interface LineItem {                                          
+10|   A  Total.tsx  src/components    +5 −0│      6 +   name: string;                                                      
+11|   M  index.ts  src                +9 −6│      7 +   price: number;                                                     
+12|   D  legacy.ts  src               +0 −6│      8 +   quantity: number;                                                  
+13|   M  math.ts  src                +14 −8│      9 + }                                                                    
+14|   R  text.ts  src                 +2 −2│     10 +                                                                      
+15|                                        │     11 + export class Cart {                                                  
+16| <CR> show  mr reviewed  gp diff        │     12 +   private items: LineItem[] = [];                                    
+17| ]c [c hunk  ]f [f file  za fold        │     13 +                                                                      
+18| gd def  K hover  go open  R refresh    │     14 +   addItem(item: LineItem): this {                                    
+19| gu committed/working tree  q close     │     15 +     this.items.push(item);                                           
+20|~                                       │     16 +     return this;                                                     
+21|~                                       │     17 +   }                                                                  
+22|~                                       │     18 +                                                                      
+23|~                                       │     19 +   total(): number {                                                  
+24|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+25|~                                       │     21 +   }                                                                  
+26|~                                       │     22 +                                                                      
+27|~                                       │     23 +   describe(): string {                                               
+28|~                                       │     24 +     const names = this.items.map((i) => capitalize(i.name)).join(", "
+29|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              6,1             3%
+30|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777776666885555555555555555555555555555555555555555555555555555555555
+03|22222222222222222222999999999999999999994::::::::::;;;;;;;;;;;<<<===>>>=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9999999999:::????@@@@@@@99999999999999994AAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+05|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999999999994DDDDEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+06|IIIIIIIIIIIII@@@@@@@@@@@@@@@9999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+07|99999999999999999999999999999999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+08|9:9IL944444444@@@@@@@@999999999999999@@@4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+09|MNMNOMPPPPPPPQQQQQMMMMMMMMMMMMMMMM:::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+10|9:9:L9444444444@@@@@@@@@@@@@@@@9999::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+11|9:9IL944444444@@@@@9999999999999999::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+12|9:9?L9444444444@@@@@999999999999999::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+13|9:9IL94444444@@@@@9999999999999999:::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+14|9:9IL94444444@@@@@99999999999999999::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+15|99999999999999999999999999999999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+16|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@99994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+26|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+29|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+30|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

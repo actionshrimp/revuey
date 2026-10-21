@@ -1,0 +1,2 @@
+Vendored from https://github.com/nvim-mini/mini.nvim (lua/mini/test.lua) at commit 8d86a057fa14681cf7cab74ea7cba894a0abe14f.
+MIT licence, see LICENSE in this directory. Used only by tests/screen_spec.lua for child-Neovim screenshots.

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Launch Neovim with a revuey review of the current branch (in the current directory).
+#   revuey [base]
+# Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
+# directory containing this script's parent (so it works straight from a checkout).
+# Pressing `q` in the review quits Neovim.
+# Set REVUEY_NVIM to choose the nvim binary. ($NVIM is deliberately ignored: inside Neovim's
+# :terminal it holds the parent's server socket, not an executable.)
+set -euo pipefail
+
+script=$0
+while [ -L "$script" ]; do
+  target=$(readlink "$script")
+  case $target in
+    /*) script=$target ;;
+    *) script=$(dirname "$script")/$target ;;
+  esac
+done
+default_dir=$(cd "$(dirname "$script")/.." && pwd)
+export REVUEY_PLUGIN_DIR=${REVUEY_PLUGIN_DIR:-$default_dir}
+export REVUEY_BASE=${1:-}
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "revuey: not inside a git repository" >&2
+  exit 1
+fi
+
+# -c runs after the user's config and plugins, so lazy.nvim's runtimepath reset can't drop us.
+exec "${REVUEY_NVIM:-nvim}" \
+  -c 'lua vim.opt.rtp:prepend(vim.env.REVUEY_PLUGIN_DIR)' \
+  -c 'runtime plugin/revuey.lua' \
+  -c 'lua require("revuey").open({ base = vim.env.REVUEY_BASE ~= "" and vim.env.REVUEY_BASE or nil, standalone = true })'
