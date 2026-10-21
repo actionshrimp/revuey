@@ -1,0 +1,4 @@
+# Neovim/test artefacts
+*.swp
+.tests/
+.DS_Store

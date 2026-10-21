@@ -1,0 +1,202 @@
+-- End-to-end screen tests: a child Neovim (driven over RPC by vendored mini.test) renders the
+-- review, and its screen grid (text + highlight attributes) is compared with reference
+-- screenshots in tests/screenshots/. Regenerate deliberately with:
+--   REVUEY_UPDATE_SCREENSHOTS=1 make test
+local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
+local MiniTest = dofile(h.root .. '/tests/vendor/mini/test.lua')
+
+local UPDATE = os.getenv('REVUEY_UPDATE_SCREENSHOTS') == '1'
+local SHOTS = h.root .. '/tests/screenshots'
+
+local child = MiniTest.new_child_neovim()
+
+local function screenshot(name)
+  -- reference_screenshot() records notes on the current case; we run outside MiniTest.run().
+  MiniTest.current.case = { exec = {} }
+  MiniTest.expect.reference_screenshot(child.get_screenshot(), SHOTS .. '/' .. name, { force = UPDATE })
+end
+
+---Start a clean child with revuey on the runtimepath, open a review of `dir`.
+local function start(dir, base, lines, columns, extra)
+  child.restart({ '-u', 'NONE' })
+  child.o.lines, child.o.columns = lines or 30, columns or 120
+  child.lua(
+    [[
+    local root, dir, state, base, extra = ...
+    vim.opt.rtp:prepend(root)
+    vim.cmd('runtime plugin/revuey.lua')
+    vim.cmd('cd ' .. vim.fn.fnameescape(dir))
+    require('revuey').setup(vim.tbl_extend('force', { state_dir = state, lsp_warmup = false }, (extra ~= vim.NIL and extra) or {}))
+    -- main-loop responsiveness probe: largest gap between 5ms timer ticks
+    _G.revuey_maxgap = 0
+    local last = vim.uv.hrtime()
+    _G.revuey_probe = vim.uv.new_timer()
+    _G.revuey_probe:start(5, 5, function()
+      local now = vim.uv.hrtime()
+      _G.revuey_maxgap = math.max(_G.revuey_maxgap, (now - last) / 1e6)
+      last = now
+    end)
+    local done = false
+    require('revuey').open({ base = base, on_ready = function() done = true end })
+    vim.wait(10000, function() return done end, 10)
+    assert(done, 'review did not open')
+  ]],
+    { h.root, dir, h.tmpdir('screen-state-' .. vim.fn.fnamemodify(dir, ':t')), base or 'main', extra or vim.NIL }
+  )
+end
+
+---Wait in the child until visible syntax has loaded: at least `n` cache entries, none pending.
+local function wait_syntax(n)
+  return child.lua(
+    [[
+    local n = ...
+    local syntax = require('revuey.syntax')
+    vim.cmd('redraw')
+    return vim.wait(10000, function()
+      return syntax.cache_size() >= n and syntax.pending() == 0
+    end, 10)
+  ]],
+    { n }
+  )
+end
+
+local function big_lua(n)
+  local parts = {}
+  for i = 1, n do
+    parts[#parts + 1] = ('local function f%d(a) return "x%d" .. tostring(a) end'):format(i, i)
+  end
+  return table.concat(parts, '\n') .. '\n'
+end
+
+local fixture = h.fixture()
+
+h.test('initial fixture layout', function()
+  start(fixture)
+  screenshot('initial-layout')
+end)
+
+h.test('after ]f and ]c navigation', function()
+  child.type_keys(']f')
+  screenshot('after-next-file')
+  child.type_keys(']c')
+  screenshot('after-next-hunk')
+end)
+
+h.test('after mr: file folds and panel shows checkmark', function()
+  child.type_keys('mr')
+  screenshot('after-mark-reviewed')
+  -- back to the reviewed file: it is a single folded line with the reviewed marker
+  child.type_keys('[f')
+  screenshot('reviewed-file-folded')
+end)
+
+h.test('working-tree mode: mode header and ● uncommitted markers', function()
+  local d = h.tmpdir('screen-wt')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', d }):wait().code == 0)
+  local l = vim.fn.readfile(d .. '/src/math.ts')
+  l[#l + 1] = '// unstaged edit'
+  vim.fn.writefile(l, d .. '/src/math.ts')
+  h.write(d, 'src/extra.ts', 'export const extra = 1;\n')
+  start(d)
+  screenshot('worktree-uncommitted')
+end)
+
+h.test('committed-only mode via gu', function()
+  child.type_keys('gu')
+  child.lua([[vim.wait(5000, function() return not require('revuey.view').session.refreshing end, 10)]])
+  screenshot('committed-mode')
+end)
+
+h.test('empty review', function()
+  start(fixture, 'HEAD', 12, 100)
+  screenshot('empty-review')
+end)
+
+-- Exercises the decoration provider's real drawing path (ephemeral extmarks): syntax from the
+-- bundled Lua parser and lazy word-diff highlights must show up as distinct screen attributes.
+h.test('decoration provider draws syntax and word-diff attrs', function()
+  local repo = h.repo('screen-lua', { ['a.lua'] = 'local answer = 42\nreturn answer\n' }, {
+    ['a.lua'] = 'local answer = 43\nreturn answer\n',
+  })
+  start(repo, 'main', 14, 80)
+  -- syntax loads asynchronously after the first draw (old + new side of a.lua)
+  h.ok(wait_syntax(2), 'syntax did not load')
+  local shot = child.get_screenshot()
+  local function find(text)
+    for r, line in ipairs(shot.text) do
+      local s = table.concat(line)
+      local c = s:find(text, 1, true)
+      if c then
+        -- convert byte offset to cell index (all ASCII before the match in these rows except gutter)
+        return r, vim.fn.strchars(s:sub(1, c - 1)) + 1
+      end
+    end
+  end
+  local r, c = find('local answer = 43')
+  h.ok(r, tostring(shot))
+  local attr = shot.attr[r]
+  local kw, ident, num = attr[c], attr[c + 6], attr[c + 15]
+  h.ok(kw ~= ident, 'keyword and identifier should differ (syntax drawn)\n' .. tostring(shot))
+  h.ok(num ~= ident, 'changed number should differ (word diff drawn)\n' .. tostring(shot))
+  local r2, c2 = find('local answer = 42')
+  h.ok(shot.attr[r2][c2 + 15] ~= shot.attr[r2][c2 + 6], 'deleted word highlighted')
+end)
+
+-- Regression (review 2, high 1): highlighting a large visible file must not freeze the UI.
+h.test('large visible file: main loop never blocked for more than 50ms', function()
+  local repo = h.repo('screen-big', { ['a.lua'] = 'local x = 1\n' }, { ['a.lua'] = 'local x = 2\n', ['big.lua'] = big_lua(20000) })
+  start(repo, 'main', 30, 120, { collapse_large_files = 1000000, max_file_bytes = 10 * 1024 * 1024 })
+  h.ok(wait_syntax(3), 'big.lua highlights did not load')
+  local gap = child.lua_get('_G.revuey_maxgap')
+  io.write(('    (largest main-loop gap: %.0fms)\n'):format(gap))
+  h.ok(gap < 50, ('main loop blocked for %.0fms'):format(gap))
+end)
+
+-- Regression (review 2, high 1): collapsed files are never fetched or parsed.
+h.test('folded large file is not parsed', function()
+  local repo = h.repo('screen-folded', { ['a.lua'] = 'local x = 1\n' }, { ['a.lua'] = 'local x = 2\n', ['big.lua'] = big_lua(20000) })
+  -- above the line-count collapse threshold but below the byte cap, so it is shown folded
+  start(repo, 'main', 30, 120, { max_file_bytes = 10 * 1024 * 1024 })
+  h.ok(wait_syntax(2), 'a.lua highlights did not load')
+  child.lua('vim.cmd("redraw") vim.wait(200)')
+  h.eq(true, child.lua_get([[vim.fn.foldclosed(vim.fn.search('^big.lua', 'n')) ~= -1]]), 'big.lua should start folded')
+  h.eq(2, child.lua_get([[require('revuey.syntax').cache_size()]]), 'only a.lua (old+new) may be loaded')
+  local gap = child.lua_get('_G.revuey_maxgap')
+  h.ok(gap < 50, ('main loop blocked for %.0fms'):format(gap))
+end)
+
+-- Regression (re-review 1): refreshing must never raise the W11 "file has changed" prompt for
+-- hidden LSP buffers when the user has 'noautoread', and must not touch buffers they opened.
+h.test('noautoread: refresh reloads hidden buffers silently, leaves user buffers alone', function()
+  local repo = h.repo('screen-noautoread', { ['a.lua'] = 'local x = 1\n', ['b.lua'] = 'local y = 1\n' }, {
+    ['a.lua'] = 'local x = 2\n',
+    ['b.lua'] = 'local y = 2\n',
+  })
+  start(repo, 'main', 20, 100, { lsp_warmup = true })
+  child.lua([[
+    vim.o.autoread = false
+    local root = ...
+    local lsp = require('revuey.lsp')
+    _G.hidden = lsp.file_buffer(root .. '/a.lua')
+    -- a buffer the user opened and modified
+    _G.user = lsp.file_buffer(root .. '/b.lua')
+    vim.bo[_G.user].buflisted = true
+    vim.api.nvim_buf_set_lines(_G.user, 0, -1, false, { 'user edit' })
+  ]], { repo })
+  vim.uv.sleep(1100) -- make sure mtimes differ
+  h.write(repo, 'a.lua', 'local x = 3\n')
+  h.write(repo, 'b.lua', 'local y = 3\n')
+  child.lua([[
+    require('revuey.view').refresh()
+    vim.wait(3000, function() return not require('revuey.view').session.refreshing end, 10)
+  ]])
+  h.eq(false, child.is_blocked(), 'Neovim is blocked by a prompt')
+  local text = table.concat(vim.tbl_map(table.concat, child.get_screenshot().text), '\n')
+  h.ok(not text:find('W11', 1, true) and not text:find('has changed', 1, true), text)
+  h.eq({ 'local x = 3' }, child.lua_get('vim.api.nvim_buf_get_lines(_G.hidden, 0, -1, false)'))
+  h.eq({ 'user edit' }, child.lua_get('vim.api.nvim_buf_get_lines(_G.user, 0, -1, false)'))
+end)
+
+child.stop()
+h.run()

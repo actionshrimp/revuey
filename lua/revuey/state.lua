@@ -1,0 +1,162 @@
+-- Persistent review state (reviewed marks). Pure data layer: JSON files, no UI calls.
+--
+-- One JSON file per review target, under `stdpath('data')/revuey/` by default, keyed by
+-- repo root + branch + base. Each reviewed file stores the content key of its diff at the time it
+-- was marked (the new blob hash, or the old blob hash for deletions); if the branch changes that
+-- file, the key no longer matches and the mark is automatically treated as unreviewed.
+local M = {}
+
+M.VERSION = 1
+
+---@class revuey.State
+---@field version integer
+---@field repo string
+---@field branch string
+---@field base string
+---@field files table<string, {key:string, reviewed_at:integer}>
+---@field _path string
+
+function M.default_dir()
+  return vim.fs.joinpath(vim.fn.stdpath('data'), 'revuey')
+end
+
+---Filename for a review target: readable slug + short hash of the full key.
+function M.file_for(dir, repo, branch, base)
+  local key = table.concat({ repo, branch, base }, '\0')
+  local slug = (vim.fs.basename(repo) .. '-' .. branch .. '-' .. base):gsub('[^%w%-_.]', '_')
+  return vim.fs.joinpath(dir, slug .. '-' .. vim.fn.sha256(key):sub(1, 12) .. '.json')
+end
+
+---Content key for a file diff: identifies the reviewed version of the file.
+---@param f {status:string, old_blob?:string, new_blob?:string, old_mode?:string, new_mode?:string}
+function M.content_key(f)
+  if f.new_blob then
+    return f.new_blob .. (f.new_mode and (':' .. f.new_mode) or '')
+  end
+  if f.old_blob then
+    return 'deleted:' .. f.old_blob
+  end
+  return 'empty:' .. (f.status or '?')
+end
+
+---Strip remote/ref prefixes so `origin/main`, `refs/remotes/origin/main` and `main` name the
+---same review target.
+---@param base string
+---@param remotes string[] configured remote names
+function M.normalize_base(base, remotes)
+  base = base:gsub('^refs/heads/', ''):gsub('^refs/remotes/', '')
+  for _, r in ipairs(remotes or {}) do
+    if vim.startswith(base, r .. '/') then
+      return base:sub(#r + 2)
+    end
+  end
+  return base
+end
+
+local backup_seq = 0
+
+---Read the files table from disk. Returns {} when missing; backs up undecodable files.
+local function read_files(path)
+  local fd = io.open(path, 'r')
+  if not fd then
+    return {}
+  end
+  local text = fd:read('*a')
+  fd:close()
+  local ok, data = pcall(vim.json.decode, text)
+  if ok and type(data) == 'table' and type(data.files) == 'table' then
+    return data.files
+  end
+  if text ~= '' then
+    -- keep the unreadable file for inspection instead of silently overwriting it later
+    backup_seq = backup_seq + 1
+    local backup = ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.fn.getpid(), backup_seq)
+    os.rename(path, backup)
+  end
+  return {}
+end
+
+---@return revuey.State
+function M.load(dir, repo, branch, base)
+  local path = M.file_for(dir, repo, branch, base)
+  return {
+    version = M.VERSION,
+    repo = repo,
+    branch = branch,
+    base = base,
+    files = read_files(path),
+    _path = path,
+    _changes = {},
+  }
+end
+
+---Persist: re-read the file and apply only this instance's changes, so concurrent instances of
+---the same review don't clobber each other. Marks are merged per path *and* content key: an
+---unmark only removes the version this instance unmarked, never a newer mark from elsewhere.
+---Every write step is checked; pending changes are kept until the rename succeeded.
+---Refreshes `st.files` with the merged result. Errors on failure.
+---@param st revuey.State
+function M.save(st)
+  local dir = vim.fs.dirname(st._path)
+  vim.fn.mkdir(dir, 'p')
+  local files = read_files(st._path)
+  for path, ch in pairs(st._changes or {}) do
+    if ch.entry then
+      files[path] = ch.entry
+    elseif files[path] and files[path].key == ch.key then
+      files[path] = nil
+    end
+  end
+  local data = { version = st.version, repo = st.repo, branch = st.branch, base = st.base, files = files }
+  if next(data.files) == nil then
+    data.files = vim.empty_dict()
+  end
+  local tmp = st._path .. '.tmp.' .. vim.fn.getpid()
+  local fd, err = io.open(tmp, 'w')
+  if not fd then
+    error('revuey: cannot write review state: ' .. tostring(err))
+  end
+  local ok, werr = fd:write(vim.json.encode(data))
+  local cok, cerr = fd:close()
+  if not ok or not cok then
+    os.remove(tmp)
+    error('revuey: cannot write review state: ' .. tostring(werr or cerr))
+  end
+  local rok, rerr = os.rename(tmp, st._path)
+  if not rok then
+    os.remove(tmp)
+    error('revuey: cannot write review state: ' .. tostring(rerr))
+  end
+  st._changes = {}
+  st.files = vim.deepcopy(files)
+end
+
+---@param st revuey.State
+function M.is_reviewed(st, path, key)
+  local e = st.files[path]
+  return e ~= nil and e.key == key
+end
+
+---@param st revuey.State
+function M.set_reviewed(st, path, key, value)
+  local entry = value and { key = key, reviewed_at = os.time() } or nil
+  st.files[path] = entry
+  st._changes = st._changes or {}
+  st._changes[path] = { key = key, entry = entry or false }
+end
+
+---Toggle and persist. Returns the new reviewed value, plus an error message if saving failed
+---(the change stays pending in memory and is retried on the next save).
+---@param st revuey.State
+function M.toggle(st, path, key)
+  local v = not M.is_reviewed(st, path, key)
+  M.set_reviewed(st, path, key, v)
+  local ok, err = pcall(M.save, st)
+  if not ok then
+    st.files[path] = v and { key = key, reviewed_at = os.time() } or nil
+    return v, err
+  end
+  return v
+end
+
+return M
