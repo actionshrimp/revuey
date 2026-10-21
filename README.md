@@ -1,5 +1,7 @@
 # revuey
 
+[![test](https://github.com/actionshrimp/revuey/actions/workflows/test.yml/badge.svg)](https://github.com/actionshrimp/revuey/actions/workflows/test.yml)
+
 Code review inside Neovim (>= 0.12). Chunk 1 shows a composed unified diff of the current branch
 against its base. Tree-sitter syntax is projected onto the diff lines, LSP go-to-definition and hover
 work from inside the diff, and "reviewed" marks persist. Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

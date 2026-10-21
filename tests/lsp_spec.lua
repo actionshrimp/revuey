@@ -1,8 +1,7 @@
 -- LSP projection against typescript-language-server (skipped when not installed).
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 if vim.fn.executable('typescript-language-server') ~= 1 then
-  io.write('  skip lsp_spec.lua (typescript-language-server not on PATH)\n')
-  os.exit(0)
+  h.skip_spec('typescript-language-server not on PATH')
 end
 vim.cmd('runtime plugin/revuey.lua')
 vim.lsp.config('ts_ls', {

@@ -1,0 +1,97 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only superseded PR runs are cancelled; every push to main gets a complete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Explicit bash adds -o pipefail, so `make test | tee` still fails the step.
+    shell: bash
+
+env:
+  # Screenshot tests depend on this exact version's rendering.
+  NVIM_VERSION: v0.12.4
+  TS_LS_VERSION: 5.3.0
+  TYPESCRIPT_VERSION: 5.9.3
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  TERM: xterm-256color
+  # Main-loop responsiveness budget for screen_spec (50ms by default); shared runners are slower.
+  REVUEY_TEST_MAX_GAP_MS: 100
+  # sha256 of nvim-linux-x86_64.tar.gz for NVIM_VERSION (from the GitHub release asset digest).
+  NVIM_SHA256: 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install git and tmux
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends git tmux
+
+      - name: Cache Neovim
+        id: nvim-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/nvim
+          key: nvim-${{ env.NVIM_VERSION }}-linux-x86_64-${{ env.NVIM_SHA256 }}
+
+      - name: Download Neovim
+        if: steps.nvim-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nvim.tar.gz" \
+            "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz"
+          echo "${NVIM_SHA256}  $RUNNER_TEMP/nvim.tar.gz" | sha256sum -c -
+          mkdir -p ~/nvim
+          tar -xzf "$RUNNER_TEMP/nvim.tar.gz" -C ~/nvim --strip-components=1
+
+      - name: Add Neovim to PATH
+        run: echo "$HOME/nvim/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install typescript-language-server
+        run: npm install -g "typescript-language-server@${TS_LS_VERSION}" "typescript@${TYPESCRIPT_VERSION}"
+
+      - name: Tool versions
+        run: |
+          nvim --version | head -n 3
+          git --version
+          tmux -V
+          typescript-language-server --version
+          tsc --version
+
+      - name: make test
+        run: make test 2>&1 | tee test-output.log
+
+      - name: Summarise skipped tests
+        if: always()
+        run: |
+          # tests/helpers.lua prints skips as `  skip <spec> :: <test> — <reason>`.
+          pattern='^  skip [^ ]+_spec\.lua :: .+ — .+$'
+          {
+            echo '### Skipped tests'
+            if [ -f test-output.log ] && grep -E "$pattern" test-output.log >/dev/null; then
+              echo '```'
+              grep -E "$pattern" test-output.log
+              echo '```'
+            else
+              echo 'None.'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

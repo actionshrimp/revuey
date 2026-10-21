@@ -1,8 +1,7 @@
 -- Smoke test for bin/revuey in a real terminal via tmux capture-pane (skipped without tmux).
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 if vim.fn.executable('tmux') ~= 1 then
-  io.write('  skip bin_spec.lua (tmux not installed)\n')
-  os.exit(0)
+  h.skip_spec('tmux not installed')
 end
 
 local socket = 'revuey-test-' .. vim.fn.getpid()
