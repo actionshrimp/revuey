@@ -12,10 +12,12 @@ local lsp = require('revuey.lsp')
 local linemap = require('revuey.linemap')
 local stack_mod = require('revuey.stack')
 local state_mod = require('revuey.state')
+local guide_view = require('revuey.guide_view')
 
 local M = {}
 
 local cleanup -- forward declaration
+local find_guide_anchor -- forward declaration
 
 local ns = api.nvim_create_namespace('revuey.diff')
 local WINBAR = "%!v:lua.require'revuey.view'.winbar()"
@@ -80,12 +82,98 @@ local function set_header_mark(s, fi)
   })
 end
 
+---Guide section heading: checkbox (inline) and status chips (end of line).
+local function set_section_mark(s, si)
+  local sec = s.guide and s.guide.resolved and s.guide.resolved.sections[si]
+  local range = s.layout.sections and s.layout.sections[si]
+  if not sec or not range then
+    return
+  end
+  local reviewed = guide_view.section_reviewed(s, sec)
+  local virt = { { '  ' } }
+  local n = #sec.items
+  virt[#virt + 1] = { n .. (n == 1 and ' hunk' or ' hunks'), 'Comment' }
+  if sec.outdated then
+    virt[#virt + 1] = { '  outdated', 'RevueyGuideOutdated' }
+  end
+  if sec.kind == 'new' then
+    virt[#virt + 1] = { '  not in guide', 'RevueyGuideOutdated' }
+  end
+  if reviewed then
+    virt[#virt + 1] = { '  ✓ reviewed', 'RevueyReviewed' }
+  end
+  s.section_marks = s.section_marks or {}
+  s.section_marks[si] = api.nvim_buf_set_extmark(s.diff_buf, ns, range.start_row - 1, 0, {
+    id = s.section_marks[si],
+    line_hl_group = 'RevueyGuideSection',
+    virt_text = virt,
+    virt_text_pos = 'eol',
+    hl_mode = 'combine',
+    priority = 20,
+  })
+  s.section_check_marks = s.section_check_marks or {}
+  s.section_check_marks[si] = api.nvim_buf_set_extmark(s.diff_buf, ns, range.start_row - 1, 0, {
+    id = s.section_check_marks[si],
+    virt_text = { sec.id and { reviewed and '☑ ' or '☐ ', reviewed and 'RevueyReviewed' or 'Comment' } or { '  ' } },
+    virt_text_pos = 'inline',
+    priority = 20,
+  })
+end
+
+---Guide hunk header: "path  @@ ... @@" with the hunk's counts and the file's reviewed mark.
+local function guide_hunk_virt(s, e)
+  local f = s.review.files[e.file_idx]
+  local virt = { { '  ' } }
+  local hk = e.hunk_idx and f.hunks[e.hunk_idx]
+  if hk then
+    local a, d = 0, 0
+    for _, l in ipairs(hk.lines) do
+      a = a + (l.kind == 'add' and 1 or 0)
+      d = d + (l.kind == 'del' and 1 or 0)
+    end
+    virt[#virt + 1] = { '+' .. a, 'RevueyCountAdd' }
+    virt[#virt + 1] = { ' −' .. d, 'RevueyCountDelete' }
+  end
+  local label = ({ A = 'added', D = 'deleted', R = 'renamed', T = 'type changed' })[f.status]
+  if label then
+    virt[#virt + 1] = { '  ' .. label, panel.status_hl[f.status] }
+  end
+  if review_mod.is_reviewed(s.review, f) then
+    virt[#virt + 1] = { '  ✓ file reviewed', 'RevueyReviewed' }
+  end
+  return virt
+end
+
 local function decorate(s)
   local buf, map = s.diff_buf, s.layout.map
   api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   s.header_marks = {}
+  s.section_marks, s.section_check_marks = {}, {}
   for row, e in ipairs(map) do
     local r0 = row - 1
+    if e.kind == 'prose' then
+      for _, hl in ipairs(e.hls or {}) do
+        pcall(api.nvim_buf_set_extmark, buf, ns, r0, hl[1], { end_col = hl[2], hl_group = hl[3], priority = 20 })
+      end
+    elseif e.meta == 'section' then
+      local len = #s.layout.lines[row]
+      local dot = s.layout.lines[row]:find('. ', 1, true) or 0
+      api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = dot, hl_group = 'RevueyGuideSectionNumber', priority = 21 })
+      api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = len, hl_group = 'RevueyGuideBold', priority = 20 })
+      set_section_mark(s, e.section_idx)
+    elseif e.meta == 'hunk' and e.path_len then
+      local len = #s.layout.lines[row]
+      api.nvim_buf_set_extmark(buf, ns, r0, 0, {
+        end_col = len,
+        hl_group = 'RevueyHunkHeader',
+        line_hl_group = 'RevueyHunkHeaderBg',
+        virt_text = guide_hunk_virt(s, e),
+        virt_text_pos = 'eol',
+        hl_mode = 'combine',
+        priority = 20,
+      })
+      api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = math.min(e.path_len, len), hl_group = 'RevueyFilePath', priority = 21 })
+    end
     -- Full-line background as a low-priority hl_group range with hl_eol (not line_hl_group, which
     -- would paint over the word-diff backgrounds); tree-sitter foregrounds combine on top.
     if e.kind == 'add' then
@@ -111,7 +199,7 @@ local function decorate(s)
   -- Line-ending indicators (cheap: only flagged lines). Otherwise identical -/+ pairs would be
   -- shown with no visible difference.
   for row, e in ipairs(map) do
-    if e.kind ~= 'meta' then
+    if e.kind ~= 'meta' and e.kind ~= 'prose' then
       local hk = s.review.files[e.file_idx].hunks[e.hunk_idx]
       if hk.has_eol_flags == nil then
         hk.has_eol_flags = false
@@ -158,7 +246,7 @@ local function make_word_spans(s)
     cache[key] = c
     local f = s.review.files[fi]
     local h = f.hunks[hi]
-    local hrow = s.layout.files[fi].hunk_rows[hi] -- 1-based header row; line k at hrow + k
+    local hrow = s.layout.hunk_base[fi][hi] -- line k of the hunk is at hrow + k
     for _, p in ipairs(diff.pair_changes(h.lines)) do
       local drow, arow = hrow + p[1], hrow + p[2]
       partner[drow], partner[arow] = arow, drow
@@ -236,6 +324,15 @@ function M.statuscolumn()
       return vim.fn.foldclosed(lnum) ~= -1
     end)
     return '%#' .. hl .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. ' ' .. (folded and '▸' or '▾') .. ' '
+  elseif e.meta == 'section' then
+    local lnum = vim.v.lnum
+    local folded = api.nvim_win_call(win, function()
+      return vim.fn.foldclosed(lnum) ~= -1
+    end)
+    return '%#RevueyGuideSectionNumber#' .. string.rep(' ', 2 * w + 1) .. (folded and '▸' or '▾') .. ' '
+  elseif e.meta == 'hunk' and e.path_len then
+    local f = s.review.files[e.file_idx]
+    return '%#' .. (panel.status_hl[f.status] or 'Normal') .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. '   '
   end
   return blank
 end
@@ -266,6 +363,25 @@ function M.foldtext()
     chunks[#chunks + 1] = { '  (' .. hidden .. ' lines folded)', 'Comment' }
     return chunks
   end
+  if e and e.meta == 'section' then
+    local sec = s.guide and s.guide.resolved and s.guide.resolved.sections[e.section_idx]
+    local reviewed = sec and guide_view.section_reviewed(s, sec)
+    local chunks = {
+      { (sec and sec.id) and (reviewed and '☑ ' or '☐ ') or '  ', reviewed and 'RevueyReviewed' or 'Comment' },
+      { s.layout.lines[fs], 'RevueyGuideBold' },
+    }
+    if sec then
+      chunks[#chunks + 1] = { '  ' .. #sec.items .. (#sec.items == 1 and ' hunk' or ' hunks'), 'Comment' }
+      if sec.outdated then
+        chunks[#chunks + 1] = { '  outdated', 'RevueyGuideOutdated' }
+      end
+      if reviewed then
+        chunks[#chunks + 1] = { '  ✓ reviewed', 'RevueyReviewed' }
+      end
+    end
+    chunks[#chunks + 1] = { '  (' .. (fe - fs) .. ' lines folded)', 'Comment' }
+    return chunks
+  end
   return { { '⋯ ' .. (fe - fs + 1) .. ' unchanged lines', 'RevueyFold' } }
 end
 
@@ -280,6 +396,9 @@ function M.winbar()
     return ''
   end
   local s = session_for_buf(api.nvim_win_get_buf(win))
+  if s and s.view_mode == 'guide' then
+    return M.guide_winbar(s, win)
+  end
   if not s or #s.review.files == 0 then
     return ''
   end
@@ -298,6 +417,37 @@ function M.winbar()
     parts[#parts + 1] = '  %#RevueyReviewed#✓ reviewed'
   end
   parts[#parts + 1] = '%*%=' .. fi .. '/' .. #s.review.files .. ' '
+  return table.concat(parts)
+end
+
+---Section containing (or following) a row of the guide layout.
+local function section_at_row(s, row)
+  local secs = s.layout.sections or {}
+  for i = #secs, 1, -1 do
+    if secs[i].start_row <= row then
+      return i
+    end
+  end
+  return nil
+end
+
+function M.guide_winbar(s, win)
+  local esc = function(str)
+    return (str:gsub('%%', '%%%%'))
+  end
+  local res = s.guide and s.guide.resolved
+  local parts = { ' %#RevueyGuideSectionNumber#Guide ' }
+  if res then
+    local top = vim.fn.line('w0', win)
+    local si = section_at_row(s, top)
+    local sec = si and res.sections[si]
+    parts[#parts + 1] = '%#RevueyWinbar#' .. esc(sec and (si .. '. ' .. sec.title) or res.title)
+    local done, total = guide_view.progress(s)
+    parts[#parts + 1] = '%*%=' .. (si and ('§' .. si .. '/' .. #res.sections .. '  ') or '')
+    parts[#parts + 1] = ((total > 0 and done == total) and '%#RevueyReviewed#' or '%#Comment#') .. '✓ ' .. done .. '/' .. total .. ' '
+  else
+    parts[#parts + 1] = guide_view.job(s) and '%#RevueyGuideSpinner#generating…' or '%#Comment#no guide yet'
+  end
   return table.concat(parts)
 end
 
@@ -340,7 +490,7 @@ end
 local function in_closed_file_fold(s, row)
   return api.nvim_win_call(s.diff_win, function()
     local c = vim.fn.foldclosed(row)
-    return c ~= -1 and s.layout.map[c] and s.layout.map[c].meta == 'file'
+    return c ~= -1 and s.layout.map[c] and (s.layout.map[c].meta == 'file' or s.layout.map[c].meta == 'section')
   end)
 end
 
@@ -385,6 +535,9 @@ end
 
 function M.next_file(dir)
   local s = M.session
+  if s and s.view_mode == 'guide' then
+    return M.next_section(dir)
+  end
   if not current(s) then
     return
   end
@@ -440,11 +593,17 @@ end
 
 function M.open_file()
   local s = M.session
-  local e, row = current(s)
+  local e = current(s)
   if not e then
     return
   end
-  local f = s.review.files[e.file_idx]
+  local f = e.file_idx and s.review.files[e.file_idx]
+  if not f then
+    if e.meta == 'section' then
+      return M.toggle_section_fold(e.section_idx)
+    end
+    return
+  end
   if f.status == 'D' then
     return vim.notify('revuey: file was deleted on this branch', vim.log.levels.INFO)
   end
@@ -645,6 +804,19 @@ function M.toggle_reviewed(fi)
   if #s.review.files == 0 then
     return
   end
+  if s.view_mode == 'guide' then
+    if not fi then
+      return M.toggle_section()
+    end
+    -- a file mark from the panel: shown on the guide's hunk headers
+    local f = s.review.files[fi]
+    if f then
+      review_mod.toggle_reviewed(s.review, f)
+      decorate(s)
+      panel.render(s)
+    end
+    return
+  end
   fi = fi or file_at_row(s, cursor_row(s))
   local f = s.review.files[fi]
   if not f then
@@ -659,6 +831,106 @@ function M.toggle_reviewed(fi)
     local nxt = s.layout.files[fi + 1]
     goto_row(s, nxt and nxt.start_row or s.layout.files[fi].start_row, nxt and 'top' or nil)
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- Guide view: sections
+-- ---------------------------------------------------------------------------
+
+local function section_fold(s, si, close)
+  local r = s.layout.sections and s.layout.sections[si]
+  if not r then
+    return
+  end
+  api.nvim_win_call(s.diff_win, function()
+    pcall(vim.cmd, r.start_row .. (close and 'foldclose' or 'foldopen'))
+  end)
+end
+
+function M.toggle_section_fold(si)
+  local s = M.session
+  local r = s and s.layout.sections and s.layout.sections[si]
+  if not r then
+    return
+  end
+  local closed = api.nvim_win_call(s.diff_win, function()
+    return vim.fn.foldclosed(r.start_row) ~= -1
+  end)
+  section_fold(s, si, not closed)
+end
+
+---]] / [[ in the guide: next/previous section heading (takes a count).
+function M.next_section(dir)
+  local s = M.session
+  if not s or not current(s) then
+    return
+  end
+  if s.view_mode ~= 'guide' then
+    return M.next_file(dir)
+  end
+  local secs = s.layout.sections or {}
+  if #secs == 0 then
+    return
+  end
+  local row = cursor_row(s)
+  local target
+  for _ = 1, vim.v.count1 do
+    local t
+    if dir > 0 then
+      for _, r in ipairs(secs) do
+        if r.start_row > row then
+          t = r.start_row
+          break
+        end
+      end
+    else
+      for i = #secs, 1, -1 do
+        if secs[i].start_row < row then
+          t = secs[i].start_row
+          break
+        end
+      end
+    end
+    if not t then
+      break
+    end
+    row, target = t, t
+  end
+  if target then
+    api.nvim_win_call(s.diff_win, function()
+      vim.cmd("normal! m'")
+    end)
+    goto_row(s, target, 'top')
+  end
+end
+
+---`mr` in the guide: toggle the reviewed state of the section under the cursor (or `si`); a newly
+---reviewed section folds and the cursor moves to the next section.
+function M.toggle_section(si)
+  local s = M.session
+  if not s or s.view_mode ~= 'guide' or not s.guide or not s.guide.resolved then
+    return
+  end
+  si = si or section_at_row(s, cursor_row(s))
+  local sec = si and s.guide.resolved.sections[si]
+  if not sec then
+    return vim.notify('revuey: move to a section to mark it reviewed', vim.log.levels.INFO)
+  end
+  if not sec.id then
+    return vim.notify('revuey: this section shows no hunks', vim.log.levels.INFO)
+  end
+  local now, err = state_mod.toggle_section(s.review.state, sec.id)
+  if err then
+    vim.notify(tostring(err), vim.log.levels.ERROR)
+  end
+  set_section_mark(s, si)
+  panel.render(s)
+  section_fold(s, si, now)
+  if now and api.nvim_get_current_win() == s.diff_win then
+    local nxt = s.layout.sections[si + 1]
+    goto_row(s, nxt and nxt.start_row or s.layout.sections[si].start_row, nxt and 'top' or nil)
+  end
+  return now
 end
 
 -- ---------------------------------------------------------------------------
@@ -683,6 +955,16 @@ local function stack_keymaps(buf)
     M.next_layer(-1)
   end, 'previous stack layer')
   map(buf, k.toggle_stack, M.toggle_full, 'toggle full stack / layer scope')
+end
+
+local function guide_keymaps(buf)
+  local k = config.options.keymaps
+  map(buf, k.toggle_guide, function()
+    M.guide_command(false)
+  end, 'toggle AI guide view')
+  map(buf, k.regenerate_guide, function()
+    M.regenerate_guide()
+  end, 'generate a new AI guide')
 end
 
 local function diff_keymaps(s)
@@ -712,6 +994,13 @@ local function diff_keymaps(s)
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
   map(buf, k.close, M.close, 'close review')
   stack_keymaps(buf)
+  guide_keymaps(buf)
+  map(buf, k.next_section, function()
+    M.next_section(1)
+  end, 'next guide section (diff: next file)')
+  map(buf, k.prev_section, function()
+    M.next_section(-1)
+  end, 'previous guide section (diff: previous file)')
   map(buf, k.focus_panel, function()
     if api.nvim_win_is_valid(s.panel_win) then
       api.nvim_set_current_win(s.panel_win)
@@ -725,13 +1014,36 @@ local function panel_keymaps(s)
   local function file_under_cursor()
     return s.panel_files[api.nvim_win_get_cursor(0)[1]]
   end
+  local function section_under_cursor()
+    return s.panel_sections and s.panel_sections[api.nvim_win_get_cursor(0)[1]]
+  end
+  local function jump_section(si, focus)
+    local r = s.layout.sections and s.layout.sections[si]
+    if not r then
+      return
+    end
+    section_fold(s, si, false)
+    goto_row(s, r.start_row, 'top')
+    panel.set_current_section(s, si)
+    if focus then
+      api.nvim_set_current_win(s.diff_win)
+    end
+  end
   local function jump(focus)
     local fi = file_under_cursor()
     if not fi then
       return
     end
-    local row = s.layout.files[fi].start_row
-    close_file_fold(s, fi, false)
+    local row
+    if s.view_mode == 'guide' then
+      row = s.layout.file_rows and s.layout.file_rows[fi]
+      if not row then
+        return
+      end
+    else
+      row = s.layout.files[fi].start_row
+      close_file_fold(s, fi, false)
+    end
     goto_row(s, row, 'top')
     panel.set_current(s, fi)
     if focus then
@@ -743,15 +1055,24 @@ local function panel_keymaps(s)
     if layer then
       return M.set_scope(layer == 'full' and { kind = 'full' } or { kind = 'layer', index = layer })
     end
+    local si = section_under_cursor()
+    if si then
+      return jump_section(si, true)
+    end
     jump(true)
-  end, 'open file in diff / select stack layer')
+  end, 'open file in diff / select stack layer / guide section')
   stack_keymaps(buf)
+  guide_keymaps(buf)
   map(buf, k.toggle_reviewed, function()
+    local si = section_under_cursor()
+    if si then
+      return M.toggle_section(si)
+    end
     local fi = file_under_cursor()
     if fi then
       M.toggle_reviewed(fi)
     end
-  end, 'toggle file reviewed')
+  end, 'toggle file / guide section reviewed')
   map(buf, k.refresh, function()
     M.refresh({ force = true, notify = true })
   end, 'refresh review')
@@ -764,12 +1085,26 @@ local function panel_keymaps(s)
     group = s.augroup,
     buffer = buf,
     callback = function()
-      if s.syncing then
+      if s.syncing or not api.nvim_win_is_valid(s.diff_win) then
+        return
+      end
+      local si = section_under_cursor()
+      if si then
+        if si ~= s.current_section then
+          jump_section(si, false)
+        end
         return
       end
       local fi = file_under_cursor()
-      if fi and fi ~= s.current_file and api.nvim_win_is_valid(s.diff_win) then
-        goto_row(s, s.layout.files[fi].start_row, 'top')
+      if fi and fi ~= s.current_file then
+        if s.view_mode == 'guide' then
+          local row = s.layout.file_rows and s.layout.file_rows[fi]
+          if row then
+            goto_row(s, row, 'top')
+          end
+        else
+          goto_row(s, s.layout.files[fi].start_row, 'top')
+        end
         panel.set_current(s, fi)
       end
     end,
@@ -796,7 +1131,10 @@ end
 ---Fill the diff buffer for the session's review.
 ---Snapshot of what the user is looking at, to restore after a re-render.
 local function capture_view(s)
-  local saved = { folds = {} }
+  if s.view_mode == 'guide' then
+    return M.capture_guide(s)
+  end
+  local saved = { folds = {}, mode = 'diff' }
   if not api.nvim_win_is_valid(s.diff_win) then
     return saved
   end
@@ -897,10 +1235,89 @@ local function restore_view(s, saved)
   if not saved.row or not api.nvim_win_is_valid(s.diff_win) then
     return
   end
-  local row = find_saved_row(s, saved)
+  if (saved.mode or 'diff') ~= (s.view_mode or 'diff') then
+    return
+  end
+  local row
+  if saved.mode == 'guide' then
+    -- the same hunk line or the same place in the same paragraph; else the same offset into the
+    -- same section
+    local col
+    row, col = find_guide_anchor(s, saved.anchor)
+    if row then
+      saved = vim.tbl_extend('force', saved, { col = col or saved.col })
+    else
+      local r = saved.section_idx and s.layout.sections and s.layout.sections[saved.section_idx]
+      row = r and math.min(r.start_row + saved.rel, r.end_row) or math.min(saved.row, #s.layout.lines)
+    end
+  else
+    row = find_saved_row(s, saved)
+  end
   api.nvim_win_call(s.diff_win, function()
     vim.fn.winrestview({ lnum = row, col = saved.col or 0, topline = math.max(1, row - (saved.offset or 0)) })
   end)
+end
+
+---Guide view snapshot: section + offset into it, scroll offset, and closed section folds.
+function M.capture_guide(s)
+  local saved = { mode = 'guide', section_folds = {} }
+  if not api.nvim_win_is_valid(s.diff_win) then
+    return saved
+  end
+  api.nvim_win_call(s.diff_win, function()
+    local v = vim.fn.winsaveview()
+    saved.offset, saved.col, saved.row = v.lnum - v.topline, v.col, v.lnum
+    for si, r in ipairs(s.layout.sections or {}) do
+      local sec = s.guide and s.guide.resolved and s.guide.resolved.sections[si]
+      if sec then
+        saved.section_folds[sec.id or ('#' .. si)] = vim.fn.foldclosed(r.start_row) ~= -1
+      end
+    end
+  end)
+  saved.section_idx = section_at_row(s, saved.row)
+  local r = saved.section_idx and s.layout.sections[saved.section_idx]
+  saved.rel = r and (saved.row - r.start_row) or 0
+  -- what the cursor is on, independent of row numbers (re-wrapping moves rows)
+  local e = s.layout.map[saved.row]
+  if e and e.hunk_id then
+    saved.anchor = { hunk_id = e.hunk_id, line_idx = e.line_idx, note = e.note }
+  elseif e and e.kind == 'prose' and e.block then
+    saved.anchor = { block = e.block, para = e.para, pos = e.off + math.max((saved.col or 0) - (e.pre or 0), 0) }
+  elseif e and e.meta == 'section' then
+    saved.anchor = { section_idx = e.section_idx }
+  end
+  return saved
+end
+
+---Row (and column) in the current guide layout for a captured anchor, or nil.
+find_guide_anchor = function(s, a)
+  if not a then
+    return nil
+  end
+  local best, best_off
+  for row, e in ipairs(s.layout.map) do
+    if a.hunk_id then
+      if e.hunk_id == a.hunk_id and e.line_idx == a.line_idx and (e.note or nil) == (a.note or nil) then
+        return row
+      end
+    elseif a.block then
+      if e.block == a.block and e.para == a.para and e.off and e.off <= a.pos and (not best_off or e.off > best_off) then
+        best, best_off = row, e.off
+      end
+    elseif a.section_idx and e.meta == 'section' and e.section_idx == a.section_idx then
+      return row
+    end
+  end
+  if best then
+    local e = s.layout.map[best]
+    return best, (e.pre or 0) + (a.pos - e.off)
+  end
+end
+
+---Prose wrap width for the guide: the diff window minus the line-number columns, capped.
+local function prose_width(s)
+  local w = api.nvim_win_is_valid(s.diff_win) and api.nvim_win_get_width(s.diff_win) or 100
+  return math.max(30, math.min(w - (2 * (s.numw or 3) + 4) - 2, 100))
 end
 
 ---Name the diff buffer after what it shows (revuey://<branch>..<base>); renaming leaves an
@@ -922,8 +1339,15 @@ end
 local function render(s, saved)
   s.render_count = (s.render_count or 0) + 1
   set_diff_name(s)
-  s.layout = layout_mod.compose(s.review.files)
-  if #s.review.files == 0 then
+  s.numw = compute_numw(s.review)
+  guide_view.prepare(s)
+  if s.view_mode == 'guide' then
+    s.prose_width = prose_width(s)
+    s.layout = layout_mod.compose_guide(s.review.files, guide_view.doc(s, s.prose_width))
+  else
+    s.layout = layout_mod.compose(s.review.files)
+  end
+  if s.view_mode ~= 'guide' and #s.review.files == 0 then
     local r = s.review
     local msg = r.mode == 'worktree'
         and {
@@ -942,7 +1366,6 @@ local function render(s, saved)
       s.layout.map[#s.layout.map + 1] = { kind = 'meta', meta = 'note', file_idx = 0, path = '' }
     end
   end
-  s.numw = compute_numw(s.review)
   s.folds = layout_mod.fold_levels(s.layout, config.options.fold_context_threshold, 3)
   local buf = s.diff_buf
   vim.bo[buf].modifiable = true
@@ -955,13 +1378,26 @@ local function render(s, saved)
   api.nvim_win_call(s.diff_win, function()
     vim.cmd('normal! zx')
   end)
-  for fi, f in ipairs(s.review.files) do
+  if s.view_mode == 'guide' then
+    -- reviewed sections start folded; otherwise keep the user's fold state
+    for si, sec in ipairs(s.guide.resolved and s.guide.resolved.sections or {}) do
+      local closed = guide_view.section_reviewed(s, sec)
+      local key = sec.id or ('#' .. si)
+      if saved and saved.section_folds and saved.section_folds[key] ~= nil then
+        closed = saved.section_folds[key]
+      end
+      if closed then
+        section_fold(s, si, true)
+      end
+    end
+  end
+  for fi, f in ipairs(s.view_mode ~= 'guide' and s.review.files or {}) do
     local size = 0
     for _, h in ipairs(f.hunks) do
       size = size + #h.lines
     end
     local closed = review_mod.is_reviewed(s.review, f) or size > config.options.collapse_large_files
-    if saved and saved.folds[f.path] ~= nil then
+    if saved and saved.folds and saved.folds[f.path] ~= nil then
       closed = saved.folds[f.path] -- keep the user's fold state across refreshes
     end
     if closed then
@@ -973,7 +1409,16 @@ local function render(s, saved)
   end
   s.stat_sig = M.stat_signature(s)
   panel.render(s)
+  guide_view.draw_status(s)
   M.load_stats(s)
+end
+
+---Re-render in place, keeping the view (used when a guide finishes or the window is resized).
+function M.rerender(s)
+  s = s or M.session
+  if s and not s.cleaned and api.nvim_buf_is_valid(s.diff_buf) then
+    render(s, capture_view(s))
+  end
 end
 
 ---Cheap fingerprint of the working tree as far as this review is concerned: size+mtime of every
@@ -1114,9 +1559,29 @@ function M.show(review, opts)
     group = group,
     buffer = s.diff_buf,
     callback = function()
-      local fi = file_at_row(s, cursor_row(s))
+      local row = cursor_row(s)
+      if s.view_mode == 'guide' then
+        local si = section_at_row(s, row)
+        if si ~= s.current_section then
+          panel.set_current_section(s, si)
+        end
+        return
+      end
+      local fi = file_at_row(s, row)
       if fi ~= s.current_file then
         panel.set_current(s, fi)
+      end
+    end,
+  })
+  -- the guide's prose is wrapped to the window: re-wrap when it is resized
+  api.nvim_create_autocmd('WinResized', {
+    group = group,
+    callback = function()
+      if M.session ~= s or s.view_mode ~= 'guide' or not api.nvim_win_is_valid(s.diff_win) then
+        return
+      end
+      if prose_width(s) ~= s.prose_width then
+        M.rerender(s)
       end
     end,
   })
@@ -1210,6 +1675,110 @@ function M.show(review, opts)
     end
   end, 100)
   return s
+end
+
+-- ---------------------------------------------------------------------------
+-- Guide view: switching and generation
+-- ---------------------------------------------------------------------------
+
+---Switch the main window between the diff view and the guide view (same buffer, same panel).
+---@param mode? 'diff'|'guide' default: the other one
+function M.set_view(mode)
+  local s = M.session
+  if not s then
+    return
+  end
+  mode = mode or (s.view_mode == 'guide' and 'diff' or 'guide')
+  if (s.view_mode or 'diff') == mode then
+    return
+  end
+  s.mode_views = s.mode_views or {}
+  s.mode_views[s.view_mode or 'diff'] = capture_view(s)
+  s.view_mode = mode
+  local saved = s.mode_views[mode]
+  render(s, saved)
+  if not saved then
+    goto_row(s, 1, 'top')
+  end
+  s.mode_views[mode] = nil
+end
+
+---Re-render whichever review is open when a guide job changes (the review may have been closed
+---and reopened while the job ran; jobs are keyed by review, not by session).
+local function on_guide_change()
+  local cur = M.session
+  if cur and not cur.cleaned then
+    if cur.guide then
+      cur.guide.reload = true
+    end
+    M.rerender(cur)
+  end
+end
+
+---Start a generation for the current review and show the guide view.
+function M.generate_guide()
+  local s = M.session
+  if not s then
+    return vim.notify('revuey: no review open', vim.log.levels.WARN)
+  end
+  if s.view_mode ~= 'guide' then
+    M.set_view('guide')
+  end
+  guide_view.generate(s, on_guide_change)
+end
+
+---Regenerate (asks first when a guide exists, since it runs the model again).
+function M.regenerate_guide()
+  local s = M.session
+  if not s then
+    return
+  end
+  local g = guide_view.prepare(s)
+  if guide_view.jobs[g.ks] then
+    return vim.notify('revuey: a guide is already being generated (:RevueyGuide cancel stops it)', vim.log.levels.INFO)
+  end
+  if not g.record then
+    return M.generate_guide()
+  end
+  vim.ui.select({ 'Generate a new guide', 'Cancel' }, { prompt = 'Regenerate the AI guide (runs claude)?' }, function(choice)
+    if choice == 'Generate a new guide' then
+      M.generate_guide()
+    end
+  end)
+end
+
+---`:RevueyGuide[!] [cancel]` and `gG`: toggle the guide view; with no guide (and no run), offer to
+---generate one. `!` regenerates without asking. `cancel` stops a run.
+function M.guide_command(bang, arg)
+  local s = M.session
+  if not s then
+    return vim.notify('revuey: no review open (:Revuey first)', vim.log.levels.WARN)
+  end
+  if arg == 'cancel' then
+    if not guide_view.cancel(s) then
+      vim.notify('revuey: no guide is being generated for this review', vim.log.levels.INFO)
+    end
+    return
+  elseif arg and arg ~= '' then
+    return vim.notify('revuey: unknown argument ' .. arg .. ' (use :RevueyGuide, :RevueyGuide! or :RevueyGuide cancel)', vim.log.levels.ERROR)
+  end
+  if bang then
+    return M.generate_guide()
+  end
+  if s.view_mode == 'guide' then
+    return M.set_view('diff')
+  end
+  local g = guide_view.prepare(s)
+  if g.record or guide_view.jobs[g.ks] or #g.hunks == 0 then
+    return M.set_view('guide')
+  end
+  vim.ui.select({ 'Generate a guide', 'Cancel' }, {
+    prompt = 'No AI guide for this review yet. Generate one with claude?',
+  }, function(choice)
+    if choice == 'Generate a guide' then
+      M.generate_guide()
+    end
+  end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1570,8 +2139,9 @@ function M.refresh(o)
       if scope and s.scope and not vim.deep_equal(scope, s.scope) and old_stack then
         -- switching scope: remember where we were, and return to where we left the new one
         s.scope_views = s.scope_views or {}
-        s.scope_views[stack_mod.scope_key(old_stack, s.scope)] = capture_view(s)
-        saved = s.scope_views[stack_mod.scope_key(stack, scope)]
+        local vm = s.view_mode or 'diff'
+        s.scope_views[stack_mod.scope_key(old_stack, s.scope) .. '\0' .. vm] = capture_view(s)
+        saved = s.scope_views[stack_mod.scope_key(stack, scope) .. '\0' .. vm]
       elseif not (scope and not vim.deep_equal(scope, s.scope)) then
         saved = capture_view(s)
       end

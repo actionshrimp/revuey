@@ -369,6 +369,11 @@ local function redraw(buf)
   if not vim.api.nvim_buf_is_valid(buf) then
     return
   end
+  -- Nothing to show without a UI, and a headless redraw has been seen to crash Neovim. Screen
+  -- tests read the grid of a UI-less child (mini.test redraws it) and opt in.
+  if #vim.api.nvim_list_uis() == 0 and not vim.g.revuey_headless_redraw then
+    return
+  end
   local ok = pcall(vim.api.nvim__redraw, { buf = buf, valid = false })
   if not ok then
     vim.cmd('redraw!')
@@ -485,11 +490,14 @@ end
 ---Spans for one composed row (0-based), or nil when not available (yet).
 function M.spans_for_row(view, row)
   local e = view.layout.map[row + 1]
-  if not e or e.kind == 'meta' then
+  if not e then
     return nil
   end
-  local f = view.review.files[e.file_idx]
   local side, lnum = side_of(e)
+  if not side then
+    return nil -- meta and guide prose rows
+  end
+  local f = view.review.files[e.file_idx]
   local k = key_for(f, side)
   local c = k and cache[k.key] -- peek only: loading is started from on_win, never on_line
   if not c or c.status ~= 'ready' then
@@ -525,7 +533,7 @@ local function request_visible(view, buf, win, top, bot)
         row = fold_end -- skip the whole closed fold (next row is fold_end + 1 in 1-based)
       else
         local e = view.layout.map[row + 1]
-        if e and e.kind ~= 'meta' then
+        if e and side_of(e) then
           wanted[e.file_idx .. (side_of(e))] = { e.file_idx, (side_of(e)) }
         end
         row = row + 1

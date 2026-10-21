@@ -43,7 +43,29 @@ M.defaults = {
     next_layer = ']s',
     prev_layer = '[s',
     toggle_stack = 'gs', -- full stack <-> layer scope
+    -- AI guide
+    toggle_guide = 'gG', -- diff view <-> guide view (offers to generate when there is none)
+    regenerate_guide = 'gR', -- guide view: generate a new guide
+    next_section = ']]', -- guide view (in the diff view: next file)
+    prev_section = '[[',
     close = 'q',
+  },
+  -- AI guided review. Runs your own `claude` CLI (logged in); revuey never reads credentials.
+  ai = {
+    provider = 'claude',
+    cmd = nil, -- executable (default: the provider name, `claude`)
+    model = nil, -- nil = Claude Code's default; or 'opus', 'sonnet', a full model id...
+    effort = nil, -- nil = default; 'low'|'medium'|'high'|'xhigh'|'max'
+    timeout_ms = 10 * 60 * 1000,
+    -- diffs larger than this many characters send big hunks as a short index entry instead
+    max_prompt_chars = 150000,
+    -- true: claude ignores all settings files (yours and the repo's), so no permission allow
+    -- rules or hooks can widen the read-only run. false: your user settings load (needed when you
+    -- log in via settings `env`/apiKeyHelper, e.g. Bedrock, Vertex, a proxy), including YOUR allow
+    -- rules and hooks, which then apply to a run that reads untrusted repo content. See README.
+    restricted = true,
+    -- saved guides kept per review (branch/layer + base); older ones are deleted
+    keep_guides = 5,
   },
 }
 
