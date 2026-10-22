@@ -36,6 +36,12 @@ sequence; later items build on earlier ones.
    answer streams into a chat side panel that resumes the guide's Claude session, so it has the review context, and
    can be pinned back as a reply in that comment's thread, then kept as a review comment or discarded. Follow-ups on
    AI review findings use the same path. Read-only, restricted `claude -p` as for the guide.
+   **Send to the launching agent session.** When a coding agent launched revuey (via a small revuey skill, in a
+   tmux or herdr pane), comments and questions can be sent straight back to that session without closing revuey.
+   revuey appends events (file, lines, code, text) to a feed that `revuey watch` streams; the agent watches it with
+   Claude Code's Monitor tool (re-armed every 30 minutes) and can answer with `revuey reply <id> "…"`, shown in the
+   comment's thread. Fallback for other agent CLIs: type the message into the launching pane. The local comments
+   chunk should write this event feed from the start.
 4. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
