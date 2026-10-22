@@ -361,9 +361,19 @@ end
 function M.place(c, ctx)
   local a = c.anchor
   local U = ctx.U
-  local fi = U.by_path[a.path]
+  -- a file renamed since: follow it
+  local path = a.path
+  if not U.by_path[path] then
+    for _, f in ipairs(ctx.files) do
+      if f.old_path == path and f.path ~= path and f.status == 'R' then
+        path = f.path
+        break
+      end
+    end
+  end
+  local fi = U.by_path[path]
   if c.file_level or not a.start_line then
-    return { outdated = fi == nil, how = fi and 'file' or 'missing' }
+    return { outdated = fi == nil, how = fi and 'file' or 'missing', path = path ~= a.path and path or nil }
   end
   local out = { start_line = a.start_line, end_line = a.end_line, outdated = true, how = fi and 'outdated' or 'missing' }
   if not fi then
@@ -371,28 +381,30 @@ function M.place(c, ctx)
   end
   -- 1. the same unit (identical content, maybe shifted), then the same hunk
   local u = a.unit_key and U.by_key[a.unit_key]
-  if u and u.path == a.path and a.unit_line and not u.whole_file then
+  if u and u.path == path and a.unit_line and not u.whole_file then
     local p = at_offset(ctx, u, (u.first or 1) + a.unit_line, a)
     if p then
       p.how = 'unit'
+      p.path = path ~= a.path and path or nil
       return p
     end
   end
   local hunk_units = a.hunk_key and U.by_hunk[a.hunk_key]
-  if hunk_units and hunk_units[1] and hunk_units[1].path == a.path and a.hunk_line and not hunk_units[1].whole_file then
+  if hunk_units and hunk_units[1] and hunk_units[1].path == path and a.hunk_line and not hunk_units[1].whole_file then
     local p = at_offset(ctx, hunk_units[1], a.hunk_line, a)
     if p then
       p.unit = require('revuey.units').at_line(U, p.unit.file_idx, p.unit.hunk_idx, a.hunk_line) or p.unit
       p.how = 'hunk'
+      p.path = path ~= a.path and path or nil
       return p
     end
   end
   -- 2. the nearest window of shown lines with the same context hash; 3. the nearest one (not too
   -- far) with the same lines, when only the context around them changed
-  local rows = ctx.rows(a.path, a.side)
+  local rows = ctx.rows(path, a.side)
   local n = a.end_line - a.start_line
   local function get(l)
-    return ctx.get_line(a.path, a.side, l)
+    return ctx.get_line(path, a.side, l)
   end
   ---All shown windows whose hash matches (within `radius` of the last known line), nearest first.
   local function search(hash, fn, radius)
@@ -445,7 +457,7 @@ function M.place(c, ctx)
     if best then
       local r = rows.by_lnum[best]
       local unit = require('revuey.units').at_line(U, r.fi, r.hi, r.li)
-      return { start_line = best, end_line = best + n, outdated = false, how = tier.how, unit = unit, hunk_line = r.li }
+      return { start_line = best, end_line = best + n, outdated = false, how = tier.how, unit = unit, hunk_line = r.li, path = path ~= a.path and path or nil }
     end
   end
   return out
@@ -463,6 +475,9 @@ function M.apply_placement(c, p)
     end
   end
   set(c, 'outdated', p.outdated and true or false)
+  if p.path and not p.outdated then
+    set(c.anchor, 'path', p.path) -- the file was renamed
+  end
   if not p.outdated and p.start_line then
     local a = c.anchor
     set(a, 'start_line', p.start_line)

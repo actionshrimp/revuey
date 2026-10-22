@@ -616,4 +616,50 @@ h.test('two instances: comments made in each are merged, live', function()
   h.ok(by_body('from the parent'))
 end)
 
+-- Regression (review): comments on a file that left the review vanished from both views.
+h.test('comments on files no longer in the review: a group at the end, ]m, panel count, list', function()
+  local whole = by_body('whole file')
+  h.ok(whole, 'a.txt has a file-level comment')
+  -- a.txt was added on the branch; removing it from the working tree takes it out of the review
+  vim.fn.delete(repo .. '/a.txt')
+  view.refresh({ force = true })
+  idle(s)
+  h.eq(nil, file_row('a.txt'))
+  local last = #s.layout.lines
+  local v = vlines(last)
+  h.ok(v:find('Comments on files no longer in this review', 1, true), v)
+  h.ok(v:find('a.txt', 1, true), v)
+  h.ok(v:find('whole file', 1, true), v)
+  -- ]m reaches it
+  vim.api.nvim_win_set_cursor(s.diff_win, { last - 1, 0 })
+  keys(s, ']m')
+  h.eq(last, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  -- the panel counts them
+  local panel = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')
+  h.ok(panel:find('on files no longer in this review', 1, true), panel)
+  -- the list shows them, and <CR> jumps to the group
+  local st = cv.open_list(s)
+  local target
+  for i, l in ipairs(st.lines) do
+    if l.id == whole.id then
+      target = i
+    end
+  end
+  h.ok(target, 'listed')
+  h.ok(st.lines[target].text:find('not in this review', 1, true), st.lines[target].text)
+  vim.api.nvim_win_set_cursor(st.win, { 1, 0 })
+  vim.api.nvim_win_set_cursor(st.win, { target, 0 })
+  vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
+  h.eq(last, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  -- in the guide too
+  view.set_view('guide')
+  h.ok(vlines(#s.layout.lines):find('whole file', 1, true))
+  view.set_view('diff')
+  -- back in the review: back on its file
+  h.git(repo, 'checkout', '--', 'a.txt')
+  view.refresh({ force = true })
+  idle(s)
+  h.ok(vlines(file_row('a.txt')):find('whole file', 1, true))
+end)
+
 h.run()
