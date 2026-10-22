@@ -134,14 +134,20 @@ are in `reports/Terminal code review tool landscape.md`.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
    **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
    text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,
-   `stale_parent`, `unknown_parent`, `cycle`, and `newer_copy`: another branch has a newer copy of one of the
-   stack's commits, so old commits of it may be in the diff); all others are `info`. `resolve` makes the
+   `stale_parent`, `unknown_parent`, `cycle`, `newer_copy`: the stack may be built on an old version of
+   another branch, and `outside`: a branch sharing commits, perhaps a parent that moved on, whose commits
+   are then in the layer's diff); all others are `info`. `resolve` makes the
    structural ones (also `fork`, `same_commit`, `parent_landed`), `mark_landed` adds `landed`, and
    `foreign_notes` the related-branch ones from one `git log --branches --not trunk` (same author, author
-   date and changed paths, different commit = another copy). The committer dates of the two copies tell
-   the direction: older elsewhere = `outdated_copy` (that branch is built on an outdated copy of the stack),
-   newer = `newer_copy`, equal = `other_copy`. `for-each-ref --contains` per copy (capped at 30) finds every
-   branch holding it, since `--source` names only one. Remaining branches containing the stack's root
+   date and changed paths, different commit = another copy; commits marked `(cherry picked from commit`
+   are skipped). Committer dates give a direction: older elsewhere = `outdated_copy` (that branch is built
+   on an outdated copy of the stack). Newer elsewhere is `newer_copy` only when shaped like a parent amended
+   under the stack: the matched commits are the bottom run of the bottom layer, the layer has commits of
+   its own above them, and the branch ends at the newer copy of the top one. Anything else (backports,
+   whole-stack rebases with a backup branch, clock skew) is `other_copy`, informational. Copies are grouped
+   by the branch `--source` names, and one `for-each-ref --contains` per group (capped at 30 groups) finds
+   every branch holding them. "Set as parent" is offered only when `merge-base --is-ancestor` says the
+   branch tip is an ancestor of the layer (`parent_ok`), so it never leads to a stale setting. Remaining branches containing the stack's root
    commit are `side` (they contain a layer tip below HEAD) or `outside`. The panel renders
    `summary()`: at most three lines grouped by kind (the related kinds share one count), wrapped, never
    cut; `notes_float.lua` renders `details()` (every note, grouped, with meaning, impact and branch rows
@@ -149,8 +155,9 @@ are in `reports/Terminal code review tool landscape.md`.
    a branch or a suggested glob, un-ignore) and re-renders from `panel.render` after each refresh.
    **Ignore list** (`stack_ignore.lua`): globs from `config.stack.ignore_branches` plus a per-repo JSON file
    in the state dir, keyed by the git common dir (worktrees share it; nothing goes into git config). Saves
-   re-read and apply only the change, then rename a temp file. `detect` filters the related kinds
-   (`newer_copy`, `outdated_copy`, `other_copy`, `outside`, `side`, `same_commit`) into `stack.ignored`
+   re-read and apply only the change, then rename a temp file; an unreadable file is moved to
+   `.corrupt-*`. `detect` filters the informational related kinds (`outdated_copy`, `other_copy`, `side`,
+   `same_commit`; warnings are never hidden) into `stack.ignored`
    (`review.notes_ignored` without a stack) after detection, so ignoring never changes the layers; the
    patterns are part of the fingerprint, so a change re-runs detection and other instances notice it.
 8. **State** lives as JSON under `stdpath('data')/revuey/`, keyed by repo + review target; a pure-Lua data layer with
