@@ -159,8 +159,9 @@ checkbox and its hunk count, followed by the explanation and its hunks. Each hun
 with light markdown styling.
 
 - `]]` / `[[`: next / previous section.
-- `<Tab>` on a section heading collapses / expands the section; on a hunk's `path  @@ … @@`
-  header it collapses / expands that hunk. `<S-Tab>` collapses every section (or expands them all).
+- `<Tab>` on a section heading (or the diagram's "Overview" heading) collapses / expands it; on a
+  hunk's `path  @@ … @@` header it collapses / expands that hunk. `<S-Tab>` collapses the diagram
+  and every section (or expands them all). A collapsed diagram stays collapsed across refreshes.
   Elsewhere `<Tab>` is `<C-i>` as in the diff.
 - `mr`: mark the section under the cursor reviewed. It folds, and the cursor moves to the next
   section. The panel shows `✓` per section and "n/m reviewed".
@@ -196,7 +197,7 @@ models align box art badly:
 Boxes are coloured by kind (`RevueyDiagramNew`, `RevueyDiagramChanged`, `RevueyDiagramContext`).
 The drawing is redone when the window is resized; when it can't fit, it becomes a list
 (`index.ts ──new Cart──▶ cart.ts`). `<CR>` on a box jumps to the section that covers it, and
-`<CR>` (or `za`) on the "Overview" heading folds the diagram. `:RevueyGuideDiagram mermaid`
+`<Tab>` (or `<CR>`, `za`) on the "Overview" heading folds the diagram. `:RevueyGuideDiagram mermaid`
 copies it as Mermaid text. Small changes get no diagram.
 
 **Branch labels (full stack).** In the full-stack scope each hunk header shows, right-aligned,
@@ -298,7 +299,7 @@ Diff buffer:
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
-| `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram |
+| `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 
 File panel:

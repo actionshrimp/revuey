@@ -1139,8 +1139,12 @@ local function restore_hunk_folds(s)
   end)
 end
 
----Title rows: file headers, hunk headers (diff and guide) and guide section headings.
+---Title rows: file headers, hunk headers (diff and guide), guide section headings and the guide
+---diagram's heading.
 local fold_titles = { file = true, hunk = true, section = true }
+local function is_fold_title(e)
+  return e and (fold_titles[e.meta] or (e.kind == 'diagram' and e.heading)) or false
+end
 
 ---Expr mapping for `toggle_fold` (<Tab>): `za` on a title line (or a fold closed at one), else
 ---<C-i>, so jumplist-forward is untouched everywhere else (<Tab> is <C-i> in most terminals). A
@@ -1153,7 +1157,7 @@ function M.fold_key()
     local c = vim.fn.foldclosed(row)
     local top = c ~= -1 and c or row
     local e = s.layout.map[top]
-    if e and fold_titles[e.meta] then
+    if is_fold_title(e) then
       if e.meta == 'hunk' then
         local k = block_key_at(s, top)
         if k then
@@ -1166,14 +1170,17 @@ function M.fold_key()
   return '<C-i>'
 end
 
----`toggle_all_folds` (<S-Tab>): collapse every file (guide: every section), or expand them all when
----they are all collapsed. Does not mark anything reviewed.
+---`toggle_all_folds` (<S-Tab>): collapse every file (guide: the diagram and every section), or
+---expand them all when they are all collapsed. Does not mark anything reviewed.
 function M.toggle_all_folds()
   local s = M.session
   if not current(s) then
     return
   end
-  local ranges = s.view_mode == 'guide' and (s.layout.sections or {}) or s.layout.files
+  local ranges = s.layout.files
+  if s.view_mode == 'guide' then
+    ranges = vim.list_extend({ s.layout.diagram }, s.layout.sections or {})
+  end
   api.nvim_win_call(s.diff_win, function()
     local any_open = false
     for _, r in ipairs(ranges) do

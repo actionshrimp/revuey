@@ -229,7 +229,8 @@ are in `reports/Terminal code review tool landscape.md`.
      In the guide the heading and drawing are side-table rows of kind `diagram` (skipped by every
      diff feature, like prose) carrying highlight spans and node spans `{start, end, id,
      section}`; `layout.diagram` is their row range and a level-1 fold. `<CR>` on a node jumps
-     to its section, on the heading toggles the fold; the drawing is redone at the prose width on
+     to its section, on the heading toggles the fold, as does `<Tab>` (the heading is a fold
+     title like section headings, and `<S-Tab>` collapses it with the sections); the drawing is redone at the prose width on
      every render, so `WinResized` re-lays it out, and its fold state is kept.
    - **Branch labels** (`attribution.lua`). Full scope only: for each hunk, the layers whose
      commits changed its lines. Each layer is diffed on its own with no context (`parent...tip`,
