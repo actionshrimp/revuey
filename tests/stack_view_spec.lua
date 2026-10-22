@@ -286,7 +286,7 @@ h.test('refresh picks up a new branch in the stack and keeps the scope on the sa
   idle(s)
   h.eq('stack/cart', s.review.branch)
   h.eq({ 'stack/cart-copy' }, s.review.stack.layers[2].also)
-  h.ok(panel_text(s):find('stack/cart-copy also at stack/cart', 1, true), panel_text(s))
+  h.ok(panel_text(s):find('● 1 other branch at stack/cart', 1, true), panel_text(s))
   h.git(fx, 'branch', '-D', 'stack/cart-copy')
 end)
 
@@ -449,21 +449,24 @@ h.test('a lone branch whose lower stack branches were squash-merged and deleted 
   h.eq(nil, s.review.stack)
   h.eq('main', s.review.base)
   h.eq(own, paths(s))
-  h.ok(panel_text(s):find('stack/ui skips 3 commits already', 1, true), panel_text(s))
+  h.ok(panel_text(s):find('⚠ stack/ui skips 3 commits already', 1, true), panel_text(s))
+  local n = s.review.notes[1]
+  h.eq({ 'squashed', 'stack/ui', 3 }, { n.kind, n.branch, n.count })
 end)
 
-h.test('long note lists are capped in the panel', function()
+h.test('many notes become one short summary line in the panel', function()
   local d = stack_fixture('stack-view-notes')
   for i = 1, 150 do
     h.git(d, 'branch', 'child/ünï-' .. i, 'stack/math')
   end
   local s = open(d)
   local text = panel_text(s)
-  h.ok(text:find('and 147 more', 1, true), text)
+  h.ok(text:find('● 150 other branches at ' .. s.review.stack.layers[1].name, 1, true), text)
+  h.ok(not text:find('ünï-2', 1, true), text) -- no list of names
   h.ok(#vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false) < 40, text)
 end)
 
-h.test('plain review (no stack) shows the rewritten-parent note', function()
+h.test('plain review (no stack) shows the built-on-an-old-version note', function()
   local src = h.tmpdir('stack-view-clone-src')
   h.git(src, 'init', '-q', '-b', 'main')
   h.write(src, 'base.txt', 'base\n')
@@ -478,8 +481,10 @@ h.test('plain review (no stack) shows the rewritten-parent note', function()
   h.git(src, 'add', '-A')
   h.git(src, 'commit', '-q', '-m', 'b')
   h.git(src, 'checkout', '-q', 'a')
+  vim.env.GIT_COMMITTER_DATE = '@' .. (os.time() + 3600) .. ' +0000'
   h.write(src, 'a.txt', 'a amended\n')
   h.git(src, 'commit', '-q', '-a', '--amend', '-m', 'a amended')
+  vim.env.GIT_COMMITTER_DATE = nil
   h.git(src, 'checkout', '-q', 'main')
   local d = h.tmpdir('stack-view-clone')
   vim.fn.delete(d, 'rf')
@@ -489,8 +494,187 @@ h.test('plain review (no stack) shows the rewritten-parent note', function()
   local s = open(d)
   h.eq(nil, s.review.stack)
   local text = panel_text(s)
-  h.ok(text:find('a has a rewritten copy of a commit on', 1, true) and text:find('old version of a', 1, true), text)
+  h.ok(text:find('⚠ b may be built on an old a', 1, true), text)
+  h.ok(text:find('! branch notes', 1, true), text)
   h.ok(not text:find('Stack:', 1, true), text)
+end)
+
+-- ---------------------------------------------------------------------------
+-- Stack notes: summary lines, the details float and its actions, the ignore list
+-- ---------------------------------------------------------------------------
+
+local float = require('revuey.notes_float')
+local OLD = { 'dave/bos-3058-apply-credit-note', 'dave/bos-3058-refund-flow', 'dave/bos-3061-cleanup' }
+
+local function float_text()
+  return table.concat(vim.api.nvim_buf_get_lines(float.state.buf, 0, -1, false), '\n')
+end
+
+---Put the float's cursor on the row of `name` (a branch or an ignore pattern) and press `k`.
+local function float_key(s, name, k)
+  local row
+  for r, e in pairs(float.state.rows) do
+    if (e.branch == name or (e.pattern_entry and e.pattern_entry.pattern == name)) and (not row or r < row) then
+      row = r
+    end
+  end
+  assert(row, 'no float row for ' .. name .. ':\n' .. float_text())
+  vim.api.nvim_set_current_win(float.state.win)
+  vim.api.nvim_win_set_cursor(float.state.win, { row, 0 })
+  vim.api.nvim_feedkeys(vim.keycode(k), 'mtx', false)
+  idle(s)
+end
+
+local function panel_key(s, k)
+  vim.api.nvim_set_current_win(s.panel_win)
+  vim.api.nvim_feedkeys(vim.keycode(k), 'mtx', false)
+end
+
+h.test("old branches on a pre-amend bottom layer: one calm summary line, not a wall", function()
+  local d = h.old_branches_repo('stack-view-old')
+  local s = open(d)
+  h.eq({ 'stack/a', 'stack/b', 'stack/c' }, vim.tbl_map(function(l)
+    return l.name
+  end, s.review.stack.layers))
+  local lines = vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)
+  local text = table.concat(lines, '\n')
+  h.ok(text:find(' ⚠ 3 related branches outside this\n   stack\n', 1, true) or text:find(' ⚠ 3 related branches outside this stack\n', 1, true), text)
+  for _, b in ipairs(OLD) do
+    h.ok(not text:find(b, 1, true), text)
+  end
+  h.ok(text:find('! notes', 1, true), text)
+  -- dim, not the warning colour
+  local ns = vim.api.nvim_get_namespaces()['revuey.panel']
+  local row = vim.fn.index(lines, ' ⚠ 3 related branches outside this') + vim.fn.index(lines, ' ⚠ 3 related branches outside this stack') + 1
+  local hl
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf, ns, { row, 0 }, { row, -1 }, { details = true })) do
+    hl = m[4].hl_group or hl
+  end
+  h.eq('RevueyStackNote', hl)
+end)
+
+h.test('the details float lists every note in full; ignoring a branch hides it and persists', function()
+  local s = view.session
+  panel_key(s, '!')
+  h.ok(float.is_open(), 'float open')
+  local text = float_text()
+  h.ok(text:find('Built on an outdated copy of your stack', 1, true), text)
+  h.ok(text:gsub("%s+", " "):find("These branches contain older versions of commits that are now in your stack (they were amended or rebased since). They may be built on an outdated copy of your stack.", 1, true), text)
+  h.ok(text:find("Doesn't affect this review", 1, true), text)
+  for _, b in ipairs(OLD) do
+    h.ok(text:find(b .. '  old copy of stack/a', 1, true), text)
+  end
+  -- x: ignore the branch under the cursor; the panel and the float follow
+  float_key(s, 'dave/bos-3061-cleanup', 'x')
+  h.ok(float.is_open(), 'float stays open')
+  h.ok(panel_text(s):find('2 related branches outside this', 1, true), panel_text(s))
+  h.ok(panel_text(s):find('(1 ignored)', 1, true), panel_text(s))
+  text = float_text()
+  h.ok(text:find('Ignored branches', 1, true) and text:find('dave/bos-3061-cleanup  this repo, hides 1', 1, true), text)
+  -- X: ignore a pattern, prefilled from the branch
+  local orig = vim.ui.input
+  local prompted
+  vim.ui.input = function(opts, cb)
+    prompted = opts.default
+    cb(opts.default)
+  end
+  float_key(s, 'dave/bos-3058-refund-flow', 'X')
+  vim.ui.input = orig
+  h.eq('dave/bos-3058-*', prompted)
+  h.ok(not panel_text(s):find('related branch', 1, true), panel_text(s))
+  h.eq(3, #s.review.stack.ignored)
+  -- persisted: a new review of the repo (after closing) still hides them
+  local root = s.review.root
+  float.close()
+  local s2 = open(root)
+  h.ok(not panel_text(s2):find('related branch', 1, true), panel_text(s2))
+  h.eq(3, #s2.review.stack.ignored)
+  -- u: stop ignoring a pattern
+  panel_key(s2, '!')
+  float_key(s2, 'dave/bos-3058-*', 'u')
+  h.ok(panel_text(s2):find('2 related branches outside this', 1, true), panel_text(s2))
+  h.ok(panel_text(s2):find('(1 ignored)', 1, true), panel_text(s2))
+  -- :RevueyStackIgnore! removes, :RevueyStackIgnore adds and lists
+  vim.cmd('RevueyStackIgnore! dave/bos-3061-cleanup')
+  idle(s2)
+  h.ok(panel_text(s2):find('3 related branches', 1, true), panel_text(s2))
+  vim.cmd('RevueyStackIgnore dave/*')
+  idle(s2)
+  h.ok(not panel_text(s2):find('related branch', 1, true), panel_text(s2))
+  local msgs, restore = h.capture_notify()
+  vim.cmd('RevueyStackIgnore')
+  restore()
+  h.ok(msgs[1] and msgs[1].msg:find('dave/*  (this repo)', 1, true), vim.inspect(msgs))
+  vim.cmd('RevueyStackIgnore! dave/*')
+  idle(s2)
+  float.close()
+end)
+
+h.test('set as parent from the float writes the override and re-detects the stack', function()
+  -- a moved on after b was built on it, and no reflog says so: a only "shares commits"
+  local d = h.tmpdir('stack-view-setparent')
+  local function commit(file)
+    h.write(d, file, file .. '\n')
+    h.git(d, 'add', '-A')
+    h.git(d, 'commit', '-q', '-m', file)
+  end
+  h.git(d, 'init', '-q', '-b', 'main')
+  commit('base.txt')
+  h.git(d, 'checkout', '-q', '-b', 'a')
+  commit('a1.txt')
+  h.git(d, 'checkout', '-q', '-b', 'b')
+  commit('b1.txt')
+  h.git(d, 'checkout', '-q', '-b', 'c')
+  commit('c1.txt')
+  h.git(d, 'checkout', '-q', 'a')
+  commit('a2.txt')
+  h.git(d, 'checkout', '-q', 'c')
+  vim.fn.delete(d .. '/.git/logs', 'rf')
+  local s = open(d)
+  h.eq({ 'b', 'c' }, vim.tbl_map(function(l)
+    return l.name
+  end, s.review.stack.layers))
+  h.ok(panel_text(s):find('1 related branch outside this stack', 1, true), panel_text(s))
+  panel_key(s, '!')
+  h.ok(float_text():find('Shares commits with your stack', 1, true), float_text())
+  local msgs, restore = h.capture_notify()
+  float_key(s, 'a', 'p')
+  restore()
+  h.eq('a\n', h.git(d, 'config', 'branch.b.revueyParent'))
+  h.ok(msgs[1] and msgs[1].msg:find('stack parent of b set to a', 1, true), vim.inspect(msgs))
+  h.eq({ 'a', 'b', 'c' }, vim.tbl_map(function(l)
+    return l.name
+  end, s.review.stack.layers))
+  -- b isn't built on a's current tip, so now the parent setting is the (warning) note; c clears it
+  h.ok(float_text():find('Parent setting out of date', 1, true), float_text())
+  float_key(s, 'b', 'c')
+  h.eq('', (vim.system({ 'git', 'config', 'branch.b.revueyParent' }, { cwd = d }):wait().stdout))
+  h.eq({ 'b', 'c' }, vim.tbl_map(function(l)
+    return l.name
+  end, s.review.stack.layers))
+  float.close()
+end)
+
+h.test('config ignore patterns (stack.ignore_branches) apply', function()
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false, stack = { ignore_branches = { 'dave/bos-*' } } })
+  local d = h.old_branches_repo('stack-view-config-ignore')
+  local s = open(d)
+  h.eq({}, s.review.stack.notes)
+  h.eq(3, #s.review.stack.ignored)
+  h.ok(not panel_text(s):find('related branch', 1, true), panel_text(s))
+  h.ok(panel_text(s):find('! notes', 1, true), 'the float is still reachable')
+  panel_key(s, '!')
+  local text = float_text()
+  h.ok(text:find('Notes about 3 branches are hidden', 1, true) and text:find('dave/bos-*  from your config, hides 3', 1, true), text)
+  -- config patterns can only be removed in the config
+  local msgs, restore = h.capture_notify()
+  float_key(s, 'dave/bos-*', 'u')
+  vim.cmd('RevueyStackIgnore! dave/bos-*')
+  restore()
+  h.ok(msgs[1] and msgs[1].msg:find('does not apply', 1, true), vim.inspect(msgs))
+  h.ok(msgs[2] and msgs[2].msg:find('comes from your config', 1, true), vim.inspect(msgs))
+  float.close()
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
 end)
 
 h.test('parse_args', function()

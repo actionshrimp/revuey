@@ -1,0 +1,67 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  3 [Scratch]                                                                                      X
+02| Files                                  │ A b.txt +1 −0                                                   1/1 
+03| Stack: 3 layers on main                │  A     ▾ b.txt   +1 −0  added                                       
+04|    stack/a                   2c 2f ✓0/2│          @@ -0,0 +1 @@                                              
+05| ▶@ stack/b                   1c 1f ✓0/1│      1 + b                                                          
+06|    stack/c                   1c 1f ✓0/1│                                                                     
+07|    full stack                4c 4f ✓0/4│                                                                     
+08| ⚠ 3 related branches outside this stack│                                                                     
+09|                                        │                                                                     
+10| stack/b → stack/a                      │                                                                     
+11| 1 files  +╭───────────────────────────────────── Stack notes ──────────────────────────────────────╮         
+12| base 12242│⚠ Built on an outdated copy of your stack                                               │         
+13| layer 2/3 │  These branches contain older versions of commits that are now in your stack (they     │         
+14| working tr│  were amended or rebased since). They may be built on an outdated copy of your stack.  │         
+15|           │  Doesn't affect this review. If you no longer need them, delete or ignore them.        │         
+16|   A  b.txt│    dave/bos-3058-apply-credit-note  old copy of stack/a             x ignore  X pattern│         
+17|           │    dave/bos-3058-refund-flow  old copy of stack/a                   x ignore  X pattern│         
+18| <CR> show │    dave/bos-3061-cleanup  old copy of stack/a                       x ignore  X pattern│         
+19| ]c [c hunk│                                                                                        │         
+20| gd def  K │x ignore branch · X ignore pattern · <CR> choose · q close                              │         
+21| gu committ╰────────────────────────────────────────────────────────────────────────────────────────╯         
+22| gG AI guide                            │                                                                     
+23| ]s [s layer  gs full stack  ! notes    │                                                                     
+24|~                                       │                                                                     
+25|~                                       │                                                                     
+26|~                                       │                                                                     
+27|~                                       │                                                                     
+28|~                                       │                                                                     
+29|~                                       │                                                                     
+30|~                                       │                                                                     
+31|revuey://files [-]    14,1           All revuey://stack/b..stack/a [-]                      1,1            All
+32|                                                                                            5,5           All 
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|00000000000121111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|33333333333333333333333333333333333333334355666666555773333333333333333333333333333333333333333333333333333333
+03|222222222222222222222222888888888888888849999999999:::::;;;<<===<<<<<<<;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+04|8>?844444448888888888888888888@@@@@@@@@@4AAAAAAAAAABBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+05|8>?822222228888888888888888888@@@@@@@@@@4DDDDEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+06|8>?844444448888888888888888888@@@@@@@@@@4AAAAAAAAAA88888888888888888888888888888888888888888888888888888888888
+07|8>88@@@@@@@@@@8888888888888888@@@@@@@@@@4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+08|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+09|88888888888888888888888888888888888888884AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+10|22222222222222222288888888888888888888884AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+11|8888888888HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII2222222222222IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+12|@@@@@@@@@@@IJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+13|>>>>>>>>>>8IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+14|>>>>>>>>>>>IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+15|88888888888IKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKIIIIIIIIIAAAAAAAAA
+16|LMLMNLOOOOOILLLLPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPQQQQQQQQQQQQQQQQQQQQQLLLLLLLLLLLLLKKKKKKKKKKKKKKKKKKKIAAAAAAAAA
+17|88888888888IIIIIRRRRRRRRRRRRRRRRRRRRRRRRRKKKKKKKKKKKKKKKKKKKKKIIIIIIIIIIIIIIIIIIIKKKKKKKKKKKKKKKKKKKIAAAAAAAAA
+18|@@@@@@@@@@@IIIIIRRRRRRRRRRRRRRRRRRRRRKKKKKKKKKKKKKKKKKKKKKIIIIIIIIIIIIIIIIIIIIIIIKKKKKKKKKKKKKKKKKKKIAAAAAAAAA
+19|@@@@@@@@@@@IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+20|@@@@@@@@@@@IKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+21|@@@@@@@@@@@IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIAAAAAAAAA
+22|@@@@@@@@@@@@88888888888888888888888888884AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+23|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@88884AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+26|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+29|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+30|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+31|00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+32|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

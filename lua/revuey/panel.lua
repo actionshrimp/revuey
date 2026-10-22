@@ -133,24 +133,41 @@ local function render_stack(s, add, add_virt, width)
   local row = add(text, { { 1, 1 + (full_sel and #'▶' or 1), 'RevueyMode' }, { #text - #'full stack', #text, full_sel and 'RevueyPanelTitle' or 'Comment' } })
   s.panel_layers[row] = 'full'
   add_virt(row, stats_virt(stack.full_stats, full_sel and live or nil))
-  local notes = stack.notes or {}
-  local max_notes = 4
-  for k, n in ipairs(notes) do
-    if k > max_notes then
-      local more = ('   … %d more note%s'):format(#notes - max_notes, #notes - max_notes == 1 and '' or 's')
-      add(more, { { 0, #more, 'DiagnosticWarn' } })
-      break
+  M.render_notes(s, add, width)
+  add('')
+end
+
+---Key that opens the stack notes float (first one when several are mapped).
+function M.notes_key()
+  local k = require('revuey.config').options.keymaps.stack_notes
+  if type(k) == 'table' then
+    k = k[1]
+  end
+  return k or nil
+end
+
+---Stack notes as a few short summary lines grouped by kind (details: the notes float). Lines
+---wrap rather than being cut; warnings (the diff shown is affected) use RevueyStackWarn, the
+---rest RevueyStackNote. Returns the number of lines added.
+function M.render_notes(s, add, width)
+  local notes_mod = require('revuey.stack_notes')
+  local notes, ignored, ctx = notes_mod.of_review(s.review, M.notes_key())
+  local n = 0
+  for _, l in ipairs(notes_mod.summary(notes, ignored, ctx, 3)) do
+    local hl = l.level == 'warn' and 'RevueyStackWarn' or 'RevueyStackNote'
+    -- first line ' ⚠ text', continuation lines indented under the text
+    local first = wrap(l.glyph .. ' ' .. l.text, width, ' ')
+    local out = { first[1] }
+    if #first > 1 then
+      local rest = l.text:sub(#first[1] - #l.glyph - 1)
+      vim.list_extend(out, wrap(rest, width, '   '))
     end
-    local lines = wrap(n, width - 1, '   ')
-    for li, line in ipairs(lines) do
-      if li > 3 then
-        break -- very long notes stay short; names are capped already
-      end
-      line = M.truncate(line, width - 1)
-      add(line, { { 0, #line, 'DiagnosticWarn' } })
+    for _, line in ipairs(out) do
+      add(line, { { 0, #line, hl } })
+      n = n + 1
     end
   end
-  add('')
+  return n
 end
 
 ---@param s revuey.Session
@@ -176,15 +193,7 @@ function M.render(s)
   else
     s.panel_layers = nil
     -- suggestions for a lone branch (e.g. it may be built on an old version of another branch)
-    for _, n in ipairs(r.notes or {}) do
-      for li, line in ipairs(wrap(n, width - 1, ' ')) do
-        if li <= 4 then
-          line = M.truncate(line, width - 1)
-          add(line, { { 0, #line, 'DiagnosticWarn' } })
-        end
-      end
-    end
-    if r.notes and #r.notes > 0 then
+    if M.render_notes(s, add, width) > 0 then
       add('')
     end
   end
@@ -296,8 +305,12 @@ function M.render(s)
       ' gG AI guide',
     }
   end
+  local nk = M.notes_key()
+  local has_notes = nk and (#(r.stack and r.stack.notes or r.notes or {}) > 0 or #(r.stack and r.stack.ignored or r.notes_ignored or {}) > 0)
   if r.stack then
-    help[#help + 1] = ' ]s [s layer  gs full stack'
+    help[#help + 1] = ' ]s [s layer  gs full stack' .. (has_notes and ('  ' .. nk .. ' notes') or '')
+  elseif has_notes then
+    help[#help + 1] = ' ' .. nk .. ' branch notes'
   end
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })
@@ -320,6 +333,8 @@ function M.render(s)
   else
     M.set_current(s, s.current_file or 1)
   end
+  -- the notes float follows the review (after an action, a refresh, a branch moved elsewhere)
+  require('revuey.notes_float').update(s)
 end
 
 ---Highlight the guide section the cursor is in (and move the panel cursor to it).
