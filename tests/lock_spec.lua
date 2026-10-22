@@ -157,4 +157,75 @@ h.test('interactive: a busy lock fails fast; the deferred save runs once it is f
   lock.interactive = false
 end)
 
+-- Regression (re-review): a same-host lock naming a live (reused) pid was never broken.
+h.test('a same-host lock older than SAME_HOST_STALE_MS is broken whatever its pid', function()
+  local path = h.tmpdir('lock-reused') .. '/f.json'
+  write_lock(path, 1, host) -- pid 1 is always alive
+  local old = os.time() - 6 * 365 * 86400
+  vim.uv.fs_utime(path .. '.lock', old, old)
+  local t, ok, v = ms(function()
+    return lock.with(path, function()
+      return 'mine'
+    end)
+  end)
+  h.eq({ true, 'mine' }, { ok, v })
+  h.ok(t < 200, t)
+  -- a fresh one with a live pid is respected
+  write_lock(path, 1, host)
+  local saved = lock.TIMEOUT_MS
+  lock.TIMEOUT_MS = 100
+  h.eq(false, (pcall(lock.with, path, function() end)))
+  lock.TIMEOUT_MS = saved
+  os.remove(path .. '.lock')
+end)
+
+-- Regression (re-review): a save still pending when Neovim quits (lock held for the whole
+-- grace period) was dropped. It goes to a recovery file that the next load merges.
+h.test('a save still blocked at quit is written to a recovery file and merged on the next load', function()
+  local state = require('revuey.state')
+  local comments = require('revuey.comments')
+  local d = h.tmpdir('lock-recover')
+  local st = state.load(d, '/repo', 'b', 'main')
+  local store = comments.load(comments.path_for(st._path))
+  local events = comments.events_path_for(st._path)
+  write_lock(st._path, vim.uv.os_getpid(), host)
+  write_lock(store.path, vim.uv.os_getpid(), host)
+  write_lock(events, vim.uv.os_getpid(), host)
+  lock.interactive = true
+  state.set_unit(st, 'k1', 'a.txt', true)
+  state.save(st)
+  local c = comments.new({ path = 'a.txt', side = 'new', start_line = 1, end_line = 1 }, 'kept at quit')
+  comments.put(store, c)
+  comments.save(store)
+  comments.append_event(events, comments.event('created', c, {}))
+  h.eq(true, lock.pending(st._path) and lock.pending(store.path) and lock.pending(events))
+  local saved = lock.EXIT_WAIT_MS
+  lock.EXIT_WAIT_MS = 100
+  lock.flush_at_exit()
+  lock.EXIT_WAIT_MS = saved
+  lock.interactive = false
+  local base = st._path:gsub('%.json$', '')
+  h.eq(1, #vim.fn.glob(base .. '.pending-*.json', false, true), 'state recovery file')
+  h.eq(1, #vim.fn.glob(base .. '.comments.pending-*.json', false, true), 'comments recovery file')
+  h.eq(1, #vim.fn.glob(base .. '.events.pending-*.jsonl', false, true), 'events recovery file')
+  for _, p in ipairs({ st._path, store.path, events }) do
+    os.remove(p .. '.lock')
+  end
+  -- the next load merges them (and saves, and removes the files)
+  local st2 = state.load(d, '/repo', 'b', 'main')
+  h.ok(state.unit_marked(st2, 'k1'), 'mark recovered')
+  h.ok(state.unit_marked(state.load(d, '/repo', 'b', 'main'), 'k1'), 'and saved')
+  local store2 = comments.load(store.path)
+  h.eq('kept at quit', comments.get(store2, c.id).body)
+  h.eq('kept at quit', comments.get(comments.load(store.path), c.id).body)
+  comments.append_event(events, comments.event('updated', c, {}))
+  local fd = assert(io.open(events))
+  local evs = comments.decode_events(fd:read('*a'))
+  fd:close()
+  h.eq({ 'created', 'updated' }, vim.tbl_map(function(e)
+    return e.kind
+  end, evs), 'recovered events first, in order')
+  h.eq(0, #vim.fn.glob(base .. '*.pending-*', false, true), 'recovery files removed')
+end)
+
 h.run()

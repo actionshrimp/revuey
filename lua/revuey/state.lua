@@ -103,7 +103,7 @@ end
 function M.load(dir, repo, branch, base)
   local path = M.file_for(dir, repo, branch, base)
   local files, sections, units = read_files(path)
-  return {
+  local st = {
     version = M.VERSION,
     repo = repo,
     branch = branch,
@@ -116,6 +116,62 @@ function M.load(dir, repo, branch, base)
     _section_changes = {},
     _unit_changes = {},
   }
+  M.recover(st)
+  return st
+end
+
+---Merge recovery files (changes an instance could not save before it quit, lock.lua) into `st`
+---as pending changes, save, and remove them once saved.
+function M.recover(st)
+  local lock = require('revuey.lock')
+  local found = lock.recovery_files(st._path)
+  if #found == 0 then
+    return
+  end
+  for _, f in ipairs(found) do
+    local fd = io.open(f, 'r')
+    local ok, data = false, nil
+    if fd then
+      ok, data = pcall(vim.json.decode, fd:read('*a'), { luanil = { object = true, array = true } })
+      fd:close()
+    end
+    if ok and type(data) == 'table' then
+      for path, ch in pairs(type(data.changes) == 'table' and data.changes or {}) do
+        st._changes[path] = ch
+        if ch.entry then
+          st.files[path] = ch.entry
+        elseif st.files[path] and st.files[path].key == ch.key then
+          st.files[path] = nil
+        end
+      end
+      for k, e in pairs(type(data.unit_changes) == 'table' and data.unit_changes or {}) do
+        st._unit_changes[k] = e
+        st.units[k] = e or nil
+      end
+      for k, e in pairs(type(data.section_changes) == 'table' and data.section_changes or {}) do
+        st._section_changes[k] = e
+        st.sections[k] = e or nil
+      end
+    end
+  end
+  if pcall(M.save, st) and not lock.pending(st._path) then
+    for _, f in ipairs(found) do
+      os.remove(f)
+    end
+  end
+end
+
+local function recovery(st)
+  return function()
+    local function obj(t)
+      return next(t or {}) and t or vim.empty_dict()
+    end
+    require('revuey.lock').write_file(require('revuey.lock').recovery_path(st._path), vim.json.encode({
+      changes = obj(st._changes),
+      unit_changes = obj(st._unit_changes),
+      section_changes = obj(st._section_changes),
+    }))
+  end
 end
 
 ---Persist: re-read the file and apply only this instance's changes, so concurrent instances of
@@ -148,7 +204,7 @@ function M.save(st)
     if not ok then
       error(err, 0)
     end
-  end)
+  end, recovery(st))
 end
 
 function M._save_locked(st)
