@@ -240,9 +240,19 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   h.eq(s.layout.sections[1].start_row, closed, 'reviewed section folded')
   h.ok(table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n'):find('✓ 1 Core change', 1, true))
   h.ok(lines(s)[2]:find('1/2 reviewed', 1, true) or true)
-  -- file marks are separate (not coupled to section marks)
-  for _, f in ipairs(s.review.files) do
-    h.eq(false, require('revuey.review').is_reviewed(s.review, f))
+  -- marks are shared with the diff view: a file is reviewed when all of its hunks are, here
+  -- exactly the files whose hunks all sit in section 1
+  local in_sec = {}
+  for _, item in ipairs(sec.items) do
+    in_sec[item.hunk.hash] = true
+  end
+  local U = require('revuey.review').units(s.review)
+  for fi, f in ipairs(s.review.files) do
+    local all = true
+    for _, u in ipairs(U.by_file[fi]) do
+      all = all and in_sec[u.hunk] == true
+    end
+    h.eq(all, require('revuey.review').is_reviewed(s.review, f), f.path)
   end
   -- reopen: the guide and the section mark are loaded from disk
   s = open(fixture)
@@ -280,7 +290,9 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   idle(s)
   local res = s.guide.resolved
   h.eq(true, res.sections[1].outdated)
-  h.eq(false, gv.section_reviewed(s, res.sections[1]))
+  -- the hunks it still shows are unchanged, so still reviewed; the edited one is not
+  h.eq(true, gv.section_reviewed(s, res.sections[1]))
+  h.eq(false, gv.section_reviewed(s, res.sections[#res.sections]))
   h.eq('Not in guide', res.sections[#res.sections].title)
   h.ok(find(s, '▎ Warning: The diff changed since this guide was generated (1 section outdated, 1 new hunk).', 'prose'), text(s))
   h.ok(text(s):find('Press\n▎ gR to regenerate.', 1, true) or text(s):find('Press gR to regenerate.', 1, true))
