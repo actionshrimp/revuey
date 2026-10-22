@@ -36,6 +36,11 @@ is available.
 - `make test` runs everything; each spec runs in a fresh `nvim --headless --clean` so specs cannot leak state.
 - Specs must not depend on the developer's own Neovim config, parsers excepted: tests that need a tree-sitter parser
   or query skip clearly when it is unavailable rather than failing obscurely.
+- Specs never reach the developer's terminal multiplexer. `tests/helpers.lua` unsets `TMUX*`,
+  `HERDR_*`, `ZELLIJ*` and `CMUX_*`, points tmux at a private `TMUX_TMPDIR` and blocks
+  `herdr`/`zellij`/`cmux` on PATH; every tmux call in a spec uses its own `-L` socket, and
+  `skill/revuey/launch.sh` is only run against fake multiplexers. `guard_spec.lua` (run first)
+  enforces this. Manual runs follow the same rule: a private `tmux -L` server, never the live one.
 - Skip with `h.skip(reason)` inside a test, or `h.skip_spec(reason)` at the top of a spec to skip all of it. Both print
   `  skip <spec> :: <test> — <reason>` (`<test>` is `(all tests)` for a whole spec).
 

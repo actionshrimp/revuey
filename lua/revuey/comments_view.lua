@@ -382,12 +382,15 @@ local function thread_lines(s, c, p, width)
   return lines
 end
 
----Marker of a comment sent to an agent: {text, hl}, or nil when it was never sent.
+---Marker of a comment sent to an agent: {text, hl}, or nil when it was never sent. It follows the
+---message's delivery, not who is connected now: once a watch printed it, it stays "sent".
 function M.delivery_label(s, c)
   local d = comments.delivery(c)
-  if d == 'sent' then
+  if d == 'delivered' then
+    return { text = 'sent → agent', hl = 'RevueyCommentSent' }
+  elseif d == 'sent' then
     if require('revuey.agent_link').connected(s) then
-      return { text = 'sent → agent', hl = 'RevueyCommentSent' }
+      return { text = 'sending → agent', hl = 'RevueyCommentSent' }
     end
     return { text = 'queued: no agent connected', hl = 'RevueyCommentQueued' }
   elseif d == 'seen' then
@@ -566,9 +569,13 @@ local function save_and_emit(s, kind, cmt, extra, store, sent)
     comments.append_event(events, comments.event(kind, cmt, info or store.review, extra))
   end
   if sent then
-    -- the message for the agent: the comment as saved, with the review it belongs to
-    local id = s.link and s.link.id or tostring(vim.uv.os_getpid())
-    comments.append_event(events, comments.sent_event(sent, info or store.review, { session = id }))
+    -- the message for the agent: the comment as saved, with the review it belongs to. Only once
+    -- the comment is on disk (a save deferred by a busy lock lands later): `show`, `reply` and
+    -- catch-up read the comments file, so the event must never get there first.
+    local ev = comments.sent_event(sent, info or store.review)
+    require('revuey.lock').after(store.path, function()
+      comments.append_event(events, ev)
+    end)
   end
   if current then
     M.refresh(s)
@@ -864,6 +871,11 @@ end
 -- Sending to the coding-agent session
 -- ---------------------------------------------------------------------------
 
+---This review's session id (the registry's): messages are routed to its watchers.
+local function link_id(s)
+  return s.link and s.link.id or tostring(vim.uv.os_getpid())
+end
+
 local function notify_sent(s, c)
   local where = comments.location(c)
   if require('revuey.agent_link').connected(s) then
@@ -907,7 +919,7 @@ function M.send_to_agent(req)
         comments.put(store, copy)
       end
       local r = comments.reply(store, c.id, text, { kind = 'user' })
-      sent = comments.mark_sent(store, c.id, { reply_id = r.id })
+      sent = comments.mark_sent(store, c.id, { reply_id = r.id, session = link_id(s) })
       kind, extra = 'replied', { reply = r }
     else
       local copy = vim.deepcopy(cur)
@@ -918,13 +930,13 @@ function M.send_to_agent(req)
         copy.status = 'saved'
       end
       comments.put(store, copy)
-      sent = comments.mark_sent(store, c.id)
+      sent = comments.mark_sent(store, c.id, { session = link_id(s) })
       kind = was_draft and 'created' or (changed and 'updated' or nil)
     end
   else
     local new = comments.new(req.anchor, text, { status = 'saved' })
     comments.put(store, new)
-    sent = comments.mark_sent(store, new.id)
+    sent = comments.mark_sent(store, new.id, { session = link_id(s) })
     kind = 'created'
   end
   if save_and_emit(s, kind, sent, extra, store, sent) then
@@ -948,7 +960,7 @@ function M.send_existing(s)
       comments.put(store, copy)
       kind = 'created'
     end
-    local sent = comments.mark_sent(store, cmt.id)
+    local sent = comments.mark_sent(store, cmt.id, { session = link_id(s) })
     if save_and_emit(s, kind, sent, nil, store, sent) then
       notify_sent(s, sent)
     end

@@ -165,7 +165,29 @@ end
 -- ---------------------------------------------------------------------------
 
 local pending = {} ---@type table<string, {fn:fun(), delay:number, since:number, due:number, warned?:boolean}>
+local waiters = {} ---@type table<string, fun()[]> run once the pending save of their key landed
 local timer
+
+local function run_waiters(key)
+  local list = waiters[key]
+  waiters[key] = nil
+  for _, fn in ipairs(list or {}) do
+    local ok, err = pcall(fn)
+    if not ok then
+      vim.notify(tostring(err), vim.log.levels.ERROR)
+    end
+  end
+end
+
+---Run `fn` once the save of `key` is on disk: now when none is pending, else after the deferred
+---save lands (or, at exit, after its recovery file was written).
+function M.after(key, fn)
+  if not pending[key] then
+    return fn()
+  end
+  waiters[key] = waiters[key] or {}
+  table.insert(waiters[key], fn)
+end
 
 local function tick()
   local now = now_ms()
@@ -186,8 +208,11 @@ local function tick()
           again.warned = true
           vim.notify('revuey: ' .. vim.fs.basename(key) .. ' is still locked by another process; changes are kept and saved once it is free', vim.log.levels.INFO)
         end
-      elseif p.warned then
-        vim.notify('revuey: ' .. vim.fs.basename(key) .. ' saved', vim.log.levels.INFO)
+      else
+        if p.warned then
+          vim.notify('revuey: ' .. vim.fs.basename(key) .. ' saved', vim.log.levels.INFO)
+        end
+        run_waiters(key)
       end
     end
   end
@@ -237,6 +262,7 @@ function M.flush_at_exit()
         io.stderr:write(tostring(err) .. '\n')
       end
     end
+    run_waiters(k)
   end
   M.interactive, M.TIMEOUT_MS = saved_i, saved_t
 end

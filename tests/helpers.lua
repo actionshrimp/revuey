@@ -12,6 +12,33 @@ vim.env.GIT_AUTHOR_NAME, vim.env.GIT_AUTHOR_EMAIL = 'revuey', 'revuey@example.co
 vim.env.GIT_COMMITTER_NAME, vim.env.GIT_COMMITTER_EMAIL = 'revuey', 'revuey@example.com'
 vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
 
+-- Never reach the user's terminal multiplexers (their live tmux, herdr, zellij or cmux session):
+-- drop every variable that points at one, give tmux a private socket dir (so even a plain
+-- `tmux` talks to a server of the tests' own), and put blockers for the others first on PATH;
+-- a blocked call is logged to M.mux_blocked and fails with exit 97. tests/guard_spec.lua checks it.
+for name in pairs(vim.fn.environ()) do
+  if name:match('^HERDR_') or name:match('^TMUX') or name:match('^ZELLIJ') or name:match('^CMUX_') then
+    vim.env[name] = nil
+  end
+end
+-- short: a tmux socket path must fit in ~100 bytes
+M.mux_dir = '/tmp/revuey-mux-' .. vim.uv.os_getpid()
+vim.fn.delete(M.mux_dir, 'rf')
+vim.fn.mkdir(M.mux_dir .. '/bin', 'p')
+vim.env.TMUX_TMPDIR = M.mux_dir
+M.mux_blocked = M.mux_dir .. '/blocked.log'
+for _, tool in ipairs({ 'herdr', 'zellij', 'cmux' }) do
+  local p = M.mux_dir .. '/bin/' .. tool
+  vim.fn.writefile({
+    '#!/bin/sh',
+    ('echo "%s $*" >> %s'):format(tool, vim.fn.shellescape(M.mux_blocked)),
+    ('echo "%s is blocked in revuey tests" >&2'):format(tool),
+    'exit 97',
+  }, p)
+  vim.uv.fs_chmod(p, tonumber('755', 8))
+end
+vim.env.PATH = M.mux_dir .. '/bin:' .. vim.env.PATH
+
 ---Expose the user's installed tree-sitter *parsers* only (never their query overrides), via a temp
 ---runtime dir whose only entry is a `parser` symlink. Highlight queries come from Neovim's bundled
 ---runtime; tests must skip clearly when a language has none there.
@@ -222,6 +249,11 @@ function M.run()
   if ai then
     ai.kill_all()
   end
+  -- a private tmux server a spec started is gone with its socket dir
+  pcall(function()
+    vim.system({ 'tmux', 'kill-server' }):wait(2000)
+  end)
+  vim.fn.delete(M.mux_dir, 'rf')
   os.exit(failures == 0 and 0 or 1)
 end
 
