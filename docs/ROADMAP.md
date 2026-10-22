@@ -15,6 +15,8 @@ sequence; later items build on earlier ones.
 - Proxy LSP client so the user's own LSP mappings and pickers work in revuey buffers; clearer guide scope wording.
 - Guide overview diagram (structured graph rendered as box-drawing text, Mermaid export) and branch labels on hunks
   in full-stack guides.
+- Nested reviewed marks: review units (one per hunk for now), `mr` on hunks, files, sections and selections in both
+  views, shared state and partial progress (`◐ 2/5`).
 
 ## Next
 1. **Local comments and export.** Comments on a line or range in the diff or guide view, on either side,
@@ -45,6 +47,8 @@ sequence; later items build on earlier ones.
    sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
    (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
+   Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
+   units are cut.
 
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
