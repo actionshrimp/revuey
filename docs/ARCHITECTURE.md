@@ -33,8 +33,11 @@ are in `reports/Terminal code review tool landscape.md`.
    set filetype so the user's LSP config attaches), translate cursor position (subtract any prefix columns), and
    send `textDocument/definition` / `hover` via that buffer. Wait for the client to be ready before first request
    (TypeScript returns the import alias until the project has loaded): initialized, at least `lsp_settle_ms`
-   old, and no `$/progress` report begun and not ended (a cold server loading its project on a busy
-   machine), capped at 15s. Proven in a spike; see report notes.
+   old, and, during warm-up only (before the client's first finished `$/progress` report or first
+   answered request), no report begun in the last `progress_max_ms` (10s) and not ended: a cold server
+   loading its project on a busy machine. Later reports (a check on save) and reports that never end
+   don't delay requests; a client's progress state is dropped when it detaches from its last buffer.
+   The whole wait is capped at 15s. Proven in a spike; see report notes.
    `del` lines get no LSP.
    **Proxy client** (`lsp_proxy.lua`), so the user's own `vim.lsp.buf.*` mappings, `<C-]>` and
    pickers work in review buffers, which otherwise have no client ("not supported by any server").
@@ -136,7 +139,8 @@ are in `reports/Terminal code review tool landscape.md`.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
    **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
    text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,
-   `stale_parent`, `unknown_parent`, `cycle`, `newer_copy`: the stack may be built on an old version of
+   `squashed`: commits at the bottom left out because trunk has them as squash merges (`squash_skip`; folded
+   into the layer's `landed` note when the layer landed entirely), `stale_parent`, `unknown_parent`, `cycle`, `newer_copy`: the stack may be built on an old version of
    another branch, and `outside`: a branch sharing commits, perhaps a parent that moved on, whose commits
    are then in the layer's diff); all others are `info`. `resolve` makes the
    structural ones (also `fork`, `same_commit`, `parent_landed`), `mark_landed` adds `landed`, and
