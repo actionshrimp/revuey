@@ -16,7 +16,8 @@ are in `reports/Terminal code review tool landscape.md`.
   Useful flags for later: `--include-partial-messages --resume <id> --fork-session`; the guide's
   session id is stored with it for that.
 - TypeScript LSP: jump to definition and hover from inside diff/guide buffers.
-- Mark files and guide chunks as reviewed; state is keyed by content hashes so it invalidates when code changes.
+- Mark hunks, files and guide sections as reviewed, in either view; marks are kept per review unit and keyed by
+  content hashes, so they invalidate exactly where code changes.
 - Coding agents can launch it in a tmux pane via a `bin/revuey` shell wrapper and read results back as JSON.
 
 ## Core design decisions
@@ -109,7 +110,11 @@ are in `reports/Terminal code review tool landscape.md`.
    layer.
    **Marks:** layers above another layer add the old blob to the content key (`key_old`), so a parent change to
    the same file resets the mark. The bottom layer, full scope and plain reviews keep chunk 1's new-blob keys,
-   so they still share marks.
+   so they still share marks. Unit marks (decision 10) are per scope too, since they live in the scope's state
+   file; their keys carry no scope, so an identical hunk in a layer and in the full scope has the same key but
+   separate marks. Layer rows count fully reviewed files: other layers' stats come from `git diff --raw`
+   content keys without parsing patches, so only the file-level mark (stored whenever all of a file's units
+   are reviewed) is visible there, and "files" matches the row's `3f` column.
    Ambiguity (duplicate tips, forks, unknown or cyclic parents) becomes panel notes; nothing inferred is
    persisted (the child-branch trap is undetectable from the graph, so the user's explicit choice is the
    fix). Layer diffs use `merge-base(parent tip, layer tip)`, which also covers a trunk that moved on and a
@@ -119,7 +124,10 @@ are in `reports/Terminal code review tool landscape.md`.
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
 8. **State** lives as JSON under `stdpath('data')/revuey/`, keyed by repo + review target; a pure-Lua data layer with
-   no UI calls so it can be tested headless.
+   no UI calls so it can be tested headless. Format version 2: `files` (file marks by content key), `units` (unit
+   and parent hunk marks by key) and, read only, version 1's `sections` (guide section marks by identity). Saves
+   re-read the file and apply only this instance's changes (file marks per path and key, unit marks per key), then
+   write a temp file and rename it.
 
 9. **AI guide** (`guide.lua` pure model, `guide_prompt.lua` prompt + schema, `ai.lua` provider, `prose.lua`
    markdown, `diagram.lua` overview diagram, `attribution.lua` branch labels, `guide_view.lua` glue).
@@ -196,9 +204,11 @@ are in `reports/Terminal code review tool landscape.md`.
    - **Staleness** (`guide.resolve`): hunks are matched by hash. Sections render the hunks that still
      exist; sections that lost any are `outdated`; hunks the guide doesn't know go to "Not in guide";
      a banner offers regeneration. Nothing re-runs automatically.
-   - **Section reviewed state:** identity = hash of the sorted hashes of the hunks the section shows,
-     stored as `sections[id]` in the review's state JSON (merged per id on save, beside file marks).
-     Unchanged hunks keep the mark across regeneration; a changed hunk gives a new id (un-reviewed).
+   - **Section reviewed state** is derived: a section is reviewed when all units of the hunks it shows
+     are (decision 10), so marks are shared with the diff view and survive regeneration per hunk. The
+     section identity (hash of the sorted hashes of the hunks it shows) still keys the guide's
+     remembered section folds, and version 1 state files stored section marks under it: when a guide
+     resolves, a stored `sections[id]` matching a section marks that section's units and is dropped.
    - **Identical hunks** (the same edit twice in one review) get `@old_start,new_start` appended to their
      hash, so an identity never moves from one copy to another; the cost is that such hunks count as
      changed when lines above them shift. Unique hunks stay shift-invariant.
@@ -269,9 +279,49 @@ are in `reports/Terminal code review tool landscape.md`.
      keeps its own cursor/scroll/folds. Jobs live in `guide_view.jobs` by review key, so they outlive
      scope switches and even closing the review; a 100ms timer redraws the spinner via extmarks only.
 
+10. **Review units and nested marks** (`units.lua`, pure). A unit is the atomic reviewable piece;
+   today one diff hunk, later several per large hunk (the planned split at tree-sitter or blank-line
+   boundaries, `h7a`/`h7b`). Nothing outside `units.lua` assumes one unit = one hunk: marks, progress,
+   folding and the guide's hunk references go through it.
+   - **Keys.** `units.derive(files, {key_old, split})` reuses `guide.hunks`: a unit's key is the
+     guide hunk hash (path, `+`/`-`/space prefixes, text, CR and no-EOL flags; not line numbers;
+     identical hunks get `@old_start,new_start`), so guide hunk ids map 1:1 to unit keys. A piece of
+     a split hunk is keyed the same way by its own lines (`@` plus its first line numbers when
+     identical). Each unit records its parent hunk key, file index, path, line range and the file's
+     content key (`state.content_key`, with the old side for `key_old` layers).
+   - **Files without hunks** (binary, placeholders, pure renames, mode-only changes) get one
+     whole-file unit whose mark *is* the file mark, keyed by content key as before.
+   - **Coverage.** A unit is reviewed when its key, its parent hunk's key, or a file mark with the
+     file's current content key is set. Marking all pieces of a hunk also stores the hunk key, so a
+     different split later still counts the hunk as reviewed; marking all units of a file also
+     stores the file mark (for layer stats). Unmarking a unit removes its key, its parent's key and
+     the file mark, after spelling out the coverage of its siblings as unit marks. Toggling a group
+     (hunk, file, section, selection) marks all when any unit is unreviewed, else unmarks all.
+   - **Derived state.** A file is reviewed when all its units are; a section when all units of its
+     hunks are. Partial progress is shown as `◐ done/total` (units) on diff file headers, hunk
+     headers once split, the winbar, the panel's file rows and section list, and guide section
+     headings; complete ones show `✓ reviewed` / `☑`.
+   - **Migration.** Version 1 file marks keep counting for all units (the file-mark coverage rule);
+     when a review is rendered, a matching file mark without unit marks behind it is converted to
+     unit marks and saved, so a later edit of one hunk resets only that hunk. Version 1 section
+     marks are converted when the guide resolves (above). Nothing is lost if a conversion fails:
+     the old marks still count until the next successful save.
+   - **View (`view.lua`).** `mr` resolves a target from the cursor row: inside a hunk block (header,
+     note or line) its hunk's units; elsewhere a diff file or a guide section; visual `mr` collects
+     the units at the selected rows. After toggling, file and hunk headers, section headings and the
+     panel are updated in place; folds change in this view (files or sections that became complete
+     close, ones that stopped being complete open; hunks marked on their own collapse, unmarked ones
+     expand), the other view's remembered folds follow, and the cursor moves to the next unreviewed
+     hunk, file or section, or stays on the last one without reopening it. Hunk fold state is kept
+     per view by hunk key: `true` (the user's `<Tab>`), `'reviewed'` (collapsed because reviewed),
+     `false` (the user expanded it), nil (no choice: a reviewed hunk in a file or section that is not
+     complete starts collapsed). Unmarking a whole file or section only re-expands `'reviewed'`
+     hunks, so the user's own collapses stay. A refresh that makes a complete file incomplete (an
+     edit) re-opens its fold, with its still-reviewed hunks collapsed.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `stack.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `guide.lua`, `guide_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

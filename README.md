@@ -54,8 +54,9 @@ Files with uncommitted changes get a `●` in the panel, whose header shows the 
 to committed-only mode (`merge-base..HEAD`) and back. In working-tree mode the review refreshes
 itself when you write a file in the repo (debounced), when Neovim regains focus, and when you
 re-enter the diff window after files changed; cursor, scroll, folds and reviewed marks are kept.
-Reviewed marks are keyed by file content, so a mark made in either mode counts in the other when
-the content is the same (and survives `git add`), and editing a file clears its mark. Untracked
+Reviewed marks are keyed by content (each hunk by its lines), so a mark made in either mode counts
+in the other when the content is the same (and survives `git add`), and editing a hunk clears only
+that hunk's mark. Untracked
 symlinks show their link text like git; nested repositories and files or diffs over
 `max_file_bytes` (default 1 MB) are listed with a "not shown" placeholder and never read. Refreshes
 only re-read files whose size/mtime changed.
@@ -116,7 +117,8 @@ suggestion and nothing guessed is ever saved. If a stack looks wrong, fix it wit
 `:RevueyStackParent`. Long lists of branch names in notes are shortened ("a, b, c and 40 more").
 
 The file panel gets a stack section at the top: the layers from trunk up, each with commits,
-files changed and reviewed files (`2c 3f ✓1/3`), `@` on HEAD's branch and `▶` on the reviewed
+files changed and fully reviewed files (`2c 3f ✓1/3`; a file counts once every hunk of it is
+reviewed), `@` on HEAD's branch and `▶` on the reviewed
 scope, then a **full stack** row. Notes about duplicate tips, forks and ignored metadata follow.
 
 - **Layer scope** (default): parent tip to layer tip. Uncommitted work belongs to the HEAD layer
@@ -163,12 +165,15 @@ with light markdown styling.
   hunk's `path  @@ … @@` header it collapses / expands that hunk. `<S-Tab>` collapses the diagram
   and every section (or expands them all). A collapsed diagram stays collapsed across refreshes.
   Elsewhere `<Tab>` is `<C-i>` as in the diff.
-- `mr`: mark the section under the cursor reviewed. It folds, and the cursor moves to the next
-  section. The panel shows `✓` per section and "n/m reviewed".
-- Section marks are separate from file marks (both are shown: file marks appear on each hunk
-  header as "✓ file reviewed"). A section's identity is the set of its hunks' contents, so the
-  mark survives regenerating the guide when those hunks are unchanged, and resets when any of
-  them changes.
+- `mr` on a section heading (or its prose): mark every hunk of the section reviewed (or unmark
+  them all when they all are). It folds, and the cursor moves to the next section that is not
+  reviewed. On a hunk header or inside a hunk: that hunk only; it folds and the cursor moves to
+  the next unreviewed hunk. Visual `mr` marks every hunk the selection touches.
+- Marks are shared with the diff view: a hunk marked in the guide counts in the diff, and a file
+  marked in the diff ticks off its hunks in every section that shows them. A section is reviewed
+  when all of its hunks are: the heading shows `☑ … ✓ reviewed`, or `◐ 1/3` while partly reviewed,
+  and so does the panel's section list (`✓`, `◐`); the guide header counts fully reviewed
+  sections. Marks follow the hunks' content, so they survive regenerating the guide.
 
 **Overview diagram.** When the structure is worth seeing (several modules calling each other, a
 data flow, a new component wired into existing ones), the guide starts with a small diagram
@@ -267,7 +272,8 @@ the code could run commands. Only turn it off if your settings have no such allo
 ## Layout
 
 The review opens in a new tab:
-- **File panel (left):** status letter, `+/-` counts, and `✓` for reviewed files.
+- **File panel (left):** status letter, `+/-` counts, and `✓` for reviewed files (`◐` and
+  `2/5` hunks when partly reviewed).
 - **Diff (right):** one continuous buffer for all files.
 
 Every diff line is a real buffer line, and its text is exactly the source text. The `+`/`-` markers,
@@ -285,7 +291,7 @@ Diff buffer:
 | `<CR>` / `go` | Open the working-tree file at this line (in a split below) |
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
 | `K` | LSP hover |
-| `mr` | Toggle file reviewed (collapses the file and moves to the next one) |
+| `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches. A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
 | `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
 | `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
 
@@ -309,14 +315,21 @@ File panel:
 - Moving the cursor previews files in the diff.
 - `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `gG`, `gR`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - In the guide view the panel also lists the guide's sections: `<CR>` jumps to one, `mr` marks it reviewed.
+- `mr` on a file row marks the whole file, in either view.
 
 Reviewed marks are stored in `stdpath('data')/revuey/*.json`. Each review is keyed by repo root,
-branch (or stack layer) and base (or parent layer), and each file by its new blob hash, so a mark
-disappears when the branch changes that file.
+branch (or stack layer) and base (or parent layer). Each hunk is marked by a hash of its path and
+lines (not line numbers), so editing one hunk resets only that hunk, and a hunk moved by edits
+above it keeps its mark. A file whose hunks are all reviewed is also stored by its new blob hash.
+Files without hunks (binary files, "not shown" placeholders, pure renames, mode changes) are
+marked as a whole, by blob hash. State files from earlier versions keep working: a file mark
+still counts for all of the file's hunks (and is converted to hunk marks when the review opens),
+and a guide section mark becomes marks on that section's hunks.
 
 All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddText` and
 `RevueyDeleteText` (word diff), `RevueyFileHeader`, `RevueyHunkHeader`, `RevueyAddSign`,
 `RevueyDeleteSign`, `RevueyLineNr`, `RevueyAddLineNr`, `RevueyDeleteLineNr`, `RevueyReviewed`,
+`RevueyPartial` (partly reviewed, `◐`),
 the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
 `RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the diagram's `RevueyDiagramNew`,
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
@@ -341,7 +354,8 @@ Things to try:
   opens `src/math.ts` in the split below; `vim.lsp.buf.type_definition()` on `cart` in
   `src/index.ts` opens the `Cart` class; `vim.lsp.buf.references()` or a picker on `sum(`
   lists the real locations. On a `-` line you get "no LSP on a deleted line".
-- `mr` to mark a file reviewed.
+- `mr` inside a hunk of `src/math.ts`: the hunk folds, the file header shows `◐ 1/2`, and the
+  cursor moves to the next hunk. `mr` on a file header marks the whole file.
 - `<Tab>` on a file header or an `@@` hunk header to collapse it, `<Tab>` again to expand it;
   `<S-Tab>` collapses every file.
 - `q` to quit.
@@ -383,6 +397,7 @@ cd /tmp/revuey-guide
   while it runs. The guide appears after about 10 seconds.
 - `]]` / `[[` between sections, `]c` within them, `gd` on `sum(` or `K` on a call.
 - `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
+  `mr` on one hunk instead: the section shows `◐ 1/2`, and `gG` shows that file's progress in the diff.
 - `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
 - Edit `src/cart.ts` and save: the section with that hunk turns "outdated", the edited hunk
   appears under "Not in guide", and a banner offers `gR`.
@@ -397,7 +412,9 @@ cd /tmp/revuey-guide
 `make test` runs every spec in a fresh `nvim --headless --clean`, offline and without your config
 (see [docs/TESTING.md](docs/TESTING.md)):
 - **Unit:** diff parsing (renames, binary, type changes, CRLF, missing EOF newline), line layout,
-  state persistence/merging/invalidation, async syntax projection (bundled Lua parser), stack
+  state persistence/merging/invalidation, review units (keys, identical hunks, files without
+  hunks, derived file and section state, nested hunk/piece marks via a synthetic split, old state
+  files), async syntax projection (bundled Lua parser), stack
   resolution (ordering, forks, duplicate tips, Graphite metadata, overrides, trunk ahead, merged
   layers) plus `detect()` on real repos.
 - **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
@@ -406,7 +423,8 @@ cd /tmp/revuey-guide
   multibyte labels, the list fallback) and Mermaid text. Branch attribution on a 3-layer git
   stack (a hunk two layers touched, a pure deletion, a rename, uncommitted and untracked work).
 - **Integration:** real fixture repos opened headlessly (buffer text, extmarks, folds, keymaps,
-  lifecycle cleanup, empty reviews, stack layer switching/full scope/per-layer marks/working tree
+  lifecycle cleanup, empty reviews, `mr` on hunks, files, sections and selections in both views
+  with folding and cursor moves, an edit resetting one hunk, stack layer switching/full scope/per-layer marks/working tree
   on the HEAD layer only), plus LSP definition/hover when `typescript-language-server`
   is on PATH (skipped otherwise). The `revuey` proxy client: capabilities, a user-style
   `LspAttach` handler (keymaps, inlay hints), lifecycle (no leaked clients), deleted lines,
