@@ -81,24 +81,39 @@ h.test('registry: entries of dead processes are removed when listed; other hosts
 end)
 
 -- Review (ghost sessions): after a crash the pid may be reused, so a live pid is not enough.
-h.test('registry: an entry not refreshed for STALE_MS, or whose Neovim socket is gone, is dead', function()
+-- Re-review: but a review that is only quiet (suspended with Ctrl-Z, blocked) is not dead.
+h.test('registry: quiet reviews stay alive while their socket answers; ghosts are dead', function()
   local base = h.tmpdir('reg-ghost')
+  local function age(p)
+    local e = vim.json.decode(table.concat(vim.fn.readfile(p), '\n'))
+    e.updated_at = sessions.now_ms() - sessions.STALE_MS - 1000
+    vim.fn.writefile({ vim.json.encode(e) }, p)
+  end
+  -- quiet, and nothing to prove it is still the same Neovim (no socket path): dead
   local p = sessions.register({ base }, entry(me))
   h.eq(1, #sessions.list({ base }))
-  -- the UI stopped refreshing it (crashed; the pid now belongs to someone else)
-  local e = vim.json.decode(table.concat(vim.fn.readfile(p), '\n'))
-  e.updated_at = sessions.now_ms() - sessions.STALE_MS - 1000
-  vim.fn.writefile({ vim.json.encode(e) }, p)
+  age(p)
   h.eq({}, sessions.list({ base }))
   h.eq(nil, vim.uv.fs_stat(p), 'removed')
-  -- refreshed, but its RPC socket no longer exists
-  local sock = h.tmpdir('reg-ghost-sock') .. '/nvim.sock'
-  vim.fn.writefile({}, sock)
+  -- quiet but its RPC socket still accepts connections (suspended, blocked): alive
+  local dir = h.tmpdir('reg-quiet')
+  local sock = dir .. '/s'
+  local server = vim.uv.new_pipe(false)
+  assert(server:bind(sock))
+  assert(server:listen(16, function() end))
   p = sessions.register({ base }, entry(me, { server = sock }))
-  h.eq(1, #sessions.list({ base }))
-  os.remove(sock)
+  age(p)
+  h.eq(1, #sessions.list({ base }), 'a quiet review keeps its entry')
+  -- quiet, and the socket file is left behind but nobody listens (crashed, pid reused): dead
+  server:close()
+  vim.wait(50)
+  vim.fn.delete(sock)
+  vim.fn.writefile({}, sock)
   h.eq({}, sessions.list({ base }))
-  -- a server address that is not a path (tcp) is not checked
+  -- refreshed, but its socket is gone: dead
+  p = sessions.register({ base }, entry(me, { server = dir .. '/gone' }))
+  h.eq({}, sessions.list({ base }))
+  -- a server address that is not a path (tcp) is not checked while the entry is refreshed
   sessions.register({ base }, entry(me, { server = '127.0.0.1:6666' }))
   h.eq(1, #sessions.list({ base }))
 end)

@@ -14,8 +14,9 @@ write it as `cd <worktree> && REVUEY ...` (the Monitor tool, too, starts in its 
 ## 1. Connect
 
 - **The user already has revuey open** (they launched it, or you did earlier): run
-  `cd <worktree> && REVUEY sessions`. One session: go on. Several: ask which one and pass
-  `--session <id>` to `watch`. None: offer to launch it.
+  `cd <worktree> && REVUEY sessions`. One session: go on. Several: ask which one. Either way,
+  note its id: below, `--session <id>` means that id, passed to both `inbox` and `watch`, so
+  you only get that review's messages. None: offer to launch it.
 - **Launch it**: `<skill-directory>/launch.sh --in <target> <worktree> [-- <revuey args>]`,
   for example `-- --stack` for the whole local stack, or a base branch (`-- main`). `<target>`
   is `tmux` when `$TMUX` is set, `herdr` when `$HERDR_ENV` is `1`, otherwise `none`. It opens a
@@ -23,14 +24,13 @@ write it as `cd <worktree> && REVUEY ...` (the Monitor tool, too, starts in its 
   verify the pane; then use `none`. Exit 3 (`none`): show the user the printed command, wait
   for them, then run `REVUEY sessions`. Exit 4: a review is already running there; attach to
   it. Exit 5: revuey did not register; look at the pane or ask the user.
-- **Once, when you first connect**: `cd <worktree> && REVUEY inbox`. It lists messages nobody
-  answered yet, including ones shown to an agent that never handled them (marked "delivered,
-  not handled"). Handle those too.
+- **Once, when you first connect**: `cd <worktree> && REVUEY inbox --session <id>`. It lists
+  that review's messages nobody answered yet, including ones shown to an agent that never
+  handled them (marked "delivered, not handled"). Handle those too.
 
 ## 2. Watch
 
-Start the Monitor tool on `cd <worktree> && REVUEY watch --messages` (add `--session <id>` when
-needed) with `timeout_ms: 1800000` (the maximum) and a description like "revuey messages". When
+Start the Monitor tool on `cd <worktree> && REVUEY watch --messages --session <id>` with `timeout_ms: 1800000` (the maximum) and a description like "revuey messages". When
 it expires, start it again the same way; keep doing so until the user says the review is over.
 Each message is printed once: a restarted watch does not repeat what an earlier one printed.
 Each line:
@@ -43,7 +43,7 @@ revuey message <id> src/cart.ts:12-14 (new) [stack/cart]: <first line>  (REVUEY 
 `[...]` is the branch (stack layer) the user was reviewing, or `full stack`; `follow-up` marks
 a reply in an earlier thread.
 
-No Monitor tool (another harness): run `REVUEY inbox` when the user says they sent something,
+No Monitor tool (another harness): run `REVUEY inbox --session <id>` when the user says they sent something,
 or poll it every 30 seconds while they review.
 
 ## 3. Handle each message

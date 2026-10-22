@@ -61,17 +61,34 @@ local function real(p)
 end
 M.real = real
 
----Is a review session entry live: pid alive, refreshed lately, its Neovim socket there?
+---Does a Unix socket accept connections? (A stopped or busy Neovim's still does: the kernel
+---queues the connection.)
+local function socket_answers(path)
+  local ok, chan = pcall(vim.fn.sockconnect, 'pipe', path, { rpc = false })
+  if ok and type(chan) == 'number' and chan > 0 then
+    pcall(vim.fn.chanclose, chan)
+    return true
+  end
+  return false
+end
+
+---Is a review session entry live? Dead when its pid is gone, or its Neovim socket (a path) is
+---gone. A review that stopped refreshing `updated_at` (suspended with Ctrl-Z, blocked) is still
+---live while its socket accepts connections; quiet with no socket that answers, it is a crashed
+---review whose pid was reused, and dead.
 function M.session_alive(e, now)
   if not M.alive(e) then
     return false
   end
   now = now or M.now_ms()
-  if type(e.updated_at) ~= 'number' or now - e.updated_at > M.STALE_MS then
+  local here = not e.host or e.host == HOST
+  local sock = here and type(e.server) == 'string' and e.server:sub(1, 1) == '/' and e.server or nil
+  if sock and not vim.uv.fs_stat(sock) then
     return false
   end
-  if (not e.host or e.host == HOST) and type(e.server) == 'string' and e.server:sub(1, 1) == '/' and not vim.uv.fs_stat(e.server) then
-    return false
+  local quiet = type(e.updated_at) ~= 'number' or now - e.updated_at > M.STALE_MS
+  if quiet then
+    return sock ~= nil and socket_answers(sock)
   end
   return true
 end
