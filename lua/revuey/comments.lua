@@ -67,6 +67,9 @@ M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = tru
 ---@field deleted? boolean          tombstone
 ---@field sent_at? integer          last sent to an agent session (ms); see M.delivery
 ---@field sent_reply? string        the thread reply that was sent (a follow-up), else the body
+---@field sent_session? string      the review session (nvim pid) that sent it: watchers attached
+---                                 to another live session leave it alone
+---@field delivered_at? integer     a `watch` printed it to an agent (not printed again on catch-up)
 ---@field acked_at? integer         the agent acknowledged it (`bin/revuey ack`, or a reply)
 ---@field answered_at? integer      the agent replied (`bin/revuey reply`)
 
@@ -578,9 +581,9 @@ function M.merge(a, b, prefer_a)
   -- UI, and the newest send (with the reply it sent) wins
   if not lose.deleted then
     if (lose.sent_at or 0) > (out.sent_at or 0) then
-      out.sent_at, out.sent_reply = lose.sent_at, lose.sent_reply
+      out.sent_at, out.sent_reply, out.sent_session = lose.sent_at, lose.sent_reply, lose.sent_session
     end
-    for _, k in ipairs({ 'acked_at', 'answered_at' }) do
+    for _, k in ipairs({ 'delivered_at', 'acked_at', 'answered_at' }) do
       if (lose[k] or 0) > (out[k] or 0) then
         out[k] = lose[k]
       end
@@ -919,9 +922,10 @@ end
 -- A sent comment keeps `status` (saved, resolved, and later an AI review's dismissed/accepted)
 -- and its `in_review` flag: delivery is separate, as timestamps that only move forward (merge).
 
----Delivery state of a comment sent to an agent: nil (never sent), 'sent' (not acknowledged yet),
----'seen' (acknowledged without a reply) or 'answered' (an agent replied after the last send).
----@return nil|'sent'|'seen'|'answered'
+---Delivery state of a comment sent to an agent: nil (never sent), 'sent' (no agent has seen it
+---yet: queued), 'delivered' (a `watch` printed it; not acknowledged yet), 'seen' (acknowledged
+---without a reply) or 'answered' (an agent replied after the last send).
+---@return nil|'sent'|'delivered'|'seen'|'answered'
 function M.delivery(c)
   if not c or c.deleted or not c.sent_at then
     return nil
@@ -938,11 +942,15 @@ function M.delivery(c)
   if (c.acked_at or 0) >= sent then
     return 'seen'
   end
+  if (c.delivered_at or 0) >= sent then
+    return 'delivered'
+  end
   return 'sent'
 end
 
 ---Mark a comment sent (again). `opts.reply_id`: the thread reply being sent as a follow-up.
----@param opts? {now?:integer, reply_id?:string}
+---`opts.session`: the sending review session's id (routing between several reviews).
+---@param opts? {now?:integer, reply_id?:string, session?:string}
 ---@return revuey.Comment?
 function M.mark_sent(store, id, opts)
   opts = opts or {}
@@ -953,7 +961,7 @@ function M.mark_sent(store, id, opts)
   local now = opts.now or M.now_ms()
   local c = vim.deepcopy(cur)
   -- strictly after anything that would count as handling an earlier send
-  local after = math.max(c.sent_at or 0, c.acked_at or 0, c.answered_at or 0)
+  local after = math.max(c.sent_at or 0, c.delivered_at or 0, c.acked_at or 0, c.answered_at or 0)
   for _, r in ipairs(c.thread or {}) do
     if r.author and r.author.kind == 'agent' then
       after = math.max(after, r.created_at or 0)
@@ -961,6 +969,7 @@ function M.mark_sent(store, id, opts)
   end
   c.sent_at = math.max(now, after + 1)
   c.sent_reply = opts.reply_id
+  c.sent_session = opts.session
   return M.put(store, c, now)
 end
 
@@ -975,6 +984,11 @@ local function stamp(store, id, keys, now)
     c[k] = math.max(now, c.sent_at or 0)
   end
   return M.put(store, c, now)
+end
+
+---A `watch` printed the message to an agent: catch-up does not print it again.
+function M.mark_delivered(store, id, now)
+  return stamp(store, id, { 'delivered_at' }, now)
 end
 
 ---The agent acknowledged the comment (`bin/revuey ack`): it is not delivered again.
@@ -999,12 +1013,10 @@ function M.message_text(c)
   return c.body
 end
 
----Sent comments the agent has not acknowledged yet, oldest send first (watch's catch-up, inbox).
----@return revuey.Comment[]
-function M.unacked(store)
+local function by_delivery(store, states)
   local out = {}
   for _, c in pairs(store.comments) do
-    if not c.deleted and M.delivery(c) == 'sent' then
+    if not c.deleted and states[M.delivery(c) or ''] then
       out[#out + 1] = c
     end
   end
@@ -1017,6 +1029,18 @@ function M.unacked(store)
   return out
 end
 
+---Sent comments the agent has not acknowledged yet, delivered or not, oldest send first (inbox).
+---@return revuey.Comment[]
+function M.unacked(store)
+  return by_delivery(store, { sent = true, delivered = true })
+end
+
+---Sent comments no agent has been shown yet (watch's catch-up), oldest send first.
+---@return revuey.Comment[]
+function M.undelivered(store)
+  return by_delivery(store, { sent = true })
+end
+
 ---The `sent` event of a comment: the usual event (full anchor, snippet, body, review) plus the
 ---message (body or follow-up reply), its kind and sent_at. `extra`: session id etc.
 function M.sent_event(c, review, extra, now)
@@ -1024,6 +1048,7 @@ function M.sent_event(c, review, extra, now)
   ev.message = M.message_text(c)
   ev.message_kind = c.sent_reply and 'reply' or 'comment'
   ev.sent_at = c.sent_at
+  ev.session = c.sent_session
   for k, v in pairs(extra or {}) do
     ev[k] = v
   end

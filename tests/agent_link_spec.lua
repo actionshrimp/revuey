@@ -209,7 +209,11 @@ end)
 h.test('sessions: several are listed, and watch asks which one', function()
   local other = vim.system({ 'sleep', '120' })
   local base = sessions.bases(repo)[1]
-  sessions.register({ base }, { pid = other.pid, worktree = s.review.root, branch = 'feat', scope = { kind = 'branch' }, started_at = 1 })
+  local common = sessions.common_dir(repo)
+  sessions.register({ base }, { pid = other.pid, worktree = s.review.root, common_dir = common, branch = 'feat', scope = { kind = 'branch' }, started_at = 1 })
+  -- a review of another repo, registered in the shared state dir
+  local elsewhere = vim.system({ 'sleep', '120' })
+  sessions.register({ state_dir }, { pid = elsewhere.pid, worktree = '/some/other/repo', common_dir = '/some/other/repo/.git', branch = 'x', scope = { kind = 'branch' }, started_at = 1 })
   local r = run({ 'sessions' })
   h.ok(r.stdout:find(ME, 1, true) and r.stdout:find(tostring(other.pid), 1, true), r.stdout)
   h.eq(2, #vim.json.decode(run({ 'sessions', '--json' }).stdout))
@@ -222,9 +226,11 @@ h.test('sessions: several are listed, and watch asks which one', function()
   vim.fn.delete(wt, 'rf')
   h.git(repo, 'worktree', 'add', '-q', wt, '-b', 'other')
   h.eq('[]', vim.trim(run({ 'sessions', '--json' }, { cwd = wt }).stdout))
-  h.eq(2, #vim.json.decode(run({ 'sessions', '--json', '--all' }, { cwd = wt }).stdout))
+  h.eq(2, #vim.json.decode(run({ 'sessions', '--json', '--all' }, { cwd = wt }).stdout), 'not the other repo')
   other:kill('sigkill')
   other:wait()
+  elsewhere:kill('sigkill')
+  elsewhere:wait()
   h.eq(1, #vim.json.decode(run({ 'sessions', '--json' }).stdout), 'the dead one is cleaned up')
 end)
 
@@ -275,10 +281,20 @@ h.test('watch --messages started after a send gets the catch-up; the panel shows
   h.ok(live.err:find('session ' .. ME, 1, true), live.err)
   h.ok(vim.wait(10000, connected, 50), 'presence did not flip on')
   h.ok(header():find('● agent connected', 1, true), header())
-  h.ok(vlines(row_of('add', 20)):find('sent → agent', 1, true), vlines(row_of('add', 20)))
+  -- the watch recorded the delivery; the review picks it up
+  h.ok(vim.wait(5000, function()
+    return vlines(row_of('add', 20)):find('sent → agent', 1, true) ~= nil
+  end, 20), vlines(row_of('add', 20)))
   h.eq(true, vim.json.decode(run({ 'sessions', '--json' }).stdout)[1].agent_connected)
   -- the full event with --json
-  local j = watch({ '--messages', '--json' })
+  -- printed once: a watch started now (Monitor re-armed) does not print it again ...
+  local again = watch({ '--messages' })
+  vim.wait(1500)
+  h.eq('', again.out)
+  h.eq(0, stop(again).code)
+  h.eq('delivered', comments.delivery(comments.get(s.cm.store, c.id)))
+  -- ... unless asked to replay; --json gives the full event
+  local j = watch({ '--messages', '--json', '--replay' })
   h.ok(wait_out(j, '"kind":"sent"'), j.out)
   local ev = comments.decode_events(j.out)[1]
   h.eq(c.id, ev.comment_id)
@@ -373,7 +389,8 @@ h.test('ack stops re-delivery: a new watch and inbox only list what is left', fu
   h.ok(vim.wait(5000, function()
     return vlines(row_of('add', 30)):find('seen by agent', 1, true) ~= nil
   end, 20), vlines(row_of('add', 30)))
-  local w = watch({ '--messages' })
+  -- delivered and not handled: a new watch leaves it alone, --replay and inbox list it
+  local w = watch({ '--messages', '--replay' })
   h.ok(wait_out(w, 'revuey message ' .. left.id), w.out)
   vim.wait(500)
   h.eq(1, #vim.split(vim.trim(w.out), '\n'), w.out)
@@ -382,11 +399,18 @@ h.test('ack stops re-delivery: a new watch and inbox only list what is left', fu
   h.eq(0, i.code, i.stderr)
   h.eq(1, #vim.split(vim.trim(i.stdout), '\n'), i.stdout)
   h.ok(i.stdout:find('revuey message ' .. left.id, 1, true), i.stdout)
+  h.ok(i.stdout:find('(delivered, not handled)', 1, true), i.stdout)
   local ij = vim.json.decode(run({ 'inbox', '--json' }).stdout)
   h.eq(1, #ij)
   h.eq(left.id, ij[1].comment_id)
   h.eq('sent', ij[1].kind)
+  h.eq(true, ij[1].delivered)
   h.eq(1, run({ 'ack', 'nope' }).code)
+  -- a comment never sent has nothing to acknowledge
+  local plain = add(row_of('ctx', 19), 'just a note')
+  local r2 = run({ 'ack', plain.id })
+  h.eq(1, r2.code)
+  h.ok(r2.stderr:find('never sent', 1, true), r2.stderr)
 end)
 
 h.test('presence flips off when watch stops (SIGTERM, exit 0, watcher removed)', function()
@@ -398,6 +422,105 @@ h.test('presence flips off when watch stops (SIGTERM, exit 0, watcher removed)',
   h.ok(header():find('○ no agent', 1, true), header())
   local base = sessions.bases(repo)[1]
   h.eq({}, sessions.watchers({ base }))
+  -- markers follow delivery, not presence: a delivered message does not go back to "queued"
+  local row = row_of('ctx', 18)
+  h.ok(vlines(row):find('sent → agent', 1, true), vlines(row))
+  h.eq(nil, vlines(row):find('queued', 1, true), vlines(row))
+end)
+
+h.test('ids: an ambiguous short id lists the candidates', function()
+  local st = s.cm.store
+  for _, id in ipairs({ 'abcabc0000000001', 'abcabc0000000002' }) do
+    comments.put(st, comments.new({ path = 'm.txt', side = 'new', start_line = 2, end_line = 2 }, 'twin ' .. id, { id = id }))
+  end
+  comments.save(st)
+  local r = run({ 'show', 'abcabc' })
+  h.eq(1, r.code)
+  h.ok(r.stderr:find('ambiguous', 1, true), r.stderr)
+  h.ok(r.stderr:find('abcabc0000000001', 1, true) and r.stderr:find('abcabc0000000002', 1, true), r.stderr)
+  h.eq(0, run({ 'show', 'abcabc0000000002' }).code)
+end)
+
+-- Review: with two reviews of one worktree, a watcher of one printed the other's messages, so
+-- two agents acted on them.
+h.test('two sessions: each watcher gets its own review\'s messages; a gone review\'s go to anyone', function()
+  local other = vim.system({ 'sleep', '120' })
+  local B = tostring(other.pid)
+  local base = sessions.bases(repo)[1]
+  local reg = sessions.register({ base }, {
+    pid = other.pid,
+    worktree = s.review.root,
+    common_dir = sessions.common_dir(repo),
+    branch = 'feat',
+    scope = { kind = 'branch' },
+    state_dir = state_dir,
+    started_at = 1,
+  })
+  -- keep B alive in the registry while the test runs
+  local keep = vim.uv.new_timer()
+  keep:start(1000, 1000, vim.schedule_wrap(function()
+    sessions.register({ base }, { pid = other.pid, worktree = s.review.root, branch = 'feat', scope = { kind = 'branch' }, state_dir = state_dir, started_at = 1 })
+  end))
+  local function send_from_b(body, row)
+    local c = add(row, body)
+    local sent = comments.mark_sent(s.cm.store, c.id, { session = B })
+    comments.save(s.cm.store)
+    comments.append_event(s.cm.events, comments.sent_event(sent, cv.review_info(s)))
+    return sent
+  end
+  local wa = watch({ '--messages', '--session', ME })
+  local m1 = send_from_b('from B, one', row_of('ctx', 21))
+  vim.wait(2000)
+  h.eq(nil, wa.out:find(m1.id, 1, true), wa.out)
+  local wb = watch({ '--messages', '--session', B })
+  h.ok(wait_out(wb, 'revuey message ' .. m1.id), wb.out)
+  h.eq(0, stop(wb).code)
+  -- B's own message while B lives and nobody watches it: still not A's
+  local m2 = send_from_b('from B, two', row_of('ctx', 22))
+  vim.wait(2000)
+  h.eq(nil, wa.out:find(m2.id, 1, true), wa.out)
+  -- this review's messages do reach A
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of('ctx', 19), 0 })
+  keys('cs')
+  h.ok(wait_out(wa, 'revuey message ' .. by_body('just a note').id), wa.out)
+  -- B is gone (it crashed): its undelivered message is now anyone's; the delivered one is not repeated
+  keep:stop()
+  keep:close()
+  other:kill('sigkill')
+  other:wait()
+  h.ok(wait_out(wa, 'revuey message ' .. m2.id), wa.out)
+  h.eq(nil, wa.out:find(m1.id, 1, true), wa.out)
+  h.eq(0, stop(wa).code)
+  sessions.remove(reg)
+end)
+
+-- Review: a send whose comments save was deferred by a busy lock appended its event first, so
+-- `show` and `reply` could not find the comment yet.
+h.test('a sent event waits for the deferred comments save', function()
+  local c = add(row_of('ctx', 23), 'while locked')
+  local function sent_events()
+    local n = 0
+    for _, ev in ipairs(events()) do
+      if ev.kind == 'sent' and ev.comment_id == c.id then
+        n = n + 1
+      end
+    end
+    return n
+  end
+  local lockf = s.cm.path .. '.lock'
+  local fd = assert(io.open(lockf, 'w'))
+  fd:write(('%d %s %d\n'):format(vim.uv.os_getpid(), vim.uv.os_gethostname(), os.time()))
+  fd:close()
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of('ctx', 23), 0 })
+  keys('cs')
+  h.ok(require('revuey.lock').pending(s.cm.path), 'the save was deferred')
+  vim.wait(500)
+  h.eq(0, sent_events(), 'no event before the comment is on disk')
+  os.remove(lockf)
+  h.ok(vim.wait(10000, function()
+    return sent_events() == 1
+  end, 50), 'the event follows the save')
+  h.ok(comments.get(comments.load(s.cm.path), c.id).sent_at, 'on disk with sent_at')
 end)
 
 h.test('install-skill: symlinks the skill into $HOME/.claude/skills; asks before overwriting', function()
@@ -429,6 +552,23 @@ h.test('install-skill: symlinks the skill into $HOME/.claude/skills; asks before
   r = run({ 'install-skill' }, { env = vim.tbl_extend('force', env, { REVUEY_ASSUME_TTY = '1' }), cwd = home, stdin = 'n\n' })
   h.eq(1, r.code)
   h.eq(nil, vim.uv.fs_readlink(dest))
+  -- --force never deletes a directory: it is moved aside
+  vim.fn.writefile({ 'mine' }, dest .. '/NOTES.md')
+  r = run({ 'install-skill', '--force' }, { env = env, cwd = home })
+  h.eq(0, r.code, r.stderr)
+  h.eq(h.root .. '/skill/revuey', vim.uv.fs_readlink(dest))
+  local baks = vim.fn.glob(dest .. '.bak-*', false, true)
+  h.eq(1, #baks, vim.inspect(vim.fn.readdir(vim.fs.dirname(dest))) .. r.stderr)
+  h.ok(vim.uv.fs_stat(baks[1] .. '/NOTES.md'), 'the old directory is kept')
+  h.ok(r.stderr:find('moved the existing', 1, true), r.stderr)
+  -- the same checkout through a symlinked path is the same install; a worktree-looking path warns
+  local alias = h.tmpdir('link-alias') .. '/.claude/worktrees/x'
+  vim.fn.mkdir(vim.fs.dirname(alias), 'p')
+  vim.uv.fs_symlink(h.root, alias)
+  r = run({ 'install-skill' }, { env = vim.tbl_extend('force', env, { REVUEY_PLUGIN_DIR = alias }), cwd = home })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('already installed', 1, true), r.stdout)
+  h.ok(r.stderr:find('looks temporary', 1, true), r.stderr)
 end)
 
 h.test('switching stack layers updates the registry; closing the review removes it', function()
