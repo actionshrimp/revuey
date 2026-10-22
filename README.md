@@ -13,17 +13,18 @@ CLI) can reorganise the review into ordered, explained sections. Design notes:
 ```lua
 {
   dir = '~/dev/revuey/main',
-  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyGuide', 'RevueyGuideDiagram' },
+  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyStackIgnore', 'RevueyGuide', 'RevueyGuideDiagram' },
   opts = {
     -- default_branch = 'develop', -- default: origin/HEAD, else main, master, develop
     -- ai = { model = 'sonnet' }, -- AI guide; default: Claude Code's default model
+    -- stack = { ignore_branches = { 'dave/old-*' } }, -- hide notes about these branches
   },
 }
 ```
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
 (`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
-`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `keymaps`, `ai`).
+`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `ai`).
 
 Requirements:
 - `git`.
@@ -41,6 +42,7 @@ Requirements:
 | `:Revuey <base>` | Single-branch review against `base`, exactly as before (no stack detection). `:Revuey <base> --stack` uses `base` as the stack's trunk. |
 | `:Revuey ... --committed` | Committed changes only (`merge-base..HEAD`). |
 | `:RevueyStackParent [branch]` | Set the stack parent of the layer being reviewed (or of the current branch). `--clear` removes the override. No argument: pick from a list, which also offers "clear override". |
+| `:RevueyStackIgnore [pattern]` | Hide [stack notes](#stack-notes) about branches matching a glob (`*` matches anything, `/` included), in this repo. No argument: list the ignore list. `:RevueyStackIgnore! pattern` removes a pattern. |
 | `:RevueyGuide` | Switch between the diff and the [AI guide](#ai-guide) view. With no guide yet, offers to generate one. |
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
 | `:RevueyGuide cancel` | Stop a running generation. |
@@ -121,12 +123,12 @@ A stack is a chain of local branches, each based on the one below, for example
 
 The guess cannot tell a parent from a child branch cut part-way through it, so it is only a
 suggestion and nothing guessed is ever saved. If a stack looks wrong, fix it with
-`:RevueyStackParent`. Long lists of branch names in notes are shortened ("a, b, c and 40 more").
+`:RevueyStackParent`.
 
 The file panel gets a stack section at the top: the layers from trunk up, each with commits,
 files changed and fully reviewed files (`2c 3f ✓1/3`; a file counts once every hunk of it is
 reviewed), `@` on HEAD's branch and `▶` on the reviewed
-scope, then a **full stack** row. Notes about duplicate tips, forks and ignored metadata follow.
+scope, then a **full stack** row, then a few short [stack notes](#stack-notes).
 
 - **Layer scope** (default): parent tip to layer tip. Uncommitted work belongs to the HEAD layer
   only. Other layers are committed-only, and `gu` says so.
@@ -145,7 +147,54 @@ scope, then a **full stack** row. Notes about duplicate tips, forks and ignored 
   overrides are unchanged, and entering the diff window checks for branches moved elsewhere.
   Layer stats load in the background from `git diff --raw`.
 
-With a single branch and no stack, everything behaves exactly as before.
+With a single branch and no stack, everything behaves exactly as before (apart from the
+related-branch notes below).
+
+### Stack notes
+
+Detection reports what it noticed as notes. The panel shows at most three short lines, one per
+kind, for example:
+
+```
+ ⚠ stack/b not restacked on stack/a
+ ⚠ 3 related branches outside this stack (2 ignored)
+ ● stack/a looks landed in main
+```
+
+Notes that change the diff you see use the warning colour (`RevueyStackWarn`). The rest are
+dim (`RevueyStackNote`) and don't affect the review.
+
+| Note | Affects the diff? |
+|---|---|
+| Not restacked (a layer is still on its parent's old tip) | yes: the layer shows only its own commits |
+| Parent setting out of date (explicit parent that isn't an ancestor) | yes: compared with trunk instead |
+| Parent setting names a missing branch | yes: the parent is guessed instead |
+| Parent settings form a loop | yes: compared with trunk instead |
+| Built on an old version of another branch (that branch has a newer copy of one of your commits) | maybe: old commits of that branch can show up |
+| Related branches outside the stack: an outdated copy of your stack, another version of a stack commit, shares commits, side branch | no |
+| Looks landed, the stack stops at a fork, same commit as a layer, parent already merged | no |
+
+`!` in the panel or the diff opens a float with every note in full: what it means, why it
+matters (or that it doesn't affect this review), and the branches involved, grouped by kind.
+On a branch row:
+
+- `p` sets that branch as the parent of the layer it relates to (`:RevueyStackParent` for that
+  layer), where that makes sense.
+- `c` clears an out-of-date parent setting made with `:RevueyStackParent`.
+- `x` ignores the branch; `X` ignores a pattern, prefilled from the branch
+  (`dave/abc-1058-apply-price-check` suggests `dave/abc-1058-*`).
+- `u` on an ignored pattern stops ignoring it. `<CR>` lists the row's actions; `q` closes.
+
+The panel and the float refresh after each action.
+
+**Ignore list.** Patterns are globs: `*` matches any characters (including `/`), `?` one
+character. Each repo has its own list, kept in the state dir (`stack-ignore-*.json` next to the
+reviewed marks), so nothing is written to your repo. All worktrees of a repo share it. Patterns in
+`setup({ stack = { ignore_branches = { 'dave/old-*' } } })` apply everywhere and can only be
+removed in your config. Ignoring hides notes about branches outside the stack (related branches
+and other branches at a layer's commit). It never changes which branches are layers: an ignored
+branch that is a layer stays one, and notes about layers (not restacked, parent settings, forks,
+landed) are always shown. The summary line counts what is hidden, e.g. `(2 ignored)`.
 
 ## AI guide
 
@@ -311,6 +360,7 @@ Diff buffer:
 | `R` | Refresh (re-runs git; also automatic in working-tree mode) |
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
+| `!` | [Stack notes](#stack-notes) in full, with actions (also in the file panel) |
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
@@ -320,7 +370,7 @@ Diff buffer:
 File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
-- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `gG`, `gR`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - In the guide view the panel also lists the guide's sections: `<CR>` jumps to one, `mr` marks it reviewed.
 - `mr` on a file row marks the whole file, in either view.
 
@@ -344,7 +394,7 @@ All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddT
 the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
 `RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the diagram's `RevueyDiagramNew`,
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
-stack's `RevueyLayerLabel`, and others (see
+stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it
@@ -394,6 +444,25 @@ Things to try:
 - `:RevueyStackParent main` while on `stack/cart` drops `stack/math` from the stack; `:RevueyStackParent`
   and "clear override" restores it.
 
+### Stack notes
+
+Old branches left on an earlier version of a layer:
+
+```sh
+scripts/make-fixture.sh --stack /tmp/revuey-notes
+cd /tmp/revuey-notes
+git branch old/try-1 stack/math && git branch old/try-2 stack/math
+git checkout -q stack/math && echo '// tweak' >> src/math.ts && git commit -qa --amend --no-edit
+git rebase -q --onto stack/math stack/math@{1} stack/cart && git rebase -q --onto stack/cart stack/cart@{1} stack/ui
+git checkout -q stack/cart
+~/dev/revuey/main/bin/revuey
+```
+
+- The panel shows one dim line, `⚠ 2 related branches outside this stack`.
+- `!` opens the details. `x` on `old/try-1` hides it (the line now says `(1 ignored)`); `X` on
+  `old/try-2` offers `old/try-*`. `u` on a pattern brings the notes back. `:RevueyStackIgnore` lists
+  the patterns.
+
 ### The AI guide
 
 Needs `claude` on `PATH` and logged in (each guide is one `claude -p` run).
@@ -427,7 +496,9 @@ cd /tmp/revuey-guide
   hunks, derived file and section state, nested hunk/piece marks via a synthetic split, old state
   files), async syntax projection (bundled Lua parser), stack
   resolution (ordering, forks, duplicate tips, Graphite metadata, overrides, trunk ahead, merged
-  layers) plus `detect()` on real repos.
+  layers) plus `detect()` on real repos. Stack notes: classification, grouping, summary lines,
+  the details listing and actions, and the ignore list (glob matching, suggestions, persistence
+  and merging).
 - **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
   parser, validation and JSON repair, section identity, staleness, guide storage, markdown prose.
   The overview diagram: schema validation, golden layouts (chain, fan-out, fan-in, cycle,
@@ -436,7 +507,9 @@ cd /tmp/revuey-guide
 - **Integration:** real fixture repos opened headlessly (buffer text, extmarks, folds, keymaps,
   lifecycle cleanup, empty reviews, `mr` on hunks, files, sections and selections in both views
   with folding and cursor moves, an edit resetting one hunk, stack layer switching/full scope/per-layer marks/working tree
-  on the HEAD layer only), plus LSP definition/hover when `typescript-language-server`
+  on the HEAD layer only; stack notes: the summary line for old branches on a pre-amend
+  layer, the details float, ignoring a branch or pattern (persisted across reviews), set as parent
+  and clearing it from the float, config ignore patterns), plus LSP definition/hover when `typescript-language-server`
   is on PATH (skipped otherwise). The `revuey` proxy client: capabilities, a user-style
   `LspAttach` handler (keymaps, inlay hints), lifecycle (no leaked clients), deleted lines,
   filetypes without an LSP, encoding conversion and keeping the review in its window run without

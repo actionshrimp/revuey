@@ -46,6 +46,17 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command('RevueyStackIgnore', function(cmd)
+  require('revuey').stack_ignore(cmd.bang, cmd.args)
+end, {
+  nargs = '?',
+  bang = true,
+  desc = 'Hide stack notes about branches matching a glob (per repo); ! removes the pattern; no arg: list',
+  complete = function(arg)
+    return branches(arg)
+  end,
+})
+
 vim.api.nvim_create_user_command('RevueyGuide', function(cmd)
   require('revuey').guide(cmd.bang, cmd.args ~= '' and cmd.args or nil)
 end, {

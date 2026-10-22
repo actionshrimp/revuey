@@ -1621,6 +1621,9 @@ local function stack_keymaps(buf)
     M.next_layer(-1)
   end, 'previous stack layer')
   map(buf, k.toggle_stack, M.toggle_full, 'toggle full stack / layer scope')
+  map(buf, k.stack_notes, function()
+    require('revuey.notes_float').toggle(M.session)
+  end, 'stack notes: details and actions')
 end
 
 local function guide_keymaps(buf)
@@ -2200,6 +2203,7 @@ cleanup = function(s)
   if M.session == s then
     M.session = nil
   end
+  require('revuey.notes_float').update(s) -- closes it
   if s.augroup then
     pcall(api.nvim_del_augroup_by_id, s.augroup)
   end
@@ -2535,13 +2539,13 @@ local function stack_trunk(root, opts)
   end
 end
 
----@return revuey.Stack?, string[]? notes, string? from for a plain review when there is no stack
+---@return revuey.Stack?, revuey.StackNote[]? notes, string? from, table[]? ignored notes for a plain review when there is no stack
 local function detect_stack(root, opts, cache)
   local trunk = stack_trunk(root, opts)
   if not trunk then
     return nil
   end
-  return stack_mod.detect(root, trunk, cache)
+  return stack_mod.detect(root, trunk, cache, { state_dir = opts.state_dir })
 end
 
 ---BufEnter: refresh when branches/overrides changed elsewhere (another terminal, no focus event).
@@ -2551,7 +2555,7 @@ function M.check_refs(s)
   end
   git.async(function()
     local trunk = stack_trunk(s.review.root, s.opts)
-    local key = trunk and stack_mod.fingerprint(s.review.root, trunk)
+    local key = trunk and stack_mod.fingerprint(s.review.root, trunk, s.opts.state_dir)
     if M.session == s and key and s.stack_cache and key ~= s.stack_cache.key then
       M.refresh()
     end
@@ -2743,6 +2747,45 @@ function M.stack_parent(parent)
   if not branch then
     return vim.notify('revuey: no branch to set a stack parent for (detached HEAD or not in a repo?)', vim.log.levels.ERROR)
   end
+  if parent then
+    return M.set_stack_parent(branch, parent, root, trunk)
+  end
+  local out = git.git({ 'for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads' }, root) or ''
+  local items = {}
+  if trunk then
+    items[#items + 1] = { label = trunk .. '  (trunk)', value = trunk }
+  end
+  for b in out:gmatch('[^\n]+') do
+    if b ~= branch and b ~= trunk then
+      items[#items + 1] = { label = b, value = b }
+    end
+  end
+  items[#items + 1] = { label = '(clear override: detect automatically)', value = '' }
+  vim.ui.select(items, {
+    prompt = 'Stack parent of ' .. branch .. ':',
+    format_item = function(it)
+      return it.label
+    end,
+  }, function(choice)
+    if choice then
+      M.set_stack_parent(branch, choice.value, root, trunk)
+    end
+  end)
+end
+
+---Record (or with `parent = ''`/'--clear' remove) the explicit stack parent of `branch` (git config
+---`branch.<name>.revueyParent`), then refresh the review. Used by :RevueyStackParent and the
+---notes float. `root`/`trunk` default to the open review's (or the cwd's repo).
+function M.set_stack_parent(branch, parent, root, trunk)
+  local s = M.session
+  if not root then
+    root = s and s.review.root or git.root(vim.fn.getcwd())
+    local stack = s and s.review.stack
+    trunk = stack and stack.trunk or (root and (config.options.default_branch or git.default_branch(root)))
+  end
+  if not root then
+    return vim.notify('revuey: not in a git repository', vim.log.levels.ERROR)
+  end
   local key = 'branch.' .. branch .. '.revueyParent'
   local function apply(p)
     if p == '' or p == '--clear' then
@@ -2770,30 +2813,77 @@ function M.stack_parent(parent)
       M.refresh({ force = true })
     end
   end
-  if parent then
-    return apply(parent)
+  return apply(parent)
+end
+
+---Repo and state dir for the stack ignore list: the open review's, else the cwd's repo.
+local function ignore_target()
+  local s = M.session
+  local root = s and s.review.root or git.root(vim.fn.getcwd())
+  return root, s and s.opts.state_dir
+end
+
+---Add (or with `remove` drop) a branch glob in the repo's persisted ignore list for stack notes,
+---then refresh the review. Patterns from the config can only be removed there.
+function M.stack_ignore(pattern, remove)
+  local ign = require('revuey.stack_ignore')
+  local root, state_dir = ignore_target()
+  if not root then
+    return vim.notify('revuey: not in a git repository', vim.log.levels.ERROR)
   end
-  local out = git.git({ 'for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads' }, root) or ''
-  local items = {}
-  if trunk then
-    items[#items + 1] = { label = trunk .. '  (trunk)', value = trunk }
+  local entries, dir, repo = ign.for_root(root, state_dir)
+  if not repo then
+    return vim.notify('revuey: not in a git repository', vim.log.levels.ERROR)
   end
-  for b in out:gmatch('[^\n]+') do
-    if b ~= branch and b ~= trunk then
-      items[#items + 1] = { label = b, value = b }
+  local from_config, persisted = false, false
+  for _, e in ipairs(entries) do
+    if e.pattern == pattern then
+      from_config = from_config or e.source == 'config'
+      persisted = persisted or e.source == 'repo'
     end
   end
-  items[#items + 1] = { label = '(clear override: detect automatically)', value = '' }
-  vim.ui.select(items, {
-    prompt = 'Stack parent of ' .. branch .. ':',
-    format_item = function(it)
-      return it.label
-    end,
-  }, function(choice)
-    if choice then
-      apply(choice.value)
+  if remove then
+    if not persisted then
+      return vim.notify(
+        from_config and ('revuey: %s comes from your config (stack.ignore_branches); remove it there'):format(pattern)
+          or ('revuey: %s is not in the ignore list'):format(pattern),
+        vim.log.levels.WARN
+      )
     end
-  end)
+    ign.update(dir, repo, { remove = { pattern } })
+    vim.notify(('revuey: no longer ignoring %s'):format(pattern), vim.log.levels.INFO)
+  else
+    if from_config or persisted then
+      return vim.notify(('revuey: already ignoring %s'):format(pattern), vim.log.levels.INFO)
+    end
+    ign.update(dir, repo, { add = { pattern } })
+    vim.notify(('revuey: ignoring notes about branches matching %s'):format(pattern), vim.log.levels.INFO)
+  end
+  if M.session then
+    M.refresh({ force = true })
+  end
+end
+
+---`:RevueyStackIgnore [pattern]` adds a pattern, `:RevueyStackIgnore! pattern` removes one; with no
+---argument it lists the ignore list.
+function M.stack_ignore_command(bang, arg)
+  arg = arg and vim.trim(arg) or ''
+  if arg ~= '' then
+    return M.stack_ignore(arg, bang)
+  end
+  if bang then
+    return vim.notify('revuey: :RevueyStackIgnore! needs the pattern to remove', vim.log.levels.ERROR)
+  end
+  local root, state_dir = ignore_target()
+  local entries = root and require('revuey.stack_ignore').for_root(root, state_dir) or {}
+  if #entries == 0 then
+    return vim.notify('revuey: no ignored branches (add one with :RevueyStackIgnore <pattern>)', vim.log.levels.INFO)
+  end
+  local lines = { 'revuey: ignored branches (notes about related branches matching these are hidden):' }
+  for _, e in ipairs(entries) do
+    lines[#lines + 1] = ('  %s  (%s)'):format(e.pattern, e.source == 'config' and 'config' or 'this repo')
+  end
+  vim.notify(table.concat(lines, '\n'), vim.log.levels.INFO)
 end
 
 ---Open a review. opts: {cwd?, base?, scope?:'full', mode?, standalone?, on_ready?}
@@ -2803,11 +2893,11 @@ function M.open(opts)
   opts = opts or {}
   git.async(function()
     local cache, stack_cache = {}, {}
-    local stack, scope, root, notes, from
+    local stack, scope, root, notes, from, ignored
     if wants_stack(opts) then
       root = git.root(opts.cwd or vim.fn.getcwd())
       if root then
-        stack, notes, from = detect_stack(root, opts, stack_cache)
+        stack, notes, from, ignored = detect_stack(root, opts, stack_cache)
       end
       if stack then
         scope = opts.scope == 'full' and { kind = 'full' } or { kind = 'layer', index = stack.current }
@@ -2820,7 +2910,7 @@ function M.open(opts)
       return
     end
     review.stack, review.scope = stack, scope
-    review.notes = not stack and notes or nil
+    review.notes, review.notes_ignored = not stack and notes or nil, not stack and ignored or nil
     review.layer_labels, review.layer_labels_note = layer_labels(review, cache)
     local s = M.show(review, opts)
     s.load_cache = cache
@@ -2864,11 +2954,11 @@ function M.refresh(o)
   end
   git.async(function()
     local mode = s.target_mode
-    local old_stack, stack, scope, notes, from = s.review.stack, nil, nil, nil, nil
+    local old_stack, stack, scope, notes, from, ignored = s.review.stack, nil, nil, nil, nil, nil
     if wants_stack(s.opts) then
       -- cheap when refs are unchanged (fingerprint cache)
       s.stack_cache = s.stack_cache or {}
-      stack, notes, from = detect_stack(s.review.root, s.opts, s.stack_cache)
+      stack, notes, from, ignored = detect_stack(s.review.root, s.opts, s.stack_cache)
       scope = rescope(old_stack, stack, o.scope or s.scope)
       if old_stack and not stack then
         vim.notify('revuey: no stack detected any more; showing the plain branch review', vim.log.levels.WARN)
@@ -2894,7 +2984,7 @@ function M.refresh(o)
       return finish()
     end
     review.stack, review.scope = stack, scope
-    review.notes = not stack and notes or nil
+    review.notes, review.notes_ignored = not stack and notes or nil, not stack and ignored or nil
     review.layer_labels, review.layer_labels_note = layer_labels(review, s.load_cache)
     if M.session ~= s or s.cleaned then
       return finish()

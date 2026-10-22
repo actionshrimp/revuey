@@ -19,6 +19,8 @@
 -- can be fixed with an explicit parent (`:RevueyStackParent`); nothing inferred is ever persisted.
 local git = require('revuey.git')
 local state = require('revuey.state')
+local notes_mod = require('revuey.stack_notes')
+local ignore_mod = require('revuey.stack_ignore')
 
 local M = {}
 
@@ -50,7 +52,8 @@ local M = {}
 ---@field layers revuey.Layer[] bottom first
 ---@field current integer       layer to open at (e.g. HEAD's branch)
 ---@field forks {at:string, children:string[]}[]
----@field notes string[]
+---@field notes revuey.StackNote[]  shown notes (see stack_notes.lua)
+---@field ignored? {branch:string, kind:string, pattern:string}[] notes hidden by the ignore list
 ---@field state_repo? string    reviewed-state repo key (nil = repo root)
 
 ---Pick one of several names at the same commit, deterministically: `prefer` if present, else one
@@ -145,10 +148,12 @@ function M.resolve(input)
     end
   end
   local notes, noted = {}, {}
-  local function note(msg)
-    if not noted[msg] then
-      noted[msg] = true
-      notes[#notes + 1] = msg
+  local ctx = { stack = true, trunk = trunk }
+  local function note(kind, fields)
+    local id = table.concat({ kind, fields.branch or '', fields.layer or '', fields.parent or '' }, '\0')
+    if not noted[id] then
+      noted[id] = true
+      notes[#notes + 1] = notes_mod.new(kind, fields, ctx)
     end
   end
   local function status(sha)
@@ -220,7 +225,7 @@ function M.resolve(input)
           want(branches[p])
           return nil
         elseif st == 'merged' then
-          note(('%s (parent of %s) is already in %s'):format(p, name, trunk))
+          note('parent_landed', { branch = name, parent = p, source = ex.source })
           res = { parent = trunk, source = ex.source }
         elseif is_ancestor(branches[p], tip) then
           res = { parent = p, source = ex.source }
@@ -230,19 +235,12 @@ function M.resolve(input)
             res = { parent = p, source = ex.source, fork = fork, diverged = true }
           else
             -- not built on the parent at all (e.g. rebased onto trunk after the parent landed)
-            note(('%s (%s parent of %s) is not an ancestor of %s: showing %s against %s. Fix it, or :RevueyStackParent --clear'):format(
-              p,
-              ex.source,
-              name,
-              name,
-              name,
-              trunk
-            ))
+            note('stale_parent', { branch = name, parent = p, source = ex.source })
             res = { parent = p, source = ex.source, fork = input.trunk_rev, stale = true }
           end
         end
       else
-        note(('ignoring %s parent "%s" of %s: no such local branch'):format(ex.source, p, name))
+        note('unknown_parent', { branch = name, parent = p, source = ex.source })
       end
     end
     if not res then
@@ -303,7 +301,7 @@ function M.resolve(input)
       break
     end
     if seen[p.parent] then
-      note(('parent cycle at %s; treating %s as based on %s'):format(p.parent, name, trunk))
+      note('cycle', { branch = name, parent = p.parent, source = p.source })
       chain[1].info = { parent = trunk, source = p.source }
       break
     end
@@ -371,7 +369,7 @@ function M.resolve(input)
       end
       table.sort(kids)
       forks[#forks + 1] = { at = x, children = kids }
-      note(('%s has %d child branches (%s); the stack stops there'):format(x, #kids, M.list(kids)))
+      note('fork', { branch = x, branches = kids })
       break
     end
     local chosen = M.pick(by_tip[tips[1]], nil, explicit)
@@ -394,18 +392,11 @@ function M.resolve(input)
       end
     end
     table.sort(also)
-    if #also > 0 then
-      note(('%s also at %s; pick another with :RevueyStackParent'):format(M.list(also), l.name))
+    for _, n in ipairs(also) do
+      note('same_commit', { branch = n, layer = l.name })
     end
     if info.diverged then
-      note(('%s is not restacked on %s (%s moved): showing only %s\'s own commits, since %s\'s old tip %s'):format(
-        l.name,
-        info.parent,
-        info.parent,
-        l.name,
-        info.parent,
-        short(info.fork)
-      ))
+      note('not_restacked', { branch = l.name, parent = info.parent, at = short(info.fork) })
     end
     local parent_rev = info.fork or (info.parent == trunk and input.trunk_rev) or branches[info.parent]
     layers[i] = {
@@ -576,14 +567,18 @@ local function load_graph(root, input, tips)
   end
 end
 
----Cheap fingerprint of everything detection depends on (refs, overrides, HEAD, trunk).
-function M.fingerprint(root, trunk)
+---Cheap fingerprint of everything detection depends on (refs, overrides, HEAD, trunk, and the
+---ignore list for notes).
+---@param state_dir? string state dir of the ignore list (default: the configured one)
+function M.fingerprint(root, trunk, state_dir)
   local refs = git.git({ 'for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads', 'refs/branch-metadata' }, root) or ''
   local cfg = git.git({ 'config', '--get-regexp', [[^branch\..*\.revueyparent$]] }, root) or ''
   local head = git.rev_parse('HEAD', root) or ''
   local trunk_rev = git.rev_parse(trunk, root) or ''
   local current = git.current_branch(root) or ''
-  return table.concat({ head, current, trunk, trunk_rev, refs, cfg }, '\0'), refs, cfg, head, trunk_rev, current
+  local ignore = ignore_mod.patterns((ignore_mod.for_root(root, state_dir)))
+  local key = table.concat({ head, current, trunk, trunk_rev, refs, cfg, table.concat(ignore, '\n') }, '\0')
+  return key, refs, cfg, head, trunk_rev, current, ignore
 end
 
 local function refs_list(out)
@@ -757,7 +752,7 @@ end
 ---Where a branch diffed from trunk should start instead: after the commits at its bottom that
 ---trunk already has as squash merges (lower PRs merged, the branch not restacked). A branch that
 ---landed entirely keeps its last run, its own squash-merged PR, as its diff.
----@return {rev:string, skipped:integer, note:string}?
+---@return {rev:string, skipped:integer, note:revuey.StackNote}?
 function M.squash_skip(root, trunk, trunk_rev, name, tip)
   local runs = M.landed_runs(root, trunk_rev, tip)
   local last = runs[#runs]
@@ -774,12 +769,7 @@ function M.squash_skip(root, trunk, trunk_rev, name, tip)
   return {
     rev = top[#top],
     skipped = skipped,
-    note = ('%s skips %d commit%s already squash-merged into %s (not restacked?)'):format(
-      name,
-      skipped,
-      skipped == 1 and '' or 's',
-      trunk
-    ),
+    note = notes_mod.new('squashed', { branch = name, count = skipped, at = short(top[#top]) }, { stack = true, trunk = trunk }),
   }
 end
 
@@ -795,6 +785,28 @@ local function skip_squashed(root, stack)
     l.parent_rev, l.skipped, stack.base_rev = skip.rev, skip.skipped, skip.rev
     stack.notes[#stack.notes + 1] = skip.note
   end
+end
+
+---A layer that landed entirely gets one note: its `squashed` note (commits skipped below its own
+---squash-merged PR) folds into its `landed` note.
+local function merge_landed_squashed(stack)
+  local landed = {}
+  for _, n in ipairs(stack.notes) do
+    if n.kind == 'landed' then
+      landed[n.branch] = n
+    end
+  end
+  local kept = {}
+  for _, n in ipairs(stack.notes) do
+    local l = n.kind == 'squashed' and landed[n.branch]
+    if l then
+      l.count = n.count
+      l.text = notes_mod.KINDS.landed.one(l, { stack = true, trunk = stack.trunk })
+    else
+      kept[#kept + 1] = n
+    end
+  end
+  stack.notes = kept
 end
 
 ---Mark bottom layers whose changes are already in trunk (squash-merged): the layer's changed
@@ -815,17 +827,23 @@ local function mark_landed(root, stack)
       return
     end
     l.landed, l.dimmed = true, true
-    table.insert(stack.notes, 1, ('%s looks landed in %s (its changes are already there)'):format(l.name, stack.trunk))
+    table.insert(stack.notes, 1, notes_mod.new('landed', { branch = l.name }, { stack = true, trunk = stack.trunk }))
   end
 end
 
----Suggest-only notes about branches outside the stack (or outside the lone branch) that look like
----they should be in it but no reflog says so (e.g. a fresh clone):
----  * they share commits above trunk with HEAD's line (a parent that moved on, not restacked);
----  * they hold a rewritten copy of a commit on HEAD's line: same author, author date and changed
----    paths, different commit (a parent amended or rebased) - one `git log` over unmerged branches.
+---Suggest-only notes about related branches outside the stack (or outside the lone branch), for
+---when no reflog links them (e.g. a fresh clone, or old branches left on an earlier version):
+---  * branches holding another copy of a commit of the stack (same author, author date and changed
+---    paths, different commit: amended or rebased), from one `git log` over unmerged branches.
+---    The committer dates tell which copy is newer: a newer copy elsewhere means the stack may be
+---    built on an old version of that branch (`newer_copy`); an older one means that branch may be
+---    built on an outdated copy of the stack (`outdated_copy`); equal dates can't tell (`other_copy`);
+---  * other branches sharing commits above trunk with HEAD's line: built on a layer below HEAD
+---    (`side`), or not (`outside`: perhaps a parent that moved on without restacking).
+---Each note is about one branch; the ignore list is applied by the caller.
+---@return revuey.StackNote[]
 local function foreign_notes(root, input, stack, above_set, trunk_names)
-  local notes = {}
+  local ctx = { stack = stack ~= nil, trunk = input.trunk }
   local in_stack = { [input.current] = true }
   for _, l in ipairs(stack and stack.layers or {}) do
     in_stack[l.name] = true
@@ -846,75 +864,121 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
   local function outside(b)
     return b and not in_stack[b] and not above_set[b] and not trunk_names[b] and input.branches[b] ~= nil
   end
-  local what = stack and 'this stack' or 'this branch'
-  -- commits on HEAD's line above trunk
-  local mine, queue = { [input.head] = true }, { input.head }
-  local root_commit = input.head
-  while #queue > 0 do
-    local c = table.remove(queue)
-    local ps = { input.graph[c] }
-    vim.list_extend(ps, input.merges[c] or {})
-    for _, p in ipairs(ps) do
-      if p and p ~= '' and input.graph[p] ~= nil and not mine[p] then
-        mine[p] = true
-        queue[#queue + 1] = p
+  -- commits of the stack (every layer; HEAD's line for a lone branch) above trunk, and the lowest
+  -- layer each belongs to
+  local layers = stack and stack.layers or { { name = input.current, tip = input.head } }
+  local owner = {} ---@type table<string, integer>
+  for i, l in ipairs(layers) do
+    local queue = { l.tip }
+    if input.graph[l.tip] ~= nil and not owner[l.tip] then
+      owner[l.tip] = i
+    end
+    while #queue > 0 do
+      local c = table.remove(queue)
+      local ps = { input.graph[c] }
+      vim.list_extend(ps, input.merges[c] or {})
+      for _, p in ipairs(ps) do
+        if p and p ~= '' and input.graph[p] ~= nil and not owner[p] then
+          owner[p] = i
+          queue[#queue + 1] = p
+        end
       end
     end
   end
+  local root_commit = input.head
   while input.graph[root_commit] and input.graph[root_commit] ~= '' do
     root_commit = input.graph[root_commit]
   end
-  local sharing = {}
-  for _, b in ipairs(refs_list(git.git({ 'for-each-ref', '--contains', root_commit, '--format=%(refname)', 'refs/heads' }, root))) do
-    if outside(b) then
-      sharing[#sharing + 1] = b
-    end
+  local function layer_name(i)
+    return layers[i or 1] and layers[i or 1].name or input.current
   end
-  table.sort(sharing)
-  if #sharing > 0 then
-    notes[#notes + 1] = ('%s share%s commits with %s but %s not in it (not restacked?); set a parent with :RevueyStackParent'):format(
-      M.list(sharing),
-      #sharing == 1 and 's' or '',
-      what,
-      #sharing == 1 and 'is' or 'are'
-    )
-  end
+
+  -- other copies of the stack's commits
   local out = git.git({
     'log', '--no-merges', '--branches', '--not', input.trunk_rev, '--source', '--max-count=2000',
-    '--format=%x00%H%x09%S%x09%ae%x09%at', '--name-only',
+    '--format=%x00%H%x09%S%x09%ae%x09%at%x09%ct', '--name-only',
   }, root) or ''
   local mine_keys, others = {}, {}
   for rec in out:gmatch('%z([^%z]*)') do
     local header, rest = rec:match('^([^\n]*)\n?(.*)$')
-    local sha, src, ae, at = (header or ''):match('^(%x+)\t(%S+)\t([^\t]*)\t(%d+)')
+    local sha, src, ae, at, ct = (header or ''):match('^(%x+)\t(%S+)\t([^\t]*)\t(%d+)\t(%d+)')
     if sha then
       local files = vim.split(rest or '', '\n', { trimempty = true })
       table.sort(files)
       if #files > 0 then
         local k = ae .. '\0' .. at .. '\0' .. table.concat(files, '\0')
-        if mine[sha] then
-          mine_keys[k] = sha
+        if owner[sha] then
+          mine_keys[k] = { sha = sha, ct = tonumber(ct) }
         else
-          others[#others + 1] = { sha = sha, key = k, branch = (src:gsub('^refs/heads/', '')) }
+          others[#others + 1] = { sha = sha, key = k, ct = tonumber(ct), branch = (src:gsub('^refs/heads/', '')) }
         end
       end
     end
   end
-  local rewritten, seen = {}, {}
-  for _, o in ipairs(others) do
-    if mine_keys[o.key] and mine_keys[o.key] ~= o.sha and outside(o.branch) and not seen[o.branch] then
-      seen[o.branch] = true
-      rewritten[#rewritten + 1] = o.branch
+  local rank = { newer_copy = 3, outdated_copy = 2, other_copy = 1 }
+  local rel = {} ---@type table<string, {kind:string, layer:integer}>
+  local function relate(b, kind, layer)
+    local r = rel[b]
+    if not r or rank[kind] > rank[r.kind] then
+      rel[b] = { kind = kind, layer = layer }
+    elseif kind == r.kind and layer > r.layer then
+      r.layer = layer
     end
   end
-  table.sort(rewritten)
-  for _, b in ipairs(rewritten) do
-    notes[#notes + 1] = ('%s has a rewritten copy of a commit on %s (amended or rebased?): %s may be built on an old version of %s; set a parent with :RevueyStackParent'):format(
-      b,
-      input.current,
-      input.current,
-      b
-    )
+  local queried = 0
+  for _, o in ipairs(others) do
+    local m = mine_keys[o.key]
+    if m and m.sha ~= o.sha then
+      local kind = o.ct > m.ct and 'newer_copy' or (o.ct < m.ct and 'outdated_copy' or 'other_copy')
+      local holders = { o.branch }
+      -- `--source` names one branch per commit; ask for every branch holding it (capped)
+      if queried < 30 then
+        queried = queried + 1
+        holders = refs_list(git.git({ 'for-each-ref', '--contains', o.sha, '--format=%(refname)', 'refs/heads' }, root))
+      end
+      for _, b in ipairs(holders) do
+        if outside(b) then
+          relate(b, kind, owner[m.sha])
+        end
+      end
+    end
+  end
+
+  -- branches sharing the stack's commits
+  local sharing = {}
+  for _, b in ipairs(refs_list(git.git({ 'for-each-ref', '--contains', root_commit, '--format=%(refname)', 'refs/heads' }, root))) do
+    if outside(b) and not rel[b] then
+      sharing[#sharing + 1] = b
+    end
+  end
+  table.sort(sharing)
+  if #sharing > 0 then
+    local left = {}
+    for _, b in ipairs(sharing) do
+      left[b] = true
+    end
+    -- built on a layer below HEAD (branches containing HEAD are above it, not here)
+    for i = (stack and stack.current or 1) - 1, 1, -1 do
+      if not next(left) then
+        break
+      end
+      for _, b in ipairs(refs_list(git.git({ 'for-each-ref', '--contains', layers[i].tip, '--format=%(refname)', 'refs/heads' }, root))) do
+        if left[b] then
+          left[b] = nil
+          rel[b] = { kind = 'side', layer = i }
+        end
+      end
+    end
+    for b in pairs(left) do
+      rel[b] = { kind = 'outside', layer = owner[root_commit] or 1 }
+    end
+  end
+
+  local names = vim.tbl_keys(rel)
+  table.sort(names)
+  local notes = {}
+  for _, b in ipairs(names) do
+    notes[#notes + 1] = notes_mod.new(rel[b].kind, { branch = b, layer = layer_name(rel[b].layer) }, ctx)
   end
   return notes
 end
@@ -923,17 +987,21 @@ end
 ---HEAD, nothing committed above trunk).
 ---@param root string
 ---@param trunk string
+---Notes about related branches matching the ignore list (config `stack.ignore_branches` plus the
+---repo's persisted list) are moved to `stack.ignored`; detection itself ignores the list.
 ---@param cache? table reused across refreshes: unchanged refs skip detection entirely
+---@param opts? {state_dir?:string}
 ---@return revuey.Stack?
----@return string[]? notes when there is no stack: suggestions for the plain review
+---@return revuey.StackNote[]? notes when there is no stack: suggestions for the plain review
 ---@return string? from when there is no stack: where the plain review's diff starts, when the
 ---branch's bottom commits are already squash-merged into trunk
-function M.detect(root, trunk, cache)
-  local key, refs, cfg, head, trunk_rev, current = M.fingerprint(root, trunk)
+---@return table[]? ignored notes hidden by the ignore list when there is no stack
+function M.detect(root, trunk, cache, opts)
+  local key, refs, cfg, head, trunk_rev, current, ignore = M.fingerprint(root, trunk, opts and opts.state_dir)
   if cache and cache.key == key then
-    return cache.stack, cache.notes, cache.from
+    return cache.stack, cache.notes, cache.from, cache.ignored
   end
-  local stack, notes, from
+  local stack, notes, from, ignored
   if head ~= '' and trunk_rev ~= '' and current ~= '' then
     local remotes = git.remotes(root)
     local function normalize(n)
@@ -1071,19 +1139,23 @@ function M.detect(root, trunk, cache)
       vim.list_extend(stack.notes, extra)
       skip_squashed(root, stack)
       mark_landed(root, stack)
+      merge_landed_squashed(stack)
+      stack.notes, stack.ignored = notes_mod.filter(stack.notes, ignore)
     else
       local skip = input.graph[head] ~= nil and M.squash_skip(root, trunk, trunk_rev, current, head)
       if skip then
         extra[#extra + 1] = skip.note
         from = skip.rev
       end
-      notes = #extra > 0 and extra or nil
+      if #extra > 0 then
+        notes, ignored = notes_mod.filter(extra, ignore)
+      end
     end
   end
   if cache then
-    cache.key, cache.stack, cache.notes, cache.from = key, stack, notes, from
+    cache.key, cache.stack, cache.notes, cache.from, cache.ignored = key, stack, notes, from, ignored
   end
-  return stack, notes, from
+  return stack, notes, from, ignored
 end
 
 return M

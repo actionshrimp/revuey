@@ -93,6 +93,43 @@ function M.repo(name, base, changes)
   return d
 end
 
+---The stack-notes case from a real repo: old local branches built on an earlier version of the
+---stack's bottom layer, which was amended since.
+---  main ── a1 ── a2' (stack/a) ── b1 (stack/b, checked out) ── c1 (stack/c)
+---              └─ a2 (pre-amend) ── one commit each on dave/abc-1058-apply-price-check,
+---                                   dave/abc-1058-report-flow, dave/abc-1061-cleanup
+---Dates are fixed (the amend one day later), so hashes are reproducible.
+function M.old_branches_repo(name)
+  local d = M.tmpdir(name)
+  local saved = { vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE }
+  vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+  local function commit(file, text)
+    M.write(d, file, text)
+    M.git(d, 'add', '-A')
+    M.git(d, 'commit', '-q', '-m', file)
+  end
+  M.git(d, 'init', '-q', '-b', 'main')
+  commit('base.txt', 'base\n')
+  M.git(d, 'checkout', '-q', '-b', 'stack/a')
+  commit('a1.txt', 'a1\n')
+  commit('a2.txt', 'a2\n')
+  for _, b in ipairs({ 'dave/abc-1058-apply-price-check', 'dave/abc-1058-report-flow', 'dave/abc-1061-cleanup' }) do
+    M.git(d, 'checkout', '-q', '-b', b, 'stack/a')
+    commit(b:gsub('[^%w]', '_') .. '.txt', b .. '\n')
+  end
+  M.git(d, 'checkout', '-q', 'stack/a')
+  vim.env.GIT_COMMITTER_DATE = '2026-01-02T00:00:00Z'
+  M.write(d, 'a2.txt', 'a2 amended\n')
+  M.git(d, 'commit', '-q', '-a', '--amend', '--no-edit')
+  M.git(d, 'checkout', '-q', '-b', 'stack/b')
+  commit('b.txt', 'b\n')
+  M.git(d, 'checkout', '-q', '-b', 'stack/c')
+  commit('c.txt', 'c\n')
+  M.git(d, 'checkout', '-q', 'stack/b')
+  vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = saved[1], saved[2]
+  return d
+end
+
 ---Open a review and wait until it is shown. Returns the session.
 function M.open_review(opts)
   local session

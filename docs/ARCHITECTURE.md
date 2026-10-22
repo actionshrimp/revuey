@@ -101,7 +101,7 @@ are in `reports/Terminal code review tool landscape.md`.
    which shows only the child's own commits, with a "not restacked" note. A parent whose tip *is* an ancestor
    (merged into the child rather than rebased) is a normal parent; ancestry follows merge parents inside the
    loaded graph. Upward candidates include branches containing old tips of stack branches. Without reflogs,
-   branches sharing the stack's root commit but not in the stack get a suggest-only note.
+   related branches outside the stack get suggest-only notes (see **Notes** below).
    **Explicit parents that aren't ancestors** use an old tip of the parent if there is one, or else trunk
    (`stale`), with a note. Every layer target carries `floor = trunk`, so `review.merge_base_for` never diffs
    below `merge-base(trunk, tip)`.
@@ -124,7 +124,7 @@ are in `reports/Terminal code review tool landscape.md`.
    separate marks. Layer rows count fully reviewed files: other layers' stats come from `git diff --raw`
    content keys without parsing patches, so only the file-level mark (stored whenever all of a file's units
    are reviewed) is visible there, and "files" matches the row's `3f` column.
-   Ambiguity (duplicate tips, forks, unknown or cyclic parents) becomes panel notes; nothing inferred is
+   Ambiguity (duplicate tips, forks, unknown or cyclic parents) becomes notes; nothing inferred is
    persisted (the child-branch trap is undetectable from the graph, so the user's explicit choice is the
    fix). Layer diffs use `merge-base(parent tip, layer tip)`, which also covers a trunk that moved on and a
    stack that was never rebased. Only the HEAD layer (and the full scope when HEAD is the top) can include the
@@ -132,6 +132,27 @@ are in `reports/Terminal code review tool landscape.md`.
    parent), so the bottom layer and full scope share files with the plain single-branch review of the same
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
+   **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
+   text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,
+   `stale_parent`, `unknown_parent`, `cycle`, and `newer_copy`: another branch has a newer copy of one of the
+   stack's commits, so old commits of it may be in the diff); all others are `info`. `resolve` makes the
+   structural ones (also `fork`, `same_commit`, `parent_landed`), `mark_landed` adds `landed`, and
+   `foreign_notes` the related-branch ones from one `git log --branches --not trunk` (same author, author
+   date and changed paths, different commit = another copy). The committer dates of the two copies tell
+   the direction: older elsewhere = `outdated_copy` (that branch is built on an outdated copy of the stack),
+   newer = `newer_copy`, equal = `other_copy`. `for-each-ref --contains` per copy (capped at 30) finds every
+   branch holding it, since `--source` names only one. Remaining branches containing the stack's root
+   commit are `side` (they contain a layer tip below HEAD) or `outside`. The panel renders
+   `summary()`: at most three lines grouped by kind (the related kinds share one count), wrapped, never
+   cut; `notes_float.lua` renders `details()` (every note, grouped, with meaning, impact and branch rows
+   carrying actions: set as parent through `view.set_stack_parent`, clear a revuey parent setting, ignore
+   a branch or a suggested glob, un-ignore) and re-renders from `panel.render` after each refresh.
+   **Ignore list** (`stack_ignore.lua`): globs from `config.stack.ignore_branches` plus a per-repo JSON file
+   in the state dir, keyed by the git common dir (worktrees share it; nothing goes into git config). Saves
+   re-read and apply only the change, then rename a temp file. `detect` filters the related kinds
+   (`newer_copy`, `outdated_copy`, `other_copy`, `outside`, `side`, `same_commit`) into `stack.ignored`
+   (`review.notes_ignored` without a stack) after detection, so ignoring never changes the layers; the
+   patterns are part of the fingerprint, so a change re-runs detection and other instances notice it.
 8. **State** lives as JSON under `stdpath('data')/revuey/`, keyed by repo + review target; a pure-Lua data layer with
    no UI calls so it can be tested headless. Format version 2: `files` (file marks by content key), `units` (unit
    and parent hunk marks by key) and, read only, version 1's `sections` (guide section marks by identity). Saves
@@ -350,7 +371,7 @@ are in `reports/Terminal code review tool landscape.md`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `guide.lua`, `guide_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

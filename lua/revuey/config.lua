@@ -30,6 +30,12 @@ M.defaults = {
   word_diff = true,
   -- Directory for persisted review state (nil = stdpath('data')/revuey).
   state_dir = nil,
+  stack = {
+    -- Branch globs (`*` matches anything, including `/`) whose notes are hidden: related branches
+    -- outside the stack, e.g. { 'dave/old-*' }. Added to the per-repo list kept by
+    -- :RevueyStackIgnore. Never changes which branches are layers.
+    ignore_branches = {},
+  },
   keymaps = {
     next_hunk = ']c',
     prev_hunk = '[c',
@@ -51,6 +57,7 @@ M.defaults = {
     next_layer = ']s',
     prev_layer = '[s',
     toggle_stack = 'gs', -- full stack <-> layer scope
+    stack_notes = '!', -- details of the stack notes (float with actions)
     -- AI guide
     toggle_guide = 'gG', -- diff view <-> guide view (offers to generate when there is none)
     regenerate_guide = 'gR', -- guide view: generate a new guide
