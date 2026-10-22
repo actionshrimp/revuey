@@ -100,6 +100,11 @@ function M.setup()
   set('RevueyDiagramEdge', { link = 'Delimiter' })
   set('RevueyDiagramLabel', { link = 'Comment' })
   set('RevueyLayerLabel', { link = 'Special' })
+  -- stack notes: informational ones are dim, ones that change the diff shown use warning colour
+  set('RevueyStackNote', { link = 'Comment' })
+  set('RevueyStackWarn', { link = 'DiagnosticWarn' })
+  set('RevueyStackTitle', { link = 'Title' })
+  set('RevueyStackBranch', { link = 'Identifier' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })
