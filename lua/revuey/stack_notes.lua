@@ -219,8 +219,12 @@ M.KINDS = {
     level = 'warn',
     title = 'Commits already in trunk are skipped',
     one = function(n, ctx)
-      return ('The first %d commit%s of %s %s already in %s as squash merges (lower branches merged, %s not rebased since).'):format(
-        n.count, n.count == 1 and '' or 's', n.branch, n.count == 1 and 'is' or 'are', ctx.trunk, n.branch)
+      if n.count == 1 then
+        return ('The first commit of %s is already in %s as a squash merge (a lower branch merged, %s not rebased since).'):format(
+          n.branch, ctx.trunk, n.branch)
+      end
+      return ('The first %d commits of %s are already in %s as squash merges (lower branches merged, %s not rebased since).'):format(
+        n.count, n.branch, ctx.trunk, n.branch)
     end,
     many = function(_, ctx)
       return ('The first commits of these branches are already in %s as squash merges (lower branches merged, not rebased since).'):format(ctx.trunk)
