@@ -40,6 +40,7 @@ local M = {}
 ---@field list revuey.Unit[]                       diff order
 ---@field by_file table<integer, revuey.Unit[]>
 ---@field by_hunk table<string, revuey.Unit[]>     by parent hunk key
+---@field by_key table<string, revuey.Unit>        by unit key
 ---@field by_path table<string, integer>           path -> file index
 ---@field hunk_key table<integer, table<integer, string>> [file_idx][hunk_idx or 0] = hunk key
 ---@field hunks revuey.GuideHunk[]                 the guide's hunk entries (ids, anchors)
@@ -53,7 +54,7 @@ local M = {}
 function M.derive(files, opts)
   opts = opts or {}
   local hunks = guide.hunks(files)
-  local U = { list = {}, by_file = {}, by_hunk = {}, by_path = {}, hunk_key = {}, hunks = hunks }
+  local U = { list = {}, by_file = {}, by_hunk = {}, by_key = {}, by_path = {}, hunk_key = {}, hunks = hunks }
   local file_keys = {}
   for fi, f in ipairs(files) do
     file_keys[fi] = state.content_key(f, opts.key_old)
@@ -105,6 +106,9 @@ function M.derive(files, opts)
       local l = p.hk.lines[p.u.first]
       p.u.key = p.u.key .. '@' .. (l.old_lnum or '-') .. ',' .. (l.new_lnum or '-')
     end
+  end
+  for _, u in ipairs(U.list) do
+    U.by_key[u.key] = u
   end
   return U
 end
@@ -184,6 +188,9 @@ end
 ---the current content key) of a file whose units are all marked; a file mark over a file that is
 ---not complete is removed. A matching file mark with no unit marks behind it at all, and not
 ---just unmarked here, is a legacy mark: its units are marked first.
+M.PRUNE_AFTER = 30 * 86400
+M.SEEN_EVERY = 86400
+
 local function finalizer(U)
   return function(files, umarks, st)
     local unmarked = {}
@@ -193,6 +200,18 @@ local function finalizer(U)
       end
     end
     local now = os.time()
+    -- prune marks of content this scope no longer shows and has not shown for PRUNE_AFTER
+    -- (worktree and committed mode share the file, so marks of the other mode must survive)
+    for k, e in pairs(umarks) do
+      local last = type(e) == 'table' and (e.seen_at or e.reviewed_at) or 0
+      if U.by_hunk[k] or U.by_key[k] then
+        if now - last > M.SEEN_EVERY then
+          e.seen_at = now
+        end
+      elseif now - last > M.PRUNE_AFTER then
+        umarks[k] = nil
+      end
+    end
     for _, list in pairs(U.by_file) do
       local first = list[1]
       if first and not first.whole_file then
