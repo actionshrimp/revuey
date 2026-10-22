@@ -4,7 +4,7 @@
 
 Code review inside Neovim (>= 0.12). It shows a composed unified diff of the current branch
 against its base, or of one layer of a local branch stack (or the whole stack) before you push. Tree-sitter syntax is projected onto the diff lines, LSP go-to-definition and hover
-work from inside the diff, and "reviewed" marks persist. An [AI guide](#ai-guide) (your own `claude`
+work from inside the diff (your own LSP mappings and pickers too), and "reviewed" marks persist. An [AI guide](#ai-guide) (your own `claude`
 CLI) can reorganise the review into ordered, explained sections. Design notes:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -23,13 +23,13 @@ CLI) can reorganise the review into ordered, explained sections. Design notes:
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
 (`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
-`lsp_settle_ms`, `word_diff`, `state_dir`, `keymaps`, `ai`).
+`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `keymaps`, `ai`).
 
 Requirements:
 - `git`.
 - Tree-sitter parsers *and highlight queries* for the languages you review (for example
   typescript/tsx via nvim-treesitter). Without them the diff still works but has no syntax colours.
-- An LSP configured for the filetype (for example `ts_ls`) for `gd` and `K`.
+- An LSP configured for the filetype (for example `ts_ls`) for `gd`, `K` and your own LSP mappings.
 - For the AI guide only: [Claude Code](https://claude.com/claude-code) (`claude`) on `PATH`, logged in.
 
 ## Commands
@@ -62,6 +62,19 @@ only re-read files whose size/mtime changed.
 LSP requests go through the working-tree buffer. Lines are mapped between the review and the
 buffer by position (through a diff when the buffer has unsaved edits, or in committed mode when the
 file has uncommitted changes); when a definition isn't shown in the diff, the real file opens.
+
+**Your own LSP mappings work in the diff and the guide.** Review buffers get an LSP client named
+`revuey` (you will see it in `:checkhealth vim.lsp` and in statuslines). It supports definition,
+type definition, declaration, implementation, references and hover, and nothing else (no
+diagnostics, completion, formatting, inlay hints or code actions). Each request is sent to the
+real language server of the file under the cursor, so `vim.lsp.buf.definition()`,
+`vim.lsp.buf.references()`, `<C-]>` and pickers (Telescope, fzf-lua, snacks) work unchanged, and a
+review with several languages routes each line to its own server. Results point at the real files.
+A jump that would replace the diff (any jump in the current window, from a picker or the quickfix
+list) opens in the code window below instead, and the review stays where it was. Deleted lines and
+filetypes without an LSP give a message instead of a result. Revuey's own `gd` is unchanged: it
+still jumps inside the diff when the definition is shown there. `lsp_proxy = false` turns the
+client off.
 
 Line-ending-only changes (LF/CRLF) and a missing final newline are marked with a `⏎` note at the end
 of the line.
@@ -156,7 +169,11 @@ the hunks that still exist. New hunks go to a final "Not in guide" section, and 
 `gR` to regenerate. The guide never re-runs by itself.
 
 **Per scope:** each review (branch and base, or a stack layer, or the full stack) has its own
-guide. Switching layers keeps a generation running for the layer it was started on.
+guide. Switching layers keeps a generation running for the layer it was started on. The guide's
+winbar names its scope ("Guide · layer stack/cart", "Guide · full stack"). For a layer, Claude is
+told the review covers only that branch's changes on top of its parent, so it says "this branch"
+and mentions the rest of the stack only when needed. For the full stack it gets the branches in
+order with each branch's commits, and notes which branch introduced what when that helps.
 
 **What runs:** your own `claude` CLI, in the repository root, with the prompt on stdin:
 `claude -p --output-format stream-json --verbose --permission-mode dontAsk --tools Read,Grep,Glob,Bash
@@ -272,6 +289,10 @@ Things to try:
 - `gd` on `sum(` in `src/cart.ts`: jumps to the new `sum` in the math.ts diff.
 - `gd` on `formatCurrency(`: opens `src/format.ts` below.
 - `K` on a call.
+- Your own mappings: `:lua vim.lsp.buf.definition()` (or whatever you map it to) on `sum(`
+  opens `src/math.ts` in the split below; `vim.lsp.buf.type_definition()` on `cart` in
+  `src/index.ts` opens the `Cart` class; `vim.lsp.buf.references()` or a picker on `sum(`
+  lists the real locations. On a `-` line you get "no LSP on a deleted line".
 - `mr` to mark a file reviewed.
 - `<Tab>` on a file header or an `@@` hunk header to collapse it, `<Tab>` again to expand it;
   `<S-Tab>` collapses every file.
@@ -327,12 +348,16 @@ cd /tmp/revuey-guide
   state persistence/merging/invalidation, async syntax projection (bundled Lua parser), stack
   resolution (ordering, forks, duplicate tips, Graphite metadata, overrides, trunk ahead, merged
   layers) plus `detect()` on real repos.
-- **Unit (guide):** hunk ids and anchors, prompt building and the size budget, the stream-json
+- **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
   parser, validation and JSON repair, section identity, staleness, guide storage, markdown prose.
 - **Integration:** real fixture repos opened headlessly (buffer text, extmarks, folds, keymaps,
   lifecycle cleanup, empty reviews, stack layer switching/full scope/per-layer marks/working tree
   on the HEAD layer only), plus LSP definition/hover when `typescript-language-server`
-  is on PATH (skipped otherwise). TypeScript highlight checks skip without the TS parser/queries.
+  is on PATH (skipped otherwise). The `revuey` proxy client: capabilities, a user-style
+  `LspAttach` handler (keymaps, inlay hints), lifecycle (no leaked clients), deleted lines,
+  filetypes without an LSP, encoding conversion and keeping the review in its window run without
+  a server; `vim.lsp.buf.definition`/`type_definition`/`references`/`hover` from context and
+  added lines, in the diff and the guide, run against `typescript-language-server`. TypeScript highlight checks skip without the TS parser/queries.
   The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
   and replays canned stream-json (good, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.

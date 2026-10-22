@@ -160,6 +160,51 @@ h.test('prompt: file list, id markers, methodology and schema', function()
   h.eq(gp.SCHEMA, vim.json.decode(gp.schema_json()))
 end)
 
+local stack_layers = {
+  { name = 'stack/math', parent = 'main', commits = { 'Add sum' } },
+  { name = 'stack/cart', parent = 'stack/math', commits = { 'Cart totals', 'Add cart' } },
+  { name = 'stack/ui', parent = 'stack/cart', commits = { 'Total component' } },
+}
+
+h.test('prompt: layer scope says the review is one branch, not the stack', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local text = gp.build({ repo = 'r', branch = 'stack/cart', base = 'stack/math', commits = { 'Cart totals', 'Add cart' },
+    stack = { kind = 'layer', index = 2, trunk = 'main', layers = stack_layers } }, hs)
+  h.ok(text:find('Changes: branch stack/cart compared with its parent branch stack/math\n', 1, true), text)
+  h.ok(text:find('This review covers only the branch `stack/cart`: its own changes on top of its parent branch `stack/math`.', 1, true), text)
+  h.ok(text:find('layer 2 of a stack of 3 branches (main <- stack/math <- stack/cart <- stack/ui)', 1, true), text)
+  h.ok(text:find('Call it "this branch" or "this change", never "this stack".', 1, true), text)
+  h.ok(text:find('Mention the surrounding stack only when it is needed', 1, true), text)
+  h.ok(text:find('Commits (newest first):\n- Cart totals\n- Add cart\n', 1, true), 'flat commit list for one branch')
+  h.ok(not text:find('Commits by branch', 1, true))
+  h.ok(not text:find('—', 1, true), 'no em-dashes in our own prompt')
+end)
+
+h.test('prompt: full scope lists the stack in order and asks which branch introduced what', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local text = gp.build({ repo = 'r', branch = 'stack/ui', base = 'main',
+    commits = { 'Total component', 'Cart totals', 'Add cart', 'Add sum' },
+    stack = { kind = 'full', trunk = 'main', layers = stack_layers } }, hs)
+  h.ok(text:find('Changes: the whole stack from main up to stack/ui\n', 1, true), text)
+  h.ok(text:find('This review covers a whole stack of 3 branches, each built on the one before it, bottom first:\n'
+    .. '1. stack/math (on main)\n2. stack/cart (on stack/math)\n3. stack/ui (on stack/cart)\n', 1, true), text)
+  h.ok(text:find('Call it "this stack".', 1, true), text)
+  h.ok(text:find('say which branch introduced', 1, true), text)
+  -- commits grouped by branch, so the model can tell which branch introduced what
+  h.ok(text:find('Commits by branch (bottom first, newest first within each):\n- stack/math:\n  - Add sum\n'
+    .. '- stack/cart:\n  - Cart totals\n  - Add cart\n- stack/ui:\n  - Total component\n', 1, true), text)
+  h.ok(not text:find('Commits (newest first):', 1, true))
+  h.ok(not text:find('—', 1, true), 'no em-dashes in our own prompt')
+end)
+
+h.test('prompt: a plain branch review has no stack wording', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local text = gp.build({ repo = 'r', branch = 'feat', base = 'main' }, hs)
+  local msg = text:sub((text:find('\n---\n', 1, true)))
+  h.ok(msg:find('Changes: feat compared with main\n', 1, true), msg)
+  h.ok(not msg:find('stack', 1, true), 'no mention of a stack')
+end)
+
 h.test('prompt: size budget sends the largest hunks as an index', function()
   local big = { '@@ -1,0 +1,200 @@ big' }
   for i = 1, 200 do

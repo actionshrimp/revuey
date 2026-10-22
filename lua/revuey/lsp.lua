@@ -101,7 +101,7 @@ end
 
 ---Wait (asynchronously) until the buffer has initialized clients supporting `method` that have
 ---been alive for `lsp_settle_ms`, then call `cb(clients)`.
-local function with_clients(buf, method, cb)
+local function with_clients(buf, method, cb, on_fail)
   local start = now()
   local deadline = start + 15000
   local notified = false
@@ -109,7 +109,7 @@ local function with_clients(buf, method, cb)
     if notified then
       vim.api.nvim_echo({ { '' } }, false, {})
     end
-    vim.notify('revuey: ' .. msg, vim.log.levels.WARN)
+    on_fail('revuey: ' .. msg)
   end
   local function try()
     local clients = vim.lsp.get_clients({ bufnr = buf, method = method })
@@ -167,26 +167,32 @@ vim.api.nvim_create_autocmd('LspAttach', {
   end,
 })
 
+local function warn(msg)
+  vim.notify(msg, vim.log.levels.WARN)
+end
+
 ---Send `method` at the target position to every client on the file's buffer that supports it.
 ---`cb` receives the first non-empty result (clients tried in id order), or nil.
+---Failures before anything is sent (file missing, line not mapped, no client) go to
+---`opts.on_fail(msg)` (default: a warning) and `cb` is not called.
 ---@param target {abs:string, lnum:integer, col:integer, text:string, head?:string}
 ---@param method string
----@param cb fun(err:any, result:any, client:vim.lsp.Client?, buf:integer)
+---@param cb fun(err:any, result:any, client:vim.lsp.Client?, buf:integer, lnum:integer)
 ---@param is_empty? fun(result:any):boolean
-function M.request(target, method, cb, is_empty)
+---@param opts? {on_fail?: fun(msg: string), params?: table} params: extra request params (`context`)
+function M.request(target, method, cb, is_empty, opts)
+  opts = opts or {}
+  local on_fail = opts.on_fail or warn
   is_empty = is_empty or function(r)
     return r == nil or (type(r) == 'table' and vim.tbl_isempty(r))
   end
   local buf = M.file_buffer(target.abs)
   if not buf then
-    return vim.notify('revuey: file not in working tree: ' .. target.abs, vim.log.levels.WARN)
+    return on_fail('revuey: file not in working tree: ' .. target.abs)
   end
   local lnum = M.match_line(buf, target.lnum, target.text, target.head)
   if not lnum then
-    return vim.notify(
-      'revuey: line differs in the working tree (uncommitted edits?); LSP unavailable here',
-      vim.log.levels.WARN
-    )
+    return on_fail('revuey: line differs in the working tree (uncommitted edits?); LSP unavailable here')
   end
   with_clients(buf, method, function(clients)
     table.sort(clients, function(a, b)
@@ -196,10 +202,10 @@ function M.request(target, method, cb, is_empty)
     local results = {}
     for i, client in ipairs(clients) do
       local character = vim.lsp.util.character_offset(buf, lnum - 1, target.col, client.offset_encoding)
-      local params = {
+      local params = vim.tbl_extend('force', opts.params or {}, {
         textDocument = { uri = vim.uri_from_bufnr(buf) },
         position = { line = lnum - 1, character = character },
-      }
+      })
       local ok = client:request(method, params, function(err, result)
         results[i] = { err = err, result = result, client = client }
         pending = pending - 1
@@ -208,11 +214,11 @@ function M.request(target, method, cb, is_empty)
           for j = 1, #clients do
             local r = results[j]
             if r and not r.err and not is_empty(r.result) then
-              return cb(nil, r.result, r.client, buf)
+              return cb(nil, r.result, r.client, buf, lnum)
             end
             first_err = first_err or (r and r.err)
           end
-          cb(first_err, nil, nil, buf)
+          cb(first_err, nil, nil, buf, lnum)
         end
       end, buf)
       if not ok then
@@ -221,9 +227,9 @@ function M.request(target, method, cb, is_empty)
       end
     end
     if pending == 0 then
-      cb({ message = 'no client accepted the request' }, nil, nil, buf)
+      cb({ message = 'no client accepted the request' }, nil, nil, buf, lnum)
     end
-  end)
+  end, on_fail)
 end
 
 ---Normalise a definition result into a list of {uri, range}.
@@ -243,5 +249,17 @@ function M.locations(result)
   end
   return out
 end
+
+-- Review buffers (filetype "revuey") get the proxy client, so the user's own vim.lsp.buf.*
+-- mappings work in them (see lsp_proxy.lua).
+vim.api.nvim_create_autocmd('FileType', {
+  group = 'revuey_lsp',
+  pattern = 'revuey',
+  callback = function(ev)
+    if config.options.lsp_proxy ~= false then
+      require('revuey.lsp_proxy').attach(ev.buf)
+    end
+  end,
+})
 
 return M

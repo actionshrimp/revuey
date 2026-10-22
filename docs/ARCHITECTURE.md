@@ -33,6 +33,33 @@ are in `reports/Terminal code review tool landscape.md`.
    send `textDocument/definition` / `hover` via that buffer. Wait for the client to be ready before first request
    (TypeScript returns the import alias until the project has loaded). Proven in a spike; see report notes.
    `del` lines get no LSP.
+   **Proxy client** (`lsp_proxy.lua`), so the user's own `vim.lsp.buf.*` mappings, `<C-]>` and
+   pickers work in review buffers, which otherwise have no client ("not supported by any server").
+   On `FileType revuey` (autocmd in `lsp.lua`, so `view.lua` needs no hook) an in-process client
+   named `revuey` is started with `vim.lsp.start({cmd = function(dispatchers) ... end})`: `cmd`
+   returns a `vim.lsp.rpc.PublicClient` (`request`, `notify`, `is_closing`, `terminate`) whose
+   replies are always scheduled, like a real server's. It advertises only definition, type
+   definition, declaration, implementation, references and hover, `positionEncoding = utf-16` and
+   no document sync, so `LspAttach` handlers enable nothing that would misbehave (diagnostics,
+   semantic tokens, inlay hints, formatting, completion, code actions have no provider). Each
+   request maps the row through the side table (`del`/meta/prose rows: a warning plus an error
+   reply, never a hang), and `lsp.request` forwards it with any extra params (`context`) to the
+   real server of *that row's* file through its hidden buffer, with the same readiness wait
+   (no LSP for the filetype: the warning after 1.5s). Results are returned as the server sent
+   them, with locations in real files; only positions are converted when the real server's
+   encoding differs, `originSelectionRange` (hidden-buffer coordinates) is dropped, and a hover
+   range on the requested line is moved to the review row.
+   Core jump handlers put the target in the *current* window, which is the diff window, and the
+   diff buffer used to be `bufhidden=wipe` (wiping it ends the session). With the proxy the diff
+   buffer is `bufhidden=hide`; on `BufWinLeave` the view and closed folds are saved, and when the
+   diff window shows another buffer the review is put back and that buffer moves to the code
+   window below (any jump, picker selection, quickfix entry or `:edit` in the diff window). If the
+   diff window is gone the buffer is wiped as before; `TabClosed` (nested, so the session's
+   `BufWipeout` cleanup runs) wipes it at once for `:tabclose`. The client is stopped on the
+   buffer's `BufWipeout`, so open/close/reopen leaves no clients. Revuey's own `gd`/`K` keep
+   their direct `lsp.request` path (`gd` jumps inside the diff when the target is shown there);
+   routing them through the proxy would need the same in-diff mapping as an `on_list` and saves
+   nothing.
 4. **One renderer, two hosts.** The guide view reuses the composed-buffer renderer with prose blocks between
    hunks (`layout.compose_guide`, sharing `push_hunk` with `layout.compose`); see decision 9.
 5. **Side-by-side** is a secondary mode using Neovim's native diff mode (later chunk).
@@ -97,6 +124,14 @@ are in `reports/Terminal code review tool landscape.md`.
      a file list with `+/-` counts and ids, then each hunk as `@@ h7 path @@` + the git hunk. Over
      `ai.max_prompt_chars` the largest hunks become index entries (header, counts, first 6 lines,
      `[abridged]`) and the model is told the files are in its cwd.
+   - **Scope wording** (a guide covers one review scope, `ctx.stack` from `guide_view`). Layer
+     scope: "This review covers only the branch X: its own changes on top of its parent branch
+     Y", the layer's position in the chain (`main <- a <- b <- c`), and an instruction to call it
+     "this branch" or "this change", never "this stack", mentioning the stack only when needed.
+     Full scope: the branches listed bottom first with their parents, "this stack", and commit
+     subjects grouped per branch (`git log parent_rev..tip` per layer) so the model can say which
+     branch introduced what. Plain branch reviews keep `Changes: X compared with Y` and no stack
+     wording. The guide's winbar shows the scope (`Guide · layer stack/cart`, `Guide · full stack`).
    - **Schema** (`--json-schema`, `additionalProperties: false` everywhere):
      `{title, summary (md), sections: [{title, overview (md), hunks: [{id, note?}]}], unplaced: [id]}`.
    - **Invocation.** `ai.run` spawns `claude -p --output-format stream-json --verbose --permission-mode
