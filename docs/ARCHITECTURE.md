@@ -108,6 +108,11 @@ are in `reports/Terminal code review tool landscape.md`.
    **Landed layers:** bottom-up, a layer whose own changed files are identical in trunk
    (`git diff --quiet trunk tip -- files`) is marked landed and dimmed. The check stops at the first unlanded
    layer.
+   **Squash-merged commits:** before that, each layer diffed from trunk drops the oldest commits whose
+   zero-context patch id matches a trunk commit touching the same paths. A run of consecutive commits can
+   match one trunk commit (a squash). The layer then starts after the last match. When every commit
+   matched, the last run is kept as the layer's own diff, and the full scope starts where the bottom
+   layer does (`stack.base_rev`).
    **Marks:** layers above another layer add the old blob to the content key (`key_old`), so a parent change to
    the same file resets the mark. The bottom layer, full scope and plain reviews keep chunk 1's new-blob keys,
    so they still share marks. Unit marks (decision 10) are per scope too, since they live in the scope's state
