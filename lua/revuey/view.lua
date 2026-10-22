@@ -448,7 +448,8 @@ function M.guide_winbar(s, win)
     return (str:gsub('%%', '%%%%'))
   end
   local res = s.guide and s.guide.resolved
-  local parts = { ' %#RevueyGuideSectionNumber#Guide ' }
+  local scope = guide_view.scope_title(s.review)
+  local parts = { ' %#RevueyGuideSectionNumber#Guide' .. (scope and esc(' · ' .. scope) or '') .. ' ' }
   if res then
     local top = vim.fn.line('w0', win)
     local si = section_at_row(s, top)
@@ -594,6 +595,7 @@ local function code_window(s)
   api.nvim_win_set_height(s.code_win, math.floor(vim.o.lines * 0.45))
   return s.code_win
 end
+M.code_window = code_window
 
 local function open_path(s, abs, lnum, col)
   if not vim.uv.fs_stat(abs) then
