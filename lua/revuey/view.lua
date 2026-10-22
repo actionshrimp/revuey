@@ -2162,13 +2162,13 @@ local function layer_labels(review, cache)
   end
   local key = table.concat(parts, '\0')
   if cache and cache.labels_key == key then
-    return cache.labels
+    return cache.labels, cache.labels_note
   end
-  local labels = attribution.load(review)
+  local labels, note = attribution.load(review)
   if cache then
-    cache.labels_key, cache.labels = key, labels
+    cache.labels_key, cache.labels, cache.labels_note = key, labels, note
   end
-  return labels
+  return labels, note
 end
 
 ---Review load options for the session's current stack/scope.
@@ -2386,7 +2386,7 @@ function M.open(opts)
     end
     review.stack, review.scope = stack, scope
     review.notes = not stack and notes or nil
-    review.layer_labels = layer_labels(review, cache)
+    review.layer_labels, review.layer_labels_note = layer_labels(review, cache)
     local s = M.show(review, opts)
     s.load_cache = cache
     s.stack_cache = stack_cache
@@ -2459,7 +2459,7 @@ function M.refresh(o)
     end
     review.stack, review.scope = stack, scope
     review.notes = not stack and notes or nil
-    review.layer_labels = layer_labels(review, s.load_cache)
+    review.layer_labels, review.layer_labels_note = layer_labels(review, s.load_cache)
     if M.session ~= s or s.cleaned then
       return finish()
     end

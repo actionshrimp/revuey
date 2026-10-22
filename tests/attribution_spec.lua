@@ -107,6 +107,56 @@ h.test('committed only: no uncommitted layer', function()
   }, flat(r, labels))
 end)
 
+h.test('not restacked: a layer whose child diverged is diffed only up to the fork point', function()
+  -- l1 is amended (40 lines inserted above its edit) after l2 branched from it
+  local s = h.tmpdir('attribution-diverged')
+  h.git(s, 'init', '-q')
+  h.write(s, 'a.txt', lines('L', 100))
+  h.git(s, 'add', '-A')
+  h.git(s, 'commit', '-q', '-m', 'main')
+  local m = vim.trim(h.git(s, 'rev-parse', 'HEAD'))
+  h.git(s, 'checkout', '-q', '-b', 'l1')
+  h.write(s, 'a.txt', lines('L', 100, { [10] = 'L10 l1' }))
+  h.git(s, 'commit', '-q', '-am', 'l1')
+  local old = vim.trim(h.git(s, 'rev-parse', 'HEAD'))
+  h.git(s, 'checkout', '-q', '-b', 'l2')
+  h.write(s, 'a.txt', lines('L', 100, { [10] = 'L10 l1', [50] = 'L50 l2' }))
+  h.git(s, 'commit', '-q', '-am', 'l2')
+  local l2 = vim.trim(h.git(s, 'rev-parse', 'HEAD'))
+  h.git(s, 'checkout', '-q', 'l1')
+  local ins = {}
+  for i = 1, 40 do
+    ins[i] = 'INS' .. i
+  end
+  h.write(s, 'a.txt', table.concat(ins, '\n') .. '\n' .. lines('L', 100, { [10] = 'L10 l1' }))
+  h.git(s, 'commit', '-q', '--amend', '-am', 'l1')
+  local amended = vim.trim(h.git(s, 'rev-parse', 'HEAD'))
+  h.git(s, 'checkout', '-q', 'l2')
+  local r = {
+    root = s,
+    mode = 'committed',
+    files = diff.parse(git.diff(m, l2, s, 3)),
+    stack = {
+      trunk = 'main',
+      trunk_rev = m,
+      layers = {
+        { name = 'l1', tip = amended, parent = 'main', parent_rev = m },
+        { name = 'l2', tip = l2, parent = 'l1', parent_rev = old, diverged = true, is_head = true },
+      },
+    },
+    scope = { kind = 'full' },
+  }
+  h.eq({ ['a.txt#1'] = 'l1', ['a.txt#2'] = 'l2' }, flat(r, attribution.load(r)))
+  -- a stale explicit parent with an old tip is the same situation
+  r.stack.layers[2].diverged, r.stack.layers[2].stale = nil, true
+  h.eq({ ['a.txt#1'] = 'l1', ['a.txt#2'] = 'l2' }, flat(r, attribution.load(r)))
+  -- a child diffed from trunk (a stale explicit parent without old tips): no labels, a note
+  r.stack.layers[2].diverged, r.stack.layers[2].stale, r.stack.layers[2].parent_rev = nil, true, m
+  local labels, note = attribution.load(r)
+  h.eq(nil, labels)
+  h.ok(note and note:find('l2', 1, true), note)
+end)
+
 h.test('a layer-scope review gets no labels', function()
   local r = full_review('committed')
   r.scope = { kind = 'layer', index = 2 }

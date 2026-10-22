@@ -210,6 +210,9 @@ function M.doc(s, width)
     s.guide_status_line = #doc + 1
     line(doc, '', nil, 'status')
   end
+  if s.review.layer_labels_note then
+    add_prose(doc, '_' .. s.review.layer_labels_note:gsub('^%l', string.upper) .. '._', width, 'meta', nil, 'RevueyGuideMeta', 'labels-note')
+  end
   if res.stale then
     local parts = {}
     if res.outdated > 0 then
