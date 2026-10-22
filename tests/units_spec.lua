@@ -424,6 +424,27 @@ h.test('two instances: each marking part of a file completes it, with its file m
   h.eq(true, state.is_reviewed(B, 'src/a.ts', a[1].file_key), 'the saving instance sees it too')
 end)
 
+h.test('marks of content not shown for 30 days are pruned on save; recent ones are kept', function()
+  local U = units.derive(base_files())
+  local a = U.by_file[1]
+  local st = fresh_state('prune')
+  local old = os.time() - 40 * 86400
+  st.units = {
+    stale = { path = 'gone.ts', reviewed_at = old },
+    recent = { path = 'other-mode.ts', reviewed_at = os.time() - 86400 },
+    [a[2].key] = { path = 'src/a.ts', reviewed_at = old },
+  }
+  st._unit_changes = vim.deepcopy(st.units)
+  state.save(st)
+  st = state.load(vim.fs.dirname(st._path), '/repo', 'feat', 'main')
+  assert(units.set(st, U, { a[1] }, true))
+  local raw = vim.json.decode(table.concat(vim.fn.readfile(st._path), '\n')).units
+  h.eq(nil, raw.stale, 'not shown for 40 days: pruned')
+  h.ok(raw.recent, 'another mode or scope, shown recently: kept')
+  h.ok(raw[a[2].key].seen_at >= os.time() - 5, 'shown now: kept, seen_at refreshed')
+  h.eq(true, units.reviewed(st, a[2]))
+end)
+
 h.test('migrating a legacy file mark over split hunks stores each piece too', function()
   local files = base_files()
   local U = units.derive(files, { split = split_lines })

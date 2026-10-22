@@ -291,7 +291,7 @@ Diff buffer:
 | `<CR>` / `go` | Open the working-tree file at this line (in a split below) |
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
 | `K` | LSP hover |
-| `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches. A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
+| `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk you can see, skipping collapsed files). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches (a collapsed file in the selection counts whole). A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
 | `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
 | `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
 
@@ -324,7 +324,11 @@ above it keeps its mark. A file whose hunks are all reviewed is also stored by i
 Files without hunks (binary files, "not shown" placeholders, pure renames, mode changes) are
 marked as a whole, by blob hash. State files from earlier versions keep working: a file mark
 still counts for all of the file's hunks (and is converted to hunk marks when the review opens),
-and a guide section mark becomes marks on that section's hunks.
+and a guide section mark becomes marks on that section's hunks. Marks of content a review has not
+shown for 30 days are dropped from the file the next time you mark something.
+
+**Upgrading:** restart every Neovim running revuey after updating. An instance still running the
+previous version keeps only file marks when it next saves, so it would drop the hunk marks.
 
 All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddText` and
 `RevueyDeleteText` (word diff), `RevueyFileHeader`, `RevueyHunkHeader`, `RevueyAddSign`,
