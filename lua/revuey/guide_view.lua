@@ -290,12 +290,14 @@ local function stack_context(r)
   local full = r.scope.kind == 'full'
   local layers = {}
   for i, l in ipairs(st.layers) do
-    local commits
+    local commits, count
     if full then
-      local log = git.git({ 'log', '--format=%s', '--no-merges', '-n', '16', l.parent_rev .. '..' .. l.tip }, r.root) or ''
+      local range = l.parent_rev .. '..' .. l.tip
+      local log = git.git({ 'log', '--format=%s', '--no-merges', '-n', tostring(prompt.MAX_LAYER_COMMITS), range }, r.root) or ''
       commits = vim.split(vim.trim(log), '\n', { trimempty = true })
+      count = tonumber(vim.trim(git.git({ 'rev-list', '--count', '--no-merges', range }, r.root) or '')) or #commits
     end
-    layers[i] = { name = l.name, parent = l.parent, commits = commits }
+    layers[i] = { name = l.name, parent = l.parent, commits = commits, commit_count = count }
   end
   return { kind = full and 'full' or 'layer', index = not full and r.scope.index or nil, trunk = st.trunk, layers = layers }
 end

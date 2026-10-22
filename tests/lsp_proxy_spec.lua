@@ -23,13 +23,17 @@ end
 -- (no headless grid resize here: with ts_ls warm-up and a reopened review, Neovim 0.12.4
 -- headless has been seen to segfault after `vim.o.lines = 50`, independent of the proxy)
 
--- A typical user LspAttach handler: buffer-local keymaps plus inlay hints, for every client.
+-- A typical user LspAttach handler: buffer-local keymaps (including LazyVim/kickstart-style
+-- `gd`, `K` and `]]`, which collide with revuey's) plus inlay hints, for every client.
 local attached = {}
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(ev)
     local client = assert(vim.lsp.get_client_by_id(ev.data.client_id))
     local ok, err = pcall(function()
       local o = { buffer = ev.buf }
+      vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = ev.buf, desc = 'user gd' })
+      vim.keymap.set('n', 'K', vim.lsp.buf.hover, { buffer = ev.buf, desc = 'user K' })
+      vim.keymap.set('n', ']]', '<Nop>', { buffer = ev.buf, desc = 'user ]]' })
       vim.keymap.set('n', 'mgg', function()
         vim.lsp.buf.definition()
       end, o)
@@ -173,6 +177,208 @@ h.test('a "revuey" client with navigation-only capabilities is attached to the r
   h.eq('', vim.v.errmsg)
 end)
 
+h.test("revuey's own keys win over keys a user LspAttach handler maps on the proxy", function()
+  open(repo)
+  vim.api.nvim_set_current_win(s.diff_win)
+  h.ok(vim.wait(1000, function()
+    return (vim.fn.maparg('gd', 'n', false, true).desc or ''):find('^revuey') ~= nil
+  end, 10), 'gd: ' .. tostring(vim.fn.maparg('gd', 'n', false, true).desc))
+  h.ok((vim.fn.maparg('K', 'n', false, true).desc or ''):find('^revuey'), vim.fn.maparg('K', 'n', false, true).desc)
+  h.ok((vim.fn.maparg(']]', 'n', false, true).desc or ''):find('^revuey'), vim.fn.maparg(']]', 'n', false, true).desc)
+  -- the user's other mappings stay
+  h.eq(1, vim.fn.maparg('mgg', 'n', false, true).buffer)
+end)
+
+h.test('picker targets: snacks picks the diff window (then redirected), never the file panel', function()
+  open(repo)
+  -- snacks.picker's main-window finder skips non-file buffers unless flagged
+  h.eq(true, vim.b[s.diff_buf].snacks_main)
+  -- any picker that would open a file in the panel window gets an error instead of wiping it
+  h.eq(true, vim.wo[s.panel_win].winfixbuf)
+end)
+
+h.test('buffers with bufhidden=wipe/delete/unload survive the redirect', function()
+  open(repo)
+  for _, bh in ipairs({ 'wipe', 'delete', 'unload' }) do
+    vim.v.errmsg = ''
+    vim.api.nvim_set_current_win(s.diff_win)
+    -- like fugitive object buffers or a dashboard opened in the current window
+    vim.cmd('enew')
+    local nb = vim.api.nvim_get_current_buf()
+    vim.bo.buftype = 'nofile'
+    vim.bo.bufhidden = bh
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'scratch ' .. bh })
+    h.ok(vim.wait(2000, function()
+      return vim.api.nvim_win_get_buf(s.diff_win) == s.diff_buf
+    end, 10), 'review put back (' .. bh .. ')')
+    h.ok(vim.api.nvim_buf_is_valid(nb), bh .. ': buffer still exists')
+    h.eq(nb, vim.api.nvim_win_get_buf(s.code_win), bh .. ': shown in the code window')
+    h.eq({ 'scratch ' .. bh }, vim.api.nvim_buf_get_lines(nb, 0, -1, false))
+    review_intact()
+    h.eq('', vim.v.errmsg, bh)
+  end
+end)
+
+h.test('redirect target: a winfixbuf code window, or no room for a split', function()
+  open(repo)
+  local proxy = require('revuey.lsp_proxy')
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd('edit ' .. vim.fn.fnameescape(repo .. '/src/types.ts'))
+  assert(vim.wait(2000, function()
+    return vim.api.nvim_win_get_buf(s.diff_win) == s.diff_buf
+  end, 10))
+  local first = s.code_win
+  vim.wo[first].winfixbuf = true
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd('edit ' .. vim.fn.fnameescape(repo .. '/src/use.ts'))
+  h.ok(vim.wait(2000, function()
+    return vim.api.nvim_win_get_buf(s.diff_win) == s.diff_buf
+  end, 10), 'review put back')
+  h.ok(s.code_win ~= first, 'a new code window, since the old one is winfixbuf')
+  h.ok(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(s.code_win)):match('src/use%.ts$'))
+  h.ok(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(first)):match('src/types%.ts$'), 'fixed window untouched')
+  review_intact()
+  -- E36: no room for a split -> the buffer opens in a new tab and the review stays
+  vim.api.nvim_win_close(first, true)
+  vim.api.nvim_win_close(s.code_win, true)
+  local orig = proxy.split_below
+  proxy.split_below = function()
+    error('Vim:E36: Not enough room')
+  end
+  local tabs = #vim.api.nvim_list_tabpages()
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd('edit ' .. vim.fn.fnameescape(repo .. '/src/types.ts'))
+  local ok = vim.wait(2000, function()
+    return vim.api.nvim_win_get_buf(s.diff_win) == s.diff_buf
+  end, 10)
+  proxy.split_below = orig
+  h.ok(ok, 'review put back without a split')
+  h.eq(tabs + 1, #vim.api.nvim_list_tabpages())
+  h.ok(vim.api.nvim_buf_get_name(0):match('src/types%.ts$'), 'the buffer is in the new tab')
+  h.eq(s, view.session)
+  vim.cmd('tabclose')
+end)
+
+h.test('jumplist and tagstack of the code window never lead back to the review', function()
+  open(repo)
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd("normal! m'")
+  vim.api.nvim_win_set_cursor(s.diff_win, { 3, 0 })
+  vim.cmd("normal! m'")
+  vim.fn.settagstack(s.diff_win, { items = { { tagname = 'x', from = { s.diff_buf, 2, 1, 0 } } } }, 't')
+  vim.cmd('edit ' .. vim.fn.fnameescape(repo .. '/src/types.ts'))
+  assert(vim.wait(2000, function()
+    return vim.api.nvim_win_get_buf(s.diff_win) == s.diff_buf
+  end, 10))
+  h.eq(s.code_win, vim.api.nvim_get_current_win())
+  -- a code window made by the redirect starts with no history
+  for _, j in ipairs(vim.fn.getjumplist(s.code_win)[1]) do
+    h.ok(j.bufnr ~= s.diff_buf, 'jumplist entry for the review buffer')
+  end
+  h.eq(0, #vim.fn.gettagstack(s.code_win).items)
+  -- a code window opened by revuey itself (go) records the review in its jumplist; <C-o> there
+  -- goes back to the review window instead of showing the review a second time
+  view.close()
+  open(repo)
+  local row = row_of('src/use.ts', 'unit: Point', 'add')
+  put_cursor('src/use.ts', 'unit: Point', 'add')
+  view.open_file()
+  local code = s.code_win
+  h.eq(code, vim.api.nvim_get_current_win())
+  local file = vim.api.nvim_get_current_buf()
+  vim.cmd('normal! \15') -- <C-o>
+  h.ok(vim.wait(1000, function()
+    return vim.api.nvim_get_current_win() == s.diff_win
+  end, 10), 'back in the diff window')
+  h.eq(file, vim.api.nvim_win_get_buf(code), 'the code window keeps its file')
+  h.eq(s.diff_buf, vim.api.nvim_win_get_buf(s.diff_win))
+  h.eq(1, #vim.fn.win_findbuf(s.diff_buf), 'the review is shown once')
+  h.eq(row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  h.eq(s, view.session)
+end)
+
+h.test('a cancelled request never calls back and cancels the forwarded request', function()
+  open(repo)
+  local proxy = vim.lsp.get_clients({ name = 'revuey', bufnr = s.diff_buf })[1]
+  -- no LSP for lua: the readiness wait (1.5s) is still running when we cancel
+  put_cursor('tools/tool.lua', 'answer', 'add')
+  local params = vim.lsp.util.make_position_params(s.diff_win, proxy.offset_encoding)
+  local msgs, restore = h.capture_notify()
+  local fired = false
+  local _, id = proxy:request('textDocument/definition', params, function()
+    fired = true
+  end, s.diff_buf)
+  proxy:cancel_request(id)
+  vim.wait(2500)
+  restore()
+  h.eq(false, fired, 'handler called after cancel')
+  h.eq({}, msgs, 'no message for a cancelled request')
+  h.ok(vim.wait(1000, function()
+    return next(proxy.requests) == nil
+  end, 10), 'request still pending: ' .. vim.inspect(proxy.requests))
+  need_ts()
+  -- a request already sent to ts_ls is cancelled there too
+  put_cursor('src/use.ts', 'norm(unit', 'add')
+  vim.lsp.buf.hover() -- warm up: wait until ts_ls answers once
+  assert(vim.wait(25000, function()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_config(w).relative ~= '' then
+        vim.api.nvim_win_close(w, true)
+        return true
+      end
+    end
+  end, 20), 'hover')
+  local ts = vim.lsp.get_clients({ name = 'ts_ls' })[1]
+  local sent, cancelled = {}, {}
+  local orig_request, orig_cancel = ts.request, ts.cancel_request
+  ts.request = function(self, method, ...)
+    local ok, rid = orig_request(self, method, ...)
+    if method == 'textDocument/hover' then
+      sent[#sent + 1] = rid
+    end
+    return ok, rid
+  end
+  ts.cancel_request = function(self, rid)
+    cancelled[#cancelled + 1] = rid
+    return orig_cancel(self, rid)
+  end
+  vim.api.nvim_set_current_win(s.diff_win)
+  params = vim.lsp.util.make_position_params(s.diff_win, proxy.offset_encoding)
+  fired = false
+  _, id = proxy:request('textDocument/hover', params, function()
+    fired = true
+  end, s.diff_buf)
+  assert(vim.wait(5000, function()
+    return #sent > 0
+  end, 1), 'forwarded')
+  proxy:cancel_request(id)
+  vim.wait(1000)
+  ts.request, ts.cancel_request = orig_request, orig_cancel
+  h.eq(false, fired)
+  h.eq(sent, cancelled)
+end)
+
+h.test(':lsp restart of the proxy does not leak a client', function()
+  open(repo)
+  local old = proxies()[1].id
+  vim.cmd('lsp restart revuey')
+  h.ok(vim.wait(3000, function()
+    local c = vim.lsp.get_clients({ name = 'revuey', bufnr = s.diff_buf })[1]
+    return c and c.id ~= old and c.initialized and #proxies() == 1
+  end, 10), 'restarted')
+  view.close()
+  h.ok(vim.wait(3000, function()
+    return #proxies() == 0
+  end, 10), 'leaked after restart + close')
+  -- restart and close at once: the new client starts for a buffer that is already gone
+  open(repo)
+  vim.cmd('lsp restart revuey')
+  view.close()
+  h.ok(vim.wait(4000, function()
+    return #proxies() == 0
+  end, 10), 'leaked after restart racing close')
+end)
+
 h.test('a buffer opened in the diff window (any jump) moves to the code window; the review stays', function()
   open(repo)
   vim.api.nvim_set_current_win(s.diff_win)
@@ -215,15 +421,31 @@ h.test('results from a server with another position encoding are converted', fun
   h.eq(16, same.range.start.character)
 end)
 
-h.test('a deleted line gives a clear message, not a hang', function()
+h.test('a deleted line gives one clear message, not a hang or an error', function()
   open(repo)
   put_cursor('src/use.ts', 'Math.hypot', 'del')
-  local msgs, restore = h.capture_notify()
-  vim.lsp.buf.definition()
-  local m = wait_msg(msgs, 'deleted line')
+  for _, fn in ipairs({ vim.lsp.buf.definition, vim.lsp.buf.references, vim.lsp.buf.hover }) do
+    local msgs, restore = h.capture_notify()
+    fn()
+    local m = wait_msg(msgs, 'deleted line')
+    vim.wait(300)
+    restore()
+    h.eq(vim.log.levels.WARN, m.level)
+    h.eq(1, #msgs, vim.inspect(msgs)) -- no "No locations found" / "No information available"
+    h.eq(s.diff_buf, vim.api.nvim_get_current_buf())
+  end
+  -- the reply is an empty result, not an error (hover would log it)
+  local proxy = vim.lsp.get_clients({ name = 'revuey', bufnr = s.diff_buf })[1]
+  local _, restore = h.capture_notify()
+  local got
+  proxy:request('textDocument/hover', vim.lsp.util.make_position_params(s.diff_win, proxy.offset_encoding), function(err, res)
+    got = { err = err, res = res }
+  end, s.diff_buf)
+  vim.wait(1000, function()
+    return got ~= nil
+  end, 10)
   restore()
-  h.eq(vim.log.levels.WARN, m.level)
-  h.eq(s.diff_buf, vim.api.nvim_get_current_buf())
+  h.eq({ err = nil, res = nil }, got)
 end)
 
 h.test('no LSP for a filetype is a clear error; other files in the same buffer still route', function()
@@ -232,7 +454,9 @@ h.test('no LSP for a filetype is a clear error; other files in the same buffer s
   local msgs, restore = h.capture_notify()
   vim.lsp.buf.definition()
   wait_msg(msgs, 'no LSP attached for filetype "lua"')
+  vim.wait(300)
   restore()
+  h.eq(1, #msgs, vim.inspect(msgs))
   h.eq(s.diff_buf, vim.api.nvim_get_current_buf())
   need_ts()
   -- a TypeScript row of the same composed buffer goes to ts_ls

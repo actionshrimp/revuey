@@ -68,13 +68,18 @@ file has uncommitted changes); when a definition isn't shown in the diff, the re
 type definition, declaration, implementation, references and hover, and nothing else (no
 diagnostics, completion, formatting, inlay hints or code actions). Each request is sent to the
 real language server of the file under the cursor, so `vim.lsp.buf.definition()`,
-`vim.lsp.buf.references()`, `<C-]>` and pickers (Telescope, fzf-lua, snacks) work unchanged, and a
+`vim.lsp.buf.references()`, `<C-]>` and pickers built on LSP requests work unchanged, and a
 review with several languages routes each line to its own server. Results point at the real files.
-A jump that would replace the diff (any jump in the current window, from a picker or the quickfix
-list) opens in the code window below instead, and the review stays where it was. Deleted lines and
-filetypes without an LSP give a message instead of a result. Revuey's own `gd` is unchanged: it
-still jumps inside the diff when the definition is shown there. `lsp_proxy = false` turns the
-client off.
+A jump that would replace the diff (any jump in the current window, a quickfix entry, a picker
+selection) opens in the code window below instead (or a new tab when there is no room for a
+split), and the review stays where it was. Tested with snacks.picker, which is pointed at the
+review window (`vim.b.snacks_main`); pickers that open selections in the window they were started
+from (Telescope, fzf-lua) should behave the same when started from the diff. The file panel window
+is `winfixbuf`, so a picker never replaces it. `<C-o>` in the code window that would show the
+review there takes you back to the review window instead. Deleted lines and filetypes without an
+LSP give one message and an empty result. Revuey's own keys (`gd`, `K`, `]]`...) are put back
+after your `LspAttach` handlers run, so `gd` still jumps inside the diff when the definition is
+shown there. `lsp_proxy = false` turns the client off.
 
 Line-ending-only changes (LF/CRLF) and a missing final newline are marked with a `⏎` note at the end
 of the line.
