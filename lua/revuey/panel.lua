@@ -16,6 +16,16 @@ local status_hl = {
 }
 M.status_hl = status_hl
 
+M.GLYPH_DONE, M.GLYPH_PARTIAL = '✓', '◐'
+
+---Progress glyph: ✓ all reviewed, ◐ some, ' ' none.
+function M.glyph(done, total)
+  if total > 0 and done == total then
+    return M.GLYPH_DONE
+  end
+  return done > 0 and M.GLYPH_PARTIAL or ' '
+end
+
 ---Cut `str` to at most `width` display cells, ending in '…' when cut (from the left with
 ---`from_left`, keeping the tail). Works on display width, so wide (CJK) characters fit.
 function M.truncate(str, width, from_left)
@@ -222,14 +232,16 @@ function M.render(s)
   s.panel_rows = {}
   s.panel_files = {}
   for fi, f in ipairs(r.files) do
-    local done = review_mod.is_reviewed(r, f)
-    local check = done and '✓' or ' '
+    local ndone, ntotal = review_mod.file_progress(r, fi)
+    local done = ntotal > 0 and ndone == ntotal
+    local check = M.glyph(ndone, ntotal)
     local name = vim.fs.basename(f.path)
     local dir = vim.fs.dirname(f.path)
     dir = dir == '.' and '' or dir
     local dot = f.uncommitted and '●' or ' '
     local prefix = ' ' .. check .. ' ' .. f.status .. dot .. ' '
-    local counts_text = f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed)
+    local partial = (not done and ndone > 0) and (ndone .. '/' .. ntotal .. ' ') or ''
+    local counts_text = partial .. (f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed))
     -- fit name + dir before the right-aligned counts
     local avail = width - vim.fn.strdisplaywidth(prefix) - vim.fn.strdisplaywidth(counts_text) - 2
     if vim.fn.strdisplaywidth(name) > avail then
@@ -246,7 +258,7 @@ function M.render(s)
     local text = prefix .. name .. (dir ~= '' and ('  ' .. dir) or '')
     local status_col = 1 + #check + 1
     local hls = {
-      { 1, 1 + #check, 'RevueyReviewed' },
+      { 1, 1 + #check, check == M.GLYPH_PARTIAL and 'RevueyPartial' or 'RevueyReviewed' },
       { status_col, status_col + 1, status_hl[f.status] or 'Normal' },
       { status_col + 1, status_col + 1 + #dot, 'RevueyUncommitted' },
       { #prefix, #prefix + #name, done and 'RevueyUnreviewed' or 'Normal' },
@@ -255,11 +267,12 @@ function M.render(s)
       hls[#hls + 1] = { #prefix + #name, #text, 'RevueyPanelDir' }
     end
     local row = add(text, hls)
-    local counts
+    local counts = partial ~= '' and { { partial, 'RevueyPartial' } } or {}
     if f.binary then
-      counts = { { 'bin', 'Comment' } }
+      counts[#counts + 1] = { 'bin', 'Comment' }
     else
-      counts = { { '+' .. f.added, 'RevueyCountAdd' }, { ' −' .. f.removed, 'RevueyCountDelete' } }
+      counts[#counts + 1] = { '+' .. f.added, 'RevueyCountAdd' }
+      counts[#counts + 1] = { ' −' .. f.removed, 'RevueyCountDelete' }
     end
     marks[row].virt = counts
     s.panel_rows[fi] = row
@@ -269,7 +282,7 @@ function M.render(s)
   local help
   if s.view_mode == 'guide' then
     help = {
-      ' ]] [[ section  mr section reviewed',
+      ' ]] [[ section  mr reviewed',
       ' ]c [c hunk  <Tab> fold  gp diff',
       ' gd def  K hover  go open  R refresh',
       ' gG diff view  gR regenerate  q close',

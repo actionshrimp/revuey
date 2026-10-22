@@ -299,5 +299,26 @@ h.test('full-stack guide with branch labels', function()
   screenshot('guide-stack-labels')
 end)
 
+-- Nested marks: one hunk of a three-hunk file marked in the diff (it folds with "✓ reviewed",
+-- the file header and the panel show "◐ 1/3"), then the guide: the section holding that hunk
+-- shows partial progress on its heading and in the panel's section list.
+h.test('partial progress: a reviewed hunk in the diff, then in the guide', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude-partial') .. '/calls.ndjson')
+  local t = {}
+  for i = 1, 40 do
+    t[#t + 1] = 'line ' .. i
+  end
+  local long = table.concat(t, '\n') .. '\n'
+  local changed = long:gsub('line 3\n', 'line three\n'):gsub('line 20\n', 'line twenty\n'):gsub('line 35\n', 'line thirty-five\n')
+  local d = h.repo('screen-partial', { ['m.txt'] = long }, { ['a.txt'] = 'new\nfile\n', ['m.txt'] = changed })
+  start(d, 'main', 40, 120)
+  child.type_keys(']f', ']c', 'mr')
+  screenshot('hunk-reviewed')
+  h.ok(generate_guide(), 'guide did not generate')
+  child.type_keys('gg')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-partial')
+end)
+
 child.stop()
 h.run()

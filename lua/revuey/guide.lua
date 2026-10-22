@@ -34,6 +34,16 @@ local function sha(s)
   return vim.fn.sha256(s):sub(1, 20)
 end
 
+---A hunk line as hashed for anchors and unit keys: +/-/space prefix, text, and its line-ending
+---flags (line-ending changes are changes too).
+---@param l revuey.DiffLine
+function M.raw_line(l)
+  local mark = l.kind == 'add' and '+' or l.kind == 'del' and '-' or ' '
+  return mark .. l.text .. (l.cr and '\r' or '') .. (l.no_eol and '\0noeol' or '')
+end
+
+M.sha = sha
+
 ---Assign ids and anchors to every hunk of a review's files, in diff order. Files without a text
 ---diff get one entry each so the guide can place them too.
 ---@param files revuey.FileDiff[]
@@ -69,8 +79,7 @@ function M.hunks(files)
         added = added + (l.kind == 'add' and 1 or 0)
         removed = removed + (l.kind == 'del' and 1 or 0)
         text[#text + 1] = mark .. l.text
-        -- line-ending changes are changes too
-        raw[#raw + 1] = mark .. l.text .. (l.cr and '\r' or '') .. (l.no_eol and '\0noeol' or '')
+        raw[#raw + 1] = M.raw_line(l)
       end
       add({
         file_idx = fi,

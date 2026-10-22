@@ -4,9 +4,15 @@
 -- repo root + branch + base. Each reviewed file stores the content key of its diff at the time it
 -- was marked (the new blob hash, or the old blob hash for deletions); if the branch changes that
 -- file, the key no longer matches and the mark is automatically treated as unreviewed.
+--
+-- Version 2 adds `units`: marks on review units (see units.lua), keyed by the unit's content
+-- key, so editing one hunk resets only that hunk. File marks stay: a file without hunks is marked
+-- as a whole, and a file whose every unit is reviewed also gets its file mark (layer stats count
+-- those). `sections` (guide section marks by identity) is the version 1 format, only read and
+-- converted to unit marks.
 local M = {}
 
-M.VERSION = 1
+M.VERSION = 2
 
 ---@class revuey.State
 ---@field version integer
@@ -14,7 +20,8 @@ M.VERSION = 1
 ---@field branch string
 ---@field base string
 ---@field files table<string, {key:string, reviewed_at:integer}>
----@field sections table<string, {reviewed_at:integer}> guide sections, by section identity
+---@field sections table<string, {reviewed_at:integer}> legacy guide section marks, by section identity
+---@field units table<string, {path:string, reviewed_at:integer}> unit (and parent hunk) marks, by key
 ---@field _path string
 
 function M.default_dir()
@@ -62,17 +69,21 @@ end
 
 local backup_seq = 0
 
----Read the files and sections tables from disk. Returns {} when missing; backs up undecodable files.
+---Read the files, sections and units tables from disk. Returns {} when missing; backs up
+---undecodable files.
 local function read_files(path)
   local fd = io.open(path, 'r')
   if not fd then
-    return {}, {}
+    return {}, {}, {}
   end
   local text = fd:read('*a')
   fd:close()
   local ok, data = pcall(vim.json.decode, text)
   if ok and type(data) == 'table' and type(data.files) == 'table' then
-    return data.files, type(data.sections) == 'table' and data.sections or {}
+    local function tbl(v)
+      return type(v) == 'table' and v or {}
+    end
+    return data.files, tbl(data.sections), tbl(data.units)
   end
   if text ~= '' then
     -- keep the unreadable file for inspection instead of silently overwriting it later
@@ -80,13 +91,13 @@ local function read_files(path)
     local backup = ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.fn.getpid(), backup_seq)
     os.rename(path, backup)
   end
-  return {}, {}
+  return {}, {}, {}
 end
 
 ---@return revuey.State
 function M.load(dir, repo, branch, base)
   local path = M.file_for(dir, repo, branch, base)
-  local files, sections = read_files(path)
+  local files, sections, units = read_files(path)
   return {
     version = M.VERSION,
     repo = repo,
@@ -94,9 +105,11 @@ function M.load(dir, repo, branch, base)
     base = base,
     files = files,
     sections = sections,
+    units = units,
     _path = path,
     _changes = {},
     _section_changes = {},
+    _unit_changes = {},
   }
 end
 
@@ -109,7 +122,7 @@ end
 function M.save(st)
   local dir = vim.fs.dirname(st._path)
   vim.fn.mkdir(dir, 'p')
-  local files, sections = read_files(st._path)
+  local files, sections, units = read_files(st._path)
   for path, ch in pairs(st._changes or {}) do
     if ch.entry then
       files[path] = ch.entry
@@ -121,12 +134,27 @@ function M.save(st)
   for id, entry in pairs(st._section_changes or {}) do
     sections[id] = entry or nil
   end
-  local data = { version = st.version, repo = st.repo, branch = st.branch, base = st.base, files = files, sections = sections }
+  -- units: keyed by content, so a plain set/unset merges safely too
+  for key, entry in pairs(st._unit_changes or {}) do
+    units[key] = entry or nil
+  end
+  local data = {
+    version = M.VERSION,
+    repo = st.repo,
+    branch = st.branch,
+    base = st.base,
+    files = files,
+    sections = sections,
+    units = units,
+  }
   if next(data.files) == nil then
     data.files = vim.empty_dict()
   end
   if next(data.sections) == nil then
     data.sections = nil
+  end
+  if next(data.units) == nil then
+    data.units = nil
   end
   local tmp = st._path .. '.tmp.' .. vim.fn.getpid()
   local fd, err = io.open(tmp, 'w')
@@ -146,8 +174,10 @@ function M.save(st)
   end
   st._changes = {}
   st._section_changes = {}
+  st._unit_changes = {}
   st.files = vim.deepcopy(files)
   st.sections = vim.deepcopy(sections)
+  st.units = vim.deepcopy(units)
 end
 
 ---@param st revuey.State
@@ -178,7 +208,40 @@ function M.toggle(st, path, key)
   return v
 end
 
----Guide section reviewed state (see guide.section_id): separate from file marks.
+---Unit (or parent hunk) mark by key (see units.lua). In memory only until `save`.
+---@param st revuey.State
+function M.unit_marked(st, key)
+  return key ~= nil and (st.units or {})[key] ~= nil
+end
+
+---@param st revuey.State
+---@param key string unit or hunk key
+---@param path string file path (kept with the mark for readability and cleanup)
+function M.set_unit(st, key, path, value)
+  st.units = st.units or {}
+  if (st.units[key] ~= nil) == (value and true or false) then
+    return false
+  end
+  local entry = value and { path = path, reviewed_at = os.time() } or false
+  st.units[key] = entry or nil
+  st._unit_changes = st._unit_changes or {}
+  st._unit_changes[key] = entry
+  return true
+end
+
+---Forget a legacy section mark (after converting it to unit marks). In memory until `save`.
+---@param st revuey.State
+function M.drop_section(st, id)
+  if st.sections and st.sections[id] ~= nil then
+    st.sections[id] = nil
+    st._section_changes = st._section_changes or {}
+    st._section_changes[id] = false
+    return true
+  end
+  return false
+end
+
+---Legacy guide section reviewed state (see guide.section_id), version 1 of the format.
 ---@param st revuey.State
 function M.section_reviewed(st, id)
   return id ~= nil and (st.sections or {})[id] ~= nil
