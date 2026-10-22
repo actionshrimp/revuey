@@ -383,6 +383,7 @@ function M.render(s, o)
   local buf = s.diff_buf
   api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
   c.place, c.signs, c.cover, c.jump, c.counts = {}, {}, {}, {}, {}
+  c.orphans = 0
   local attach = {} -- row -> list of {c, p, group}
   local changed = false
   local all = comments.list(store, { include_resolved = true, include_drafts = true })
@@ -393,8 +394,9 @@ function M.render(s, o)
       store._dirty[cmt.id] = true
       changed = true
     end
-    local path = cmt.anchor.path
-    if cmt.status ~= 'resolved' and cmt.status ~= 'dismissed' then
+    local path = p.path or cmt.anchor.path
+    local open = cmt.status ~= 'resolved' and cmt.status ~= 'dismissed'
+    if open then
       c.counts[path] = (c.counts[path] or 0) + 1
     end
     local row, group, first
@@ -422,7 +424,17 @@ function M.render(s, o)
         first = row
       end
     end
-    if row then
+    if not row then
+      -- the file is not shown (it left the review): a group at the end of the buffer, so the
+      -- comment stays visible, navigable and listed
+      row = #s.layout.lines
+      first = row
+      group = p.how == 'missing' and 'missing' or 'hidden'
+      if open then
+        c.orphans = c.orphans + 1
+      end
+    end
+    if row > 0 then
       local hl = p.outdated and 'RevueyCommentOutdated' or SIGN_HL[cmt.status] or 'RevueyCommentSign'
       for r = first, row do
         if not group then
@@ -443,11 +455,29 @@ function M.render(s, o)
   if not c.hidden then
     for row, items in pairs(attach) do
       local vl = {}
-      local grouped = false
+      local headed = {}
+      -- in-file items first, then outdated, then the end-of-review groups
+      local rank = { outdated = 1, missing = 2, hidden = 3 }
+      table.sort(items, function(x, y)
+        local rx, ry = rank[x.group] or 0, rank[y.group] or 0
+        if rx ~= ry then
+          return rx < ry
+        end
+        return x.c.id < y.c.id
+      end)
+      local titles = {
+        outdated = 'Outdated comments',
+        missing = 'Comments on files no longer in this review',
+        hidden = 'Comments on files not shown in this view',
+      }
       for _, it in ipairs(items) do
-        if it.group and not grouped then
-          grouped = true
-          vl[#vl + 1] = { { 'Outdated comments', 'RevueyCommentOutdated' } }
+        if it.group and not headed[it.group] then
+          headed[it.group] = true
+          vl[#vl + 1] = { { '' } }
+          vl[#vl + 1] = { { titles[it.group], 'RevueyCommentOutdated' } }
+        end
+        if it.group == 'missing' or it.group == 'hidden' then
+          vl[#vl + 1] = { { comments.location(it.c) .. ' (' .. (it.c.file_level and 'file' or it.c.anchor.side) .. ')', 'RevueyFilePath' } }
         end
         vim.list_extend(vl, thread_lines(s, it.c, it.p, width))
       end
@@ -474,6 +504,11 @@ end
 function M.sign(s, row)
   local c = s.cm
   return c and c.signs and c.signs[row]
+end
+
+---Open comments on files the view does not show (panel).
+function M.orphans(s)
+  return s.cm and s.cm.orphans or 0
 end
 
 ---Unresolved comments on a file (panel).
@@ -871,7 +906,9 @@ function M.list_lines(s)
     elseif cmt.status == 'draft' then
       tags[#tags + 1] = 'draft'
     end
-    if p.outdated then
+    if p.how == 'missing' then
+      tags[#tags + 1] = 'not in this review'
+    elseif p.outdated then
       tags[#tags + 1] = 'outdated'
     end
     local n = 0
