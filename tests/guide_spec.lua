@@ -197,6 +197,21 @@ h.test('prompt: full scope lists the stack in order and asks which branch introd
   h.ok(not text:find('—', 1, true), 'no em-dashes in our own prompt')
 end)
 
+h.test('prompt: full scope says how many commits of a branch are not listed', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local many = {}
+  for i = 1, 15 do
+    many[i] = 'commit ' .. i
+  end
+  local layers = {
+    { name = 'a', parent = 'main', commits = many, commit_count = 40 },
+    { name = 'b', parent = 'a', commits = { 'only one' }, commit_count = 1 },
+  }
+  local text = gp.build({ repo = 'r', branch = 'b', base = 'main', stack = { kind = 'full', trunk = 'main', layers = layers } }, hs)
+  h.ok(text:find('  - commit 15\n  - ... and 25 more\n- b:\n  - only one\n', 1, true), text)
+  h.ok(not text:find('and 0 more', 1, true))
+end)
+
 h.test('prompt: a plain branch review has no stack wording', function()
   local hs = guide.hunks(diff.parse(difftext(base_diff)))
   local text = gp.build({ repo = 'r', branch = 'feat', base = 'main' }, hs)

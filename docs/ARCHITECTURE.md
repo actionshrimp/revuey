@@ -52,8 +52,21 @@ are in `reports/Terminal code review tool landscape.md`.
    Core jump handlers put the target in the *current* window, which is the diff window, and the
    diff buffer used to be `bufhidden=wipe` (wiping it ends the session). With the proxy the diff
    buffer is `bufhidden=hide`; on `BufWinLeave` the view and closed folds are saved, and when the
-   diff window shows another buffer the review is put back and that buffer moves to the code
-   window below (any jump, picker selection, quickfix entry or `:edit` in the diff window). If the
+   diff window shows another buffer that buffer is first shown in the code window below (a new
+   split made while the diff window still shows it, with cleared jumplist and tagstack; a new
+   tab on E36; a `winfixbuf` code window is skipped), so `bufhidden=wipe/delete/unload` buffers
+   (fugitive objects, dashboards) are never hidden, and only then is the review put back (any
+   jump, picker selection, quickfix entry or `:edit` in the diff window). `BufWinEnter` of the
+   review in the code window (`<C-o>` there) puts the code window's file back and focuses the
+   review at that position. `vim.b.snacks_main` makes snacks.picker target the review window, and
+   the panel window is `winfixbuf`. Revuey's buffer keymaps are re-applied (twice scheduled)
+   after `LspAttach` of the proxy, since user handlers map `gd`/`K`/`]]` on every client.
+   `$/cancelRequest` drops the reply and cancels the readiness wait and the forwarded request
+   (`lsp.request` returns a cancel handle). Rows without LSP reply with an empty result, and core's
+   "No locations found"/"No information available" are suppressed while that reply's handler
+   runs, so the user sees one revuey message. On wipe every `revuey` client attached to the
+   buffer is stopped, and clients left with no buffer (`:lsp restart` racing a close) are swept
+   after each initialize. If the
    diff window is gone the buffer is wiped as before; `TabClosed` (nested, so the session's
    `BufWipeout` cleanup runs) wipes it at once for `:tabclose`. The client is stopped on the
    buffer's `BufWipeout`, so open/close/reopen leaves no clients. Revuey's own `gd`/`K` keep
