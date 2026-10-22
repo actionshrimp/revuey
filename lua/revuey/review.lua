@@ -390,12 +390,16 @@ function M.raw_keys(root, from, to, with_old)
   return keys
 end
 
+---How hunks are cut into units (units.derive's `split`); nil = one unit per hunk. A hook for
+---tests until the engine cuts large hunks itself.
+M.split = nil
+
 ---The review's units (units.lua), derived once per loaded review.
 ---@param review revuey.Review
 ---@return revuey.Units
 function M.units(review)
   if not review._units then
-    review._units = require('revuey.units').derive(review.files, { key_old = review.key_old })
+    review._units = require('revuey.units').derive(review.files, { key_old = review.key_old, split = M.split })
   end
   return review._units
 end
