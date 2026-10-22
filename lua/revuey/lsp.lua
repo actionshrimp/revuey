@@ -6,8 +6,31 @@ local linemap = require('revuey.linemap')
 local M = {}
 
 local first_seen = {} ---@type table<integer, integer> client id -> ms timestamp
--- `$/progress` per client: tokens begun and not ended yet (e.g. tsserver loading its project).
+-- Warm-up per client: `$/progress` tokens begun and not ended yet (e.g. tsserver loading its
+-- project), with when they began; `warm` once a report has finished or a request was answered.
+-- Only warm-up waits on progress, and only on reports younger than `M.progress_max_ms`, so later
+-- work (rust-analyzer's check on save) or a report that never ends doesn't delay requests.
 local progress = {} ---@type table<integer, table<any, integer>>
+local warm = {} ---@type table<integer, true>
+M.progress_max_ms = 10000
+
+---Open progress reports of a client (tests), or nil when none are tracked.
+function M.progress_state(id)
+  return progress[id]
+end
+
+---Still warming up with a recent progress report open?
+local function loading(id)
+  if warm[id] then
+    return false
+  end
+  for _, began in pairs(progress[id] or {}) do
+    if vim.uv.now() - began < M.progress_max_ms then
+      return true
+    end
+  end
+  return false
+end
 local created = {} ---@type table<integer, true> hidden buffers loaded by revuey
 
 local function mtime(buf)
@@ -139,9 +162,9 @@ local function with_clients(buf, method, cb, on_fail, handle)
     local ready = #clients > 0
     for _, c in ipairs(clients) do
       first_seen[c.id] = first_seen[c.id] or now()
-      -- ready once initialized, settled, and not reporting work in progress (e.g. tsserver
-      -- still loading the project on a busy machine); the 15s deadline caps the wait
-      local busy = next(progress[c.id] or {}) ~= nil
+      -- ready once initialized, settled, and not still loading during warm-up (e.g. tsserver's
+      -- project on a busy machine); the 15s deadline caps the wait
+      local busy = loading(c.id)
       local settled = now() - first_seen[c.id] >= config.options.lsp_settle_ms
       if not c.initialized or busy or not settled then
         ready = false
@@ -185,7 +208,26 @@ vim.api.nvim_create_autocmd('LspProgress', {
       progress[id][params.token] = now()
     elseif kind == 'end' then
       progress[id][params.token] = nil
+      warm[id] = true
     end
+  end,
+})
+
+---Forget a client's progress once it has no buffers left (stopped, exited, or detached).
+vim.api.nvim_create_autocmd('LspDetach', {
+  group = lsp_group,
+  callback = function(ev)
+    local id = ev.data and ev.data.client_id
+    if not id then
+      return
+    end
+    local c = vim.lsp.get_client_by_id(id)
+    for b in pairs(c and not c:is_stopped() and c.attached_buffers or {}) do
+      if b ~= ev.buf then
+        return -- still attached elsewhere
+      end
+    end
+    progress[id], warm[id] = nil, nil
   end,
 })
 
@@ -266,6 +308,9 @@ function M.request(target, method, cb, is_empty, opts)
       })
       local ok, req_id = client:request(method, params, function(err, result)
         results[i] = { err = err, result = result, client = client }
+        if not err then
+          warm[client.id] = true -- it answers: no more waiting on its progress reports
+        end
         pending = pending - 1
         if pending == 0 then
           local first_err
