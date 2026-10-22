@@ -37,6 +37,7 @@ local M = {}
 ---@field landed? boolean       its changes are already in trunk (squash-merged)
 ---@field diverged? boolean     not restacked on its moved parent: diffed from the parent's old tip
 ---@field stale? boolean        explicit parent that is not an ancestor: diffed against trunk
+---@field skipped? integer      commits at its bottom already squash-merged into trunk, left out
 ---@field key_old? boolean      reviewed marks also key on the old side (parent content)
 ---@field stats? {commits?:integer, files?:integer, reviewed?:integer}
 
@@ -45,6 +46,7 @@ local M = {}
 ---@field trunk string
 ---@field trunk_rev string
 ---@field trunk_state string    normalised trunk for state keys
+---@field base_rev? string      full-scope old side when the bottom layer skips squash-merged commits
 ---@field layers revuey.Layer[] bottom first
 ---@field current integer       layer to open at (e.g. HEAD's branch)
 ---@field forks {at:string, children:string[]}[]
@@ -444,7 +446,7 @@ function M.target(stack, scope)
   if scope.kind == 'full' then
     local top = stack.layers[#stack.layers]
     return {
-      from = stack.trunk_rev,
+      from = stack.base_rev or stack.trunk_rev,
       to = not top.is_head and top.tip or nil,
       branch = top.name,
       base = stack.trunk,
@@ -606,6 +608,103 @@ local function read_tail(path, bytes)
     data = data:gsub('^[^\n]*\n', '') -- drop the partial first line
   end
   return data
+end
+
+local MAX_RUN = 20
+local NO_CONTEXT = { '-U0', '--no-renames', '--no-ext-diff', '--no-color' }
+
+---Patch ids (`git patch-id --stable`) of a stream of `commit <sha>`-headed patches: sha -> id.
+local function patch_ids(root, patches)
+  local res = git.system({ 'git', 'patch-id', '--stable' }, { cwd = root, stdin = patches })
+  local ids = {}
+  for id, sha in (res.code == 0 and res.stdout or ''):gmatch('(%x+) (%x+)') do
+    ids[sha] = id
+  end
+  return ids
+end
+
+---Patch id of the change `from..to`, labelled `to`; nil when there is no change.
+local function range_patch_id(root, from, to)
+  local d = git.git(vim.list_extend({ 'diff', from, to }, NO_CONTEXT), root)
+  return d and d ~= '' and patch_ids(root, 'commit ' .. to .. '\n' .. d)[to] or nil
+end
+
+---The oldest commits on `tip`'s first-parent line above trunk that are already in trunk as
+---commits of their own (squash merges, cherry-picks), grouped into runs: one run per trunk commit,
+---oldest first. Patches are compared without context lines, so a trunk change next to a hunk does
+---not stop a match. Stops at the first commit no run starting there matches.
+---@return string[][]
+function M.landed_runs(root, trunk_rev, tip)
+  local mb = git.merge_base(trunk_rev, tip, root)
+  local out = mb and git.git({ 'rev-list', '--reverse', '--first-parent', '--max-count=200', mb .. '..' .. tip }, root)
+  local commits = vim.split(out or '', '\n', { trimempty = true })
+  if #commits == 0 then
+    return {}
+  end
+  local out_paths = git.git({ 'log', '--format=', '--name-only', '--no-renames', mb .. '..' .. tip }, root) or ''
+  local paths = vim.fn.uniq(vim.fn.sort(vim.split(out_paths, '\n', { trimempty = true })))
+  if #paths == 0 or #paths > 500 then
+    return {}
+  end
+  local args = vim.list_extend({ 'log', '-p', '--full-diff', '--no-merges', '--max-count=2000', '--format=commit %H' }, NO_CONTEXT)
+  vim.list_extend(args, { mb .. '..' .. trunk_rev, '--' })
+  vim.list_extend(args, vim.tbl_map(function(p)
+    return ':(literal)' .. p
+  end, paths))
+  local in_trunk = {}
+  for _, id in pairs(patch_ids(root, git.git(args, root) or '')) do
+    in_trunk[id] = true
+  end
+  if next(in_trunk) == nil then
+    return {}
+  end
+  local runs, from, i = {}, mb, 1
+  while i <= #commits do
+    local matched
+    for j = i, math.min(#commits, i + MAX_RUN - 1) do
+      if in_trunk[range_patch_id(root, from, commits[j]) or ''] then
+        matched = j
+        break
+      end
+    end
+    if not matched then
+      break
+    end
+    runs[#runs + 1] = vim.list_slice(commits, i, matched)
+    from, i = commits[matched], matched + 1
+  end
+  return runs
+end
+
+---Layers diffed from trunk start after the commits at their bottom that trunk already has as
+---squash merges (lower PRs merged, the branch not restacked). A layer that landed entirely keeps
+---its last run, its own squash-merged PR, as its diff.
+local function skip_squashed(root, stack)
+  for i, l in ipairs(stack.layers) do
+    if l.parent_rev == stack.trunk_rev then
+      local runs = M.landed_runs(root, stack.trunk_rev, l.tip)
+      local last = runs[#runs]
+      if last and last[#last] == l.tip then
+        runs[#runs] = nil
+      end
+      if #runs > 0 then
+        local skipped = vim.iter(runs):fold(0, function(n, r)
+          return n + #r
+        end)
+        local top = runs[#runs]
+        l.parent_rev, l.skipped = top[#top], skipped
+        stack.notes[#stack.notes + 1] = ('%s skips %d commit%s already squash-merged into %s (not restacked?)'):format(
+          l.name,
+          skipped,
+          skipped == 1 and '' or 's',
+          stack.trunk
+        )
+        if i == 1 then
+          stack.base_rev = l.parent_rev
+        end
+      end
+    end
+  end
 end
 
 ---Mark bottom layers whose changes are already in trunk (squash-merged): the layer's changed
@@ -878,6 +977,7 @@ function M.detect(root, trunk, cache)
     end
     if stack then
       vim.list_extend(stack.notes, extra)
+      skip_squashed(root, stack)
       mark_landed(root, stack)
     elseif #extra > 0 then
       notes = extra
