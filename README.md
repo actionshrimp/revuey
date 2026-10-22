@@ -13,7 +13,7 @@ CLI) can reorganise the review into ordered, explained sections. Design notes:
 ```lua
 {
   dir = '~/dev/revuey/main',
-  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyGuide' },
+  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyGuide', 'RevueyGuideDiagram' },
   opts = {
     -- default_branch = 'develop', -- default: origin/HEAD, else main, master, develop
     -- ai = { model = 'sonnet' }, -- AI guide; default: Claude Code's default model
@@ -44,6 +44,7 @@ Requirements:
 | `:RevueyGuide` | Switch between the diff and the [AI guide](#ai-guide) view. With no guide yet, offers to generate one. |
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
 | `:RevueyGuide cancel` | Stop a running generation. |
+| `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 
@@ -168,6 +169,42 @@ with light markdown styling.
   mark survives regenerating the guide when those hunks are unchanged, and resets when any of
   them changes.
 
+**Overview diagram.** When the structure is worth seeing (several modules calling each other, a
+data flow, a new component wired into existing ones), the guide starts with a small diagram
+below the summary. Claude only names the nodes (modules or concepts, each new, changed or
+context) and edges; revuey lays them out and draws them with box-drawing characters, because
+models align box art badly:
+
+```
+╭─────────────────╮    ╭─────────────────╮
+│ main (index.ts) │    │ Total component │
+╰────────┬────────╯    ╰────────┬────────╯
+         │                      │
+         ╰────────╮  ╭──────────╯
+          total() │  │ total()
+                  ▼  ▼
+                ╭──────╮
+                │ Cart │
+                ╰───┬──╯
+                    │ sum, multiply
+                    ▼
+               ╭─────────╮
+               │ math.ts │
+               ╰─────────╯
+```
+
+Boxes are coloured by kind (`RevueyDiagramNew`, `RevueyDiagramChanged`, `RevueyDiagramContext`).
+The drawing is redone when the window is resized; when it can't fit, it becomes a list
+(`index.ts ──new Cart──▶ cart.ts`). `<CR>` on a box jumps to the section that covers it, and
+`<CR>` (or `za`) on the "Overview" heading folds the diagram. `:RevueyGuideDiagram mermaid`
+copies it as Mermaid text. Small changes get no diagram.
+
+**Branch labels (full stack).** In the full-stack scope each hunk header shows, right-aligned,
+the branch that introduced it, for example `[stack/cart]`, or several (`[stack/cart, stack/ui]`)
+when more than one branch changed those lines; working-tree changes show `[uncommitted]`. The
+labels appear in the guide and in the full-stack diff view, and Claude gets the same tags in the
+prompt, so the prose can say which branch introduced what. Layer scopes have no labels.
+
 **When the code changes** after the guide was generated, sections whose hunks are unchanged
 render as before. A section with changed or missing hunks gets an "outdated" chip and shows only
 the hunks that still exist. New hunks go to a final "Not in guide" section, and a banner offers
@@ -261,6 +298,7 @@ Diff buffer:
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
+| `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 
 File panel:
@@ -277,7 +315,9 @@ All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddT
 `RevueyDeleteText` (word diff), `RevueyFileHeader`, `RevueyHunkHeader`, `RevueyAddSign`,
 `RevueyDeleteSign`, `RevueyLineNr`, `RevueyAddLineNr`, `RevueyDeleteLineNr`, `RevueyReviewed`,
 the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
-`RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, and others (see
+`RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the diagram's `RevueyDiagramNew`,
+`RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
+stack's `RevueyLayerLabel`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it
@@ -343,7 +383,11 @@ cd /tmp/revuey-guide
 - `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
 - Edit `src/cart.ts` and save: the section with that hunk turns "outdated", the edited hunk
   appears under "Not in guide", and a banner offers `gR`.
-- `gs` for a layer: it has no guide of its own yet. `gs` again: the full-stack guide is back.
+- The full-stack guide starts with an overview diagram: `<CR>` on a box jumps to its section,
+  `:RevueyGuideDiagram mermaid` copies it as Mermaid. Hunk headers show the branch that
+  introduced each hunk (`[stack/cart, stack/ui]` on `src/cart.ts`).
+- `gs` for a layer: it has no guide of its own yet, and no branch labels. `gs` again: the
+  full-stack guide is back.
 
 ## Tests
 
@@ -355,6 +399,9 @@ cd /tmp/revuey-guide
   layers) plus `detect()` on real repos.
 - **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
   parser, validation and JSON repair, section identity, staleness, guide storage, markdown prose.
+  The overview diagram: schema validation, golden layouts (chain, fan-out, fan-in, cycle,
+  multibyte labels, the list fallback) and Mermaid text. Branch attribution on a 3-layer git
+  stack (a hunk two layers touched, a pure deletion, a rename, uncommitted and untracked work).
 - **Integration:** real fixture repos opened headlessly (buffer text, extmarks, folds, keymaps,
   lifecycle cleanup, empty reviews, stack layer switching/full scope/per-layer marks/working tree
   on the HEAD layer only), plus LSP definition/hover when `typescript-language-server`
@@ -364,7 +411,7 @@ cd /tmp/revuey-guide
   a server; `vim.lsp.buf.definition`/`type_definition`/`references`/`hover` from context and
   added lines, in the diff and the guide, run against `typescript-language-server`. TypeScript highlight checks skip without the TS parser/queries.
   The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
-  and replays canned stream-json (good, invalid, missing hunks, unknown ids, errors, slow, hang),
+  and replays canned stream-json (good, diagram, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.
 - **Screen:** a child Neovim (vendored `mini.test`, `tests/vendor/mini`) renders the review and its
   screen grid, highlight attributes included, is compared to `tests/screenshots/*`. After an

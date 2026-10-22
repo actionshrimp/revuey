@@ -141,6 +141,27 @@ elseif scenario == 'unknown' then
   g.sections[#g.sections + 1] = { title = 'Ghost', overview = 'Only unknown ids.', hunks = { { id = 'h998' } } }
   tool('StructuredOutput', g)
   result(g)
+elseif scenario == 'diagram' then
+  -- a guide with an overview diagram of the fixture's modules (both fixtures have these files)
+  local g = guide()
+  g.diagram = {
+    nodes = {
+      { id = 'index', label = 'index.ts', kind = 'changed' },
+      { id = 'ui', label = 'Total.tsx', kind = 'new', section = 2 },
+      { id = 'cart', label = 'cart.ts', kind = 'new', section = 1 },
+      { id = 'math', label = 'math.ts', kind = 'changed' },
+      { id = 'format', label = 'format.ts', kind = 'context' },
+    },
+    edges = {
+      { from = 'index', to = 'cart', label = 'new Cart' },
+      { from = 'ui', to = 'cart', label = 'total()' },
+      { from = 'cart', to = 'math', label = 'sum' },
+      { from = 'ui', to = 'format' },
+      { from = 'ghost', to = 'cart' }, -- unknown node: dropped by validation
+    },
+  }
+  tool('StructuredOutput', g)
+  result(g)
 else
   local g = guide()
   tool('StructuredOutput', g)

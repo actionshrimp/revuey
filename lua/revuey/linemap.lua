@@ -70,6 +70,15 @@ function M.new(a, b)
   return (M.both(a, b))
 end
 
+---Map a->b through diff hunks given as {a_start, a_count, b_start, b_count} (vim.text.diff
+---"indices" form: a start is the line *before* the range when its count is 0), e.g. from a
+---zero-context diff. Lines are not range-checked.
+---@param hunks integer[][]
+---@return fun(lnum: integer): integer?
+function M.from_hunks(hunks)
+  return mapper(hunks, math.huge, 1)
+end
+
 ---Map with texts given as line lists.
 function M.from_lines(a_lines, b_lines)
   return M.new(table.concat(a_lines, '\n') .. '\n', table.concat(b_lines, '\n') .. '\n')

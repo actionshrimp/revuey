@@ -9,6 +9,7 @@
 --   * storage under <state_dir>/guides/.
 -- Prompt text and schema live in guide_prompt.lua; the CLI call in ai.lua.
 local layout = require('revuey.layout')
+local diagram_mod = require('revuey.diagram')
 
 local M = {}
 
@@ -201,6 +202,10 @@ function M.sanitize(rec)
     end
   end
   rec.sections = sections
+  rec.diagram = M.validate_diagram(rec.diagram, function(v)
+    v = tonumber(v)
+    return v and v == math.floor(v) and v >= 1 and v <= #sections and v or nil
+  end)
   if type(rec.generator) ~= 'table' then
     rec.generator = {}
   end
@@ -223,6 +228,70 @@ local function norm_id(v)
 end
 
 M.OTHER_TITLE = 'Other changes'
+
+M.DIAGRAM_MAX_NODES, M.DIAGRAM_MAX_EDGES = 12, 20
+M.DIAGRAM_LABEL_MAX, M.DIAGRAM_EDGE_LABEL_MAX = 28, 20
+local KINDS = { new = true, changed = true, context = true }
+
+local function diagram_id(v)
+  if type(v) == 'number' then
+    v = tostring(v)
+  end
+  return type(v) == 'string' and M.one_line(v) or ''
+end
+
+---Hold the optional overview diagram to its schema: nodes with unique ids (first wins, at most
+---12), labels on one line and truncated, unknown kinds as "changed", sections mapped by
+---`section_of` (nil when unknown); edges between known nodes only, no self loops, deduplicated
+---(first wins, at most 20). A diagram with fewer than two nodes is omitted (nil).
+---@param raw any
+---@param section_of? fun(v:any):integer?
+---@return {nodes:{id:string, label:string, kind:string, section?:integer}[], edges:{from:string, to:string, label?:string}[]}?
+function M.validate_diagram(raw, section_of)
+  if type(raw) ~= 'table' then
+    return nil
+  end
+  local nodes, seen = {}, {}
+  for _, n in ipairs(type(raw.nodes) == 'table' and raw.nodes or {}) do
+    if #nodes >= M.DIAGRAM_MAX_NODES then
+      break
+    end
+    local id = type(n) == 'table' and diagram_id(n.id) or ''
+    if id ~= '' and not seen[id] then
+      seen[id] = true
+      local label = M.one_line(n.label)
+      nodes[#nodes + 1] = {
+        id = id,
+        label = diagram_mod.truncate(label ~= '' and label or id, M.DIAGRAM_LABEL_MAX),
+        kind = KINDS[n.kind] and n.kind or 'changed',
+        section = section_of and n.section ~= nil and section_of(n.section) or nil,
+      }
+    end
+  end
+  if #nodes < 2 then
+    return nil
+  end
+  local edges, pairs_seen = {}, {}
+  for _, e in ipairs(type(raw.edges) == 'table' and raw.edges or {}) do
+    if #edges >= M.DIAGRAM_MAX_EDGES then
+      break
+    end
+    if type(e) == 'table' then
+      local from, to = diagram_id(e.from), diagram_id(e.to)
+      local key = from .. '\0' .. to
+      if seen[from] and seen[to] and from ~= to and not pairs_seen[key] then
+        pairs_seen[key] = true
+        local label = M.one_line(e.label)
+        edges[#edges + 1] = {
+          from = from,
+          to = to,
+          label = label ~= '' and diagram_mod.truncate(label, M.DIAGRAM_EDGE_LABEL_MAX) or nil,
+        }
+      end
+    end
+  end
+  return { nodes = nodes, edges = edges }
+end
 
 ---Hold model output to the schema and the coverage rule, against the launch-time hunks.
 ---Unknown ids and duplicates are dropped (first placement wins), empty sections dropped, missed and
@@ -248,7 +317,8 @@ function M.validate(raw, hunks)
   local placed = {}
   local warnings = { unknown = 0, duplicates = 0, missed = 0, unplaced = 0 }
   local sections = {}
-  for _, s in ipairs(type(raw.sections) == 'table' and raw.sections or {}) do
+  local sec_map, sec_titles = {}, {} -- model section index / title -> validated index
+  for ri, s in ipairs(type(raw.sections) == 'table' and raw.sections or {}) do
     if type(s) == 'table' then
       local refs = {}
       for _, r in ipairs(type(s.hunks) == 'table' and s.hunks or {}) do
@@ -270,6 +340,10 @@ function M.validate(raw, hunks)
           overview = M.clean_text(s.overview),
           hunks = refs,
         }
+        sec_map[ri] = #sections
+        if title ~= '' then
+          sec_titles[title:lower()] = sec_titles[title:lower()] or #sections
+        end
       end
     end
   end
@@ -306,10 +380,21 @@ function M.validate(raw, hunks)
     }
   end
   local title = M.one_line(raw.title)
+  local diagram = M.validate_diagram(raw.diagram, function(v)
+    if type(v) == 'string' then
+      local t = vim.trim(v):lower()
+      return sec_titles[t] or sec_map[tonumber(t:match('^#?(%d+)$') or '')]
+    end
+    return type(v) == 'number' and sec_map[v] or nil
+  end)
+  if raw.diagram ~= nil and not diagram then
+    warnings.diagram_dropped = true
+  end
   return {
     title = title ~= '' and title or 'Guided review',
     summary = M.clean_text(raw.summary),
     sections = sections,
+    diagram = diagram,
   }, warnings
 end
 
@@ -345,6 +430,7 @@ function M.record(guide, hunks, meta)
     title = guide.title,
     summary = guide.summary,
     sections = sections,
+    diagram = guide.diagram,
     generator = meta.generator or {},
   }
 end
@@ -423,6 +509,7 @@ function M.resolve(rec, hunks)
     stale = outdated > 0 or #new > 0,
     outdated = outdated,
     new = #new,
+    diagram = rec.diagram,
     generator = rec.generator or {},
   }
 end

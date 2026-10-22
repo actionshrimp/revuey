@@ -254,5 +254,50 @@ h.test('guide view and the panel section list', function()
   screenshot('guide-narrow')
 end)
 
+local function generate_guide()
+  return child.lua([[
+    vim.notify = function() end
+    require('revuey.view').guide_command(true)
+    return vim.wait(20000, function()
+      local s = require('revuey.view').session
+      return next(require('revuey.guide_view').jobs) == nil and s.guide.resolved ~= nil and not s.refreshing
+    end, 20)
+  ]])
+end
+
+-- The overview diagram under the summary: boxes coloured by kind, routed edges, labels.
+h.test('guide with an overview diagram', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude-diagram') .. '/calls.ndjson')
+  vim.env.REVUEY_FAKE_CLAUDE = 'diagram'
+  local d = h.tmpdir('screen-guide-diagram')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', d }):wait().code == 0)
+  start(d, 'main', 40, 130)
+  h.ok(generate_guide(), 'guide did not generate')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-diagram')
+  vim.env.REVUEY_FAKE_CLAUDE = nil
+end)
+
+-- A full-stack guide: each hunk header names the branch (or branches) that introduced it.
+h.test('full-stack guide with branch labels', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude-stack') .. '/calls.ndjson')
+  local d = h.tmpdir('screen-guide-stack')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  start(d, '', 40, 130)
+  child.type_keys('gs')
+  child.lua([[
+    vim.wait(5000, function()
+      local s = require('revuey.view').session
+      return s.scope.kind == 'full' and not s.refreshing and not s.pending_scope
+    end, 10)
+  ]])
+  h.ok(generate_guide(), 'guide did not generate')
+  child.type_keys(']]', ']]') -- section 2: two files, two layers
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-stack-labels')
+end)
+
 child.stop()
 h.run()

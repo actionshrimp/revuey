@@ -13,6 +13,7 @@ local linemap = require('revuey.linemap')
 local stack_mod = require('revuey.stack')
 local state_mod = require('revuey.state')
 local guide_view = require('revuey.guide_view')
+local attribution = require('revuey.attribution')
 
 local M = {}
 
@@ -144,6 +145,24 @@ local function guide_hunk_virt(s, e)
   return virt
 end
 
+---Full-stack reviews: the layers that introduced a hunk, right-aligned on its header row (guide
+---rows carry them in the side table; diff rows look them up by file and hunk).
+local function set_layer_mark(s, r0, e)
+  local names = e.layers
+  if not names and not e.path_len and e.hunk_id and s.review.layer_labels then
+    local per = s.review.layer_labels[e.file_idx]
+    names = per and per[tonumber(e.hunk_id:match('#(%d+)$'))]
+  end
+  if names then
+    api.nvim_buf_set_extmark(s.diff_buf, ns, r0, 0, {
+      virt_text = { { ' [' .. table.concat(names, ', ') .. '] ', 'RevueyLayerLabel' } },
+      virt_text_pos = 'right_align',
+      hl_mode = 'combine',
+      priority = 22,
+    })
+  end
+end
+
 local function decorate(s)
   local buf, map = s.diff_buf, s.layout.map
   api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -151,7 +170,7 @@ local function decorate(s)
   s.section_marks, s.section_check_marks = {}, {}
   for row, e in ipairs(map) do
     local r0 = row - 1
-    if e.kind == 'prose' then
+    if e.kind == 'prose' or e.kind == 'diagram' then
       for _, hl in ipairs(e.hls or {}) do
         pcall(api.nvim_buf_set_extmark, buf, ns, r0, hl[1], { end_col = hl[2], hl_group = hl[3], priority = 20 })
       end
@@ -173,6 +192,7 @@ local function decorate(s)
         priority = 20,
       })
       api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = math.min(e.path_len, len), hl_group = 'RevueyFilePath', priority = 21 })
+      set_layer_mark(s, r0, e)
     end
     -- Full-line background as a low-priority hl_group range with hl_eol (not line_hl_group, which
     -- would paint over the word-diff backgrounds); tree-sitter foregrounds combine on top.
@@ -192,6 +212,9 @@ local function decorate(s)
         line_hl_group = 'RevueyHunkHeaderBg',
         priority = 20,
       })
+      if not e.path_len then -- (guide headers got theirs above)
+        set_layer_mark(s, r0, e)
+      end
     elseif e.meta == 'note' then
       api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = #s.layout.lines[row], hl_group = 'RevueyNote' })
     end
@@ -199,7 +222,7 @@ local function decorate(s)
   -- Line-ending indicators (cheap: only flagged lines). Otherwise identical -/+ pairs would be
   -- shown with no visible difference.
   for row, e in ipairs(map) do
-    if e.kind ~= 'meta' and e.kind ~= 'prose' then
+    if e.kind ~= 'meta' and e.kind ~= 'prose' and e.kind ~= 'diagram' then
       local hk = s.review.files[e.file_idx].hunks[e.hunk_idx]
       if hk.has_eol_flags == nil then
         hk.has_eol_flags = false
@@ -324,6 +347,12 @@ function M.statuscolumn()
       return vim.fn.foldclosed(lnum) ~= -1
     end)
     return '%#' .. hl .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. ' ' .. (folded and '▸' or '▾') .. ' '
+  elseif e.kind == 'diagram' and e.heading then
+    local lnum = vim.v.lnum
+    local folded = api.nvim_win_call(win, function()
+      return vim.fn.foldclosed(lnum) ~= -1
+    end)
+    return '%#RevueyGuideHeading#' .. string.rep(' ', 2 * w + 1) .. (folded and '▸' or '▾') .. ' '
   elseif e.meta == 'section' then
     local lnum = vim.v.lnum
     local folded = api.nvim_win_call(win, function()
@@ -362,6 +391,9 @@ function M.foldtext()
     end
     chunks[#chunks + 1] = { '  (' .. hidden .. ' lines folded)', 'Comment' }
     return chunks
+  end
+  if e and e.kind == 'diagram' then
+    return { { s.layout.lines[fs], 'RevueyGuideHeading' }, { '  (diagram, ' .. (fe - fs) .. ' lines folded)', 'Comment' } }
   end
   if e and e.meta == 'section' then
     local sec = s.guide and s.guide.resolved and s.guide.resolved.sections[e.section_idx]
@@ -619,6 +651,8 @@ function M.open_file()
   if not f then
     if e.meta == 'section' then
       return M.toggle_section_fold(e.section_idx)
+    elseif e.kind == 'diagram' then
+      return M.diagram_select()
     end
     return
   end
@@ -876,6 +910,61 @@ function M.toggle_section_fold(si)
     return vim.fn.foldclosed(r.start_row) ~= -1
   end)
   section_fold(s, si, not closed)
+end
+
+---Diagram heading: fold or unfold the diagram. A node: jump to the guide section covering it.
+function M.diagram_select()
+  local s = M.session
+  local e = current(s)
+  if not e or e.kind ~= 'diagram' then
+    return
+  end
+  local r = s.layout.diagram
+  if e.heading then
+    if r then
+      local closed = api.nvim_win_call(s.diff_win, function()
+        return vim.fn.foldclosed(r.start_row) ~= -1
+      end)
+      api.nvim_win_call(s.diff_win, function()
+        pcall(vim.cmd, r.start_row .. (closed and 'foldopen' or 'foldclose'))
+      end)
+    end
+    return
+  end
+  local col = api.nvim_win_get_cursor(s.diff_win)[2]
+  for _, n in ipairs(e.nodes or {}) do
+    if col >= n[1] and col < n[2] then
+      local sec = n.section and s.layout.sections and s.layout.sections[n.section]
+      if not sec then
+        return vim.notify('revuey: no guide section is linked to this node', vim.log.levels.INFO)
+      end
+      api.nvim_win_call(s.diff_win, function()
+        vim.cmd("normal! m'")
+      end)
+      section_fold(s, n.section, false)
+      return goto_row(s, sec.start_row, 'top')
+    end
+  end
+end
+
+---The guide's diagram as Mermaid flowchart text, copied to `reg` (default: the clipboard
+---register `+` when there is a clipboard, else the unnamed register).
+---@param reg? string
+function M.guide_diagram(what, reg)
+  local s = M.session
+  if what ~= nil and what ~= 'mermaid' then
+    return vim.notify('revuey: unknown argument ' .. what .. ' (use :RevueyGuideDiagram mermaid [register])', vim.log.levels.ERROR)
+  end
+  local g = s and guide_view.prepare(s)
+  local d = g and g.resolved and g.resolved.diagram
+  if not d then
+    return vim.notify('revuey: this guide has no diagram', vim.log.levels.INFO)
+  end
+  local text = require('revuey.diagram').mermaid(d)
+  reg = reg or (vim.fn.has('clipboard') == 1 and '+' or '"')
+  vim.fn.setreg(reg, text, 'l')
+  vim.notify(('revuey: Mermaid diagram copied to register %s (%d lines)'):format(reg, #vim.split(vim.trim(text), '\n')), vim.log.levels.INFO)
+  return text
 end
 
 ---]] / [[ in the guide: next/previous section heading (takes a count).
@@ -1464,6 +1553,11 @@ function M.capture_guide(s)
     end
     sync_hunk_folds(s)
   end)
+  if s.layout.diagram then
+    saved.diagram_folded = api.nvim_win_call(s.diff_win, function()
+      return vim.fn.foldclosed(s.layout.diagram.start_row) ~= -1
+    end)
+  end
   saved.section_idx = section_at_row(s, saved.row)
   local r = saved.section_idx and s.layout.sections[saved.section_idx]
   saved.rel = r and (saved.row - r.start_row) or 0
@@ -1475,6 +1569,8 @@ function M.capture_guide(s)
     saved.anchor = { block = e.block, para = e.para, pos = e.off + math.max((saved.col or 0) - (e.pre or 0), 0) }
   elseif e and e.meta == 'section' then
     saved.anchor = { section_idx = e.section_idx }
+  elseif e and e.kind == 'diagram' then
+    saved.anchor = { diagram = true }
   end
   return saved
 end
@@ -1495,6 +1591,8 @@ find_guide_anchor = function(s, a)
         best, best_off = row, e.off
       end
     elseif a.section_idx and e.meta == 'section' and e.section_idx == a.section_idx then
+      return row
+    elseif a.diagram and e.kind == 'diagram' then
       return row
     end
   end
@@ -1581,6 +1679,11 @@ local function render(s, saved)
       if closed then
         section_fold(s, si, true)
       end
+    end
+    if saved and saved.diagram_folded and s.layout.diagram then
+      api.nvim_win_call(s.diff_win, function()
+        pcall(vim.cmd, s.layout.diagram.start_row .. 'foldclose')
+      end)
     end
   end
   for fi, f in ipairs(s.view_mode ~= 'guide' and s.review.files or {}) do
@@ -2039,6 +2142,28 @@ local function rescope(old_stack, new_stack, scope)
   return { kind = 'layer', index = new_stack.current }
 end
 
+---Full-stack reviews: which layer introduced each hunk (cached while the diff and the stack are
+---unchanged). Runs git: call inside git.async.
+local function layer_labels(review, cache)
+  local st, scope = review.stack, review.scope
+  if not (st and scope and scope.kind == 'full') then
+    return nil
+  end
+  local parts = { review.signature }
+  for _, l in ipairs(st.layers) do
+    parts[#parts + 1] = l.name .. '=' .. l.tip .. '^' .. l.parent_rev
+  end
+  local key = table.concat(parts, '\0')
+  if cache and cache.labels_key == key then
+    return cache.labels
+  end
+  local labels = attribution.load(review)
+  if cache then
+    cache.labels_key, cache.labels = key, labels
+  end
+  return labels
+end
+
 ---Review load options for the session's current stack/scope.
 local function load_opts(base_opts, stack, scope)
   local o = vim.tbl_extend('force', {}, base_opts)
@@ -2254,6 +2379,7 @@ function M.open(opts)
     end
     review.stack, review.scope = stack, scope
     review.notes = not stack and notes or nil
+    review.layer_labels = layer_labels(review, cache)
     local s = M.show(review, opts)
     s.load_cache = cache
     s.stack_cache = stack_cache
@@ -2326,6 +2452,10 @@ function M.refresh(o)
     end
     review.stack, review.scope = stack, scope
     review.notes = not stack and notes or nil
+    review.layer_labels = layer_labels(review, s.load_cache)
+    if M.session ~= s or s.cleaned then
+      return finish()
+    end
     if o.force or scope_changed or review.signature ~= s.review.signature then
       local saved
       if scope and s.scope and not vim.deep_equal(scope, s.scope) and old_stack then
