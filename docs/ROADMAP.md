@@ -57,6 +57,12 @@ sequence; later items build on earlier ones.
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
    Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
    units are cut.
+8. **Edit from the review.** A key on a hunk (diff or guide view) opens an editable float of the real
+   working-tree file, folded to that hunk plus context, so undo, LSP and formatters work as normal; saving lets
+   working-tree auto-refresh redraw the diff and guide. Guide hunks re-anchor by overlap (as comments do) so an
+   edited hunk stays in its section with an "edited since guide" marker instead of moving to "Not in guide"; its
+   reviewed mark resets. Working-tree layer only; editing lower stack layers via fixup commits is a later idea.
+   Direct typing into the composed review buffer is not planned (no per-line read-only in Neovim).
 
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
