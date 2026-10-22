@@ -65,6 +65,23 @@ M.defaults = {
     next_section = ']]', -- guide view (in the diff view: next file)
     prev_section = '[[',
     close = 'q',
+    -- comments (diff and guide views). `gc` shadows Neovim's commenting operator, which has
+    -- nothing to do in a read-only review buffer; the c* keys shadow `c{motion}` likewise.
+    comment_add = 'gc', -- on a line, a visual selection, or a file header (whole file)
+    comment_edit = 'ce',
+    comment_delete = 'cd',
+    comment_reply = 'cr',
+    comment_resolve = 'cx', -- resolve / reopen
+    comment_expand = 'cz', -- expand / collapse a long or resolved comment
+    comment_toggle = 'gC', -- show / hide the threads (gutter bars stay)
+    comment_next = ']m', -- ]m/[m shadow the method motions, which mean nothing in a diff
+    comment_prev = '[m',
+    comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
+    comment_send = '<C-a>', -- in the comment editor: reserved for sending to an AI / agent session
+  },
+  comments = {
+    max_lines = 6, -- longer threads are cut ("… N more lines", comment_expand shows all)
+    width = 100, -- max width of a thread box (else the window's text width)
   },
   -- AI guided review. Runs your own `claude` CLI (logged in); revuey never reads credentials.
   ai = {

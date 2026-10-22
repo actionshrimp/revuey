@@ -80,3 +80,19 @@ end, {
     return {}
   end,
 })
+
+vim.api.nvim_create_user_command('RevueyComments', function()
+  require('revuey').comments()
+end, { desc = 'List the comments of the open review (<CR> jumps)' })
+
+vim.api.nvim_create_user_command('RevueyCommentsExport', function(cmd)
+  require('revuey').comments_export(cmd.fargs)
+end, {
+  nargs = '*',
+  desc = 'Export the review comments: [markdown|json] [--all] [register|file] (default: markdown to +)',
+  complete = function(arg)
+    return vim.tbl_filter(function(x)
+      return vim.startswith(x, arg)
+    end, { 'markdown', 'json', '--all' })
+  end,
+})

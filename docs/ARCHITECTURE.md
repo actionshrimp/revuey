@@ -384,10 +384,63 @@ are in `reports/Terminal code review tool landscape.md`.
      hunks, so the user's own collapses stay. A refresh that makes a complete file incomplete (an
      edit) re-opens its fold, with its still-reviewed hunks collapsed.
 
+11. **Comments** (`comments.lua` pure model, storage and events; `comments_export.lua` Markdown/JSON;
+   `comments_view.lua` UI glue; `comment_editor.lua` the float; `cli.lua` the shell side).
+   - **Model.** `{id, anchor, body (md), author {kind = user|ai|agent, name?}, status (draft|saved|resolved,
+     room for dismissed|accepted), in_review, thread [{id, author, body, created_at, updated_at}],
+     created_at, updated_at (ms), file_level, outdated (derived)}`, plus `draft`/`reply_draft` for unsaved
+     edits of a saved comment. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
+     unique. Only `user` comments are made today; AI review findings (`ai`, `dismissed`/`accepted`), agent
+     replies (`agent`) and the forge's "add to review" (`in_review`) fill the rest.
+   - **Anchor.** `{path, side = new|old, start_line, end_line, unit_key, unit_line, hunk_key, hunk_line,
+     context_hash, text_hash, snippet}`. A range is on the new side when any selected row has a new-side line
+     (deleted rows inside it stay in the snippet), else on the old side. `context_hash` is a sha256 of
+     the side's lines `start-2 .. end+2` (from the full side text: the reviewed snapshot or new blob, the
+     old blob; positions outside the file hash as a marker). `snippet` is the selected rows with
+     `+`/`-`/space markers when made.
+   - **Placement** (every render, against the review's files and units, view-independent): the anchor's
+     unit still exists (same content, so only shifted) -> the same offset in it; else its parent hunk;
+     else the nearest window of rows shown on that side whose hash matches (ties: nearest to the last known
+     line, so identical code at two places stays put); else, within 100 lines, the nearest window whose
+     lines alone match `text_hash` (only stored when the lines hold three or more word characters, so a
+     lone `}` never wanders; this covers an edit next to the comment, or lines inserted at the top of a
+     file, where the context changed but the commented code did not); else outdated. Renders after a review change write
+     the "last known" lines, unit and outdated flag back (no `updated_at` bump: derived, every instance
+     derives the same); renders caused by a live reload never write, so two instances in different modes
+     cannot ping-pong. Rows come from the layout (`comment_index`), so the guide shows the same comments
+     where it shows the lines; an outdated comment sits at its last known row, else in an "Outdated
+     comments" group on the file's last row; a file-level comment under the file header (guide: the
+     file's first hunk header). Threads are `virt_lines` in their own namespace and the gutter bar is
+     drawn by `view.statuscolumn` in the first cell of the sign area (same width), so buffer text, the
+     side table, folds, marks and LSP are untouched.
+   - **Storage.** `<state file>.comments.json` next to the marks file of the scope (a separate file, so
+     an older revuey rewriting the marks file cannot drop comments). Saves re-read the file and merge per
+     id: last writer wins by `updated_at` (ties: this instance for its changed ids), deletes are tombstones
+     (`{id, deleted, updated_at}`), replies are merged by reply id (an agent reply survives a concurrent
+     edit of the body). Atomic write (temp + rename); an undecodable file is moved to `.corrupt-*`. Never
+     pruned. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
+     with an 80ms debounce.
+   - **Event feed.** Each change appends one JSON line to `<state file>.events.jsonl`: `{id (sortable),
+     kind = created|updated|deleted|resolved|replied|sent (reserved), at, comment_id, review {repo,
+     branch, base, state_branch, scope, layers?, head, merge_base, mode}, location, anchor, snippet, body,
+     author, status, file_level, outdated, reply?}`. Past 1 MB the file is renamed to `.1` before the next
+     append. `cli.lua watch` polls every events file of the state dir (new ones too) every 250ms: files
+     present at start are followed from their end (`--since` replays from the start, `.1` included); a
+     changed inode means rotation: the old descriptor is drained, `.1` is read whole if it is not the
+     file being followed (two rotations between polls), and the new file is followed from 0. Events are
+     filtered by repo and branch (`branch`, `state_branch` or full-stack `layers`) and printed with a
+     flush per line. Neovim turns SIGTERM into a deadly-signal exit, so `bin/revuey` runs `watch` as a
+     child and turns TERM/INT/HUP into SIGUSR1, which the script handles with a `Signal` autocmd; it also
+     exits when its parent goes away. `reply` merges and saves like the UI, then appends a `replied`
+     event; the running UI picks the file change up.
+   - **Send hook.** The editor's `<C-a>` calls `comments_view.actions.send({session, kind, anchor,
+     comment?, text})`; today it reports "not available". The roadmap's Ask AI and "send to the
+     launching agent session" plug in there and append `sent` events.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
 - Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `guide.lua`, `guide_prompt.lua`,
-  `prose.lua`, `diagram.lua`, `attribution.lua`) free of window/buffer UI so it is testable with
+  `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
 - Shell out to `git`/`gh` with `vim.system`; never block the UI for long-running work.
