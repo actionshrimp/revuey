@@ -157,7 +157,7 @@ kind, for example:
 
 ```
  ⚠ stack/b not restacked on stack/a
- ⚠ 3 related branches outside this stack (2 ignored)
+ ○ 3 related branches outside this stack (2 ignored)
  ● stack/a looks landed in main
 ```
 
@@ -170,8 +170,9 @@ dim (`RevueyStackNote`) and don't affect the review.
 | Parent setting out of date (explicit parent that isn't an ancestor) | yes: compared with trunk instead |
 | Parent setting names a missing branch | yes: the parent is guessed instead |
 | Parent settings form a loop | yes: compared with trunk instead |
-| Built on an old version of another branch (that branch has a newer copy of one of your commits) | maybe: old commits of that branch can show up |
-| Related branches outside the stack: an outdated copy of your stack, another version of a stack commit, shares commits, side branch | no |
+| Built on an old version of another branch (that branch ends at a newer copy of the bottom commits of your stack, like a parent amended without restacking) | maybe: old commits of that branch can show up |
+| Shares commits with your stack (no reflog links it; perhaps a parent that moved on) | maybe: its commits can be part of the layer's diff |
+| Related branches outside the stack (`○`): an outdated copy of your stack, another version of a stack commit (backports, backups, clock skew), side branch | no |
 | Looks landed, the stack stops at a fork, same commit as a layer, parent already merged | no |
 
 `!` in the panel or the diff opens a float with every note in full: what it means, why it
@@ -179,20 +180,24 @@ matters (or that it doesn't affect this review), and the branches involved, grou
 On a branch row:
 
 - `p` sets that branch as the parent of the layer it relates to (`:RevueyStackParent` for that
-  layer), where that makes sense.
+  layer). It is offered only when the branch tip is an ancestor of the layer, so the setting
+  holds; otherwise the fix is to rebase, as the note says.
 - `c` clears an out-of-date parent setting made with `:RevueyStackParent`.
-- `x` ignores the branch; `X` ignores a pattern, prefilled from the branch
-  (`dave/bos-3058-apply-credit-note` suggests `dave/bos-3058-*`).
+- `x` ignores the branch; `X` ignores a pattern, prefilled from the branch: up to a ticket
+  number (`dave/bos-3058-apply-credit-note` suggests `dave/bos-3058-*`), else up to the last
+  `-`, never just `dave/*`. The prompt says how many branches the suggestion matches when it is
+  more than three.
 - `u` on an ignored pattern stops ignoring it. `<CR>` lists the row's actions; `q` closes.
 
 The panel and the float refresh after each action.
 
 **Ignore list.** Patterns are globs: `*` matches any characters (including `/`), `?` one
-character. Each repo has its own list, kept in the state dir (`stack-ignore-*.json` next to the
-reviewed marks), so nothing is written to your repo. All worktrees of a repo share it. Patterns in
+character, and `**/x` also matches `x`. Each repo has its own list, kept in the state dir (`stack-ignore-*.json` next to the
+reviewed marks; an unreadable file is kept as `.corrupt-*`), so nothing is written to your repo. All worktrees of a repo share it. Patterns in
 `setup({ stack = { ignore_branches = { 'dave/old-*' } } })` apply everywhere and can only be
-removed in your config. Ignoring hides notes about branches outside the stack (related branches
-and other branches at a layer's commit). It never changes which branches are layers: an ignored
+removed in your config. Ignoring hides informational notes about branches outside the stack
+(related branches and other branches at a layer's commit); warnings that can change the diff are
+never hidden. It never changes which branches are layers: an ignored
 branch that is a layer stays one, and notes about layers (not restacked, parent settings, forks,
 landed) are always shown. The summary line counts what is hidden, e.g. `(2 ignored)`.
 
