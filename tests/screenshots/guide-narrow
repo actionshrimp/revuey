@@ -6,19 +6,19 @@
 05|   2 Follow-up wiring                  3│          just now                                         
 06|                                        │                                                           
 07| feature/cart → main                    │          A fake summary for tests.                        
-08| 7 files  +57 −22  ✓ 0/7                │                                                           
+08| 7 files  +57 −22  ✓ 4/7                │                                                           
 09| base ee2e6fcf  head 6b2be8a3           │       ▸  ☑ 1. Core change  4 hunks  ✓ reviewed  (36 lines 
 10| working tree  ● uncommitted            │       ▾  ☐ 2. Follow-up wiring   3 hunks                  
 11|                                        │          Call sites and glue.                             
-12|   M  logo.png  assets               bin│                                                           
+12| ✓ M  logo.png  assets               bin│                                                           
 13|   A  cart.ts  src                +27 −0│          • one                                            
-14|   A  Total.tsx  src/components    +5 −0│          • two                                            
+14| ✓ A  Total.tsx  src/components    +5 −0│          • two                                            
 15|   M  index.ts  src                +9 −6│                                                           
-16|   D  legacy.ts  src               +0 −6│  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added    
+16| ✓ D  legacy.ts  src               +0 −6│  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added    
 17|   M  math.ts  src                +14 −8│      1 + import { multiply, sum } from "./math";          
-18|   R  text.ts  src                 +2 −2│      2 + import { formatCurrency } from "./format";       
+18| ✓ R  text.ts  src                 +2 −2│      2 + import { formatCurrency } from "./format";       
 19|                                        │      3 + import { capitalize } from "./text";             
-20| ]] [[ section  mr section reviewed     │      4 +                                                  
+20| ]] [[ section  mr reviewed             │      4 +                                                  
 21| ]c [c hunk  <Tab> fold  gp diff        │      5 + export interface LineItem {                      
 22| gd def  K hover  go open  R refresh    │      6 +   name: string;                                  
 23| gG diff view  gR regenerate  q close   │      7 +   price: number;                                 
@@ -52,15 +52,15 @@
 09|888888888888888888888888888887777777777742222222222AABBBBBBBBBBBBBBBBBBBBBBBAAAAAAAAAAAABBBBBBBBBBBB
 10|CCCCCCCCCCCCC88888888888888877777777777742222222222BBDDEEEEEEEEEEEEEEEEEEEEBBBBBBBEEEEEEEEEEEEEEEEEE
 11|77777777777777777777777777777777777777774==========7777777777777777777777777777777777777777777777777
-12|7<7CF744444444888888887777777777777778884==========7777777777777777777777777777777777777777777777777
+12|7<7CF788888888888888887777777777777778884==========7777777777777777777777777777777777777777777777777
 13|7<7<F74444444888887777777777777777<<<@@@4==========C777777777777777777777777777777777777777777777777
-14|7<7<F744444444488888888888888887777<<@@@4==========C777777777777777777777777777777777777777777777777
+14|7<7<F788888888888888888888888887777<<@@@4==========C777777777777777777777777777777777777777777777777
 15|7<7CF744444444888887777777777777777<<@@@4==========7777777777777777777777777777777777777777777777777
-16|7<7@F744444444488888777777777777777<<@@@4<<<<<<<<<<GGGGGGGGGGGHHHHHHHHHHHHHHHHHHIIIJJJKKKJJJJJJJIIII
+16|7<7@F788888888888888777777777777777<<@@@4<<<<<<<<<<GGGGGGGGGGGHHHHHHHHHHHHHHHHHHIIIJJJKKKJJJJJJJIIII
 17|7<7CF74444444888887777777777777777<<<@@@4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-18|7<7CF744444448888877777777777777777<<@@@4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+18|7<7CF788888888888877777777777777777<<@@@4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 19|77777777777777777777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-20|88888888888888888888888888888888888777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+20|88888888888888888888888888877777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 21|88888888888888888888888888888888777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 22|88888888888888888888888888888888888877774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 23|88888888888888888888888888888888888887774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO

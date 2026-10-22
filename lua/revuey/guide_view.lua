@@ -10,6 +10,8 @@ local diagram = require('revuey.diagram')
 local ai = require('revuey.ai')
 local git = require('revuey.git')
 local state_mod = require('revuey.state')
+local units = require('revuey.units')
+local review_mod = require('revuey.review')
 
 local M = {}
 
@@ -44,7 +46,8 @@ function M.prepare(s, force)
   if g and g.review == r then
     hunks, anchors = g.hunks, g.anchors
   else
-    hunks = guide.hunks(r.files)
+    -- the units' hunk entries: guide hunk ids and unit keys come from the same hashes
+    hunks = review_mod.units(r).hunks
     anchors = guide.anchors_hash(hunks)
     -- full-stack reviews: the layers that introduced each hunk (labels and prompt tags)
     local labels = r.layer_labels
@@ -69,6 +72,13 @@ function M.prepare(s, force)
     record = rec,
     resolved = rec and guide.resolve(rec, hunks) or nil,
   }
+  if s.guide.resolved then
+    -- section marks of the old format become unit marks
+    local _, err = units.migrate_sections(r.state, review_mod.units(r), s.guide.resolved.sections)
+    if err then
+      vim.notify(tostring(err), vim.log.levels.ERROR)
+    end
+  end
   return s.guide
 end
 
@@ -77,7 +87,23 @@ function M.job(s)
   return M.jobs[g.ks]
 end
 
----Reviewed count over sections that can be reviewed (those showing hunks).
+---Units shown by a resolved section.
+function M.section_units(s, sec)
+  return units.section_units(review_mod.units(s.review), sec)
+end
+
+---Reviewed and total units of a section.
+---@return integer done, integer total
+function M.section_progress(s, sec)
+  return units.progress(s.review.state, M.section_units(s, sec))
+end
+
+---A section is reviewed when all of its units are (sections showing no hunks never are).
+function M.section_reviewed(s, sec)
+  return units.all_reviewed(s.review.state, M.section_units(s, sec))
+end
+
+---Fully reviewed sections over sections that can be reviewed (those showing hunks).
 function M.progress(s)
   local g = s.guide
   local res = g and g.resolved
@@ -86,18 +112,14 @@ function M.progress(s)
   end
   local done, total = 0, 0
   for _, sec in ipairs(res.sections) do
-    if sec.id then
+    if #sec.items > 0 then
       total = total + 1
-      if state_mod.section_reviewed(s.review.state, sec.id) then
+      if M.section_reviewed(s, sec) then
         done = done + 1
       end
     end
   end
   return done, total
-end
-
-function M.section_reviewed(s, sec)
-  return sec.id ~= nil and state_mod.section_reviewed(s.review.state, sec.id)
 end
 
 local function ago(t)
@@ -555,20 +577,21 @@ function M.panel(s, add, add_virt, width)
   end
   if s.view_mode == 'guide' and res then
     for si, sec in ipairs(res.sections) do
-      local reviewed = M.section_reviewed(s, sec)
-      local check = reviewed and '✓' or ' '
+      local ndone, ntotal = M.section_progress(s, sec)
+      local reviewed = ntotal > 0 and ndone == ntotal
+      local check = require('revuey.panel').glyph(ndone, ntotal)
       local num = tostring(si)
       local prefix = ' ' .. check .. ' ' .. num .. ' '
-      local info = sec.outdated and '!' or tostring(#sec.items)
+      local info = (sec.outdated and '!' or '') .. ((ndone > 0 and not reviewed) and (ndone .. '/' .. ntotal) or tostring(#sec.items))
       local avail = width - vim.fn.strdisplaywidth(prefix) - #info - 2
       local name = require('revuey.panel').truncate(sec.title, math.max(avail, 1))
       local text = prefix .. name
       local r = add(text, {
-        { 1, 1 + #check, 'RevueyReviewed' },
+        { 1, 1 + #check, (ndone > 0 and not reviewed) and 'RevueyPartial' or 'RevueyReviewed' },
         { 1 + #check + 1, 1 + #check + 1 + #num, 'RevueyGuideSectionNumber' },
         { #prefix, #text, reviewed and 'RevueyUnreviewed' or (sec.kind ~= 'section' and 'Comment' or 'Normal') },
       })
-      add_virt(r, { { info, sec.outdated and 'RevueyGuideOutdated' or 'Comment' } })
+      add_virt(r, { { info, sec.outdated and 'RevueyGuideOutdated' or ((ndone > 0 and not reviewed) and 'RevueyPartial' or 'Comment') } })
       s.panel_sections[r] = si
     end
   elseif not res and s.view_mode == 'guide' and not job then
