@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//s/ui..main                                                                                                      X
-02| Files                                  │ Guide · full stack 2. Follow-up wiring                                      §2/2  ✓ 0/2 
+02| Files                       ○ no agent │ Guide · full stack 2. Follow-up wiring                                      §2/2  ✓ 0/2 
 03| Stack: 3 layers on main                │       ▾  ☐ 2. Follow-up wiring   2 hunks                                                
 04|    stack/math                1c 1f ✓0/1│          Call sites and glue.                                                           
 05|  @ stack/cart                2c 2f ✓0/2│                                                                                         

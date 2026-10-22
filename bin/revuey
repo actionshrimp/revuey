@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Launch Neovim with a revuey review of the current branch (in the current directory).
 #   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
-#   revuey comments|watch|reply ...                    (review comments from the shell; see below)
+#   revuey sessions|watch|show|reply|ack|inbox|comments|install-skill ...
+#                                                      (for coding agents; see `revuey --help`)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
 # directory containing this script's parent (so it works straight from a checkout).
 # Pressing `q` in the review quits Neovim.
@@ -19,21 +20,29 @@ while [ -L "$script" ]; do
 done
 default_dir=$(cd "$(dirname "$script")/.." && pwd)
 export REVUEY_PLUGIN_DIR=${REVUEY_PLUGIN_DIR:-$default_dir}
+# how the agent-facing commands tell agents to call this script again
+export REVUEY_BIN=${REVUEY_BIN:-$(cd "$(dirname "$script")" && pwd)/$(basename "$script")}
+
+# The agent-facing commands run without the UI (no user config: fast and quiet). The state dir is
+# $REVUEY_STATE_DIR, else Neovim's data dir/revuey (and the state dirs of live sessions).
+cli=("${REVUEY_NVIM:-nvim}" --clean --headless -l "$REVUEY_PLUGIN_DIR/lua/revuey/cli.lua")
+
+case "${1:-}" in
+  -h|--help|help)
+    exec "${cli[@]}" help
+    ;;
+  install-skill)
+    exec "${cli[@]}" "$@"
+    ;;
+esac
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "revuey: not inside a git repository" >&2
   exit 1
 fi
 
-# Review comments from the shell, without the UI (no user config: fast and quiet):
-#   revuey comments [--json] [--all] [--scope current|all|<branch>]
-#   revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]
-#   revuey reply <comment id> <text|->
-# The state dir is $REVUEY_STATE_DIR, else Neovim's data dir/revuey (set it when your config
-# gives revuey another state_dir).
-cli=("${REVUEY_NVIM:-nvim}" --clean --headless -l "$REVUEY_PLUGIN_DIR/lua/revuey/cli.lua")
 case "${1:-}" in
-  comments|reply)
+  comments|reply|sessions|show|ack|inbox)
     exec "${cli[@]}" "$@"
     ;;
   watch)
@@ -68,9 +77,7 @@ case "${1:-}" in
       {
         echo "revuey: unknown command $1 (and not a branch or commit)"
         echo "usage: revuey [base] [--stack] [--committed|--worktree]"
-        echo "       revuey comments [--json] [--all] [--scope current|all|<branch>]"
-        echo "       revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]"
-        echo "       revuey reply <comment id> <text|->"
+        echo "       revuey sessions|watch|show|reply|ack|inbox|comments|install-skill ...  (revuey --help)"
       } >&2
       exit 2
     fi

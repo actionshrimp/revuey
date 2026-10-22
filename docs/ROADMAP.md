@@ -12,6 +12,11 @@ sequence; later items build on earlier ones.
 - Local comments and export: comments on lines, ranges (either side) and files in the diff and guide views,
   inline threads, drafts, re-anchoring and outdated comments, per-review storage with merge-on-save, Markdown/JSON
   export, `bin/revuey comments|watch|reply` and the comment event feed for agents.
+- Ask AI, part 1: send to an agent session. `<C-a>` in the comment editor, `cs` on a comment and `ga` on a
+  line or selection send it to a coding-agent session (Claude Code via the `revuey` skill, launched by the agent
+  in a tmux or herdr pane, or connected to a review the user started); a per-worktree session registry,
+  `bin/revuey sessions|watch --messages|show|reply|ack|inbox|install-skill`, catch-up of unacknowledged
+  messages, presence in the panel header, sent/queued/seen/answered markers on threads.
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.

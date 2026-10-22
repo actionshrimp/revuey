@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs revuey's bin/revuey with the given arguments. Finds it through `.revuey-bin` (written by
+# `revuey install-skill --copy`), else through this skill directory's real path (the skill is a
+# link into a revuey checkout), else `revuey` on PATH.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd -P)
+if [ -f "$here/.revuey-bin" ]; then
+  bin=$(cat "$here/.revuey-bin")
+elif [ -x "$here/../../bin/revuey" ]; then
+  bin=$here/../../bin/revuey
+elif command -v revuey >/dev/null 2>&1; then
+  bin=$(command -v revuey)
+else
+  echo "revuey: cannot find bin/revuey (reinstall the skill with \`bin/revuey install-skill\`)" >&2
+  exit 127
+fi
+exec "$bin" "$@"
