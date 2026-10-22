@@ -88,4 +88,16 @@ function M.guide_diagram(what, reg)
   return require('revuey.view').guide_diagram(what, reg)
 end
 
+---`:RevueyComments`: all comments of the open review in a float (<CR> jumps to one).
+function M.comments()
+  return require('revuey.view').comments_list()
+end
+
+---`:RevueyCommentsExport [markdown|json] [--all] [register|file]`: export the review's comments
+---(default: Markdown for an AI session, to the `+` register). Returns the text.
+---@param args? string[]
+function M.comments_export(args)
+  return require('revuey.view').comments_export(args or {})
+end
+
 return M

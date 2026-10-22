@@ -15,6 +15,7 @@ local state_mod = require('revuey.state')
 local guide_view = require('revuey.guide_view')
 local attribution = require('revuey.attribution')
 local units = require('revuey.units')
+local comments_view = require('revuey.comments_view')
 
 local M = {}
 
@@ -378,12 +379,15 @@ function M.statuscolumn()
   if not e then
     return blank
   end
+  -- a comment on the row: a bar in the first cell of the sign area (same width either way)
+  local sign = comments_view.sign(s, vim.v.lnum)
+  local bar = sign and ('%#' .. sign .. '#▍') or nil
   if e.kind == 'add' then
-    return '%#RevueyLineNr#' .. pad(nil, w) .. ' %#RevueyAddLineNr#' .. pad(e.new_lnum, w) .. '%#RevueyAddSign# + '
+    return '%#RevueyLineNr#' .. pad(nil, w) .. ' %#RevueyAddLineNr#' .. pad(e.new_lnum, w) .. (bar and (bar .. '%#RevueyAddSign#+ ') or '%#RevueyAddSign# + ')
   elseif e.kind == 'del' then
-    return '%#RevueyDeleteLineNr#' .. pad(e.old_lnum, w) .. ' ' .. pad(nil, w) .. '%#RevueyDeleteSign# - '
+    return '%#RevueyDeleteLineNr#' .. pad(e.old_lnum, w) .. ' ' .. pad(nil, w) .. (bar and (bar .. '%#RevueyDeleteSign#- ') or '%#RevueyDeleteSign# - ')
   elseif e.kind == 'ctx' then
-    return '%#RevueyLineNr#' .. pad(e.old_lnum, w) .. ' ' .. pad(e.new_lnum, w) .. '   '
+    return '%#RevueyLineNr#' .. pad(e.old_lnum, w) .. ' ' .. pad(e.new_lnum, w) .. (bar and (bar .. '%#RevueyLineNr#  ') or '   ')
   elseif e.meta == 'file' then
     local f = s.review.files[e.file_idx]
     local hl = panel.status_hl[f.status] or 'Normal'
@@ -391,7 +395,7 @@ function M.statuscolumn()
     local folded = api.nvim_win_call(win, function()
       return vim.fn.foldclosed(lnum) ~= -1
     end)
-    return '%#' .. hl .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. ' ' .. (folded and '▸' or '▾') .. ' '
+    return '%#' .. hl .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. ' ' .. (folded and '▸' or '▾') .. (bar or ' ')
   elseif e.kind == 'diagram' and e.heading then
     local lnum = vim.v.lnum
     local folded = api.nvim_win_call(win, function()
@@ -406,7 +410,7 @@ function M.statuscolumn()
     return '%#RevueyGuideSectionNumber#' .. string.rep(' ', 2 * w + 1) .. (folded and '▸' or '▾') .. ' '
   elseif e.meta == 'hunk' and e.path_len then
     local f = s.review.files[e.file_idx]
-    return '%#' .. (panel.status_hl[f.status] or 'Normal') .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. '   '
+    return '%#' .. (panel.status_hl[f.status] or 'Normal') .. '#' .. pad(f.status, w) .. ' ' .. pad(nil, w) .. (bar and (bar .. '  ') or '   ')
   end
   return blank
 end
@@ -1685,6 +1689,7 @@ local function diff_keymaps(s)
     end
   end
   map(buf, k.toggle_all_folds, M.toggle_all_folds, 'collapse / expand every file (guide: section)')
+  M.comment_keymaps(s)
   map(buf, k.focus_panel, function()
     if api.nvim_win_is_valid(s.panel_win) then
       api.nvim_set_current_win(s.panel_win)
@@ -1692,6 +1697,59 @@ local function diff_keymaps(s)
   end, 'focus file panel')
 end
 M.diff_keymaps = diff_keymaps
+
+---Comment keys in the diff/guide buffer (`gc` also in visual mode: the selected lines).
+function M.comment_keymaps(s)
+  local k = config.options.keymaps
+  local buf = s.diff_buf
+  local function with(fn)
+    return function()
+      if M.session == s then
+        fn(s)
+      end
+    end
+  end
+  map(buf, k.comment_add, function()
+    if M.session == s and current(s) then
+      local row = cursor_row(s)
+      comments_view.add(s, row, row)
+    end
+  end, 'comment on this line (a file header: the whole file)')
+  if k.comment_add then
+    for _, l in ipairs(type(k.comment_add) == 'table' and k.comment_add or { k.comment_add }) do
+      vim.keymap.set('x', l, function()
+        local a, b = vim.fn.line('v'), vim.fn.line('.')
+        api.nvim_feedkeys(vim.keycode('<Esc>'), 'nx', false)
+        if M.session == s then
+          comments_view.add(s, math.min(a, b), math.max(a, b))
+        end
+      end, { buffer = buf, nowait = true, silent = true, desc = 'revuey: comment on the selected lines' })
+    end
+  end
+  map(buf, k.comment_edit, with(comments_view.edit), 'edit the comment on this line')
+  map(buf, k.comment_delete, with(comments_view.delete), 'delete the comment on this line')
+  map(buf, k.comment_reply, with(comments_view.reply), 'reply to the comment on this line')
+  map(buf, k.comment_resolve, with(comments_view.resolve), 'resolve / reopen the comment on this line')
+  map(buf, k.comment_expand, with(comments_view.toggle_expand), 'expand / collapse a long comment')
+  map(buf, k.comment_toggle, with(comments_view.toggle_visible), 'show / hide comment threads')
+  map(buf, k.comment_list, with(comments_view.open_list), 'list all comments')
+  map(buf, k.comment_next, function()
+    comments_view.next(M.session, 1)
+  end, 'next comment')
+  map(buf, k.comment_prev, function()
+    comments_view.next(M.session, -1)
+  end, 'previous comment')
+end
+
+---`:RevueyComments`: the comments list of the open review.
+function M.comments_list()
+  return comments_view.open_list(M.session)
+end
+
+---`:RevueyCommentsExport [markdown|json] [--all] [register|file]`.
+function M.comments_export(args)
+  return comments_view.export(M.session, args)
+end
 
 local function panel_keymaps(s)
   local k = config.options.keymaps
@@ -1766,6 +1824,9 @@ local function panel_keymaps(s)
   map(buf, k.focus_panel, function()
     api.nvim_set_current_win(s.diff_win)
   end, 'focus diff')
+  map(buf, k.comment_list, function()
+    comments_view.open_list(s)
+  end, 'list all comments')
   api.nvim_create_autocmd('CursorMoved', {
     group = s.augroup,
     buffer = buf,
@@ -2104,6 +2165,11 @@ local function render(s, saved)
   make_word_spans(s)
   syntax.attach(buf, s)
   decorate(s)
+  -- comments: placed against this review, drawn as virtual lines (persist moved anchors)
+  local cok, cerr = pcall(comments_view.render, s, { persist = true })
+  if not cok then
+    vim.notify('revuey: comments: ' .. tostring(cerr), vim.log.levels.ERROR)
+  end
   api.nvim_win_call(s.diff_win, function()
     vim.cmd('normal! zx')
   end)
@@ -2204,6 +2270,7 @@ cleanup = function(s)
     M.session = nil
   end
   require('revuey.notes_float').update(s) -- closes it
+  comments_view.detach(s)
   if s.augroup then
     pcall(api.nvim_del_augroup_by_id, s.augroup)
   end
@@ -2318,7 +2385,14 @@ function M.show(review, opts)
   api.nvim_create_autocmd('WinResized', {
     group = group,
     callback = function()
-      if M.session ~= s or s.view_mode ~= 'guide' or not api.nvim_win_is_valid(s.diff_win) then
+      if M.session ~= s or not api.nvim_win_is_valid(s.diff_win) then
+        return
+      end
+      if s.view_mode ~= 'guide' then
+        -- comment threads are wrapped to the window
+        if s.cm and s.cm.store and next(s.cm.store.comments) then
+          comments_view.render(s)
+        end
         return
       end
       if prose_width(s) ~= s.prose_width or (s.layout.diagram and diagram_width(s) ~= s.diagram_width) then

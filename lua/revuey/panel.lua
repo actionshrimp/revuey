@@ -250,7 +250,9 @@ function M.render(s)
     local dot = f.uncommitted and '●' or ' '
     local prefix = ' ' .. check .. ' ' .. f.status .. dot .. ' '
     local partial = (not done and ndone > 0) and (ndone .. '/' .. ntotal .. ' ') or ''
-    local counts_text = partial .. (f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed))
+    local ncom = require('revuey.comments_view').count(s, f.path)
+    local com = ncom > 0 and ('✎' .. ncom .. ' ') or ''
+    local counts_text = com .. partial .. (f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed))
     -- fit name + dir before the right-aligned counts
     local avail = width - vim.fn.strdisplaywidth(prefix) - vim.fn.strdisplaywidth(counts_text) - 2
     if vim.fn.strdisplaywidth(name) > avail then
@@ -277,6 +279,9 @@ function M.render(s)
     end
     local row = add(text, hls)
     local counts = partial ~= '' and { { partial, 'RevueyPartial' } } or {}
+    if com ~= '' then
+      table.insert(counts, 1, { com, 'RevueyCommentSign' })
+    end
     if f.binary then
       counts[#counts + 1] = { 'bin', 'Comment' }
     else
