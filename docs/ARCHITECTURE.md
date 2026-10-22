@@ -175,14 +175,18 @@ are in `reports/Terminal code review tool landscape.md`.
    write a temp file and rename it. Read, merge and rename hold a cross-process lock (`lock.lua`), so two
    processes saving at once cannot both start from the old file. The lock is `<file>.lock`
    created with O_EXCL and holding "pid host time token"; release removes it only when it still
-   holds this holder's token. A lock whose pid is dead on this host is broken at once; one from
-   another host (or without a readable record) when older than 15s. Breakers serialise on
+   holds this holder's token. A lock whose pid is dead on this host is broken at once, and any
+   lock of this host older than 60s (its pid may have been reused; holders keep it for
+   milliseconds); one from another host (or without a readable record) when older than 15s. Breakers serialise on
    `<file>.lock.break` and remove the lock only if it is still the one they judged stale, so two
    breakers never both end up holding it. The CLI waits up to 10s (`$REVUEY_LOCK_TIMEOUT_MS`).
    The UI waits at most 100ms: on a busy lock the change stays pending in memory (`_changes`,
    the comments store's dirty ids, queued event lines) and `lock.defer` retries the save from a
    timer with backoff (50ms doubling to 2s), with one quiet message if it still fails after 30s
-   and a last longer try on `VimLeavePre`. The stack ignore
+   and a last 2s try on `VimLeavePre`. A save still blocked then is written to a recovery file
+   next to its file (`<name>.pending-<pid>.json`, `.jsonl` for events) that the next load merges
+   (comments by last writer wins, marks as pending changes; events are appended first), saves and
+   removes. The stack ignore
    list, the comments file and the comment event feed use the same lock.
 
 9. **AI guide** (`guide.lua` pure model, `guide_prompt.lua` prompt + schema, `ai.lua` provider, `prose.lua`
