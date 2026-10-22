@@ -376,6 +376,32 @@ function M.migrate(st, U)
   return false
 end
 
+---The review shows these units: refresh `seen_at` of their marks (unit and parent hunk keys) so
+---pruning keeps them. Saves at most once per SEEN_EVERY per scope: only when a shown mark was last
+---seen longer ago than that. Called when a review renders.
+---@return boolean saved, string? err
+function M.touch(st, U)
+  local now = os.time()
+  local stale = false
+  for _, u in ipairs(U.list) do
+    for _, k in ipairs({ u.key, u.hunk }) do
+      local e = st.units and st.units[k]
+      if type(e) == 'table' and now - (e.seen_at or e.reviewed_at or 0) > M.SEEN_EVERY then
+        stale = true
+        break
+      end
+    end
+    if stale then
+      break
+    end
+  end
+  if not stale then
+    return false
+  end
+  local ok, err = save(st, U) -- the finalizer refreshes seen_at of every shown key
+  return ok, err
+end
+
 ---Legacy guide section marks (keyed by section identity): mark the section's units reviewed and
 ---drop the section mark. Saves when anything changed.
 ---@param sections {id?:string, items:table}[] resolved guide sections

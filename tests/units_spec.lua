@@ -445,6 +445,37 @@ h.test('marks of content not shown for 30 days are pruned on save; recent ones a
   h.eq(true, units.reviewed(st, a[2]))
 end)
 
+-- Regression (r11): working-tree and committed mode share a state file. A hunk reviewed long ago
+-- but shown recently must keep its mark when the other mode (where an edit changed that hunk)
+-- marks something: showing a review refreshes `seen_at`, not just marking.
+h.test('showing a review keeps its old marks from being pruned by the other mode', function()
+  local function mk(new, l)
+    return diff.parse(difftext({ { path = 'a.ts', new = new, hunks = {
+      { '@@ -1,1 +1,1 @@', '-x', '+' .. l },
+      { '@@ -9,1 +9,1 @@', '-y', '+Y' },
+    } } }))
+  end
+  local committed = units.derive(mk(blob('1'), 'X'))
+  local worktree = units.derive(mk(blob('2'), 'X-edited'))
+  local st = fresh_state('r11')
+  local dir = vim.fs.dirname(st._path)
+  assert(units.set(st, committed, committed.list, true))
+  local raw = vim.json.decode(table.concat(vim.fn.readfile(st._path), '\n'))
+  for _, e in pairs(raw.units) do
+    e.reviewed_at = e.reviewed_at - 40 * 86400
+  end
+  vim.fn.writefile({ vim.json.encode(raw) }, st._path)
+  -- the committed-mode review is shown (rendered): its marks are seen now, saved once
+  local c = state.load(dir, '/repo', 'feat', 'main')
+  h.eq(true, (units.touch(c, committed)))
+  h.eq(false, (units.touch(c, committed)), 'at most one save per day')
+  -- the working tree (hunk 1 edited) marks something: the committed mark of hunk 1 survives
+  local w = state.load(dir, '/repo', 'feat', 'main')
+  assert(units.set(w, worktree, { worktree.list[1] }, true))
+  local back = state.load(dir, '/repo', 'feat', 'main')
+  h.eq({ true, true }, reviewed_list(back, committed.list))
+end)
+
 h.test('migrating a legacy file mark over split hunks stores each piece too', function()
   local files = base_files()
   local U = units.derive(files, { split = split_lines })
