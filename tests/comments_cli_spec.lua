@@ -302,6 +302,20 @@ h.test('bin/revuey: an unknown subcommand prints usage and fails; a base still o
   h.eq(1, bin({}).code)
 end)
 
+h.test('reply waits for a live lock and then fails with one "revuey:" prefix', function()
+  local c = by_body('context note')
+  local fd = assert(io.open(s.cm.path .. '.lock', 'w'))
+  fd:write(('%d %s %d\n'):format(vim.uv.os_getpid(), vim.uv.os_gethostname(), os.time()))
+  fd:close()
+  ENV.REVUEY_LOCK_TIMEOUT_MS = '300'
+  local r = run({ 'reply', c.id, 'blocked' })
+  ENV.REVUEY_LOCK_TIMEOUT_MS = nil
+  os.remove(s.cm.path .. '.lock')
+  h.eq(1, r.code)
+  h.ok(r.stderr:find('^revuey: ') and not r.stderr:find('revuey: revuey:', 1, true), r.stderr)
+  h.ok(r.stderr:find('pid ' .. vim.uv.os_getpid(), 1, true), r.stderr)
+end)
+
 h.test('watch stops by itself when whoever started it goes away', function()
   local marker = 'owner-gone-' .. vim.fn.getpid()
   local script = ('%s watch --scope %s >/dev/null 2>&1 & sleep 1; exit 0'):format(vim.fn.shellescape(BIN), marker)

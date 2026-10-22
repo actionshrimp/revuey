@@ -16,6 +16,8 @@ local guide_view = require('revuey.guide_view')
 local attribution = require('revuey.attribution')
 local units = require('revuey.units')
 local comments_view = require('revuey.comments_view')
+-- the editor never waits long for another process's lock: busy saves retry from a timer
+require('revuey.lock').interactive = true
 
 local M = {}
 
@@ -2168,7 +2170,7 @@ local function render(s, saved)
   -- comments: placed against this review, drawn as virtual lines (persist moved anchors)
   local cok, cerr = pcall(comments_view.render, s, { persist = true })
   if not cok then
-    vim.notify('revuey: comments: ' .. tostring(cerr), vim.log.levels.ERROR)
+    vim.notify('revuey: comments: ' .. tostring(cerr):gsub('^revuey: ', ''), vim.log.levels.ERROR)
   end
   api.nvim_win_call(s.diff_win, function()
     vim.cmd('normal! zx')

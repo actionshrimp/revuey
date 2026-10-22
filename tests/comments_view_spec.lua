@@ -351,6 +351,62 @@ h.test('editor: :wq and :x save the comment (not a draft)', function()
   end
 end)
 
+-- Regression (re-review): a lock held by another (or a killed) process froze the UI for 5s per
+-- save. The UI waits ~100ms at most, keeps the change in memory and saves it from a timer.
+h.test('a held lock never freezes the UI: saves are retried and complete once it is free', function()
+  local lock = require('revuey.lock')
+  local function hold(path)
+    local fd = assert(io.open(path .. '.lock', 'w'))
+    fd:write(('%d %s %d\n'):format(vim.uv.os_getpid(), vim.uv.os_gethostname(), os.time()))
+    fd:close()
+  end
+  hold(s.cm.path)
+  hold(s.review.state._path)
+  -- main-loop probe: the largest gap between 5ms ticks
+  local maxgap, last = 0, vim.uv.hrtime()
+  local probe = vim.uv.new_timer()
+  probe:start(5, 5, function()
+    local now = vim.uv.hrtime()
+    maxgap = math.max(maxgap, (now - last) / 1e6)
+    last = now
+  end)
+  local t0 = vim.uv.hrtime()
+  add(row_of('m.txt', 'ctx', 36), 'while locked')
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of('m.txt', 'add', 35), 0 })
+  keys(s, 'mr')
+  local took = (vim.uv.hrtime() - t0) / 1e6
+  vim.wait(400)
+  probe:stop()
+  probe:close()
+  h.ok(took < 1000, ('the saves blocked for %dms'):format(took))
+  h.ok(maxgap < 400, ('main loop blocked for %dms'):format(maxgap))
+  -- shown at once, in memory; not on disk yet
+  h.ok(by_body('while locked'), 'kept in memory')
+  h.ok(vlines(row_of('m.txt', 'ctx', 36)):find('while locked', 1, true))
+  local function on_disk()
+    for _, c in pairs((comments.read(s.cm.path) or {}).comments or {}) do
+      if c.body == 'while locked' then
+        return true
+      end
+    end
+    return false
+  end
+  h.eq(false, on_disk())
+  h.eq(true, lock.pending(s.cm.path))
+  -- released: the retries save everything
+  os.remove(s.cm.path .. '.lock')
+  os.remove(s.review.state._path .. '.lock')
+  h.ok(vim.wait(5000, function()
+    return on_disk() and not lock.pending(s.review.state._path)
+  end, 20), 'saved after the lock was released')
+  local st = require('revuey.state').load(state_dir, s.review.state.repo, s.review.state.branch, s.review.state.base)
+  h.ok(next(st.units) ~= nil, 'the mark reached the file')
+  local ev = events()
+  h.eq('while locked', ev[#ev].body, 'the event was written too')
+  -- undo the mark for the tests below
+  keys(s, 'mr')
+end)
+
 h.test('editor: the send key is reserved (not yet available), and pluggable', function()
   local row = row_of('m.txt', 'ctx', 37)
   vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
