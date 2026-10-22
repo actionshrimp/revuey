@@ -127,10 +127,10 @@ M.KINDS = {
     impact = function(ns)
       if #ns == 1 then
         local n = ns[1]
-        return ('May affect this review: it can include old commits that belong to %s. If %s is the parent of %s, set it as the parent and rebase %s onto it.'):format(
+        return ('May affect this review: it can include old commits that belong to %s. If %s is the parent of %s, rebase %s onto it.'):format(
           n.branch, n.branch, n.layer, n.layer)
       end
-      return 'May affect this review: it can include old commits that belong to them. If one is the parent, set it as the parent and rebase onto it.'
+      return 'May affect this review: it can include old commits that belong to them. If one is the parent, rebase onto it.'
     end,
     detail = function(n)
       return ('newer copy of a commit in %s'):format(n.layer)
@@ -168,16 +168,16 @@ M.KINDS = {
     end,
     impact = function(ns)
       if #ns == 1 then
-        return ('Doesn\'t affect this review, unless %s is built on an old version of %s. Then set %s as its parent.'):format(ns[1].layer, ns[1].branch, ns[1].branch)
+        return ('Doesn\'t affect this review. It is often a backport or a backup of %s.'):format(ns[1].layer)
       end
-      return 'Doesn\'t affect this review, unless a layer is built on an old version of one of them. Then set that branch as its parent.'
+      return 'Doesn\'t affect this review. They are often backports or backups.'
     end,
     detail = function(n)
       return ('other version of a commit in %s'):format(n.layer)
     end,
   },
   outside = {
-    level = 'info',
+    level = 'warn',
     related = true,
     title = 'Shares commits with your stack',
     one = function(n, ctx)
@@ -189,10 +189,10 @@ M.KINDS = {
     impact = function(ns)
       if #ns == 1 then
         local n = ns[1]
-        return ('Doesn\'t affect this review, unless %s is the branch %s was built on and it moved since. Then set it as the parent of %s.'):format(
-          n.branch, n.layer, n.layer)
+        return ('May affect this review: if %s is the branch %s was built on and it moved since, %s\'s diff includes %s\'s commits. Then rebase %s onto %s.'):format(
+          n.branch, n.layer, n.layer, n.branch, n.layer, n.branch)
       end
-      return 'Doesn\'t affect this review, unless one is the branch your stack was built on and it moved since. Then set it as the parent.'
+      return 'May affect this review: if one is the branch your stack was built on and it moved since, the diff includes its commits. Then rebase onto it.'
     end,
     detail = function(n)
       return ('shares commits with %s'):format(n.layer)
@@ -310,7 +310,7 @@ for i, k in ipairs(M.ORDER) do
 end
 
 -- Kinds sharing one summary line ("3 related branches outside this stack").
-M.RELATED_SUMMARY = { outdated_copy = true, other_copy = true, outside = true, side = true }
+M.RELATED_SUMMARY = { outdated_copy = true, other_copy = true, side = true }
 
 ---Build a note with its full text.
 ---@param kind string
@@ -328,9 +328,11 @@ function M.level(note)
   return M.KINDS[note.kind] and M.KINDS[note.kind].level or 'info'
 end
 
----Notes about branches outside the stack, which the ignore list can hide.
+---Informational notes about branches outside the stack, which the ignore list can hide. Notes
+---that affect the diff are never hidden.
 function M.ignorable(note)
-  return M.KINDS[note.kind] and M.KINDS[note.kind].related or false
+  local k = M.KINDS[note.kind]
+  return k ~= nil and k.related == true and k.level == 'info'
 end
 
 ---Split notes by the ignore list. `patterns` are globs (stack_ignore).
@@ -423,6 +425,8 @@ function M.summary(notes, ignored, ctx, max)
       add('⚠', 'parent settings form a loop', 'warn')
     elseif k == 'newer_copy' then
       add('⚠', c == 1 and ('%s may be built on an old %s'):format(n1.layer, n1.branch) or ('may be built on old copies of %d branches'):format(c), 'warn')
+    elseif k == 'outside' then
+      add('⚠', c == 1 and ('%s shares commits with %s'):format(n1.branch, n1.layer) or ('%d branches share commits with %s'):format(c, ctx.stack and 'the stack' or n1.layer), 'warn')
     elseif M.RELATED_SUMMARY[k] then
       vim.list_extend(related, ns)
       if not related_done then
@@ -453,7 +457,7 @@ function M.summary(notes, ignored, ctx, max)
         return M.RELATED_SUMMARY[kind] or false
       end)
       lines[i] = {
-        glyph = '⚠',
+        glyph = '○',
         text = ('%d related %s%s'):format(n, plural(n, 'branch', 'branches'), ctx.stack and ' outside this stack' or '')
           .. (ign > 0 and (' (%d ignored)'):format(ign) or ''),
         level = 'info',
@@ -477,7 +481,8 @@ end
 function M.actions(note, branch)
   local acts = {}
   local k = note.kind
-  if (k == 'newer_copy' or k == 'other_copy' or k == 'outside') and note.layer then
+  -- only when the setting would hold (no "parent setting out of date" warning right after)
+  if (k == 'newer_copy' or k == 'outside') and note.layer and note.parent_ok then
     acts[#acts + 1] = {
       key = 'p', id = 'parent', branch = note.layer, parent = note.branch,
       label = ('set %s as the parent of %s'):format(note.branch, note.layer),
@@ -504,7 +509,23 @@ local HINT = { p = 'p parent', c = 'c clear', x = 'x ignore', X = 'X pattern', u
 function M.wrap(text, width, indent)
   indent = indent or ''
   local out, line = {}, indent
+  local room = width - vim.fn.strdisplaywidth(indent)
+  local words = {}
   for word in text:gmatch('%S+') do
+    -- a word longer than a line (a long branch name) is split rather than overflowing
+    while room > 0 and vim.fn.strdisplaywidth(word) > room do
+      local cut, w = 0, 0
+      while w + vim.fn.strdisplaywidth(vim.fn.strcharpart(word, cut, 1)) <= room do
+        w = w + vim.fn.strdisplaywidth(vim.fn.strcharpart(word, cut, 1))
+        cut = cut + 1
+      end
+      cut = math.max(cut, 1)
+      words[#words + 1] = vim.fn.strcharpart(word, 0, cut)
+      word = vim.fn.strcharpart(word, cut)
+    end
+    words[#words + 1] = word
+  end
+  for _, word in ipairs(words) do
     if line ~= indent and vim.fn.strdisplaywidth(line .. ' ' .. word) > width then
       out[#out + 1] = line
       line = indent .. word
@@ -547,6 +568,22 @@ function M.details(notes, ignored, patterns, ctx, width)
     end
     local base = '    ' .. text
     detail = detail or ''
+    if vim.fn.strdisplaywidth(base) > width then
+      -- a name longer than the float: wrap it in chunks (every chunk acts on the entry)
+      local chunk, w = '', 0
+      for k = 0, vim.fn.strchars(text) - 1 do
+        local ch = vim.fn.strcharpart(text, k, 1)
+        local cw = vim.fn.strdisplaywidth(ch)
+        if w + cw > width - 4 and chunk ~= '' then
+          local r = add('    ' .. chunk)
+          hls[#hls + 1] = { r, 4, #lines[r], 'RevueyStackBranch' }
+          rows[r] = e
+          chunk, w = '', 0
+        end
+        chunk, w = chunk .. ch, w + cw
+      end
+      base = '    ' .. chunk
+    end
     local inline = detail ~= '' and vim.fn.strdisplaywidth(base .. '  ' .. detail) <= width
     local row = add(base .. (inline and ('  ' .. detail) or ''))
     hls[#hls + 1] = { row, 4, #base, 'RevueyStackBranch' }
@@ -575,8 +612,10 @@ function M.details(notes, ignored, patterns, ctx, width)
     local kind = M.KINDS[g.kind]
     local warn = g.level == 'warn'
     local title = kind.title:gsub('your stack', your(ctx))
-    local head = (warn and '⚠ ' or (kind.related and '⚠ ' or '● ')) .. title
-    add(head, warn and 'RevueyStackWarn' or 'RevueyStackTitle')
+    local head = (warn and '⚠ ' or (kind.related and '○ ' or '● ')) .. title
+    for _, l in ipairs(M.wrap(head, width, '')) do
+      add(l, warn and 'RevueyStackWarn' or 'RevueyStackTitle')
+    end
     local meaning = (#g.notes == 1 or not kind.many) and g.notes[1].text or kind.many(g.notes, ctx)
     if g.kind == 'fork' then
       meaning = g.notes[1].text

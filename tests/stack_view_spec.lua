@@ -538,14 +538,14 @@ h.test("old branches on a pre-amend bottom layer: one calm summary line, not a w
   end, s.review.stack.layers))
   local lines = vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)
   local text = table.concat(lines, '\n')
-  h.ok(text:find(' ⚠ 3 related branches outside this\n   stack\n', 1, true) or text:find(' ⚠ 3 related branches outside this stack\n', 1, true), text)
+  h.ok(text:find(' ○ 3 related branches outside this stack\n', 1, true), text)
   for _, b in ipairs(OLD) do
     h.ok(not text:find(b, 1, true), text)
   end
   h.ok(text:find('! notes', 1, true), text)
   -- dim, not the warning colour
   local ns = vim.api.nvim_get_namespaces()['revuey.panel']
-  local row = vim.fn.index(lines, ' ⚠ 3 related branches outside this') + vim.fn.index(lines, ' ⚠ 3 related branches outside this stack') + 1
+  local row = vim.fn.index(lines, ' ○ 3 related branches outside this stack')
   local hl
   for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf, ns, { row, 0 }, { row, -1 }, { details = true })) do
     hl = m[4].hl_group or hl
@@ -610,48 +610,89 @@ h.test('the details float lists every note in full; ignoring a branch hides it a
   float.close()
 end)
 
-h.test('set as parent from the float writes the override and re-detects the stack', function()
-  -- a moved on after b was built on it, and no reflog says so: a only "shares commits"
-  local d = h.tmpdir('stack-view-setparent')
-  local function commit(file)
-    h.write(d, file, file .. '\n')
-    h.git(d, 'add', '-A')
-    h.git(d, 'commit', '-q', '-m', file)
+h.test('set as parent from the float: offered only when it holds; clearing a stale setting', function()
+  local function repo(name, merge)
+    local d = h.tmpdir(name)
+    local function commit(file)
+      h.write(d, file, file .. '\n')
+      h.git(d, 'add', '-A')
+      h.git(d, 'commit', '-q', '-m', file)
+    end
+    h.git(d, 'init', '-q', '-b', 'main')
+    commit('base.txt')
+    h.git(d, 'checkout', '-q', '-b', 'a')
+    commit('a1.txt')
+    h.git(d, 'checkout', '-q', '-b', 'b')
+    commit('b1.txt')
+    h.git(d, 'checkout', '-q', '-b', 'c')
+    commit('c1.txt')
+    h.git(d, 'checkout', '-q', 'a')
+    commit('a2.txt')
+    if merge then
+      h.git(d, 'checkout', '-q', 'b')
+      h.git(d, 'merge', '-q', '--no-ff', '-m', 'merge a', 'a')
+      h.git(d, 'branch', '-D', 'c')
+    end
+    h.git(d, 'checkout', '-q', merge and 'b' or 'c')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+    return d
   end
-  h.git(d, 'init', '-q', '-b', 'main')
-  commit('base.txt')
-  h.git(d, 'checkout', '-q', '-b', 'a')
-  commit('a1.txt')
-  h.git(d, 'checkout', '-q', '-b', 'b')
-  commit('b1.txt')
-  h.git(d, 'checkout', '-q', '-b', 'c')
-  commit('c1.txt')
-  h.git(d, 'checkout', '-q', 'a')
-  commit('a2.txt')
-  h.git(d, 'checkout', '-q', 'c')
-  vim.fn.delete(d .. '/.git/logs', 'rf')
+  local function layers(s)
+    return vim.tbl_map(function(l)
+      return l.name
+    end, s.review.stack and s.review.stack.layers or {})
+  end
+  -- a moved on after b was built on it, and no reflog says so: b's diff includes a's commit
+  local d = repo('stack-view-setparent')
   local s = open(d)
-  h.eq({ 'b', 'c' }, vim.tbl_map(function(l)
-    return l.name
-  end, s.review.stack.layers))
-  h.ok(panel_text(s):find('1 related branch outside this stack', 1, true), panel_text(s))
+  h.eq({ 'b', 'c' }, layers(s))
+  h.ok(panel_text(s):find('⚠ a shares commits with b', 1, true), panel_text(s))
   panel_key(s, '!')
-  h.ok(float_text():find('Shares commits with your stack', 1, true), float_text())
+  h.ok(float_text():find('May affect this review', 1, true), float_text())
+  -- setting a as b's parent would only produce "parent setting out of date": not offered
   local msgs, restore = h.capture_notify()
   float_key(s, 'a', 'p')
   restore()
-  h.eq('a\n', h.git(d, 'config', 'branch.b.revueyParent'))
-  h.ok(msgs[1] and msgs[1].msg:find('stack parent of b set to a', 1, true), vim.inspect(msgs))
-  h.eq({ 'a', 'b', 'c' }, vim.tbl_map(function(l)
-    return l.name
-  end, s.review.stack.layers))
-  -- b isn't built on a's current tip, so now the parent setting is the (warning) note; c clears it
-  h.ok(float_text():find('Parent setting out of date', 1, true), float_text())
-  float_key(s, 'b', 'c')
+  h.ok(msgs[1] and msgs[1].msg:find('does not apply', 1, true), vim.inspect(msgs))
   h.eq('', (vim.system({ 'git', 'config', 'branch.b.revueyParent' }, { cwd = d }):wait().stdout))
-  h.eq({ 'b', 'c' }, vim.tbl_map(function(l)
-    return l.name
-  end, s.review.stack.layers))
+  -- a stale setting made elsewhere: c clears it from the float
+  h.git(d, 'config', 'branch.b.revueyParent', 'a')
+  view.refresh({ force = true })
+  idle(s)
+  h.ok(float_text():find('Parent setting out of date', 1, true), float_text())
+  msgs, restore = h.capture_notify()
+  float_key(s, 'b', 'c')
+  restore()
+  h.ok(msgs[1] and msgs[1].msg:find('cleared the stack parent of b', 1, true), vim.inspect(msgs))
+  h.eq('', (vim.system({ 'git', 'config', 'branch.b.revueyParent' }, { cwd = d }):wait().stdout))
+  h.eq({ 'b', 'c' }, layers(s))
+  float.close()
+  -- b merged a's new tip: a is an ancestor, so p is offered and the stack takes a in
+  local m = repo('stack-view-setparent-merge', true)
+  s = open(m)
+  h.eq(nil, s.review.stack)
+  panel_key(s, '!')
+  msgs, restore = h.capture_notify()
+  float_key(s, 'a', 'p')
+  restore()
+  h.eq('a\n', h.git(m, 'config', 'branch.b.revueyParent'))
+  h.ok(msgs[1] and msgs[1].msg:find('stack parent of b set to a', 1, true), vim.inspect(msgs))
+  h.eq({ 'a', 'b' }, layers(s))
+  h.eq({}, s.review.stack.notes)
+  float.close()
+end)
+
+h.test('the float follows a terminal resize', function()
+  local s = open(h.old_branches_repo('stack-view-resize'))
+  panel_key(s, '!')
+  local cols = vim.o.columns
+  vim.o.columns = 60
+  vim.api.nvim_exec_autocmds('VimResized', {})
+  h.ok(vim.api.nvim_win_get_width(float.state.win) <= 54, tostring(vim.api.nvim_win_get_width(float.state.win)))
+  for _, l in ipairs(vim.api.nvim_buf_get_lines(float.state.buf, 0, -1, false)) do
+    h.ok(vim.fn.strdisplaywidth(l) <= vim.api.nvim_win_get_width(float.state.win), l)
+  end
+  vim.o.columns = cols
   float.close()
 end)
 

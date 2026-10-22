@@ -1022,6 +1022,168 @@ h.test('detect: a side branch off a layer below HEAD is told apart from one shar
   h.eq({}, require('revuey.stack_notes').actions(n)[1].id == 'parent' and { 'parent' } or {}, 'no set-as-parent for a side branch')
 end)
 
+-- Scenario repos with explicit commit dates: main ── a ── b ── c (one commit each), then `how`.
+local function dated_repo(name, how)
+  local d = h.tmpdir(name)
+  local t = 1767225600
+  local saved = { vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE }
+  local function at(ct)
+    vim.env.GIT_COMMITTER_DATE = '@' .. ct .. ' +0000'
+  end
+  local function c(file)
+    vim.env.GIT_AUTHOR_DATE = '@' .. t .. ' +0000'
+    at(t)
+    h.write(d, file, file .. '\n')
+    h.git(d, 'add', '-A')
+    h.git(d, 'commit', '-q', '-m', file)
+    t = t + 100
+  end
+  h.git(d, 'init', '-q', '-b', 'main')
+  c('base.txt')
+  h.git(d, 'checkout', '-q', '-b', 'a')
+  c('a.txt')
+  h.git(d, 'checkout', '-q', '-b', 'b')
+  c('b.txt')
+  h.git(d, 'checkout', '-q', '-b', 'c')
+  c('c.txt')
+  how(d, c, at, t)
+  vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = saved[1], saved[2]
+  return d
+end
+
+local function rebase_stack(skew)
+  return function(d, c, at, t)
+    h.git(d, 'branch', 'backup/c', 'c')
+    h.git(d, 'checkout', '-q', 'main')
+    c('m.txt')
+    h.git(d, 'checkout', '-q', 'c')
+    at(t + skew)
+    h.git(d, 'rebase', '-q', 'main')
+    h.git(d, 'branch', '-f', 'b', 'c~1')
+    h.git(d, 'branch', '-f', 'a', 'c~2')
+    h.git(d, 'checkout', '-q', 'b')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+  end
+end
+
+local function ids(n)
+  return vim.tbl_map(function(a)
+    return a.id
+  end, require('revuey.stack_notes').actions(n))
+end
+
+h.test('detect: a cherry-pick of a layer onto a release branch is not a warning, and offers no parent', function()
+  for _, trailer in ipairs({ false, true }) do
+    local d = dated_repo('st-cherry-' .. tostring(trailer), function(d, _, at, t)
+      h.git(d, 'checkout', '-q', '-b', 'release/1.0', 'main')
+      at(t + 5000)
+      if trailer then
+        h.git(d, 'cherry-pick', '-x', 'a')
+      else
+        h.git(d, 'cherry-pick', 'a')
+      end
+      h.git(d, 'checkout', '-q', 'b')
+    end)
+    local st = detect(d)
+    h.eq({ 'a', 'b', 'c' }, names(st))
+    for _, n in ipairs(st.notes) do
+      h.eq('info', require('revuey.stack_notes').level(n), vim.inspect(n))
+      h.eq(false, vim.tbl_contains(ids(n), 'parent'), vim.inspect(n))
+    end
+    if trailer then
+      h.eq({}, st.notes, 'a marked cherry-pick is no note at all')
+    end
+  end
+end)
+
+h.test('detect: whole stack rebased, a backup branch holds the old copies: informational, right layer', function()
+  for _, skew in ipairs({ 5000, -100000, -200 }) do -- normal, clock behind (backup newer), equal-ish
+    local d = dated_repo('st-rebased-' .. skew, rebase_stack(skew))
+    local st = detect(d)
+    h.eq({ 'a', 'b', 'c' }, names(st), skew)
+    local n = note_of(st.notes, nil, 'backup/c') or {}
+    for _, x in ipairs(st.notes) do
+      if x.branch == 'backup/c' then
+        n = x
+      end
+    end
+    h.eq('info', require('revuey.stack_notes').level(n), skew .. vim.inspect(st.notes))
+    h.eq('c', n.layer, skew .. vim.inspect(st.notes))
+  end
+end)
+
+h.test('detect: a parent amended without restacking (no reflog) warns, and offers no parent that would be stale', function()
+  local d = dated_repo('st-newer-copy', function(d, c, at, t)
+    h.git(d, 'checkout', '-q', 'a')
+    h.git(d, 'branch', '-D', 'c')
+    at(t + 5000)
+    h.write(d, 'a.txt', 'a amended\n')
+    h.git(d, 'commit', '-q', '-a', '--amend', '--no-edit')
+    h.git(d, 'checkout', '-q', 'b')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+  end)
+  local st, notes = detect(d)
+  h.eq(nil, st)
+  local n = note_of(notes, 'newer_copy', 'a')
+  h.eq('b', n and n.layer, vim.inspect(notes))
+  h.eq('warn', require('revuey.stack_notes').level(n))
+  h.eq({}, ids(n), 'no stale parent, and warnings cannot be ignored')
+end)
+
+h.test('detect: sharing commits can change the diff (warning); parent offered only when it is an ancestor', function()
+  -- a moved on after b was built on it (no reflog): b's diff from main includes a's commit
+  local d = dated_repo('st-outside-warn', function(d, c)
+    h.git(d, 'checkout', '-q', 'a')
+    c('a2.txt')
+    h.git(d, 'checkout', '-q', 'c')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+  end)
+  local st = detect(d)
+  local n = note_of(st.notes, 'outside', 'a')
+  h.eq('warn', require('revuey.stack_notes').level(n), vim.inspect(st.notes))
+  h.eq(false, vim.tbl_contains(ids(n), 'parent'), 'setting a would be a stale parent')
+  -- b merged a (a is an ancestor through the merge): set as parent is offered
+  local m = dated_repo('st-outside-merge', function(d2, c)
+    h.git(d2, 'checkout', '-q', 'a')
+    h.git(d2, 'branch', '-D', 'c')
+    c('a2.txt')
+    h.git(d2, 'checkout', '-q', 'b')
+    h.git(d2, 'merge', '-q', '--no-ff', '-m', 'merge a', 'a')
+    vim.fn.delete(d2 .. '/.git/logs', 'rf')
+  end)
+  local _, notes = detect(m)
+  local o = note_of(notes, 'outside', 'a')
+  h.ok(o and vim.tbl_contains(ids(o), 'parent'), vim.inspect(notes))
+end)
+
+h.test('detect: warnings are never hidden by the ignore list', function()
+  local d = dated_repo('st-ignore-warn', function(d, c)
+    h.git(d, 'checkout', '-q', 'a')
+    c('a2.txt')
+    h.git(d, 'checkout', '-q', 'c')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+  end)
+  require('revuey.config').set({ state_dir = state_dir, stack = { ignore_branches = { '*' } } })
+  local st = detect(d)
+  require('revuey.config').set({ state_dir = state_dir })
+  h.ok(note_of(st.notes, 'outside', 'a'), vim.inspect(st.notes))
+end)
+
+h.test('detect: many old branches stay fast (one lookup per source branch)', function()
+  local d = h.old_branches_repo('st-old-many')
+  for i = 1, 150 do
+    h.git(d, 'branch', 'old/x-' .. i, 'dave/abc-1061-cleanup')
+  end
+  local t0 = vim.uv.hrtime()
+  local st = detect(d)
+  local ms = (vim.uv.hrtime() - t0) / 1e6
+  io.write(('    (detect with 150 old branches: %dms)\n'):format(ms))
+  h.eq(153, #st.notes)
+  for _, n in ipairs(st.notes) do
+    h.eq('outdated_copy', n.kind, n.branch)
+  end
+end)
+
 h.test('raw_keys() (layer stats) agree with content keys of the parsed diff', function()
   local review = require('revuey.review')
   local state = require('revuey.state')

@@ -834,13 +834,20 @@ end
 ---Suggest-only notes about related branches outside the stack (or outside the lone branch), for
 ---when no reflog links them (e.g. a fresh clone, or old branches left on an earlier version):
 ---  * branches holding another copy of a commit of the stack (same author, author date and changed
----    paths, different commit: amended or rebased), from one `git log` over unmerged branches.
----    The committer dates tell which copy is newer: a newer copy elsewhere means the stack may be
----    built on an old version of that branch (`newer_copy`); an older one means that branch may be
----    built on an outdated copy of the stack (`outdated_copy`); equal dates can't tell (`other_copy`);
+---    paths, different commit: amended, rebased or cherry-picked), from one `git log` over
+---    unmerged branches. Commits marked `(cherry picked from commit …)` are skipped. Committer
+---    dates give the direction: older copies elsewhere = that branch may be built on an outdated
+---    copy of the stack (`outdated_copy`). Newer copies elsewhere are a warning (`newer_copy`: the
+---    stack may be built on an old version of that branch) only when shaped like a parent that was
+---    amended under the stack: the matched commits are the bottom run of the bottom layer (which
+---    has commits of its own above them) and the branch ends at the newer copy of the top one.
+---    Anything else (backports, clock skew, whole-stack rebases) is `other_copy`, informational;
 ---  * other branches sharing commits above trunk with HEAD's line: built on a layer below HEAD
----    (`side`), or not (`outside`: perhaps a parent that moved on without restacking).
----Each note is about one branch; the ignore list is applied by the caller.
+---    (`side`), or not (`outside`, a warning: perhaps a parent that moved on without restacking,
+---    whose commits are then part of the layer's diff).
+---Notes that could suggest "set as parent" carry `parent_ok` when the branch tip is an ancestor
+---of the layer (so the setting would not be stale). One note per branch; the ignore list is
+---applied by the caller.
 ---@return revuey.StackNote[]
 local function foreign_notes(root, input, stack, above_set, trunk_names)
   local ctx = { stack = stack ~= nil, trunk = input.trunk }
@@ -889,11 +896,31 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
   while input.graph[root_commit] and input.graph[root_commit] ~= '' do
     root_commit = input.graph[root_commit]
   end
+  -- the bottom layer's first-parent line, bottom up: pos[sha] = 1 for its lowest commit
+  local pos, chain_len = {}, 0
+  do
+    local line, c = {}, layers[1].tip
+    while c and c ~= '' and input.graph[c] ~= nil do
+      line[#line + 1] = c
+      c = input.graph[c]
+    end
+    chain_len = #line
+    for i, sha in ipairs(line) do
+      pos[sha] = chain_len - i + 1
+    end
+  end
   local function layer_name(i)
     return layers[i or 1] and layers[i or 1].name or input.current
   end
 
-  -- other copies of the stack's commits
+  -- deliberate copies (backports): `git cherry-pick -x` leaves a marker in the message
+  local picked = {}
+  for sha in (git.git({
+    'log', '--branches', '--not', input.trunk_rev, '--fixed-strings', '--grep=(cherry picked from commit', '--format=%H',
+  }, root) or ''):gmatch('%x+') do
+    picked[sha] = true
+  end
+  -- other copies of the stack's commits, grouped by the branch `--source` names for them
   local out = git.git({
     'log', '--no-merges', '--branches', '--not', input.trunk_rev, '--source', '--max-count=2000',
     '--format=%x00%H%x09%S%x09%ae%x09%at%x09%ct', '--name-only',
@@ -902,7 +929,7 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
   for rec in out:gmatch('%z([^%z]*)') do
     local header, rest = rec:match('^([^\n]*)\n?(.*)$')
     local sha, src, ae, at, ct = (header or ''):match('^(%x+)\t(%S+)\t([^\t]*)\t(%d+)\t(%d+)')
-    if sha then
+    if sha and not picked[sha] then
       local files = vim.split(rest or '', '\n', { trimempty = true })
       table.sort(files)
       if #files > 0 then
@@ -915,30 +942,76 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
       end
     end
   end
-  local rank = { newer_copy = 3, outdated_copy = 2, other_copy = 1 }
-  local rel = {} ---@type table<string, {kind:string, layer:integer}>
-  local function relate(b, kind, layer)
-    local r = rel[b]
-    if not r or rank[kind] > rank[r.kind] then
-      rel[b] = { kind = kind, layer = layer }
-    elseif kind == r.kind and layer > r.layer then
-      r.layer = layer
-    end
-  end
-  local queried = 0
+  local groups, order = {}, {}
   for _, o in ipairs(others) do
     local m = mine_keys[o.key]
     if m and m.sha ~= o.sha then
-      local kind = o.ct > m.ct and 'newer_copy' or (o.ct < m.ct and 'outdated_copy' or 'other_copy')
-      local holders = { o.branch }
-      -- `--source` names one branch per commit; ask for every branch holding it (capped)
-      if queried < 30 then
-        queried = queried + 1
-        holders = refs_list(git.git({ 'for-each-ref', '--contains', o.sha, '--format=%(refname)', 'refs/heads' }, root))
+      if not groups[o.branch] then
+        groups[o.branch] = {}
+        order[#order + 1] = o.branch
       end
-      for _, b in ipairs(holders) do
-        if outside(b) then
-          relate(b, kind, owner[m.sha])
+      table.insert(groups[o.branch], { m = m, o = o })
+    end
+  end
+
+  ---Kind of a branch holding these copies (with tip `tip`).
+  local function classify(matches, tip)
+    local newer, older = 0, 0
+    for _, p in ipairs(matches) do
+      if p.o.ct > p.m.ct then
+        newer = newer + 1
+      elseif p.o.ct < p.m.ct then
+        older = older + 1
+      end
+    end
+    if older > 0 and newer == 0 then
+      return 'outdated_copy'
+    end
+    if newer > 0 and older == 0 then
+      local top, seen, n = nil, {}, 0
+      for _, p in ipairs(matches) do
+        local k = pos[p.m.sha]
+        if not k or seen[k] then
+          return 'other_copy'
+        end
+        seen[k] = true
+        n = n + 1
+        if not top or k > pos[top.m.sha] then
+          top = p
+        end
+      end
+      -- a bottom run 1..n, below the layer's own commits, and the branch ends at its newer copy
+      if pos[top.m.sha] == n and n < chain_len and tip == top.o.sha then
+        return 'newer_copy'
+      end
+    end
+    return 'other_copy'
+  end
+
+  local rank = { newer_copy = 3, outdated_copy = 2, other_copy = 1 }
+  local rel = {} ---@type table<string, {kind:string, layer:integer}>
+  for gi, src in ipairs(order) do
+    local matches = groups[src]
+    local layer, rep = 1, matches[1]
+    for _, p in ipairs(matches) do
+      local i = owner[p.m.sha] or 1
+      if i >= layer then
+        layer, rep = i, p
+      end
+    end
+    -- `--source` names one branch per commit: ask once per source for every branch holding it
+    local holders = { src }
+    if gi <= 30 then
+      holders = refs_list(git.git({ 'for-each-ref', '--contains', rep.o.sha, '--format=%(refname)', 'refs/heads' }, root))
+    end
+    for _, b in ipairs(holders) do
+      if outside(b) then
+        local kind = classify(matches, input.branches[b])
+        local r = rel[b]
+        if not r or rank[kind] > rank[r.kind] then
+          rel[b] = { kind = kind, layer = layer }
+        elseif kind == r.kind and layer > r.layer then
+          r.layer = layer
         end
       end
     end
@@ -976,12 +1049,22 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
 
   local names = vim.tbl_keys(rel)
   table.sort(names)
-  local notes = {}
+  local notes, checked = {}, 0
   for _, b in ipairs(names) do
-    notes[#notes + 1] = notes_mod.new(rel[b].kind, { branch = b, layer = layer_name(rel[b].layer) }, ctx)
+    local r = rel[b]
+    local fields = { branch = b, layer = layer_name(r.layer) }
+    if (r.kind == 'newer_copy' or r.kind == 'outside') and checked < 20 then
+      -- only offer "set as parent" when the setting would hold (tip is an ancestor of the layer)
+      checked = checked + 1
+      local tip = layers[r.layer] and layers[r.layer].tip or input.head
+      local res = git.system({ 'git', 'merge-base', '--is-ancestor', input.branches[b], tip }, { cwd = root })
+      fields.parent_ok = res.code == 0 or nil
+    end
+    notes[#notes + 1] = notes_mod.new(r.kind, fields, ctx)
   end
   return notes
 end
+
 
 ---Detect the local stack around HEAD. Returns nil when there is none (single branch, detached
 ---HEAD, nothing committed above trunk).

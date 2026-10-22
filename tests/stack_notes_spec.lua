@@ -17,17 +17,17 @@ h.test('classification: only notes that change the diff shown are warnings', fun
       warn[#warn + 1] = k
     end
   end
-  h.eq({ 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy' }, warn)
+  h.eq({ 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy', 'outside' }, warn)
   h.eq('info', sn.level(new('outdated_copy', { branch = 'x', layer = 'a' })))
   h.eq('warn', sn.level(new('not_restacked', { branch = 'b', parent = 'a', at = '1234abcd' })))
-  -- only notes about branches outside the stack can be ignored
+  -- only informational notes about branches outside the stack can be ignored, never warnings
   local ignorable = {}
   for _, k in ipairs(sn.ORDER) do
-    if sn.KINDS[k].related then
+    if sn.ignorable({ kind = k }) then
       ignorable[#ignorable + 1] = k
     end
   end
-  h.eq({ 'newer_copy', 'outdated_copy', 'other_copy', 'outside', 'side', 'same_commit' }, ignorable)
+  h.eq({ 'outdated_copy', 'other_copy', 'side', 'same_commit' }, ignorable)
   -- every kind has a plain text, an impact and a title
   for _, k in ipairs(sn.ORDER) do
     local n = new(k, { branch = 'b', layer = 'a', parent = 'a', at = 'abc', branches = { 'x', 'y' }, source = 'config', count = 2 })
@@ -66,11 +66,12 @@ h.test('summary: 0, 1 and many notes; related kinds share a line; ignored count'
   h.eq({ { glyph = '●', text = 'stack/a looks landed in main', level = 'info' } }, sn.summary({ new('landed', { branch = 'stack/a' }) }, {}, ctx))
   local related = {
     new('outdated_copy', { branch = 'x', layer = 'a' }),
-    new('outside', { branch = 'y', layer = 'a' }),
+    new('other_copy', { branch = 'y', layer = 'a' }),
     new('side', { branch = 'z', layer = 'a' }),
   }
-  h.eq({ { glyph = '⚠', text = '3 related branches outside this stack (2 ignored)', level = 'info' } },
-    sn.summary(related, { { branch = 'p', kind = 'outside' }, { branch = 'q', kind = 'outdated_copy' } }, ctx))
+  h.eq({ { glyph = '○', text = '3 related branches outside this stack (2 ignored)', level = 'info' } },
+    sn.summary(related, { { branch = 'p', kind = 'side' }, { branch = 'q', kind = 'outdated_copy' } }, ctx))
+  h.eq({ { glyph = '⚠', text = 'y shares commits with a', level = 'warn' } }, sn.summary({ new('outside', { branch = 'y', layer = 'a' }) }, {}, ctx))
   h.eq('1 related branch', sn.summary({ related[1] }, {}, { stack = false, trunk = 'main' })[1].text)
   -- many kinds: warnings first, capped at 3 lines with a pointer to the details
   local many = vim.list_extend({
@@ -81,7 +82,7 @@ h.test('summary: 0, 1 and many notes; related kinds share a line; ignored count'
   }, related)
   h.eq({
     { glyph = '⚠', text = '2 layers not restacked', level = 'warn' },
-    { glyph = '⚠', text = '3 related branches outside this stack', level = 'info' },
+    { glyph = '○', text = '3 related branches outside this stack', level = 'info' },
     { glyph = '…', text = '2 more: press ! for details', level = 'info' },
   }, sn.summary(many, {}, ctx))
   h.eq(4, #sn.summary(many, {}, ctx, 4))
@@ -93,9 +94,11 @@ h.test('filter: the ignore list hides only related-branch notes', function()
     new('same_commit', { branch = 'dave/old-2', layer = 'a' }),
     new('landed', { branch = 'dave/old-3' }),
     new('outside', { branch = 'keep', layer = 'a' }),
+    new('outside', { branch = 'dave/old-warn', layer = 'a' }),
+    new('newer_copy', { branch = 'dave/old-newer', layer = 'a' }),
   }
-  local shown, ignored = sn.filter(notes, { 'dave/old-*' })
-  h.eq({ 'dave/old-3', 'keep' }, vim.tbl_map(function(n)
+  local shown, ignored = sn.filter(notes, { 'dave/old-*', 'keep' })
+  h.eq({ 'dave/old-3', 'keep', 'dave/old-warn', 'dave/old-newer' }, vim.tbl_map(function(n)
     return n.branch
   end, shown))
   h.eq({ { branch = 'dave/old-1', kind = 'outdated_copy', pattern = 'dave/old-*' }, { branch = 'dave/old-2', kind = 'same_commit', pattern = 'dave/old-*' } }, ignored)
@@ -109,9 +112,12 @@ h.test('actions per note kind', function()
   end
   h.eq({ 'ignore', 'pattern' }, ids(new('outdated_copy', { branch = 'dave/abc-1058-x', layer = 'a' })))
   h.eq('dave/abc-1058-*', sn.actions(new('outdated_copy', { branch = 'dave/abc-1058-x', layer = 'a' }))[2].pattern)
-  local p = sn.actions(new('outside', { branch = 'old', layer = 'stack/a' }))[1]
+  -- set as parent only where the setting would hold; warnings can't be ignored
+  h.eq({}, ids(new('outside', { branch = 'old', layer = 'stack/a' })))
+  local p = sn.actions(new('outside', { branch = 'old', layer = 'stack/a', parent_ok = true }))[1]
   h.eq({ 'parent', 'stack/a', 'old' }, { p.id, p.branch, p.parent })
-  h.eq({ 'parent', 'ignore', 'pattern' }, ids(new('newer_copy', { branch = 'x', layer = 'a' })))
+  h.eq({}, ids(new('newer_copy', { branch = 'x', layer = 'a' })))
+  h.eq({ 'ignore', 'pattern' }, ids(new('other_copy', { branch = 'x', layer = 'a' })))
   h.eq({ 'clear' }, ids(new('stale_parent', { branch = 'b', parent = 'a', source = 'config' })))
   h.eq({}, ids(new('stale_parent', { branch = 'b', parent = 'a', source = 'graphite' })))
   h.eq({}, ids(new('not_restacked', { branch = 'b', parent = 'a', at = '1' })))
@@ -134,7 +140,7 @@ h.test('details: every note in full, wrapped to the width, grouped, with branch 
   h.ok(text:find('⚠ Not restacked', 1, true), text)
   h.ok(text:find('Affects this review', 1, true), text)
   h.ok(text:find("Doesn't affect this review", 1, true), text)
-  h.ok(text:find('⚠ Built on an outdated copy of your stack', 1, true), text)
+  h.ok(text:find('○ Built on an outdated copy of your stack', 1, true), text)
   h.ok(text:find('These branches contain older versions', 1, true), text)
   h.ok(text:find('Ignored branches', 1, true), text)
   -- branch rows: the two old branches (with ignore actions), the stack/b row, fork children, patterns
@@ -155,10 +161,26 @@ h.test('details: every note in full, wrapped to the width, grouped, with branch 
   end, rows))
   h.eq('x ignore  X pattern', m.hints[rows[2][1]])
   h.eq({ ' No notes about this stack.' }, sn.details({}, {}, {}, ctx, 50).lines)
+  -- a branch name longer than the width wraps instead of being cut off
+  local long = 'dävé/ブランチ-' .. string.rep('x', 70)
+  local w = sn.details({ new('outdated_copy', { branch = long, layer = 'a' }) }, {}, {}, ctx, 40)
+  local joined, entry_rows = '', 0
+  for row, l in ipairs(w.lines) do
+    h.ok(vim.fn.strdisplaywidth(l) <= 40, l)
+    if w.rows[row] then
+      entry_rows = entry_rows + 1
+      joined = joined .. vim.trim(l)
+    end
+  end
+  h.ok(joined:find(long, 1, true), vim.inspect(w.lines))
+  h.ok(entry_rows >= 3, 'every wrapped line acts on the branch')
 end)
 
 h.test('ignore globs: matching and suggestions', function()
   h.eq('dave/old-*', ign.match({ 'x', 'dave/old-*' }, 'dave/old-thing'))
+  h.eq('**/x', ign.match({ '**/x' }, 'x'))
+  h.eq('**/x', ign.match({ '**/x' }, 'a/b/x'))
+  h.eq(nil, ign.match({ '**/x' }, 'ax'))
   h.eq('dave/*', ign.match({ 'dave/*' }, 'dave/a/b'), '* crosses /')
   h.eq(nil, ign.match({ 'dave/old-*' }, 'dave/new-thing'))
   h.eq(nil, ign.match({ 'dave/old' }, 'dave/old-thing'), 'anchored')
@@ -168,9 +190,12 @@ h.test('ignore globs: matching and suggestions', function()
   h.eq('feat/(x)%', ign.match({ 'feat/(x)%' }, 'feat/(x)%'))
   h.eq('dave/abc-1058-*', ign.suggest('dave/abc-1058-apply-price-check'))
   h.eq('dave/old-*', ign.suggest('dave/old-thing'))
-  h.eq('dave/*', ign.suggest('dave/x'))
-  h.eq('feature*', ign.suggest('feature'))
-  h.eq('a/b/c-*', ign.suggest('a/b/c-d-e'))
+  -- never as broad as `<user>/*`, and no broader than the last separator without a ticket number
+  h.eq('dave/x', ign.suggest('dave/x'))
+  h.eq('feature', ign.suggest('feature'))
+  h.eq('a/b/c-d-*', ign.suggest('a/b/c-d-e'))
+  h.eq('dave/old-*', ign.suggest('dave/old-'))
+  h.eq(2, ign.count('dave/*', { 'dave/a', 'dave/b/c', 'x' })) -- shown in the X prompt when over 3
 end)
 
 h.test('ignore list: persisted per repo, merged with concurrent changes and the config', function()
@@ -190,9 +215,10 @@ h.test('ignore list: persisted per repo, merged with concurrent changes and the 
   h.eq({ { pattern = 'b/*', source = 'config' }, { pattern = 'c', source = 'config' } }, ign.effective({ 'b/*', 'c' }, dir, repo))
   ign.update(dir, repo, { add = { 'd' } })
   h.eq({ 'c', 'b/*', 'd' }, ign.patterns(ign.effective({ 'c' }, dir, repo)))
-  -- unreadable file: empty list, and the next update rewrites it
+  -- unreadable file: kept as a backup, empty list, and the next update starts afresh
   h.write(vim.fs.dirname(ign.file_for(dir, repo)), vim.fs.basename(ign.file_for(dir, repo)), '{not json')
   h.eq({}, ign.read(dir, repo))
+  h.eq(1, #vim.fn.glob(ign.file_for(dir, repo) .. '.corrupt-*', false, true))
   h.eq({ 'e' }, ign.update(dir, repo, { add = { 'e' } }))
   h.eq('stack-ignore-repo-', vim.fs.basename(ign.file_for(dir, repo)):sub(1, 18))
 end)

@@ -6,11 +6,11 @@
 05| ▶@ stack/b                   1c 1f ✓0/1│      1 + b                                                          
 06|    stack/c                   1c 1f ✓0/1│                                                                     
 07|    full stack                4c 4f ✓0/4│                                                                     
-08| ⚠ 3 related branches outside this stack│                                                                     
+08| ○ 3 related branches outside this stack│                                                                     
 09|                                        │                                                                     
 10| stack/b → stack/a                      │                                                                     
 11| 1 files  +╭───────────────────────────────────── Stack notes ──────────────────────────────────────╮         
-12| base 12242│⚠ Built on an outdated copy of your stack                                               │         
+12| base 12242│○ Built on an outdated copy of your stack                                               │         
 13| layer 2/3 │  These branches contain older versions of commits that are now in your stack (they     │         
 14| working tr│  were amended or rebased since). They may be built on an outdated copy of your stack.  │         
 15|           │  Doesn't affect this review. If you no longer need them, delete or ignore them.        │         
