@@ -128,9 +128,26 @@ function M.save(st)
   local dir = vim.fs.dirname(st._path)
   vim.fn.mkdir(dir, 'p')
   -- read, merge and rename under a lock: two processes saving at once must not both start
-  -- from the old file (the last rename would drop the other's change)
-  return require('revuey.lock').with(st._path, function()
-    return M._save_locked(st)
+  -- from the old file (the last rename would drop the other's change). In the UI a busy lock
+  -- defers the save to a timer (lock.save): the changes stay pending in `st` meanwhile.
+  local lock = require('revuey.lock')
+  local fin, first = st._finalize, true
+  return lock.save(st._path, function()
+    -- a retry runs after units.lua dropped its derived-marks hook: put it back for this save
+    local restore = not first and st._finalize == nil and fin
+    first = false
+    if restore then
+      st._finalize = fin
+    end
+    local ok, err = pcall(lock.with, st._path, function()
+      return M._save_locked(st)
+    end)
+    if restore then
+      st._finalize = nil
+    end
+    if not ok then
+      error(err, 0)
+    end
   end)
 end
 

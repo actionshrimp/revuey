@@ -22,7 +22,7 @@ function M.async(fn, on_error)
         on_error(err)
       else
         vim.schedule(function()
-          vim.notify('revuey: ' .. tostring(err), vim.log.levels.ERROR)
+          vim.notify('revuey: ' .. tostring(err):gsub('^revuey: ', ''), vim.log.levels.ERROR)
         end)
       end
     end
@@ -58,7 +58,7 @@ function M.resume(co, ...)
     if handler then
       handler(err)
     else
-      vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
+      vim.notify('revuey: ' .. tostring(err):gsub('^revuey: ', ''), vim.log.levels.ERROR)
     end
   end
 end
