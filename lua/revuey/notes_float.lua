@@ -143,7 +143,18 @@ local function run(a)
   elseif a.id == 'unignore' then
     view.stack_ignore(a.pattern, true)
   elseif a.id == 'pattern' then
-    vim.ui.input({ prompt = 'Ignore branches matching: ', default = a.pattern }, function(input)
+    -- say how broad the suggestion is when it covers more than a few branches
+    local prompt = 'Ignore branches matching: '
+    local st = M.state
+    local root = st and st.s.review.root
+    local out = root and require('revuey.git').git({ 'for-each-ref', '--format=%(refname:short)', 'refs/heads' }, root)
+    if out then
+      local n = require('revuey.stack_ignore').count(a.pattern, vim.split(out, '\n', { trimempty = true }))
+      if n > 3 then
+        prompt = ('Ignore branches matching (the suggestion matches %d branches): '):format(n)
+      end
+    end
+    vim.ui.input({ prompt = prompt, default = a.pattern }, function(input)
       input = input and vim.trim(input) or ''
       if input ~= '' then
         view.stack_ignore(input)
@@ -234,13 +245,24 @@ function M.open(s)
     M.act('unignore')
   end, 'stop ignoring')
   map('<CR>', M.choose, 'choose an action')
+  local group = api.nvim_create_augroup('revuey.notes_float', { clear = true })
+  api.nvim_create_autocmd('VimResized', {
+    group = group,
+    callback = function()
+      if M.is_open() and M.state.buf == buf then
+        render(M.state)
+      end
+    end,
+  })
   api.nvim_create_autocmd('BufWipeout', {
+    group = group,
     buffer = buf,
     once = true,
     callback = function()
       if M.state and M.state.buf == buf then
         M.state = nil
       end
+      pcall(api.nvim_del_augroup_by_id, group)
     end,
   })
   render(M.state)

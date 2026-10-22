@@ -27,25 +27,35 @@ end
 ---@param patterns string[]
 ---@param branch string
 ---@return string?
+---Does one glob match? A `**/` may also match nothing (`**/x` matches `x`).
+local function glob_match(p, branch)
+  if p == branch or branch:match(M.to_pattern(p)) then
+    return true
+  end
+  local i = p:find('**/', 1, true)
+  return i ~= nil and glob_match(p:sub(1, i - 1) .. p:sub(i + 3), branch)
+end
+
 function M.match(patterns, branch)
   for _, p in ipairs(patterns or {}) do
-    if p == branch or branch:match(M.to_pattern(p)) then
+    if glob_match(p, branch) then
       return p
     end
   end
 end
 
----A glob covering a branch and its likely siblings: the directory part plus the leaf up to its
----first token with a digit (`dave/bos-3058-apply-credit-note` -> `dave/bos-3058-*`), else the
----leaf's first token (`dave/old-thing` -> `dave/old-*`), else the directory (`dave/x` -> `dave/*`).
+---A glob covering a branch and its close siblings, never broader than the branch's own leaf
+---prefix (never just `dave/*`): up to the leaf's first token with a digit, like a ticket number
+---(`dave/bos-3058-apply-credit-note` -> `dave/bos-3058-*`), else up to the leaf's last `-`
+---(`a/b/c-d-e` -> `a/b/c-d-*`). A leaf without `-` is suggested as the exact name.
 function M.suggest(branch)
   local dir, leaf = branch:match('^(.*/)([^/]*)$')
   dir, leaf = dir or '', leaf or branch
   local tokens = vim.split(leaf, '-', { plain = true })
   if #tokens < 2 or tokens[1] == '' then
-    return dir ~= '' and (dir .. '*') or (branch .. '*')
+    return branch
   end
-  local keep = 1
+  local keep = #tokens - 1
   for i = 1, #tokens - 1 do
     if tokens[i]:find('%d') then
       keep = i
@@ -55,6 +65,17 @@ function M.suggest(branch)
   return dir .. table.concat(vim.list_slice(tokens, 1, keep), '-') .. '-*'
 end
 
+---How many of `branches` a glob matches.
+function M.count(pattern, branches)
+  local n = 0
+  for _, b in ipairs(branches) do
+    if glob_match(pattern, b) then
+      n = n + 1
+    end
+  end
+  return n
+end
+
 ---State file holding a repo's ignore list. `repo` is the git common dir (shared by worktrees).
 function M.file_for(dir, repo)
   local name = vim.fs.basename(vim.fs.dirname(repo)) or 'repo'
@@ -62,10 +83,14 @@ function M.file_for(dir, repo)
   return vim.fs.joinpath(dir, 'stack-ignore-' .. slug .. '-' .. vim.fn.sha256(repo):sub(1, 12) .. '.json')
 end
 
----Persisted patterns for a repo ({} when missing or unreadable).
+local backup_seq = 0
+
+---Persisted patterns for a repo ({} when missing). An unreadable file is moved aside to
+---`<file>.corrupt-*` (like review state) rather than silently overwritten later.
 ---@return string[]
 function M.read(dir, repo)
-  local fd = io.open(M.file_for(dir, repo), 'r')
+  local path = M.file_for(dir, repo)
+  local fd = io.open(path, 'r')
   if not fd then
     return {}
   end
@@ -79,6 +104,9 @@ function M.read(dir, repo)
         list[#list + 1] = p
       end
     end
+  elseif text ~= '' then
+    backup_seq = backup_seq + 1
+    os.rename(path, ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.fn.getpid(), backup_seq))
   end
   return list
 end
@@ -107,7 +135,7 @@ function M.update(dir, repo, o)
   end
   vim.fn.mkdir(dir, 'p')
   local path = M.file_for(dir, repo)
-  local tmp = path .. '.tmp.' .. vim.fn.getpid()
+  local tmp = path .. '.tmp.' .. vim.fn.getpid() .. '.' .. vim.uv.hrtime()
   local fd, err = io.open(tmp, 'w')
   if not fd then
     error('revuey: cannot write the ignore list: ' .. tostring(err))
