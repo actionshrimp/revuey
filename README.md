@@ -116,7 +116,8 @@ A stack is a chain of local branches, each based on the one below, for example
 - **Squash-merged commits under the bottom layer** (lower PRs merged, the branch not restacked
   onto trunk): commits at its bottom that trunk already has, one squash per run of commits and
   not reverted since, are left out of its diff and the full scope, with a note, so it shows what
-  its PR shows. A layer that landed entirely keeps its own squash-merged commits. The same
+  its PR shows (a `⚠ … skips N commits already in main` note). A layer that landed entirely keeps
+  its own squash-merged commits, and its "looks landed" note mentions the skipped ones. The same
   applies to a lone branch once the lower branches are deleted and no stack is left. Squashes
   that needed conflict resolution, or that a later trunk change touches within a line, don't
   match, and the diff is unchanged.
@@ -167,6 +168,7 @@ dim (`RevueyStackNote`) and don't affect the review.
 | Note | Affects the diff? |
 |---|---|
 | Not restacked (a layer is still on its parent's old tip) | yes: the layer shows only its own commits |
+| Commits already in trunk are skipped (squash-merged lower branches; a layer that landed entirely says so in its "looks landed" note instead) | yes: the diff leaves them out, wrongly if the match is wrong |
 | Parent setting out of date (explicit parent that isn't an ancestor) | yes: compared with trunk instead |
 | Parent setting names a missing branch | yes: the parent is guessed instead |
 | Parent settings form a loop | yes: compared with trunk instead |

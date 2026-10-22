@@ -452,6 +452,14 @@ h.test('a lone branch whose lower stack branches were squash-merged and deleted 
   h.ok(panel_text(s):find('⚠ stack/ui skips 3 commits already', 1, true), panel_text(s))
   local n = s.review.notes[1]
   h.eq({ 'squashed', 'stack/ui', 3 }, { n.kind, n.branch, n.count })
+  -- the details float lists it in full
+  local fl = require('revuey.notes_float')
+  vim.api.nvim_set_current_win(s.panel_win)
+  vim.api.nvim_feedkeys('!', 'mtx', false)
+  local ftext = table.concat(vim.api.nvim_buf_get_lines(fl.state.buf, 0, -1, false), '\n')
+  h.ok(ftext:find('⚠ Commits already in trunk are skipped', 1, true), ftext)
+  h.ok(ftext:gsub('%s+', ' '):find("it shows only stack/ui's own commits", 1, true), ftext)
+  fl.close()
 end)
 
 h.test('many notes become one short summary line in the panel', function()
