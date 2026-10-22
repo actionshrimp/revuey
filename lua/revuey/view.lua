@@ -1233,7 +1233,15 @@ local function mark_target(s, row)
   if bi then
     local k = block_keys(s)[bi]
     local fi = row_hunk(s.layout.map[s.layout.blocks[bi].start_row])
-    return { level = 'hunk', units = k and U.by_hunk[k] or {}, block = bi, file = fi, section = e.section_idx }
+    local list = k and U.by_hunk[k] or {}
+    -- a code line of a hunk split into several units: just the unit holding that line
+    if #list > 1 and e.line_idx and e.hunk_idx then
+      local u = units.at_line(U, e.file_idx, e.hunk_idx, e.line_idx)
+      if u then
+        return { level = 'hunk', units = { u }, piece = u, block = bi, file = fi, section = e.section_idx }
+      end
+    end
+    return { level = 'hunk', units = list, block = bi, file = fi, section = e.section_idx }
   end
   if s.view_mode == 'guide' then
     local si = e.section_idx or (e.kind ~= 'diagram' and section_at_row(s, row)) or nil
@@ -1284,6 +1292,44 @@ local function next_unreviewed_block(s, bi)
       return s.layout.blocks[i].start_row
     end
   end
+end
+
+---Rewrite the guide's meta line ("… · 1/2 reviewed · …") in place; a full re-render if its
+---wrapped height changed.
+local function update_guide_meta(s)
+  if not (s.guide and s.guide.resolved) then
+    return
+  end
+  local rows = {}
+  for row, e in ipairs(s.layout.map) do
+    if e.kind == 'prose' and e.block == 'meta' and e.role == 'meta' then
+      rows[#rows + 1] = row
+    elseif #rows > 0 then
+      break
+    end
+  end
+  local new = guide_view.meta_rows(s, s.prose_width or 80)
+  if #rows == 0 then
+    return
+  end
+  if #new ~= #rows then
+    return M.rerender(s)
+  end
+  local buf = s.diff_buf
+  vim.bo[buf].modifiable = true
+  for i, row in ipairs(rows) do
+    local item = new[i]
+    api.nvim_buf_set_lines(buf, row - 1, row, false, { item.text })
+    s.layout.lines[row] = item.text
+    local e = s.layout.map[row]
+    e.hls, e.off, e.pre = item.hls, item.off, item.pre
+    api.nvim_buf_clear_namespace(buf, ns, row - 1, row)
+    for _, hl in ipairs(item.hls or {}) do
+      pcall(api.nvim_buf_set_extmark, buf, ns, row - 1, hl[1], { end_col = hl[2], hl_group = hl[3], priority = 20 })
+    end
+  end
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].modified = false
 end
 
 ---Toggle the reviewed state of `target`'s units (all marked when any is unreviewed, else all
@@ -1348,6 +1394,13 @@ local function apply_marks(s, target)
     set_section_mark(s, si)
   end
   panel.render(s)
+  if guide_mode then
+    update_guide_meta(s)
+  end
+  -- the winbar shows progress too; with no UI attached there is nothing to redraw
+  if #api.nvim_list_uis() > 0 then
+    pcall(api.nvim__redraw, { win = s.diff_win, winbar = true })
+  end
   -- folds in this view: parents that are no longer complete open first, then hunks, then
   -- parents that became complete close
   if guide_mode then
@@ -1434,6 +1487,25 @@ local function apply_marks(s, target)
     end
     goto_row(s, s.layout.files[fi].start_row, 'nofold')
     return now
+  end
+  -- a piece of a split hunk: on to the next unreviewed piece of the same hunk
+  if target.piece and not units.all_reviewed(st, U.by_hunk[target.piece.hunk] or {}) then
+    local p = target.piece
+    local after, any
+    for _, u in ipairs(U.by_hunk[p.hunk]) do
+      if not units.reviewed(st, u) then
+        any = any or u
+        if not after and u.first > p.first then
+          after = u
+        end
+      end
+    end
+    local pick = after or any
+    local base = s.layout.hunk_base[p.file_idx] and s.layout.hunk_base[p.file_idx][p.hunk_idx]
+    if pick and base then
+      goto_row(s, base + pick.first, 'nofold')
+      return now
+    end
   end
   -- a hunk in a file or section that still has unreviewed hunks: on to the next one
   local nxt = next_unreviewed_block(s, target.block)

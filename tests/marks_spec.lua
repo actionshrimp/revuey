@@ -364,6 +364,10 @@ h.test('guide: mr on a section heading marks its units; files it covers are revi
   h.eq(true, gv.section_reviewed(s, sec(1)))
   h.eq(s.layout.sections[1].start_row, closed_at(s, s.layout.sections[1].start_row))
   h.eq(s.layout.sections[2].start_row, cursor(s))
+  -- the guide's own meta line follows, in place (no re-render: the fold just closed stays)
+  local text = table.concat(vim.api.nvim_buf_get_lines(s.diff_buf, 0, -1, false), '\n')
+  h.ok(text:find('2 sections · 1/2 reviewed', 1, true), text:sub(1, 200))
+  h.eq(s.layout.sections[1].start_row, closed_at(s, s.layout.sections[1].start_row))
   h.eq(true, review_mod.is_reviewed(s.review, s.review.files[fidx(s, 'a.txt')]), 'a.txt was all in section 1')
   h.eq({ 1, 3 }, progress(s, 'm.txt'))
   view.set_view('diff')
@@ -501,6 +505,47 @@ h.test('layer and full scope keep separate unit marks, even for identical hunks'
     end
   end
   h.ok(table.concat(pv):find('✓1/2', 1, true), table.concat(pv))
+end)
+
+-- Pre-tests the planned hunk splitting: with two units per hunk (lines 1-3 and the rest), the view
+-- marks one piece from a code line, shows the hunk's progress, moves to the other piece, and
+-- folds the hunk once both are reviewed; the header still toggles the whole hunk.
+h.test('split units: mr on each piece of a hunk, progress, folding', function()
+  review_mod.split = function(_, hk)
+    if #hk.lines < 4 then
+      return nil
+    end
+    return { { first = 1, last = 3 }, { first = 4, last = #hk.lines } }
+  end
+  local d = h.repo('marks-split', { ['m.txt'] = long }, { ['m.txt'] = edit(long, { [3] = 'three', [20] = 'twenty' }) })
+  s = open(d)
+  local ok, err = pcall(function()
+    local r = rows(s, 'm.txt')
+    local U = review_mod.units(s.review)
+    h.eq(4, #U.by_file[1], 'two hunks, two pieces each')
+    local hr = r.hunk_rows[1]
+    vim.api.nvim_win_set_cursor(s.diff_win, { hr + 1, 0 }) -- line 1: the first piece
+    keys(s, 'mr')
+    h.eq({ 1, 4 }, progress(s, 'm.txt'))
+    h.ok(virt(s, hr):find('◐ 1/2', 1, true), virt(s, hr))
+    h.eq(-1, closed_at(s, hr), 'a partly reviewed hunk stays open')
+    local base = s.layout.hunk_base[1][1]
+    h.eq(base + 4, cursor(s), 'on to the other piece')
+    keys(s, 'mr')
+    h.eq({ 2, 4 }, progress(s, 'm.txt'))
+    h.eq(hr, closed_at(s, hr), 'both pieces: the hunk folds')
+    h.ok(virt(s, hr):find('✓ reviewed', 1, true))
+    h.ok(s.review.state.units[U.by_file[1][1].hunk], 'the parent hunk key is stored')
+    h.eq(r.hunk_rows[2], cursor(s), 'then the next hunk')
+    -- the header toggles the whole hunk
+    keys(s, 'mr')
+    h.eq({ 4, 4 }, progress(s, 'm.txt'))
+    vim.api.nvim_win_set_cursor(s.diff_win, { r.start_row, 0 })
+    keys(s, 'mr')
+    h.eq({ 0, 4 }, progress(s, 'm.txt'))
+  end)
+  review_mod.split = nil
+  assert(ok, err)
 end)
 
 h.run()
