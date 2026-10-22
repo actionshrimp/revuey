@@ -240,6 +240,50 @@ h.test('visual mr marks every hunk the selection touches', function()
   h.eq(-1, closed_at(s, r.hunk_rows[1]))
 end)
 
+local function tab_collapse(path)
+  local r = rows(s, path)
+  if closed_at(s, r.start_row) == -1 then
+    vim.api.nvim_win_set_cursor(s.diff_win, { r.start_row, 0 })
+    keys(s, '<Tab>')
+  end
+end
+
+local function tab_expand(path)
+  local r = rows(s, path)
+  if closed_at(s, r.start_row) ~= -1 then
+    vim.api.nvim_win_set_cursor(s.diff_win, { r.start_row, 0 })
+    keys(s, '<Tab>')
+  end
+end
+
+h.test('after a hunk mr the cursor skips hunks inside collapsed files', function()
+  tab_collapse('z.txt')
+  local r = rows(s, 'm.txt')
+  vim.api.nvim_win_set_cursor(s.diff_win, { r.hunk_rows[3] + 1, 0 })
+  keys(s, 'mr')
+  h.eq(r.hunk_rows[3], cursor(s), 'no visible unreviewed hunk after it: stays')
+  h.eq(r.hunk_rows[3], closed_at(s, r.hunk_rows[3]))
+  h.eq({ 0, 2 }, progress(s, 'z.txt'))
+  h.eq(rows(s, 'z.txt').start_row, closed_at(s, rows(s, 'z.txt').start_row), 'z.txt stays collapsed')
+  unmark_all(s)
+  tab_expand('z.txt')
+end)
+
+h.test('visual mr over collapsed files marks all of them, the last one included', function()
+  for _, p in ipairs({ 'a.txt', 'm.txt', 'z.txt' }) do
+    tab_collapse(p)
+  end
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.diff_win, { rows(s, 'a.txt').start_row, 0 })
+  vim.api.nvim_feedkeys('Vjj', 'nx', false)
+  keys(s, 'mr')
+  h.eq({ { 1, 1 }, { 3, 3 }, { 2, 2 } }, { progress(s, 'a.txt'), progress(s, 'm.txt'), progress(s, 'z.txt') })
+  unmark_all(s)
+  for _, p in ipairs({ 'a.txt', 'm.txt', 'z.txt' }) do
+    tab_expand(p)
+  end
+end)
+
 -- The guide: section 1 = a.txt + m.txt's first hunk; section 2 = m.txt's other hunks + z.txt.
 local function guide()
   local hs = review_mod.units(s.review).hunks
