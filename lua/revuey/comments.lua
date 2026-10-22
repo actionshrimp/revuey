@@ -587,8 +587,9 @@ end
 
 local backup_seq = 0
 
----Decoded comments file, or nil (missing; an undecodable file is moved aside).
-function M.read(path)
+---Decoded comments file, or nil (missing; an undecodable file is moved aside, or with `readonly`
+---only reported on stderr).
+function M.read(path, readonly)
   local fd = io.open(path, 'r')
   if not fd then
     return nil
@@ -610,6 +611,10 @@ function M.read(path)
     return data
   end
   if text ~= '' then
+    if readonly then
+      io.stderr:write('revuey: cannot read ' .. path .. ' (not valid JSON); skipped\n')
+      return nil
+    end
     backup_seq = backup_seq + 1
     os.rename(path, ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.uv.os_getpid(), backup_seq))
   end
@@ -623,8 +628,9 @@ end
 ---@field _dirty table<string, boolean>
 
 ---@return revuey.CommentStore
-function M.load(path)
-  local data = M.read(path) or {}
+---@param opts? {readonly?:boolean}
+function M.load(path, opts)
+  local data = M.read(path, opts and opts.readonly) or {}
   return { path = path, review = data.review or {}, comments = data.comments or {}, _dirty = {} }
 end
 
