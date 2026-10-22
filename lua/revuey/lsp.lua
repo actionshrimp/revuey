@@ -6,6 +6,8 @@ local linemap = require('revuey.linemap')
 local M = {}
 
 local first_seen = {} ---@type table<integer, integer> client id -> ms timestamp
+-- `$/progress` per client: tokens begun and not ended yet (e.g. tsserver loading its project).
+local progress = {} ---@type table<integer, table<any, integer>>
 local created = {} ---@type table<integer, true> hidden buffers loaded by revuey
 
 local function mtime(buf)
@@ -137,7 +139,11 @@ local function with_clients(buf, method, cb, on_fail, handle)
     local ready = #clients > 0
     for _, c in ipairs(clients) do
       first_seen[c.id] = first_seen[c.id] or now()
-      if not c.initialized or now() - first_seen[c.id] < config.options.lsp_settle_ms then
+      -- ready once initialized, settled, and not reporting work in progress (e.g. tsserver
+      -- still loading the project on a busy machine); the 15s deadline caps the wait
+      local busy = next(progress[c.id] or {}) ~= nil
+      local settled = now() - first_seen[c.id] >= config.options.lsp_settle_ms
+      if not c.initialized or busy or not settled then
         ready = false
       end
     end
@@ -162,9 +168,30 @@ local function with_clients(buf, method, cb, on_fail, handle)
   try()
 end
 
+local lsp_group = vim.api.nvim_create_augroup('revuey_lsp', { clear = true })
+
+---Track `$/progress` per client: tokens begun and not yet ended.
+vim.api.nvim_create_autocmd('LspProgress', {
+  group = lsp_group,
+  callback = function(ev)
+    local data = ev.data or {}
+    local id, params = data.client_id, data.params or {}
+    local kind = type(params.value) == 'table' and params.value.kind
+    if not id or params.token == nil or not kind then
+      return
+    end
+    progress[id] = progress[id] or {}
+    if kind == 'begin' then
+      progress[id][params.token] = now()
+    elseif kind == 'end' then
+      progress[id][params.token] = nil
+    end
+  end,
+})
+
 ---Note the time clients first attach to warmed-up buffers.
 vim.api.nvim_create_autocmd('LspAttach', {
-  group = vim.api.nvim_create_augroup('revuey_lsp', { clear = true }),
+  group = lsp_group,
   callback = function(ev)
     local id = ev.data and ev.data.client_id
     if id then

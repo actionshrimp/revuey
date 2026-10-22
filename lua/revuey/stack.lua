@@ -897,7 +897,7 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
     root_commit = input.graph[root_commit]
   end
   -- the bottom layer's first-parent line, bottom up: pos[sha] = 1 for its lowest commit
-  local pos, chain_len = {}, 0
+  local pos, by_pos, chain_len = {}, {}, 0
   do
     local line, c = {}, layers[1].tip
     while c and c ~= '' and input.graph[c] ~= nil do
@@ -907,7 +907,11 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
     chain_len = #line
     for i, sha in ipairs(line) do
       pos[sha] = chain_len - i + 1
+      by_pos[chain_len - i + 1] = sha
     end
+  end
+  local function is_ancestor_git(a, b)
+    return git.system({ 'git', 'merge-base', '--is-ancestor', a, b }, { cwd = root }).code == 0
   end
   local function layer_name(i)
     return layers[i or 1] and layers[i or 1].name or input.current
@@ -967,8 +971,8 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
     if older > 0 and newer == 0 then
       return 'outdated_copy'
     end
-    if newer > 0 and older == 0 then
-      local top, seen, n = nil, {}, 0
+    if newer > 0 and older == 0 and tip then
+      local top, lo, seen, n = nil, nil, {}, 0
       for _, p in ipairs(matches) do
         local k = pos[p.m.sha]
         if not k or seen[k] then
@@ -979,9 +983,15 @@ local function foreign_notes(root, input, stack, above_set, trunk_names)
         if not top or k > pos[top.m.sha] then
           top = p
         end
+        lo = math.min(lo or k, k)
       end
-      -- a bottom run 1..n, below the layer's own commits, and the branch ends at its newer copy
-      if pos[top.m.sha] == n and n < chain_len and tip == top.o.sha then
+      -- a contiguous run lo..top below the layer's own commits; under it the branch holds exactly
+      -- the stack's commits (a parent amended only at the top); and the branch ends at the newer
+      -- copy or went on from it (amended, then new commits)
+      local hi = pos[top.m.sha]
+      if hi - lo + 1 == n and hi < chain_len
+        and (lo == 1 or is_ancestor_git(by_pos[lo - 1], tip))
+        and (tip == top.o.sha or is_ancestor_git(top.o.sha, tip)) then
         return 'newer_copy'
       end
     end
