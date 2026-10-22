@@ -56,3 +56,16 @@ end, {
     return vim.startswith('cancel', arg) and { 'cancel' } or {}
   end,
 })
+
+vim.api.nvim_create_user_command('RevueyGuideDiagram', function(cmd)
+  require('revuey').guide_diagram(cmd.fargs[1], cmd.fargs[2])
+end, {
+  nargs = '*',
+  desc = "Copy the guide's overview diagram as Mermaid text: mermaid [register] (default +)",
+  complete = function(arg, line)
+    if #vim.split(line, '%s+', { trimempty = true }) <= 2 and vim.startswith('mermaid', arg) then
+      return { 'mermaid' }
+    end
+    return {}
+  end,
+})

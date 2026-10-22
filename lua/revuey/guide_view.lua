@@ -6,6 +6,7 @@ local config = require('revuey.config')
 local guide = require('revuey.guide')
 local prompt = require('revuey.guide_prompt')
 local prose = require('revuey.prose')
+local diagram = require('revuey.diagram')
 local ai = require('revuey.ai')
 local git = require('revuey.git')
 local state_mod = require('revuey.state')
@@ -45,6 +46,13 @@ function M.prepare(s, force)
   else
     hunks = guide.hunks(r.files)
     anchors = guide.anchors_hash(hunks)
+    -- full-stack reviews: the layers that introduced each hunk (labels and prompt tags)
+    local labels = r.layer_labels
+    if labels then
+      for _, h in ipairs(hunks) do
+        h.layers = labels[h.file_idx] and labels[h.file_idx][h.hunk_idx or 0] or nil
+      end
+    end
   end
   local rec
   if not force and g and g.ks == ks and g.anchors == anchors and not g.reload then
@@ -221,6 +229,10 @@ function M.doc(s, width)
     line(doc, '', nil, 'blank')
     add_prose(doc, res.summary, width, 'summary')
   end
+  if res.diagram then
+    line(doc, '', nil, 'blank')
+    M.add_diagram(doc, res.diagram, width)
+  end
   for si, sec in ipairs(res.sections) do
     line(doc, '', nil, 'blank')
     doc[#doc + 1] = { kind = 'section', text = si .. '. ' .. sec.title, section_idx = si }
@@ -256,10 +268,35 @@ function M.doc(s, width)
         guide_id = h.id,
         note = note,
         section_idx = si,
+        layers = h.layers,
       }
     end
   end
   return doc
+end
+
+---Overview diagram rows: a heading, then the drawing (boxes, or the list form when the boxes do
+---not fit `width`). Node spans carry the node's section for `<CR>`.
+function M.add_diagram(doc, d, width)
+  local heading = 'Overview'
+  doc[#doc + 1] = { kind = 'diagram', heading = true, text = heading, hls = { { 0, #heading, 'RevueyGuideHeading' } } }
+  local out = diagram.render(d, width)
+  local section = {}
+  for _, n in ipairs(d.nodes) do
+    section[n.id] = n.section
+  end
+  local rows = {}
+  for i, l in ipairs(out.lines) do
+    rows[i] = { kind = 'diagram', text = l, hls = {}, nodes = {} }
+  end
+  for _, sp in ipairs(out.hls) do
+    table.insert(rows[sp[1]].hls, { sp[2], sp[3], sp[4] })
+  end
+  for _, sp in ipairs(out.nodes) do
+    table.insert(rows[sp[1]].nodes, { sp[2], sp[3], id = sp[4], section = section[sp[4]] })
+  end
+  vim.list_extend(doc, rows)
+  return out
 end
 
 -- ---------------------------------------------------------------------------

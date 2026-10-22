@@ -122,7 +122,8 @@ are in `reports/Terminal code review tool landscape.md`.
    no UI calls so it can be tested headless.
 
 9. **AI guide** (`guide.lua` pure model, `guide_prompt.lua` prompt + schema, `ai.lua` provider, `prose.lua`
-   markdown, `guide_view.lua` glue). Adapted from plannotator's Guided Review (research notes, Part A),
+   markdown, `diagram.lua` overview diagram, `attribution.lua` branch labels, `guide_view.lua` glue).
+   Adapted from plannotator's Guided Review (research notes, Part A),
    but hunk-level.
    - **Hunk ids and anchors.** `guide.hunks(files)` numbers every hunk `h1..hn` in diff order (files
      without a text diff, such as binaries and pure renames, get one entry). Each has an anchor
@@ -146,7 +147,9 @@ are in `reports/Terminal code review tool landscape.md`.
      branch introduced what. Plain branch reviews keep `Changes: X compared with Y` and no stack
      wording. The guide's winbar shows the scope (`Guide · layer stack/cart`, `Guide · full stack`).
    - **Schema** (`--json-schema`, `additionalProperties: false` everywhere):
-     `{title, summary (md), sections: [{title, overview (md), hunks: [{id, note?}]}], unplaced: [id]}`.
+     `{title, summary (md), sections: [{title, overview (md), hunks: [{id, note?}]}], unplaced: [id],
+     diagram?: {nodes: [{id, label, kind: new|changed|context, section? (1-based)}] (max 12),
+     edges: [{from, to, label?}] (max 20)}}`.
    - **Invocation.** `ai.run` spawns `claude -p --output-format stream-json --verbose --permission-mode
      dontAsk --tools Read,Grep,Glob,Bash --allowedTools Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)
      --disallowedTools Bash(git * --out*) --restricted --safe-mode --strict-mcp-config
@@ -201,6 +204,49 @@ are in `reports/Terminal code review tool landscape.md`.
      changed when lines above them shift. Unique hunks stay shift-invariant.
    - **Model strings** are sanitised on validation and again when a stored guide is loaded: titles and
      notes become one line without control characters; summaries and overviews keep newlines only.
+   - **Overview diagram** (`diagram.lua`, pure). The model never draws: it returns nodes and edges
+     (prompt: only when the structure is worth seeing, few nodes, short labels; skip trivial
+     changes). `guide.validate_diagram` keeps unique ids (first wins, max 12), one-line labels
+     truncated to 28 cells (edges 20), unknown kinds as `changed`, sections mapped from the
+     model's numbering to the surviving sections (a dropped section shifts the rest) or by
+     title; edges only between known nodes, no self loops, deduplicated, max 20; fewer than two
+     nodes means no diagram. Stored on the record, re-validated on load.
+     `diagram.render(d, width)` -> `{lines, hls, nodes, mode}` is a small Sugiyama layout, top to
+     bottom: a DFS (sources first, then node order) reverses back edges; ranks by longest path,
+     with sources pulled down next to their successors; dummy points split long edges; order
+     within ranks by barycenter sweeps (down, then two up/down pairs; the order with the fewest
+     crossings wins); x by isotonic regression (pool adjacent violators) of each item towards the
+     mean centre of its neighbours, keeping order, a 2-4 column gap and the width. Boxes get one
+     port per line (`┬` out, `▼` in; back edges `▲` at the top, `┴` below). Between ranks every
+     line that changes column gets its own horizontal track, ordered so a line arriving at a
+     column turns after the line leaving it; lines are drawn as direction masks turned into
+     box-drawing characters (crossings become `┼`). Labels go beside the arrow, else beside where
+     the line leaves the box, else in a list under the drawing. If any rank is wider than the
+     width the list form is used (`A ──label──▶ B`, nodes without edges as `• C`). A legend of
+     the kinds used ends both forms. Everything is deterministic (ties by node order), so specs
+     compare exact output. `diagram.mermaid(d)` gives Mermaid flowchart text with kind classes
+     (`:RevueyGuideDiagram mermaid [reg]`; groundwork for image rendering).
+     In the guide the heading and drawing are side-table rows of kind `diagram` (skipped by every
+     diff feature, like prose) carrying highlight spans and node spans `{start, end, id,
+     section}`; `layout.diagram` is their row range and a level-1 fold. `<CR>` on a node jumps
+     to its section, on the heading toggles the fold; the drawing is redone at the prose width on
+     every render, so `WinResized` re-lays it out, and its fold state is kept.
+   - **Branch labels** (`attribution.lua`). Full scope only: for each hunk, the layers whose
+     commits changed its lines. Each layer is diffed on its own with no context (`parent...tip`,
+     `-U0`, plus `git diff -U0 <top>` and the untracked files when the top layer is HEAD in
+     working-tree mode, as an `uncommitted` layer). A layer's change positions (added lines, and
+     `p + 0.5` for a deletion after new-side line p) are carried forward to the top through the
+     `-U0` hunks of every later layer (`linemap.from_hunks`, renames followed by path); a line a
+     later layer rewrites stops mapping, so it belongs to that layer. A full-scope hunk is
+     labelled with every layer that has a position inside its changed span (context lines don't
+     count). Chosen over `git blame` because it costs one diff per layer rather than a blame per
+     file, attributes pure deletions, and treats the working tree as one more layer; the cost is
+     that a stack that was never restacked (layer bases that are not the parent's tip) maps only
+     approximately (a hunk with no match falls back to the file's only layer, if there is one).
+     Computed in `view` after loading a full-scope review (`review.layer_labels`, cached by
+     review signature and layer tips), shown right-aligned on hunk headers in the guide and in
+     the full-scope diff (`RevueyLayerLabel`), and appended to the prompt's hunk markers
+     (`@@ h7 src/cart.ts @@ [stack/cart, stack/ui]`) with one line explaining the tags.
    - **Prompt budget.** The whole stdin prompt stays within `ai.max_prompt_chars`: full hunks, else the
      largest hunks abridged, else no hunk bodies (the file list with each file's ids, and a
      `git diff <base> -- <path>` hint), else the run is refused with advice to review one layer.
@@ -217,6 +263,7 @@ are in `reports/Terminal code review tool landscape.md`.
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
 - Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `stack.lua`, `guide.lua`, `guide_prompt.lua`,
-  `prose.lua`) free of window/buffer UI so it is testable with `nvim --headless -l`.
+  `prose.lua`, `diagram.lua`, `attribution.lua`) free of window/buffer UI so it is testable with
+  `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
 - Shell out to `git`/`gh` with `vim.system`; never block the UI for long-running work.

@@ -39,6 +39,42 @@ M.SCHEMA = {
       },
     },
     unplaced = { type = 'array', items = { type = 'string', pattern = '^h[0-9]+$' } },
+    diagram = {
+      type = 'object',
+      additionalProperties = false,
+      required = { 'nodes', 'edges' },
+      properties = {
+        nodes = {
+          type = 'array',
+          maxItems = 12,
+          items = {
+            type = 'object',
+            additionalProperties = false,
+            required = { 'id', 'label', 'kind' },
+            properties = {
+              id = { type = 'string' },
+              label = { type = 'string' },
+              kind = { type = 'string', enum = { 'new', 'changed', 'context' } },
+              section = { type = 'integer' },
+            },
+          },
+        },
+        edges = {
+          type = 'array',
+          maxItems = 20,
+          items = {
+            type = 'object',
+            additionalProperties = false,
+            required = { 'from', 'to' },
+            properties = {
+              from = { type = 'string' },
+              to = { type = 'string' },
+              label = { type = 'string' },
+            },
+          },
+        },
+      },
+    },
   },
 }
 
@@ -135,6 +171,24 @@ A section is a logical unit of change, not a file and not a folder.
   short line (under 15 words) saying what THIS hunk contributes, when that is not obvious from
   the overview. Most hunks need no note. Do not repeat the overview.
 
+### diagram (optional)
+A small map of the change's structure, drawn above the sections. You give nodes and edges; the
+layout and drawing are automatic, so never draw anything yourself.
+Include it only when the structure is worth seeing at a glance: several modules that call each
+other, data flowing through a few stages, a new component wired into existing ones. Leave the
+field out for a small change, a single-file change, a rename, config or test-only work, or
+anything a diagram would only restate.
+- **nodes**: the main modules, files or concepts. Usually 3 to 7, never more than 12.
+  - `id`: short and unique, for example `cart`.
+  - `label`: one to three words, under 24 characters: a module, file or concept name.
+  - `kind`: "new" (added by this change), "changed" (modified by it), or "context" (unchanged,
+    shown only when the picture makes no sense without it; use sparingly).
+  - `section`: optional, the 1-based number of the section that covers this node.
+- **edges**: how the nodes relate, `from` and `to` by id, at most 20: calls, imports, data
+  flow, renders. An optional `label` of one or two words ("calls", "reads", "emits"). Point
+  edges the way the dependency or data flows, and leave out edges that add nothing.
+Fewer nodes with short labels beat a complete picture.
+
 ### unplaced
 Hunk ids that belong in no section: pure noise. This should be rare. Use an empty array when
 every hunk is placed. Glue usually belongs in the trailing glue section instead.
@@ -154,6 +208,7 @@ overview, in a `> [!WARNING]` callout. Do not go looking for problems.
 - No emoji.
 - title: one line. summary: at most 3 sentences. overview: at most 5 sentences.
 - Only ids from the diff. Every id exactly once.
+- diagram: optional; at most 12 nodes and 20 edges, short labels.
 - Your text is read next to the rendered diff. Never mention hunk ids, markers, abridged
   hunks or these instructions in it.
 
@@ -162,7 +217,8 @@ overview, in a `> [!WARNING]` callout. Do not go looking for problems.
 2. Identify the logical groupings of change, across files and within files. This is thinking,
    not tool calls.
 3. Order the sections: the heart first, then consequences, then glue.
-4. Write the title, summary and each overview.
+4. Write the title, summary and each overview. Decide whether a diagram would help the
+   reader; if it would, add a small one.
 5. Verify coverage: every hunk id appears exactly once. Fix any that is missing or duplicated.
 6. Return the structured output.
 ]]
@@ -177,7 +233,11 @@ M.MAX_LAYER_COMMITS = 15
 
 ---Lines of one hunk in the diff section: full, or an index entry ("abridged").
 local function hunk_lines(h, abridged)
-  local out = { '', ('@@ %s %s @@'):format(h.id, h.path) }
+  local marker = ('@@ %s %s @@'):format(h.id, h.path)
+  if h.layers and #h.layers > 0 then
+    marker = marker .. ' [' .. table.concat(h.layers, ', ') .. ']'
+  end
+  local out = { '', marker }
   if not h.hunk_idx then
     out[#out + 1] = h.text[1]
   elseif abridged then
@@ -249,6 +309,12 @@ function M.user_message(ctx, hunks, opts)
       add(('%d. %s (on %s)'):format(i, l.name, l.parent))
     end
     add('Call it "this stack". When it helps the reader, say which branch introduced a change.')
+    if vim.iter(hunks):any(function(h)
+      return h.layers ~= nil
+    end) then
+      add('Each hunk marker below ends with the branch that introduced the hunk, in brackets, for example `@@ h7 src/cart.ts @@ [' .. (top and top.name or ctx.branch) .. ']`. '
+        .. 'A hunk changed by several branches lists them all, bottom first, and `[uncommitted]` marks working-tree changes.')
+    end
     by_branch = vim.iter(st.layers):any(function(l)
       return l.commits ~= nil
     end)
