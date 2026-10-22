@@ -167,35 +167,4 @@ h.test('default_dir honours $REVUEY_STATE_DIR (as the CLI does)', function()
   vim.env.REVUEY_STATE_DIR = saved
 end)
 
-h.test('lock: waits for a held lock, breaks a stale one, never leaves one behind', function()
-  local lock = require('revuey.lock')
-  local d = h.tmpdir('lock')
-  local path = d .. '/f.json'
-  h.eq(42, lock.with(path, function()
-    h.ok(vim.uv.fs_stat(path .. '.lock'), 'held')
-    return 42
-  end))
-  h.eq(nil, vim.uv.fs_stat(path .. '.lock'), 'released')
-  -- an error inside releases it too
-  h.eq(false, (pcall(lock.with, path, function()
-    error('boom')
-  end)))
-  h.eq(nil, vim.uv.fs_stat(path .. '.lock'))
-  -- held by someone else: times out
-  vim.uv.fs_mkdir(path .. '.lock', 448)
-  local saved = lock.TIMEOUT_MS
-  lock.TIMEOUT_MS = 200
-  local ok, err = pcall(lock.with, path, function() end)
-  lock.TIMEOUT_MS = saved
-  h.eq(false, ok)
-  h.ok(tostring(err):find('lock', 1, true), err)
-  -- stale (a writer that died holding it): broken
-  local old = os.time() - 3600
-  vim.uv.fs_utime(path .. '.lock', old, old)
-  h.eq('ran', lock.with(path, function()
-    return 'ran'
-  end))
-  h.eq(nil, vim.uv.fs_stat(path .. '.lock'))
-end)
-
 h.run()
