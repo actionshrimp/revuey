@@ -23,7 +23,7 @@
 22|   M  math.ts  src                +11 −5│      7 + export function subtract(a: number, b: number): number {                       
 23|                                        │      8 +   return a - b;                                                                
 24| ]] [[ section  mr section reviewed     │      9 + }                                                                              
-25| ]c [c hunk  za fold  gp diff           │     10 +                                                                                
+25| ]c [c hunk  <Tab> fold  gp diff        │     10 +                                                                                
 26| gd def  K hover  go open  R refresh    │  6  11   /** Multiply two numbers. */                                                   
 27| gG diff view  gR regenerate  q close   │  7  12   export function multiply(a: number, b: number): number {                       
 28| ]s [s layer  gs full stack             │  8     -   let result = 0;                                                              
@@ -65,7 +65,7 @@
 22|7A7=>74444444?????7777777777777777AAAOOO4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 23|77777777777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 24|???????????????????????????????????777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|?????????????????????????????777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|????????????????????????????????777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 26|????????????????????????????????????77774GGGGGGGGGG7777777777777777777777777777777777777777777777777777777777777777777777777777777
 27|?????????????????????????????????????7774GGGGGGGGGG7777777777777777777777777777777777777777777777777777777777777777777777777777777
 28|???????????????????????????77777777777774PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
