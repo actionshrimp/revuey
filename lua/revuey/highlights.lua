@@ -92,6 +92,13 @@ function M.setup()
   set('RevueyGuideBanner', { link = 'DiagnosticWarn' })
   set('RevueyGuideOutdated', { link = 'DiagnosticWarn' })
   set('RevueyGuideSpinner', { link = 'Special' })
+  -- guide overview diagram (node colour by kind) and stack layer labels
+  set('RevueyDiagramNew', { link = 'Added' })
+  set('RevueyDiagramChanged', { link = 'Changed' })
+  set('RevueyDiagramContext', { link = 'Comment' })
+  set('RevueyDiagramEdge', { link = 'Delimiter' })
+  set('RevueyDiagramLabel', { link = 'Comment' })
+  set('RevueyLayerLabel', { link = 'Special' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

@@ -66,4 +66,12 @@ function M.guide(bang, arg)
   require('revuey.view').guide_command(bang, arg)
 end
 
+---`:RevueyGuideDiagram mermaid [register]`: copy the guide's overview diagram as Mermaid
+---flowchart text (default register: `+` when there is a clipboard, else `"`).
+---@param what? string
+---@param reg? string
+function M.guide_diagram(what, reg)
+  return require('revuey.view').guide_diagram(what, reg)
+end
+
 return M

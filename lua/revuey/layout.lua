@@ -14,7 +14,7 @@
 local M = {}
 
 ---@class revuey.LineEntry
----@field kind 'add'|'del'|'ctx'|'meta'|'prose'  prose: guide text, skipped by all diff features
+---@field kind 'add'|'del'|'ctx'|'meta'|'prose'|'diagram'  prose/diagram: guide rows, skipped by all diff features
 ---@field meta? 'file'|'hunk'|'blank'|'note'|'section'
 ---@field section_idx? integer  guide: the section the row belongs to
 ---@field guide_id? string      guide: engine hunk id (h1...) on hunk rows
@@ -43,6 +43,7 @@ local M = {}
 ---@field blocks {start_row:integer, end_row:integer}[] one per hunk (header to last row): level-2 folds
 ---@field sections? {start_row:integer, end_row:integer, section_idx:integer}[] guide only
 ---@field file_rows? table<integer, integer> guide only: first row showing each file
+---@field diagram? {start_row:integer, end_row:integer} guide only: overview diagram (heading first)
 
 ---@param f revuey.FileDiff
 function M.file_title(f)
@@ -165,7 +166,7 @@ function M.compose(files)
 end
 
 ---@class revuey.GuideDocItem
----@field kind 'prose'|'section'|'hunk'
+---@field kind 'prose'|'section'|'hunk'|'diagram'
 ---@field text? string            prose/section: the line text
 ---@field hls? table              prose: {{start_col, end_col, group}, ...}
 ---@field role? string            prose: title|summary|overview|note|banner|meta|blank|placeholder
@@ -176,6 +177,9 @@ end
 ---@field path_len? integer       hunk: bytes of the path prefix in `header`
 ---@field guide_id? string        hunk: engine hunk id (h1...)
 ---@field note? revuey.GuideDocItem[] hunk: prose rows shown under the header
+---@field layers? string[]        hunk: stack layers that introduced it (full-stack guides)
+---@field heading? boolean        diagram: the heading row
+---@field nodes? table            diagram: {start byte, end byte, node} spans on the row
 
 ---Compose the guide view: prose rows (kind = 'prose', ignored by every diff feature) around hunks
 ---rendered exactly as in the diff layout. Each section is a range of rows for folding.
@@ -203,8 +207,13 @@ function M.compose_guide(files, doc)
       pre = item.pre,
     })
   end
+  local diagram
   for _, item in ipairs(doc) do
-    if item.kind == 'section' then
+    if item.kind == 'diagram' then
+      local row = push(item.text or '', { kind = 'diagram', heading = item.heading, hls = item.hls, nodes = item.nodes })
+      diagram = diagram or { start_row = row }
+      diagram.end_row = row
+    elseif item.kind == 'section' then
       if cur then
         cur.end_row = #lines
       end
@@ -214,7 +223,7 @@ function M.compose_guide(files, doc)
     elseif item.kind == 'hunk' then
       local fi, hi = item.file_idx, item.hunk_idx
       local f = files[fi]
-      local extra = { section_idx = item.section_idx, guide_id = item.guide_id, path_len = item.path_len }
+      local extra = { section_idx = item.section_idx, guide_id = item.guide_id, path_len = item.path_len, layers = item.layers }
       local h = hi and f.hunks[hi]
       local header_row
       if h then
@@ -270,6 +279,7 @@ function M.compose_guide(files, doc)
     blocks = blocks,
     sections = sections,
     file_rows = first_row,
+    diagram = diagram,
   }
 end
 
@@ -311,7 +321,8 @@ end
 function M.fold_levels(layout, ctx_threshold, keep)
   local levels = {}
   -- diff: one fold per file; guide: one per section (title and summary stay unfolded)
-  for _, r in ipairs(layout.kind == 'guide' and layout.sections or layout.files) do
+  local ranges = layout.kind == 'guide' and vim.list_extend({ layout.diagram }, layout.sections) or layout.files
+  for _, r in ipairs(ranges) do
     levels[r.start_row] = '>1'
     for row = r.start_row + 1, r.end_row do
       levels[row] = '1'
@@ -339,7 +350,7 @@ function M.fold_levels(layout, ctx_threshold, keep)
         if map[s - 1] and map[s - 1].meta == 'hunk' then
           fs = s
         end
-        if not map[e + 1] or map[e + 1].kind == 'meta' or map[e + 1].kind == 'prose' then
+        if not map[e + 1] or map[e + 1].kind == 'meta' or map[e + 1].kind == 'prose' or map[e + 1].kind == 'diagram' then
           fe = e
         end
         if fe - fs + 1 >= 4 then

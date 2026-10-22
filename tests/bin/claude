@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fake `claude` CLI for tests (never the real one). Put tests/bin first on PATH.
-#   REVUEY_FAKE_CLAUDE       scenario: good (default), fenced, invalid, missing, unknown, newlines,
+#   REVUEY_FAKE_CLAUDE       scenario: good (default), diagram, fenced, invalid, missing, unknown, newlines,
 #                            error, notloggedin, crash, slow, hang, stubborn (ignores SIGTERM, as does its child),
 #                            kids (hang + a `sleep` child
 #                            whose pid goes to $REVUEY_FAKE_CLAUDE_LOG.kids)
