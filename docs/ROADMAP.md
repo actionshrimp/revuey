@@ -82,6 +82,12 @@ sequence; later items build on earlier ones.
    viewable but refuse edits with a "press gS to switch" message. Local branches only. Alternative considered:
    one worktree per layer via worktrunk.
 
+## Known bugs
+- **Comment thread borders in herdr.** The bottom and right borders of inline comment threads (virtual lines)
+  render incorrectly in herdr. Not yet investigated; likely candidates are the width calculation (sign, number
+  and fold columns) or how herdr renders box-drawing characters in virtual lines. Check in plain Ghostty and
+  tmux first to tell revuey bugs from terminal ones.
+
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
 - Codex as a second AI provider.
