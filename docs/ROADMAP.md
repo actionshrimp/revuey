@@ -45,6 +45,14 @@ sequence; later items build on earlier ones.
 4. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
+   **Stacks without local branches.** Reviewing someone else's stack from a worktree at its top shouldn't need
+   local branches for the intermediate PRs. When the stack has PRs, layers come from the GitHub base chain, with
+   tips at `origin/<head>` (or `refs/pull/<N>/head` for forks), fetched as needed. Without a forge, remote-tracking
+   branches are a fallback for layers *below* HEAD only: an `origin/*` branch counts when its tip is on HEAD's own
+   line between trunk and HEAD (cheap and bounded even with thousands of remote branches); remote branches above
+   HEAD are not used. A local branch wins over its remote copy. State keys strip the remote prefix, so marks and
+   comments carry over if a local branch is created later. Remote-only layers are shown dimmer and are read-only;
+   editing one needs `gS`, which creates a local tracking branch with `git switch --track`.
 5. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
    and render them inline alongside local comments, including resolved and outdated state.
 6. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
