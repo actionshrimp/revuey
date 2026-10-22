@@ -16,7 +16,9 @@ local M = {}
 
 M.TIMEOUT_MS = tonumber(vim.env.REVUEY_LOCK_TIMEOUT_MS or '') or 10000
 M.INTERACTIVE_MS = 100
-M.STALE_MS = 15000
+M.STALE_MS = 15000 -- other hosts, or a record that cannot be read
+M.SAME_HOST_STALE_MS = 60000 -- this host: a live pid may have been reused; holders keep locks for ms
+M.EXIT_WAIT_MS = 2000 -- on quit, how long a pending save may still wait before its recovery file
 M.WARN_AFTER_MS = 30000 -- deferred saves still failing after this: one quiet message
 M.interactive = false
 
@@ -59,11 +61,13 @@ end
 
 local function is_stale(lockp, text)
   local pid, host = owner(text)
-  if pid and host == HOST then
-    return not alive(pid)
-  end
   local st = vim.uv.fs_stat(lockp)
-  return st ~= nil and (os.time() - st.mtime.sec) * 1000 > M.STALE_MS
+  local age = st and (os.time() - st.mtime.sec) * 1000 or 0
+  if pid and host == HOST then
+    -- a dead holder at once; a live pid only for SAME_HOST_STALE_MS (it may be a reused pid)
+    return not alive(pid) or age > M.SAME_HOST_STALE_MS
+  end
+  return st ~= nil and age > M.STALE_MS
 end
 
 ---Break the lock judged stale (its content was `judged`). Breakers take a second lock,
@@ -74,7 +78,11 @@ local function break_lock(lockp, judged)
   local bp = lockp .. '.break'
   local fd = vim.uv.fs_open(bp, 'wx', 420)
   if not fd then
-    -- another breaker is at it (or died at it: clear its marker for the next attempt)
+    -- another breaker is at it (or died at it: clear its marker for the next attempt). Clearing
+    -- reads and then removes, so two waiters could both judge a dead breaker's marker and the
+    -- second remove a marker the first had just re-created. That needs a breaker to die inside
+    -- these few microseconds of its own, and the worst outcome is two breakers removing the
+    -- same stale lock (each still checks it is the judged one), not two holders: acceptable.
     local t = read(bp)
     if t and is_stale(bp, t) then
       vim.uv.fs_unlink(bp)
@@ -190,33 +198,70 @@ end
 
 ---Retry `fn` (a save that found the lock busy) from a timer until it no longer defers itself.
 ---The latest `fn` for a key wins.
-function M.defer(key, fn)
+function M.defer(key, fn, recover)
   local p = pending[key]
   if p then
-    p.fn = fn
+    p.fn, p.recover = fn, recover or p.recover
   else
-    pending[key] = { fn = fn, delay = 50, since = now_ms(), due = now_ms() + 50 }
+    pending[key] = { fn = fn, recover = recover, delay = 50, since = now_ms(), due = now_ms() + 50 }
   end
   if not timer then
     timer = vim.uv.new_timer()
     -- on the way out, wait a little longer for each pending save rather than lose it
     pcall(vim.api.nvim_create_autocmd, 'VimLeavePre', {
       callback = function()
-        local saved = M.interactive
-        M.interactive = false
-        local t = M.TIMEOUT_MS
-        M.TIMEOUT_MS = 2000
-        for k, q in pairs(pending) do
-          pending[k] = nil
-          pcall(q.fn)
-        end
-        M.interactive, M.TIMEOUT_MS = saved, t
+        M.flush_at_exit()
       end,
     })
   end
   if not timer:is_active() then
     timer:start(25, 25, vim.schedule_wrap(tick))
   end
+end
+
+---On quit: give each pending save a last, longer try (EXIT_WAIT_MS); one whose lock is still
+---held is written to its recovery file (`recover`), which the next load merges.
+function M.flush_at_exit()
+  local saved_i, saved_t = M.interactive, M.TIMEOUT_MS
+  M.interactive, M.TIMEOUT_MS = false, M.EXIT_WAIT_MS
+  for k, q in pairs(pending) do
+    pending[k] = nil
+    local ok, err = pcall(q.fn)
+    if not ok then
+      if q.recover then
+        local rok, rerr = pcall(q.recover)
+        if not rok then
+          io.stderr:write('revuey: lost a pending save of ' .. k .. ': ' .. tostring(rerr) .. '\n')
+        end
+      else
+        io.stderr:write(tostring(err) .. '\n')
+      end
+    end
+  end
+  M.interactive, M.TIMEOUT_MS = saved_i, saved_t
+end
+
+---Recovery file of `path` for this process: `<name>.pending-<pid><ext>` next to it.
+function M.recovery_path(path)
+  local base, ext = path:match('^(.*)(%.[^./]+)$')
+  return ('%s.pending-%d%s'):format(base or path, vim.uv.os_getpid(), ext or '')
+end
+
+---Recovery files of `path` left by any process (sorted).
+function M.recovery_files(path)
+  local base, ext = path:match('^(.*)(%.[^./]+)$')
+  local list = vim.fn.glob(vim.fn.escape(base or path, '[]*?') .. '.pending-*' .. (ext or ''), false, true)
+  table.sort(list)
+  return list
+end
+
+---Write `text` to `path` (temp + rename).
+function M.write_file(path, text)
+  local tmp = path .. '.tmp.' .. vim.uv.os_getpid()
+  local fd = assert(io.open(tmp, 'w'))
+  fd:write(text)
+  fd:close()
+  assert(os.rename(tmp, path))
 end
 
 ---Is a save of `key` waiting for the lock?
@@ -228,15 +273,17 @@ end
 ---later instead of failing. Returns what `fn` returns, or nothing when deferred.
 ---@param key string the protected file
 ---@param fn fun(): any the whole save (it takes the lock itself)
-function M.save(key, fn)
+---`recover` (optional) writes the pending changes to a recovery file if the save is still
+---blocked when Neovim quits.
+function M.save(key, fn, recover)
   local res = { pcall(fn) }
   if res[1] then
     return unpack(res, 2, table.maxn(res))
   end
   if M.interactive and M.is_busy(res[2]) then
     M.defer(key, function()
-      M.save(key, fn)
-    end)
+      M.save(key, fn, recover)
+    end, recover)
     return
   end
   error(res[2], 0)

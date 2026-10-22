@@ -674,7 +674,45 @@ end
 ---@param opts? {readonly?:boolean}
 function M.load(path, opts)
   local data = M.read(path, opts and opts.readonly) or {}
-  return { path = path, review = data.review or {}, comments = data.comments or {}, _dirty = {} }
+  local store = { path = path, review = data.review or {}, comments = data.comments or {}, _dirty = {} }
+  M.recover(store, opts and opts.readonly)
+  return store
+end
+
+---Merge recovery files (comments an instance could not save before it quit, lock.lua): last
+---writer wins as usual. Saves and removes them, unless `readonly`.
+function M.recover(store, readonly)
+  local lock = require('revuey.lock')
+  local found = lock.recovery_files(store.path)
+  if #found == 0 then
+    return
+  end
+  for _, f in ipairs(found) do
+    local fd = io.open(f, 'r')
+    if fd then
+      local ok, data = pcall(vim.json.decode, fd:read('*a'), { luanil = { object = true, array = true } })
+      fd:close()
+      if ok and type(data) == 'table' and type(data.comments) == 'table' then
+        for id, c in pairs(data.comments) do
+          if type(c) == 'table' then
+            if not c.deleted then
+              c.thread = type(c.thread) == 'table' and c.thread or {}
+            end
+            local merged = M.merge(c, store.comments[id], true)
+            if merged ~= store.comments[id] then
+              store.comments[id] = merged
+              store._dirty[id] = true
+            end
+          end
+        end
+      end
+    end
+  end
+  if not readonly and pcall(M.save, store) and not lock.pending(store.path) then
+    for _, f in ipairs(found) do
+      os.remove(f)
+    end
+  end
 end
 
 local function encode(store)
@@ -696,6 +734,15 @@ function M.save(store, review)
     return lock.with(store.path, function()
       return M._save_locked(store, review)
     end)
+  end, function()
+    -- still blocked at quit: the dirty comments go to a recovery file (merged on the next load)
+    local dirty = {}
+    for id in pairs(store._dirty) do
+      dirty[id] = store.comments[id]
+    end
+    if next(dirty) then
+      lock.write_file(lock.recovery_path(store.path), vim.json.encode({ comments = dirty }))
+    end
   end)
 end
 
@@ -905,6 +952,13 @@ function M.append_event(path, ev)
     return lock.with(path, function()
       return M._flush_events(path)
     end)
+  end, function()
+    -- still blocked at quit: the queued lines go to a recovery file (appended first next time)
+    local q = event_queue[path] or {}
+    if #q > 0 then
+      lock.write_file(lock.recovery_path(path), table.concat(q))
+      event_queue[path] = {}
+    end
   end)
   if not ok then
     return false, res
@@ -919,6 +973,15 @@ event_queue = {}
 
 function M._flush_events(path)
   local queue = event_queue[path] or {}
+  -- lines an instance could not append before it quit come first
+  local recovered = require('revuey.lock').recovery_files(path)
+  for i = #recovered, 1, -1 do
+    local fd = io.open(recovered[i], 'r')
+    if fd then
+      table.insert(queue, 1, fd:read('*a'))
+      fd:close()
+    end
+  end
   if #queue == 0 then
     return true
   end
@@ -933,6 +996,9 @@ function M._flush_events(path)
   fd:write(table.concat(queue))
   fd:close()
   event_queue[path] = {}
+  for _, f in ipairs(recovered) do
+    os.remove(f)
+  end
   return true
 end
 
