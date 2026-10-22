@@ -1130,6 +1130,54 @@ h.test('detect: a parent amended without restacking (no reflog) warns, and offer
   h.eq({}, ids(n), 'no stale parent, and warnings cannot be ignored')
 end)
 
+h.test('detect: parent partly amended, or amended then extended (no reflog): still a warning', function()
+  ---main ── a1 ── a2 (a, `two` commits) ── b1 (b, checked out); then a is amended (and extended)
+  local function repo(name, two, extend)
+    local d = h.tmpdir(name)
+    local t = 1767225600
+    local saved = { vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE }
+    local function c(file, ct)
+      vim.env.GIT_AUTHOR_DATE = '@' .. t .. ' +0000'
+      vim.env.GIT_COMMITTER_DATE = '@' .. (ct or t) .. ' +0000'
+      h.write(d, file, file .. '\n')
+      h.git(d, 'add', '-A')
+      h.git(d, 'commit', '-q', '-m', file)
+      t = t + 100
+    end
+    h.git(d, 'init', '-q', '-b', 'main')
+    c('base.txt')
+    h.git(d, 'checkout', '-q', '-b', 'a')
+    c('a1.txt')
+    if two then
+      c('a2.txt')
+    end
+    h.git(d, 'checkout', '-q', '-b', 'b')
+    c('b1.txt')
+    h.git(d, 'checkout', '-q', 'a')
+    vim.env.GIT_COMMITTER_DATE = '@' .. (t + 5000) .. ' +0000'
+    h.write(d, two and 'a2.txt' or 'a1.txt', 'amended\n')
+    h.git(d, 'commit', '-q', '-a', '--amend', '--no-edit')
+    if extend then
+      c('a3.txt', t + 6000)
+    end
+    h.git(d, 'checkout', '-q', 'b')
+    vim.fn.delete(d .. '/.git/logs', 'rf')
+    vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = saved[1], saved[2]
+    return d
+  end
+  for _, case in ipairs({
+    { 'one commit amended', false, false },
+    { 'top of two amended', true, false },
+    { 'amended, then a new commit', false, true },
+    { 'top of two amended, then a new commit', true, true },
+  }) do
+    local _, notes = detect(repo('st-amend-' .. case[1]:gsub('[^%w]', '-'), case[2], case[3]))
+    local n = note_of(notes, 'newer_copy', 'a')
+    h.ok(n, case[1] .. ': ' .. vim.inspect(notes))
+    h.eq('b', n.layer, case[1])
+  end
+end)
+
 h.test('detect: sharing commits can change the diff (warning); parent offered only when it is an ancestor', function()
   -- a moved on after b was built on it (no reflog): b's diff from main includes a's commit
   local d = dated_repo('st-outside-warn', function(d, c)
