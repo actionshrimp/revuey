@@ -101,7 +101,7 @@ end
 
 ---Wait (asynchronously) until the buffer has initialized clients supporting `method` that have
 ---been alive for `lsp_settle_ms`, then call `cb(clients)`.
-local function with_clients(buf, method, cb, on_fail)
+local function with_clients(buf, method, cb, on_fail, handle)
   local start = now()
   local deadline = start + 15000
   local notified = false
@@ -112,6 +112,12 @@ local function with_clients(buf, method, cb, on_fail)
     on_fail('revuey: ' .. msg)
   end
   local function try()
+    if handle and handle.cancelled then
+      if notified then
+        vim.api.nvim_echo({ { '' } }, false, {})
+      end
+      return
+    end
     local clients = vim.lsp.get_clients({ bufnr = buf, method = method })
     local any = vim.lsp.get_clients({ bufnr = buf })
     -- Fail fast: nothing attached shortly after loading means no LSP is configured for this
@@ -180,19 +186,44 @@ end
 ---@param cb fun(err:any, result:any, client:vim.lsp.Client?, buf:integer, lnum:integer)
 ---@param is_empty? fun(result:any):boolean
 ---@param opts? {on_fail?: fun(msg: string), params?: table} params: extra request params (`context`)
+---@return {cancel: fun()} handle cancelling stops the readiness wait, cancels requests already
+---  sent to the servers, and suppresses `cb` and `on_fail`
 function M.request(target, method, cb, is_empty, opts)
   opts = opts or {}
-  local on_fail = opts.on_fail or warn
+  local handle = { cancelled = false, sent = {} }
+  function handle.cancel()
+    if handle.cancelled then
+      return
+    end
+    handle.cancelled = true
+    for _, r in ipairs(handle.sent) do
+      pcall(r.client.cancel_request, r.client, r.id)
+    end
+  end
+  local on_fail_opt = opts.on_fail or warn
+  local function on_fail(msg)
+    if not handle.cancelled then
+      on_fail_opt(msg)
+    end
+  end
+  local cb_opt = cb
+  cb = function(...)
+    if not handle.cancelled then
+      cb_opt(...)
+    end
+  end
   is_empty = is_empty or function(r)
     return r == nil or (type(r) == 'table' and vim.tbl_isempty(r))
   end
   local buf = M.file_buffer(target.abs)
   if not buf then
-    return on_fail('revuey: file not in working tree: ' .. target.abs)
+    on_fail('revuey: file not in working tree: ' .. target.abs)
+    return handle
   end
   local lnum = M.match_line(buf, target.lnum, target.text, target.head)
   if not lnum then
-    return on_fail('revuey: line differs in the working tree (uncommitted edits?); LSP unavailable here')
+    on_fail('revuey: line differs in the working tree (uncommitted edits?); LSP unavailable here')
+    return handle
   end
   with_clients(buf, method, function(clients)
     table.sort(clients, function(a, b)
@@ -206,7 +237,7 @@ function M.request(target, method, cb, is_empty, opts)
         textDocument = { uri = vim.uri_from_bufnr(buf) },
         position = { line = lnum - 1, character = character },
       })
-      local ok = client:request(method, params, function(err, result)
+      local ok, req_id = client:request(method, params, function(err, result)
         results[i] = { err = err, result = result, client = client }
         pending = pending - 1
         if pending == 0 then
@@ -221,7 +252,9 @@ function M.request(target, method, cb, is_empty, opts)
           cb(first_err, nil, nil, buf, lnum)
         end
       end, buf)
-      if not ok then
+      if ok and req_id then
+        handle.sent[#handle.sent + 1] = { client = client, id = req_id }
+      elseif not ok then
         pending = pending - 1
         results[i] = { err = { message = 'request failed' }, client = client }
       end
@@ -229,7 +262,8 @@ function M.request(target, method, cb, is_empty, opts)
     if pending == 0 then
       cb({ message = 'no client accepted the request' }, nil, nil, buf, lnum)
     end
-  end, on_fail)
+  end, on_fail, handle)
+  return handle
 end
 
 ---Normalise a definition result into a list of {uri, range}.

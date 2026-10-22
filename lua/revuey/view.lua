@@ -1184,6 +1184,7 @@ local function diff_keymaps(s)
     end
   end, 'focus file panel')
 end
+M.diff_keymaps = diff_keymaps
 
 local function panel_keymaps(s)
   local k = config.options.keymaps

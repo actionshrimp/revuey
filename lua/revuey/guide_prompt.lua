@@ -172,6 +172,8 @@ local function counts(h)
 end
 
 M.PREVIEW_LINES = 6
+-- Full stack scope: commit subjects listed per branch (the rest are counted).
+M.MAX_LAYER_COMMITS = 15
 
 ---Lines of one hunk in the diff section: full, or an index entry ("abridged").
 local function hunk_lines(h, abridged)
@@ -203,7 +205,8 @@ end
 ---@field kind 'layer'|'full' one branch (layer scope) or the whole stack (full scope)
 ---@field index? integer      layer scope: which layer (1 = bottom)
 ---@field trunk string
----@field layers {name: string, parent: string, commits?: string[]}[] bottom first; commits newest first
+---@field layers {name: string, parent: string, commits?: string[], commit_count?: integer}[] bottom
+---  first; commits newest first (at most MAX_LAYER_COMMITS), commit_count = all of the branch's
 
 ---@class revuey.GuideContext
 ---@field repo string        repo name
@@ -275,12 +278,13 @@ function M.user_message(ctx, hunks, opts)
     for _, l in ipairs(st.layers) do
       add('- ' .. l.name .. ':')
       local cs = l.commits or {}
-      for i, c in ipairs(cs) do
-        if i > 15 then
-          add(('  - ... and %d more'):format(#cs - 15))
-          break
-        end
-        add('  - ' .. c)
+      for i = 1, math.min(#cs, M.MAX_LAYER_COMMITS) do
+        add('  - ' .. cs[i])
+      end
+      local shown = math.min(#cs, M.MAX_LAYER_COMMITS)
+      local total = math.max(l.commit_count or #cs, #cs)
+      if total > shown then
+        add(('  - ... and %d more'):format(total - shown))
       end
       if #cs == 0 then
         add('  - (no commits)')
