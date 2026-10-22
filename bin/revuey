@@ -60,6 +60,21 @@ case "${1:-}" in
     # `wait` returns early when a trapped signal arrives; the trap exits
     exit "$status"
     ;;
+  -*|'')
+    ;; # flags or nothing: the review UI
+  *)
+    # a base for the review UI, or a mistyped command
+    if ! git rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1; then
+      {
+        echo "revuey: unknown command $1 (and not a branch or commit)"
+        echo "usage: revuey [base] [--stack] [--committed|--worktree]"
+        echo "       revuey comments [--json] [--all] [--scope current|all|<branch>]"
+        echo "       revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]"
+        echo "       revuey reply <comment id> <text|->"
+      } >&2
+      exit 2
+    fi
+    ;;
 esac
 
 # arguments travel to Lua joined by the unit separator (\x1f), so spaces survive

@@ -52,7 +52,16 @@ function M.parse(args)
   local i = 1
   while i <= #args do
     local a = args[i]
-    if VALUE_FLAGS[a] then
+    if a == '--' then
+      -- everything after `--` is positional
+      vim.list_extend(pos, args, i + 1)
+      break
+    elseif #pos > 0 then
+      -- options come before the positionals: the rest (a reply text such as "-- see above")
+      -- is positional too
+      vim.list_extend(pos, args, i)
+      break
+    elseif VALUE_FLAGS[a] then
       if not args[i + 1] then
         die(a .. ' needs a value\n' .. USAGE, 2)
       end
@@ -118,7 +127,7 @@ function M.matches(review, ctx, scope)
 end
 
 ---Comments files of the selected reviews: { {path, store}, ... } (sorted by branch, scope).
-local function stores(dir, ctx, scope)
+local function stores(dir, ctx, scope, readonly)
   local list = {}
   if not vim.uv.fs_stat(dir) then
     return list
@@ -126,7 +135,7 @@ local function stores(dir, ctx, scope)
   for name, t in vim.fs.dir(dir) do
     if t == 'file' and name:match('%.comments%.json$') then
       local path = vim.fs.joinpath(dir, name)
-      local store = comments.load(path)
+      local store = comments.load(path, readonly and { readonly = true } or nil)
       if M.matches(store.review, ctx, scope) then
         list[#list + 1] = { path = path, store = store }
       end
@@ -148,7 +157,8 @@ end
 function M.comments(o)
   local ctx = here()
   local reviews = {}
-  for _, e in ipairs(stores(state_dir(o), ctx, o.scope)) do
+  -- read-only: an unreadable file is reported, never moved aside
+  for _, e in ipairs(stores(state_dir(o), ctx, o.scope, true)) do
     local list = export.select(e.store, { all = o.all })
     if #list > 0 then
       reviews[#reviews + 1] = { review = e.store.review, comments = list }
