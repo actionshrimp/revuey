@@ -314,6 +314,28 @@ h.test('editor: q asks before discarding typed text; closing it otherwise keeps 
   h.eq('created', events()[#events()].kind)
 end)
 
+-- Regression (review): WinClosed ran before the scheduled BufWriteCmd save, so :wq and :x
+-- stored a draft instead of the comment.
+h.test('editor: :wq and :x save the comment (not a draft)', function()
+  for _, cmd in ipairs({ 'wq', 'x' }) do
+    local row = row_of('m.txt', 'ctx', 38)
+    vim.api.nvim_set_current_win(s.diff_win)
+    vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+    keys(s, 'gc')
+    local st = editor.current
+    vim.api.nvim_buf_set_lines(st.buf, 0, -1, false, { 'saved with :' .. cmd })
+    vim.cmd('stopinsert')
+    vim.cmd(cmd)
+    vim.wait(300)
+    local c = by_body('saved with :' .. cmd)
+    h.ok(c, ':' .. cmd .. ' lost the text')
+    h.eq('saved', c.status, ':' .. cmd)
+    h.eq('created', events()[#events()].kind)
+    h.eq(c.id, events()[#events()].comment_id)
+    h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  end
+end)
+
 h.test('editor: the send key is reserved (not yet available), and pluggable', function()
   local row = row_of('m.txt', 'ctx', 37)
   vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })

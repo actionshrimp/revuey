@@ -172,6 +172,10 @@ function M.open(o)
     buffer = buf,
     callback = function()
       vim.bo[buf].modified = false
+      -- :w saves (scheduled: closing the window inside the write is not allowed); :wq and :x
+      -- close the window first, so WinClosed sees the pending write and saves instead of
+      -- keeping a draft
+      st.write_pending = true
       vim.schedule(function()
         M.save(st)
       end)
@@ -202,11 +206,17 @@ function M.open(o)
       if M.current == st then
         M.current = nil
       end
+      local saving = st.write_pending and t ~= ''
       vim.schedule(function()
         if api.nvim_buf_is_valid(buf) then
           pcall(api.nvim_buf_delete, buf, { force = true })
         end
-        if t ~= '' and t ~= st.original and o.on_draft then
+        if saving then
+          if o.return_win and api.nvim_win_is_valid(o.return_win) then
+            pcall(api.nvim_set_current_win, o.return_win)
+          end
+          o.on_save(t)
+        elseif t ~= '' and t ~= st.original and o.on_draft then
           o.on_draft(t)
         end
       end)
