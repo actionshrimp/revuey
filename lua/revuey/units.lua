@@ -178,26 +178,64 @@ function M.all_reviewed(st, list)
   return total > 0 and done == total
 end
 
----Store coverage marks for what is now complete: the parent hunk key of a split hunk whose
----pieces are all reviewed, and the file mark of a file whose units all are.
-local function normalize(st, U, fis)
-  for fi in pairs(fis) do
-    local list = U.by_file[fi] or {}
-    local seen = {}
-    for _, u in ipairs(list) do
-      if not u.whole_file and not seen[u.hunk] then
-        seen[u.hunk] = true
-        local pieces = U.by_hunk[u.hunk]
-        if #pieces > 1 and not state.unit_marked(st, u.hunk) and M.all_reviewed(st, pieces) then
-          state.set_unit(st, u.hunk, u.path, true)
-        end
+---Derived coverage marks, computed by `state.save` on the merged tables (after re-reading the
+---file and applying this instance's changes), so two instances never decide them from stale
+---memory: the parent hunk key of a split hunk whose pieces are all marked, and the file mark (at
+---the current content key) of a file whose units are all marked; a file mark over a file that is
+---not complete is removed. A matching file mark with no unit marks behind it at all, and not
+---just unmarked here, is a legacy mark: its units are marked first.
+local function finalizer(U)
+  return function(files, umarks, st)
+    local unmarked = {}
+    for k, e in pairs(st._unit_changes or {}) do
+      if e == false then
+        unmarked[k] = true
       end
     end
-    local first = list[1]
-    if first and M.all_reviewed(st, list) then
-      local fm = st.files[first.path]
-      if not (fm and fm.key == first.file_key) then
-        state.set_reviewed(st, first.path, first.file_key, true)
+    local now = os.time()
+    for _, list in pairs(U.by_file) do
+      local first = list[1]
+      if first and not first.whole_file then
+        local path = first.path
+        local function marked(u)
+          return umarks[u.key] ~= nil or umarks[u.hunk] ~= nil
+        end
+        local fm = files[path]
+        local current = fm ~= nil and fm.key == first.file_key
+        if current then
+          local any, explicit = false, false
+          for _, u in ipairs(list) do
+            any = any or marked(u)
+            explicit = explicit or unmarked[u.key] or unmarked[u.hunk] or false
+          end
+          if not any and not explicit then
+            for _, u in ipairs(list) do
+              umarks[u.key] = { path = path, reviewed_at = fm.reviewed_at or now }
+            end
+          end
+        end
+        local all, seen = true, {}
+        for _, u in ipairs(list) do
+          if not seen[u.hunk] then
+            seen[u.hunk] = true
+            local pieces = U.by_hunk[u.hunk]
+            if #pieces > 1 and umarks[u.hunk] == nil and not unmarked[u.hunk] then
+              local complete = true
+              for _, piece in ipairs(pieces) do
+                complete = complete and umarks[piece.key] ~= nil
+              end
+              if complete then
+                umarks[u.hunk] = { path = path, reviewed_at = now }
+              end
+            end
+          end
+          all = all and marked(u)
+        end
+        if all and not current then
+          files[path] = { key = first.file_key, reviewed_at = now }
+        elseif not all and current then
+          files[path] = nil
+        end
       end
     end
   end
@@ -233,10 +271,11 @@ local function apply(st, U, targets, value)
         end
       end
     end
+    -- removals are recorded even when this instance never saw the mark (another instance may
+    -- have stored it): the file mark at the current content key and the parent hunk keys
     for fi in pairs(fis) do
       local first = (U.by_file[fi] or {})[1]
-      local fm = first and st.files[first.path]
-      if fm and fm.key == first.file_key then
+      if first then
         state.set_reviewed(st, first.path, first.file_key, false)
       end
     end
@@ -257,12 +296,13 @@ local function apply(st, U, targets, value)
       end
     end
   end
-  normalize(st, U, fis)
   return fis
 end
 
-local function save(st)
+local function save(st, U)
+  st._finalize = finalizer(U)
   local ok, err = pcall(state.save, st)
+  st._finalize = nil
   if not ok then
     return false, err
   end
@@ -276,7 +316,7 @@ end
 ---@return boolean ok, string? err  on a failed save the change stays pending in memory
 function M.set(st, U, targets, value)
   apply(st, U, targets, value)
-  return save(st)
+  return save(st, U)
 end
 
 ---Toggle a group (a file, a hunk, a section, a selection): if any unit is unreviewed mark them
@@ -299,15 +339,19 @@ function M.migrate(st, U)
     local fm = first and st.files[first.path]
     if fm and fm.key == first.file_key then
       for _, u in ipairs(list) do
-        if not u.whole_file and not state.unit_marked(st, u.key) and not state.unit_marked(st, u.hunk) then
-          state.set_unit(st, #U.by_hunk[u.hunk] > 1 and u.hunk or u.key, u.path, true)
+        if not u.whole_file and not state.unit_marked(st, u.key) then
+          -- each piece by its own key (an edit to one piece keeps the others), and the hunk
+          state.set_unit(st, u.key, u.path, true)
+          if #U.by_hunk[u.hunk] > 1 then
+            state.set_unit(st, u.hunk, u.path, true)
+          end
           changed = true
         end
       end
     end
   end
   if changed then
-    local ok, err = save(st)
+    local ok, err = save(st, U)
     return ok, err
   end
   return false
@@ -330,7 +374,7 @@ function M.migrate_sections(st, U, sections)
     end
   end
   if changed then
-    local ok, err = save(st)
+    local ok, err = save(st, U)
     return ok, err
   end
   return false

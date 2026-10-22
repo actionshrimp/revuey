@@ -138,6 +138,11 @@ function M.save(st)
   for key, entry in pairs(st._unit_changes or {}) do
     units[key] = entry or nil
   end
+  -- derived marks (units.lua: parent hunk keys, file marks of complete files) are computed from
+  -- the merged result, so one instance's stale memory never decides them
+  if st._finalize then
+    st._finalize(files, units, st)
+  end
   local data = {
     version = M.VERSION,
     repo = st.repo,
@@ -217,9 +222,11 @@ end
 ---@param st revuey.State
 ---@param key string unit or hunk key
 ---@param path string file path (kept with the mark for readability and cleanup)
+---An unmark is always recorded, even when this instance never saw the mark: another instance
+---may have stored it since this one last read the file.
 function M.set_unit(st, key, path, value)
   st.units = st.units or {}
-  if (st.units[key] ~= nil) == (value and true or false) then
+  if value and st.units[key] ~= nil then
     return false
   end
   local entry = value and { path = path, reviewed_at = os.time() } or false
