@@ -738,6 +738,66 @@ h.test('detect: squash-merged bottom layer is dimmed as landed; the child still 
   h.eq(nil, detect(stack_repo('st-not-landed')).layers[1].landed)
 end)
 
+---main ── x ── y (two commits) ── z ── w, with x and y squash-merged into main (trunk also edits
+---a line near y's change first) and their branches deleted; `land_z` squash-merges z as well.
+local function squashed_below(name, land_z)
+  local d = h.tmpdir(name)
+  h.git(d, 'init', '-q', '-b', 'main')
+  commit(d, 'shared.txt', 'one\ntwo\nthree\nfour\n')
+  h.git(d, 'checkout', '-q', '-b', 'x')
+  commit(d, 'x.txt', 'x\n')
+  h.git(d, 'checkout', '-q', '-b', 'y')
+  commit(d, 'shared.txt', 'one\ntwo\nthree\nFOUR\n')
+  commit(d, 'y.txt', 'y\n')
+  h.git(d, 'checkout', '-q', '-b', 'z')
+  commit(d, 'z.txt', 'z\n')
+  h.git(d, 'checkout', '-q', '-b', 'w')
+  commit(d, 'w.txt', 'w\n')
+  h.git(d, 'checkout', '-q', 'main')
+  commit(d, 'other.txt', 'unrelated\n')
+  h.git(d, 'merge', '-q', '--squash', 'x')
+  h.git(d, 'commit', '-q', '-m', 'squash x')
+  commit(d, 'shared.txt', 'ONE\ntwo\nthree\nfour\n')
+  h.git(d, 'merge', '-q', '--squash', 'y')
+  h.git(d, 'commit', '-q', '-m', 'squash y')
+  if land_z then
+    h.git(d, 'merge', '-q', '--squash', 'z')
+    h.git(d, 'commit', '-q', '-m', 'squash z')
+  end
+  h.git(d, 'checkout', '-q', 'w')
+  h.git(d, 'branch', '-q', '-D', 'x', 'y')
+  return d
+end
+
+h.test('detect: commits squash-merged below the bottom layer are skipped, not shown in it', function()
+  local d = squashed_below('st-squashed-below')
+  local st = detect(d)
+  h.eq({ 'z', 'w' }, names(st))
+  h.eq(nil, st.layers[1].landed)
+  h.ok(has_note(st, 'z skips 3 commits already squash-merged into main'), vim.inspect(st.notes))
+  h.eq({ { 'z.txt' }, { 'w.txt' }, { 'w.txt', 'z.txt' } }, layer_files(d, st))
+end)
+
+h.test('detect: a landed bottom layer keeps its own squash-merged commits as its diff', function()
+  local d = squashed_below('st-squashed-landed', true)
+  local st = detect(d)
+  h.eq({ 'z', 'w' }, names(st))
+  h.eq(true, st.layers[1].landed)
+  h.ok(has_note(st, 'z skips 3 commits already squash-merged into main'), vim.inspect(st.notes))
+  h.eq({ { 'z.txt' }, { 'w.txt' }, { 'w.txt', 'z.txt' } }, layer_files(d, st))
+end)
+
+h.test('detect: no commits are skipped when trunk only has similar, not identical, changes', function()
+  local d = squashed_below('st-squashed-none')
+  h.git(d, 'checkout', '-q', 'main')
+  h.git(d, 'reset', '-q', '--hard', 'HEAD~3')
+  commit(d, 'x.txt', 'x but different\n')
+  h.git(d, 'checkout', '-q', 'w')
+  local st = detect(d)
+  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq({ 'shared.txt', 'x.txt', 'y.txt', 'z.txt' }, layer_files(d, st)[1])
+end)
+
 h.test('detect: many duplicate tips are listed briefly', function()
   local d = stack_repo('st-dups')
   for i = 1, 40 do

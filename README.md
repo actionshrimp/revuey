@@ -111,6 +111,10 @@ A stack is a chain of local branches, each based on the one below, for example
   below the trunk merge-base.
 - **Landed bottom layers:** a bottom layer whose changed files are identical in trunk
   (squash-merged) is dimmed with "looks landed in main". The layers above still diff against it.
+- **Squash-merged commits under a layer** (lower PRs merged, the branch not restacked onto
+  trunk): commits at the bottom of a layer that trunk already has, one squash per run of commits,
+  are left out of its diff with a note, so it shows what its PR shows. A layer that landed
+  entirely keeps its own squash-merged commits.
 
 The guess cannot tell a parent from a child branch cut part-way through it, so it is only a
 suggestion and nothing guessed is ever saved. If a stack looks wrong, fix it with
