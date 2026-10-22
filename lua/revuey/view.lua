@@ -1140,6 +1140,9 @@ local function restore_hunk_folds(s)
   api.nvim_win_call(s.diff_win, function()
     for i, b in ipairs(s.layout.blocks or {}) do
       local k = keys[i]
+      if k and set[k] == 'reviewed' and not units.all_reviewed(st, U.by_hunk[k] or {}) then
+        set[k] = nil -- collapsed because reviewed, and no longer is (unmarked elsewhere, or edited)
+      end
       local close = k and set[k]
       if k and close == nil and units.all_reviewed(st, U.by_hunk[k] or {}) and not parent_complete(s, i, memo) then
         close = true
@@ -1271,12 +1274,13 @@ local function set_block_fold(row, close)
   end
 end
 
----First hunk block after block `bi` (in layout order) whose units are not all reviewed.
+---First hunk block after block `bi` (in layout order) whose units are not all reviewed, skipping
+---blocks the user can't see (inside a collapsed file or section, or collapsed themselves).
 local function next_unreviewed_block(s, bi)
   local keys, U, st = block_keys(s), review_mod.units(s.review), s.review.state
   for i = (bi or 0) + 1, #(s.layout.blocks or {}) do
     local k = keys[i]
-    if k and not units.all_reviewed(st, U.by_hunk[k] or {}) then
+    if k and not units.all_reviewed(st, U.by_hunk[k] or {}) and not in_closed_file_fold(s, s.layout.blocks[i].start_row) then
       return s.layout.blocks[i].start_row
     end
   end
@@ -1483,6 +1487,18 @@ function M.toggle_selection(first, last)
   if first > last then
     first, last = last, first
   end
+  -- a collapsed file or hunk at either end counts whole (a selection ending on a collapsed
+  -- file's header row covers the file)
+  api.nvim_win_call(s.diff_win, function()
+    local c = vim.fn.foldclosed(first)
+    if c ~= -1 then
+      first = c
+    end
+    local e = vim.fn.foldclosedend(last)
+    if e ~= -1 then
+      last = e
+    end
+  end)
   local U = review_mod.units(s.review)
   local seen, list = {}, {}
   local function add(us)
