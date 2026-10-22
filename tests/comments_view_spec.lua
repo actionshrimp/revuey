@@ -361,6 +361,39 @@ h.test('editor: the send key is reserved (not yet available), and pluggable', fu
   h.eq(nil, by_body('to the agent'), 'sending does not save')
 end)
 
+-- Regression (review): saving an edit (or cancelling one with a draft, or resolving) of a
+-- comment deleted elsewhere brought it back.
+h.test('a comment deleted elsewhere is not resurrected by an edit, a draft or a resolve', function()
+  local row = row_of('m.txt', 'ctx', 32)
+  add(row, 'doomed')
+  local c = by_body('doomed')
+  local function delete_elsewhere()
+    local other = comments.load(s.cm.path)
+    comments.delete(other, c.id)
+    comments.save(other)
+  end
+  -- an edit saved after the delete
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+  keys(s, 'ce')
+  local st = editor.current
+  delete_elsewhere()
+  vim.api.nvim_buf_set_lines(st.buf, 0, -1, false, { 'doomed, edited' })
+  msgs = {}
+  vim.api.nvim_feedkeys(vim.keycode('<C-s>'), 'mtx', false)
+  h.eq(nil, comments.get(store(), c.id), 'not resurrected')
+  h.eq(true, comments.read(s.cm.path).comments[c.id].deleted)
+  h.ok(msgs[#msgs] and msgs[#msgs].msg:find('deleted', 1, true), vim.inspect(msgs))
+  h.eq('doomed, edited', vim.trim(vim.fn.getreg('"')), 'the text is kept in a register')
+  -- a resolve and a draft, on another comment deleted elsewhere before the reload
+  add(row, 'doomed too')
+  c = by_body('doomed too')
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+  delete_elsewhere()
+  cv.resolve(s)
+  h.eq(true, comments.read(s.cm.path).comments[c.id].deleted, 'resolve did not resurrect it')
+  h.eq(nil, comments.get(store(), c.id))
+end)
+
 h.test(']m and [m move between comments; gC hides and shows the threads', function()
   -- a.txt's header (row 1) has a file-level comment
   vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
