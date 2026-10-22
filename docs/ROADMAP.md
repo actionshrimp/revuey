@@ -67,8 +67,11 @@ sequence; later items build on earlier ones.
    `]s`/`[s` stay view-only unless opted in via config. Refuses on a dirty worktree (no auto-stash) and handles
    branches checked out elsewhere; confirms first when launched by an agent session working in the same worktree.
    After committing, the existing "not restacked" warning flags the layers above; restacking is handed to the
-   launching agent session (one-key "restack above <branch>" message) rather than done by revuey. Local branches
-   only. Alternative considered: one worktree per layer via worktrunk.
+   launching agent session (one-key "restack above <branch>" message) rather than done by revuey; in Graphite
+   repos (detected via `refs/branch-metadata`) the message asks for `gt restack` so Graphite's parent records stay
+   current. Plain `git switch` is fine for Graphite branches. Layers other than the checked-out one (`@`) stay
+   viewable but refuse edits with a "press gS to switch" message. Local branches only. Alternative considered:
+   one worktree per layer via worktrunk.
 
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
