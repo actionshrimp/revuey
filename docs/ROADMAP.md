@@ -66,10 +66,11 @@ sequence; later items build on earlier ones.
    worktree is treated as fair game), making it the working-tree layer so the edit float works there; plain
    `]s`/`[s` stay view-only unless opted in via config. Refuses on a dirty worktree (no auto-stash) and handles
    branches checked out elsewhere; confirms first when launched by an agent session working in the same worktree.
-   After committing, the existing "not restacked" warning flags the layers above; restacking is handed to the
-   launching agent session (one-key "restack above <branch>" message) rather than done by revuey; in Graphite
-   repos (detected via `refs/branch-metadata`) the message asks for `gt restack` so Graphite's parent records stay
-   current. Plain `git switch` is fine for Graphite branches. Layers other than the checked-out one (`@`) stay
+   After committing, the existing "not restacked" warning flags the layers above. revuey never restacks and never
+   asks for a restack automatically: the warning's details float offers a "send restack request" action the user
+   triggers when ready, which messages the launching agent session (mentioning Graphite when the repo uses it, so
+   the agent can pick the right tool). revuey itself uses plain git throughout (e.g. `git switch`, also fine for
+   Graphite branches). Layers other than the checked-out one (`@`) stay
    viewable but refuse edits with a "press gS to switch" message. Local branches only. Alternative considered:
    one worktree per layer via worktrunk.
 
