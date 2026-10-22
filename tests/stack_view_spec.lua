@@ -435,6 +435,23 @@ h.test('a landed (squash-merged) bottom layer is dimmed in the panel', function(
   h.ok(dim, 'stack/math row dimmed')
 end)
 
+h.test('a lone branch whose lower stack branches were squash-merged and deleted shows only its own commits', function()
+  local d = stack_fixture('stack-view-squashed-lone')
+  local own = vim.split(vim.trim(h.git(d, 'diff', '--name-only', 'stack/cart', 'stack/ui')), '\n')
+  h.git(d, 'checkout', '-q', 'main')
+  for _, b in ipairs({ 'stack/math', 'stack/cart' }) do
+    h.git(d, 'merge', '-q', '--squash', b)
+    h.git(d, 'commit', '-q', '-m', 'squash ' .. b)
+  end
+  h.git(d, 'checkout', '-q', 'stack/ui')
+  h.git(d, 'branch', '-q', '-D', 'stack/math', 'stack/cart')
+  local s = open(d, { mode = 'committed' })
+  h.eq(nil, s.review.stack)
+  h.eq('main', s.review.base)
+  h.eq(own, paths(s))
+  h.ok(panel_text(s):find('stack/ui skips 3 commits already', 1, true), panel_text(s))
+end)
+
 h.test('long note lists are capped in the panel', function()
   local d = stack_fixture('stack-view-notes')
   for i = 1, 150 do
