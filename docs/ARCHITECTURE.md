@@ -108,11 +108,15 @@ are in `reports/Terminal code review tool landscape.md`.
    **Landed layers:** bottom-up, a layer whose own changed files are identical in trunk
    (`git diff --quiet trunk tip -- files`) is marked landed and dimmed. The check stops at the first unlanded
    layer.
-   **Squash-merged commits:** before that, each layer diffed from trunk drops the oldest commits whose
-   zero-context patch id matches a trunk commit touching the same paths. A run of consecutive commits can
-   match one trunk commit (a squash). The layer then starts after the last match. When every commit
-   matched, the last run is kept as the layer's own diff, and the full scope starts where the bottom
-   layer does (`stack.base_rev`).
+   **Squash-merged commits:** before that, the bottom layer (when diffed from trunk) drops its oldest
+   commits that trunk already has (`stack.landed_runs`). A run of consecutive commits matches a trunk
+   commit that changes the same paths and has the same patch id (one line of context, whitespace kept,
+   no path prefixes), and each trunk commit accounts for one run. A revert's reversed patch cancels
+   the commit it reverts. The longest run wins. The layer starts after the last run, except that when
+   every commit matched the last run stays as the layer's own diff. The full scope starts there too
+   (`stack.base_rev`). With no stack, `detect` returns the same start for the plain review, which
+   diffs from it while keeping the trunk as its base (labels and marks). Caps: runs of 20 commits,
+   branches of 200 commits or 500 paths, the latest 2000 trunk commits touching those paths.
    **Marks:** layers above another layer add the old blob to the content key (`key_old`), so a parent change to
    the same file resets the mark. The bottom layer, full scope and plain reviews keep chunk 1's new-blob keys,
    so they still share marks. Unit marks (decision 10) are per scope too, since they live in the scope's state

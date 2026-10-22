@@ -254,7 +254,9 @@ end
 ---            files, plus untracked non-ignored files as additions. New-side content is on disk.
 ---  committed merge-base..HEAD only.
 ---A target with `committed_only` is always loaded in committed mode (`mode_locked`).
----@param opts {cwd?:string, base?:string, target?:revuey.Target, state_dir?:string, context_lines?:integer, mode?:'worktree'|'committed', cache?:table}
+---`from` (no target) diffs from that commit instead of the merge-base with `base`, which stays the
+---review's base for labels and reviewed state.
+---@param opts {cwd?:string, base?:string, from?:string, target?:revuey.Target, state_dir?:string, context_lines?:integer, mode?:'worktree'|'committed', cache?:table}
 ---@return revuey.Review?, string? err
 function M.load(opts)
   local cwd = opts.cwd or vim.fn.getcwd()
@@ -279,7 +281,7 @@ function M.load(opts)
   if not head then
     return nil, target and ('unknown revision: ' .. tostring(target.to)) or 'the current branch has no commits yet'
   end
-  local from = target and target.from or base
+  local from = target and target.from or opts.from or base
   local mb = target and M.merge_base_for(root, target, head) or git.merge_base(from, head, root)
   if not mb then
     return nil, ('no common ancestor between %s and %s (unrelated histories?); pass another base: :Revuey <base>'):format(

@@ -798,6 +798,146 @@ h.test('detect: no commits are skipped when trunk only has similar, not identica
   h.eq({ 'shared.txt', 'x.txt', 'y.txt', 'z.txt' }, layer_files(d, st)[1])
 end)
 
+local LUA = 'local M = {}\nfunction M.a()\n  return 1\nend\nfunction M.b()\n  return 2\nend\nreturn M\n'
+
+---main ── x ── z ── w, with `x` (on top of `base` files) then `on_main` run on main, x's branch
+---deleted and w checked out. `on_z` adds commits to z before z.txt.
+local function bottom_case(name, o)
+  local d = h.tmpdir(name)
+  h.git(d, 'init', '-q', '-b', 'main')
+  for p, c in pairs(o.base) do
+    h.write(d, p, c)
+  end
+  h.git(d, 'add', '-A')
+  h.git(d, 'commit', '-q', '-m', 'base')
+  h.git(d, 'checkout', '-q', '-b', 'x')
+  o.x(d)
+  h.git(d, 'checkout', '-q', '-b', 'z')
+  if o.on_z then
+    o.on_z(d)
+  end
+  commit(d, 'z.txt', 'z\n')
+  h.git(d, 'checkout', '-q', '-b', 'w')
+  commit(d, 'w.txt', 'w\n')
+  h.git(d, 'checkout', '-q', 'main')
+  o.on_main(d)
+  h.git(d, 'checkout', '-q', 'w')
+  h.git(d, 'branch', '-q', '-D', 'x')
+  return d
+end
+
+local function squash_x(d)
+  h.git(d, 'merge', '-q', '--squash', 'x')
+  h.git(d, 'commit', '-q', '-m', 'squash x')
+end
+
+local function bottom_files(d)
+  local st = detect(d)
+  return layer_files(d, st)[1], st
+end
+
+h.test('detect: a squash-merge trunk has since reverted is not skipped', function()
+  local files, st = bottom_files(bottom_case('st-sq-revert', {
+    base = { ['base.txt'] = 'base\n' },
+    x = function(d)
+      commit(d, 'x.txt', 'x\n')
+    end,
+    on_main = function(d)
+      squash_x(d)
+      h.git(d, 'revert', '--no-edit', 'HEAD')
+    end,
+  }))
+  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq({ 'x.txt', 'z.txt' }, files)
+end)
+
+h.test('detect: the same line added at a different place in trunk is not a squash-merge', function()
+  local files, st = bottom_files(bottom_case('st-sq-sameline', {
+    base = { ['m.lua'] = LUA },
+    x = function(d)
+      commit(d, 'm.lua', (LUA:gsub('  return 2', '  -- TODO\n  return 2')))
+    end,
+    on_main = function(d)
+      commit(d, 'm.lua', (LUA:gsub('  return 1', '  -- TODO\n  return 1')))
+    end,
+  }))
+  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq({ 'm.lua', 'z.txt' }, files)
+end)
+
+h.test('detect: a whitespace-only difference from trunk is not a squash-merge', function()
+  local files, st = bottom_files(bottom_case('st-sq-ws', {
+    base = { ['f.lua'] = 'function f()\n  g()\nend\n' },
+    x = function(d)
+      commit(d, 'f.lua', 'function f()\n    g()\nend\n')
+    end,
+    on_main = function(d)
+      commit(d, 'f.lua', 'function f()\n\tg()\nend\n')
+    end,
+  }))
+  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq({ 'f.lua', 'z.txt' }, files)
+end)
+
+h.test('detect: each trunk squash-merge accounts for one run only', function()
+  local files, st = bottom_files(bottom_case('st-sq-reuse', {
+    base = { ['m.lua'] = LUA },
+    x = function(d)
+      commit(d, 'm.lua', (LUA:gsub('  return 1', '  -- TODO\n  return 1')))
+    end,
+    on_z = function(d)
+      commit(d, 'm.lua', (LUA:gsub('  return 1', '  -- TODO\n  return 1'):gsub('  return 2', '  -- TODO\n  return 2')))
+    end,
+    on_main = squash_x,
+  }))
+  h.ok(has_note(st, 'z skips 1 commit already squash-merged'), vim.inspect(st.notes))
+  h.eq({ 'm.lua', 'z.txt' }, files)
+end)
+
+h.test('detect: only the bottom layer skips squash-merged commits, never a stale layer above it', function()
+  local d = h.tmpdir('st-sq-stale')
+  h.git(d, 'init', '-q', '-b', 'main')
+  commit(d, 'base.txt', 'base\n')
+  h.git(d, 'checkout', '-q', '-b', 'x')
+  commit(d, 'x.txt', 'x\n')
+  h.git(d, 'checkout', '-q', '-b', 'b')
+  commit(d, 'b.txt', 'b\n')
+  h.git(d, 'checkout', '-q', 'main')
+  squash_x(d)
+  h.git(d, 'checkout', '-q', '-b', 'a')
+  commit(d, 'a.txt', 'a\n')
+  h.git(d, 'branch', '-q', '-D', 'x')
+  h.git(d, 'config', 'branch.b.revueyParent', 'a')
+  h.git(d, 'checkout', '-q', 'b')
+  local st = detect(d)
+  h.eq({ 'a', 'b' }, names(st))
+  h.eq(true, st.layers[2].stale)
+  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(nil, st.base_rev)
+end)
+
+h.test('landed_runs: a multi-commit squash is one run', function()
+  local d = h.tmpdir('st-sq-runs')
+  h.git(d, 'init', '-q', '-b', 'main')
+  commit(d, 'base.txt', 'base\n')
+  h.git(d, 'checkout', '-q', '-b', 'x')
+  commit(d, 'x.txt', 'x1\n')
+  commit(d, 'x.txt', 'x2\n')
+  h.git(d, 'checkout', '-q', '-b', 'y')
+  commit(d, 'y.txt', 'y\n')
+  commit(d, 'own.txt', 'own\n')
+  h.git(d, 'checkout', '-q', 'main')
+  h.git(d, 'merge', '-q', '--squash', 'x')
+  h.git(d, 'commit', '-q', '-m', 'squash x')
+  h.git(d, 'merge', '-q', '--squash', 'y~1')
+  h.git(d, 'commit', '-q', '-m', 'squash y')
+  local function rev(r)
+    return vim.trim(h.git(d, 'rev-parse', r))
+  end
+  local runs = stack.landed_runs(d, rev('main'), rev('y'))
+  h.eq({ { rev('x~1'), rev('x') }, { rev('y~1') } }, runs)
+end)
+
 h.test('detect: many duplicate tips are listed briefly', function()
   local d = stack_repo('st-dups')
   for i = 1, 40 do
