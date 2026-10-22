@@ -167,6 +167,54 @@ h.test('the diagram re-renders on resize and keeps its fold', function()
   vim.cmd('doautocmd WinResized')
 end)
 
+h.test('<Tab> on the diagram heading folds it; <S-Tab> includes it; the fold survives a refresh', function()
+  local s = view.session
+  local function closed(row)
+    return vim.api.nvim_win_call(s.diff_win, function()
+      return vim.fn.foldclosed(row) ~= -1
+    end)
+  end
+  local heading = s.layout.diagram.start_row
+  vim.api.nvim_win_set_cursor(s.diff_win, { heading, 0 })
+  keys(s, '<Tab>')
+  h.eq(true, closed(heading))
+  keys(s, '<Tab>')
+  h.eq(false, closed(heading))
+  -- elsewhere in the diagram <Tab> stays jump-forward: no fold toggles
+  local crow, ccol = find(s, 'cart.ts', 'diagram')
+  vim.api.nvim_win_set_cursor(s.diff_win, { crow, ccol })
+  keys(s, '<Tab>')
+  h.eq(false, closed(heading))
+  -- <S-Tab>: the diagram and every section collapse, then all expand
+  keys(s, '<S-Tab>')
+  h.eq(true, closed(s.layout.diagram.start_row))
+  for _, r in ipairs(s.layout.sections) do
+    h.eq(true, closed(r.start_row))
+  end
+  keys(s, '<S-Tab>')
+  h.eq(false, closed(s.layout.diagram.start_row))
+  for _, r in ipairs(s.layout.sections) do
+    h.eq(false, closed(r.start_row))
+  end
+  -- only the diagram collapsed: a forced refresh keeps it collapsed and the sections open
+  vim.api.nvim_win_set_cursor(s.diff_win, { s.layout.diagram.start_row, 0 })
+  keys(s, '<Tab>')
+  local renders = s.render_count
+  view.refresh({ force = true })
+  idle(s)
+  h.ok(s.render_count > renders, 're-rendered')
+  h.eq(true, closed(s.layout.diagram.start_row))
+  h.eq(false, closed(s.layout.sections[1].start_row))
+  -- and across a trip to the diff view and back
+  keys(s, 'gG')
+  keys(s, 'gG')
+  h.eq('guide', s.view_mode)
+  h.eq(true, closed(s.layout.diagram.start_row))
+  vim.api.nvim_win_set_cursor(s.diff_win, { s.layout.diagram.start_row, 0 })
+  keys(s, '<Tab>')
+  h.eq(false, closed(s.layout.diagram.start_row))
+end)
+
 h.test(':RevueyGuideDiagram mermaid copies Mermaid text to a register', function()
   vim.fn.setreg('a', '')
   vim.cmd('RevueyGuideDiagram mermaid a')
