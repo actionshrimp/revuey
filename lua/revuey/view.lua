@@ -14,6 +14,7 @@ local stack_mod = require('revuey.stack')
 local state_mod = require('revuey.state')
 local guide_view = require('revuey.guide_view')
 local attribution = require('revuey.attribution')
+local units = require('revuey.units')
 
 local M = {}
 
@@ -52,6 +53,34 @@ end
 -- Decoration
 -- ---------------------------------------------------------------------------
 
+---Reviewed-progress chip: "✓ reviewed" when everything is, "◐ 2/5" when some is, else nil.
+local function progress_chunk(done, total, label)
+  if total > 0 and done == total then
+    return { '  ✓ ' .. (label or 'reviewed'), 'RevueyReviewed' }
+  elseif done > 0 then
+    return { '  ◐ ' .. done .. '/' .. total, 'RevueyPartial' }
+  end
+end
+M.progress_chunk = progress_chunk
+
+---File and hunk index of a hunk block's header row (hi 0: a file without hunks in the guide).
+local function row_hunk(e)
+  if not e or not e.file_idx then
+    return nil
+  end
+  local hi = e.hunk_idx or (e.hunk_id and tonumber(e.hunk_id:match('#(%d+)$'))) or 0
+  return e.file_idx, hi
+end
+
+---The units of the hunk whose header is at `row`.
+local function header_units(s, row)
+  local fi, hi = row_hunk(s.layout.map[row])
+  if not fi then
+    return {}
+  end
+  return units.of_hunk(review_mod.units(s.review), fi, hi)
+end
+
 local function header_virt(s, fi)
   local f = s.review.files[fi]
   local virt = { { '  ' } }
@@ -65,8 +94,9 @@ local function header_virt(s, fi)
   if label then
     virt[#virt + 1] = { '  ' .. label, panel.status_hl[f.status] }
   end
-  if review_mod.is_reviewed(s.review, f) then
-    virt[#virt + 1] = { '  ✓ reviewed', 'RevueyReviewed' }
+  local p = progress_chunk(review_mod.file_progress(s.review, fi))
+  if p then
+    virt[#virt + 1] = p
   end
   return virt
 end
@@ -90,7 +120,8 @@ local function set_section_mark(s, si)
   if not sec or not range then
     return
   end
-  local reviewed = guide_view.section_reviewed(s, sec)
+  local done, total = guide_view.section_progress(s, sec)
+  local reviewed = total > 0 and done == total
   local virt = { { '  ' } }
   local n = #sec.items
   virt[#virt + 1] = { n .. (n == 1 and ' hunk' or ' hunks'), 'Comment' }
@@ -100,8 +131,9 @@ local function set_section_mark(s, si)
   if sec.kind == 'new' then
     virt[#virt + 1] = { '  not in guide', 'RevueyGuideOutdated' }
   end
-  if reviewed then
-    virt[#virt + 1] = { '  ✓ reviewed', 'RevueyReviewed' }
+  local p = progress_chunk(done, total)
+  if p then
+    virt[#virt + 1] = p
   end
   s.section_marks = s.section_marks or {}
   s.section_marks[si] = api.nvim_buf_set_extmark(s.diff_buf, ns, range.start_row - 1, 0, {
@@ -115,14 +147,14 @@ local function set_section_mark(s, si)
   s.section_check_marks = s.section_check_marks or {}
   s.section_check_marks[si] = api.nvim_buf_set_extmark(s.diff_buf, ns, range.start_row - 1, 0, {
     id = s.section_check_marks[si],
-    virt_text = { sec.id and { reviewed and '☑ ' or '☐ ', reviewed and 'RevueyReviewed' or 'Comment' } or { '  ' } },
+    virt_text = { total > 0 and { reviewed and '☑ ' or '☐ ', reviewed and 'RevueyReviewed' or 'Comment' } or { '  ' } },
     virt_text_pos = 'inline',
     priority = 20,
   })
 end
 
----Guide hunk header: "path  @@ ... @@" with the hunk's counts and the file's reviewed mark.
-local function guide_hunk_virt(s, e)
+---Guide hunk header: "path  @@ ... @@" with the hunk's counts and its reviewed progress.
+local function guide_hunk_virt(s, e, row)
   local f = s.review.files[e.file_idx]
   local virt = { { '  ' } }
   local hk = e.hunk_idx and f.hunks[e.hunk_idx]
@@ -139,10 +171,36 @@ local function guide_hunk_virt(s, e)
   if label then
     virt[#virt + 1] = { '  ' .. label, panel.status_hl[f.status] }
   end
-  if review_mod.is_reviewed(s.review, f) then
-    virt[#virt + 1] = { '  ✓ file reviewed', 'RevueyReviewed' }
+  local p = progress_chunk(units.progress(s.review.state, header_units(s, row)))
+  if p then
+    virt[#virt + 1] = p
   end
   return virt
+end
+
+---Hunk header row (diff or guide): header highlight plus counts and reviewed progress. Kept by id
+---so marking a hunk updates only its header.
+local function set_hunk_mark(s, row)
+  local e = s.layout.map[row]
+  local len = #s.layout.lines[row]
+  local virt
+  if e.path_len then
+    virt = guide_hunk_virt(s, e, row)
+  else
+    local p = progress_chunk(units.progress(s.review.state, header_units(s, row)))
+    virt = p and { p } or nil
+  end
+  s.hunk_marks = s.hunk_marks or {}
+  s.hunk_marks[row] = api.nvim_buf_set_extmark(s.diff_buf, ns, row - 1, 0, {
+    id = s.hunk_marks[row],
+    end_col = len,
+    hl_group = 'RevueyHunkHeader',
+    line_hl_group = 'RevueyHunkHeaderBg',
+    virt_text = virt,
+    virt_text_pos = virt and 'eol' or nil,
+    hl_mode = 'combine',
+    priority = 20,
+  })
 end
 
 ---Full-stack reviews: the layers that introduced a hunk, right-aligned on its header row (guide
@@ -168,6 +226,7 @@ local function decorate(s)
   api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   s.header_marks = {}
   s.section_marks, s.section_check_marks = {}, {}
+  s.hunk_marks = {}
   for row, e in ipairs(map) do
     local r0 = row - 1
     if e.kind == 'prose' or e.kind == 'diagram' then
@@ -182,15 +241,7 @@ local function decorate(s)
       set_section_mark(s, e.section_idx)
     elseif e.meta == 'hunk' and e.path_len then
       local len = #s.layout.lines[row]
-      api.nvim_buf_set_extmark(buf, ns, r0, 0, {
-        end_col = len,
-        hl_group = 'RevueyHunkHeader',
-        line_hl_group = 'RevueyHunkHeaderBg',
-        virt_text = guide_hunk_virt(s, e),
-        virt_text_pos = 'eol',
-        hl_mode = 'combine',
-        priority = 20,
-      })
+      set_hunk_mark(s, row)
       api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = math.min(e.path_len, len), hl_group = 'RevueyFilePath', priority = 21 })
       set_layer_mark(s, r0, e)
     end
@@ -205,13 +256,7 @@ local function decorate(s)
       api.nvim_buf_set_extmark(buf, ns, r0, 0, { end_col = len, hl_group = 'RevueyFilePath', priority = 20 })
       set_header_mark(s, e.file_idx)
     elseif e.meta == 'hunk' then
-      local len = #s.layout.lines[row]
-      api.nvim_buf_set_extmark(buf, ns, r0, 0, {
-        end_col = len,
-        hl_group = 'RevueyHunkHeader',
-        line_hl_group = 'RevueyHunkHeaderBg',
-        priority = 20,
-      })
+      set_hunk_mark(s, row)
       if not e.path_len then -- (guide headers got theirs above)
         set_layer_mark(s, r0, e)
       end
@@ -397,9 +442,13 @@ function M.foldtext()
   end
   if e and e.meta == 'section' then
     local sec = s.guide and s.guide.resolved and s.guide.resolved.sections[e.section_idx]
-    local reviewed = sec and guide_view.section_reviewed(s, sec)
+    local done, total = 0, 0
+    if sec then
+      done, total = guide_view.section_progress(s, sec)
+    end
+    local reviewed = total > 0 and done == total
     local chunks = {
-      { (sec and sec.id) and (reviewed and '☑ ' or '☐ ') or '  ', reviewed and 'RevueyReviewed' or 'Comment' },
+      { total > 0 and (reviewed and '☑ ' or '☐ ') or '  ', reviewed and 'RevueyReviewed' or 'Comment' },
       { s.layout.lines[fs], 'RevueyGuideBold' },
     }
     if sec then
@@ -407,8 +456,9 @@ function M.foldtext()
       if sec.outdated then
         chunks[#chunks + 1] = { '  outdated', 'RevueyGuideOutdated' }
       end
-      if reviewed then
-        chunks[#chunks + 1] = { '  ✓ reviewed', 'RevueyReviewed' }
+      local p = progress_chunk(done, total)
+      if p then
+        chunks[#chunks + 1] = p
       end
     end
     chunks[#chunks + 1] = { '  (' .. (fe - fs) .. ' lines folded)', 'Comment' }
@@ -419,9 +469,13 @@ function M.foldtext()
     local chunks
     if e.path_len then
       chunks = { { text:sub(1, e.path_len), 'RevueyFilePath' }, { text:sub(e.path_len + 1), 'RevueyHunkHeader' } }
-      vim.list_extend(chunks, guide_hunk_virt(s, e))
+      vim.list_extend(chunks, guide_hunk_virt(s, e, fs))
     else
       chunks = { { text, 'RevueyHunkHeader' } }
+      local p = progress_chunk(units.progress(s.review.state, header_units(s, fs)))
+      if p then
+        chunks[#chunks + 1] = p
+      end
     end
     chunks[#chunks + 1] = { '  (' .. (fe - fs) .. ' lines folded)', 'Comment' }
     return chunks
@@ -457,8 +511,9 @@ function M.winbar()
     '%#RevueyFilePath#' .. esc(layout_mod.file_title(f)) .. ' ',
     f.binary and '%#Comment#binary' or ('%#RevueyCountAdd#+' .. f.added .. ' %#RevueyCountDelete#−' .. f.removed),
   }
-  if review_mod.is_reviewed(s.review, f) then
-    parts[#parts + 1] = '  %#RevueyReviewed#✓ reviewed'
+  local p = progress_chunk(review_mod.file_progress(s.review, fi))
+  if p then
+    parts[#parts + 1] = '  %#' .. p[2] .. '#' .. p[1]:sub(3)
   end
   parts[#parts + 1] = '%*%=' .. fi .. '/' .. #s.review.files .. ' '
   return table.concat(parts)
@@ -848,44 +903,6 @@ local function close_file_fold(s, fi, close)
   end)
 end
 
-function M.toggle_reviewed(fi)
-  local s = M.session
-  if not s then
-    return
-  end
-  if #s.review.files == 0 then
-    return
-  end
-  if s.view_mode == 'guide' then
-    if not fi then
-      return M.toggle_section()
-    end
-    -- a file mark from the panel: shown on the guide's hunk headers
-    local f = s.review.files[fi]
-    if f then
-      review_mod.toggle_reviewed(s.review, f)
-      decorate(s)
-      panel.render(s)
-    end
-    return
-  end
-  fi = fi or file_at_row(s, cursor_row(s))
-  local f = s.review.files[fi]
-  if not f then
-    return
-  end
-  local now = review_mod.toggle_reviewed(s.review, f)
-  set_header_mark(s, fi)
-  panel.render(s)
-  close_file_fold(s, fi, now)
-  if now and api.nvim_get_current_win() == s.diff_win then
-    -- move on to the next file, like GitHub's "Viewed" checkbox
-    local nxt = s.layout.files[fi + 1]
-    -- the last file: stay on its header without reopening the fold just closed
-    goto_row(s, nxt and nxt.start_row or s.layout.files[fi].start_row, nxt and 'top' or 'nofold')
-  end
-end
-
 -- ---------------------------------------------------------------------------
 -- Guide view: sections
 -- ---------------------------------------------------------------------------
@@ -1012,75 +1029,45 @@ function M.next_section(dir)
   end
 end
 
----`mr` in the guide: toggle the reviewed state of the section under the cursor (or `si`); a newly
----reviewed section folds and the cursor moves to the next section.
-function M.toggle_section(si)
-  local s = M.session
-  if not s or s.view_mode ~= 'guide' or not s.guide or not s.guide.resolved then
-    return
-  end
-  si = si or section_at_row(s, cursor_row(s))
-  local sec = si and s.guide.resolved.sections[si]
-  if not sec then
-    return vim.notify('revuey: move to a section to mark it reviewed', vim.log.levels.INFO)
-  end
-  if not sec.id then
-    return vim.notify('revuey: this section shows no hunks', vim.log.levels.INFO)
-  end
-  local now, err = state_mod.toggle_section(s.review.state, sec.id)
-  if err then
-    vim.notify(tostring(err), vim.log.levels.ERROR)
-  end
-  set_section_mark(s, si)
-  panel.render(s)
-  section_fold(s, si, now)
-  if now and api.nvim_get_current_win() == s.diff_win then
-    local nxt = s.layout.sections[si + 1]
-    goto_row(s, nxt and nxt.start_row or s.layout.sections[si].start_row, nxt and 'top' or 'nofold')
-  end
-  return now
-end
-
 -- ---------------------------------------------------------------------------
 -- Folding: <Tab> on title lines, <S-Tab> for every file / section
 -- ---------------------------------------------------------------------------
 
 ---Identities of the layout's hunk blocks (cached on the layout), for keeping a collapsed hunk
----collapsed across re-renders: a hash of the path and the hunk's lines (so it survives line
----shifts), or the path for a file without hunks. Identical blocks get `@old_start,new_start`
----appended, like the guide's hunk hashes, so one never takes another's fold.
+---collapsed across re-renders and for reviewed marks: the parent hunk key of the block's units
+---(units.lua), a hash of the path and the hunk's lines (so it survives line shifts; identical
+---hunks get `@old_start,new_start`, so one never takes another's fold). The same in the diff and
+---the guide, so a fold or mark made in one view can be applied to the other.
 local function block_keys(s)
   local L = s.layout
   if L.block_keys then
     return L.block_keys
   end
-  local keys, hunks, count = {}, {}, {}
+  local keys = {}
+  local U = review_mod.units(s.review)
   for i, b in ipairs(L.blocks or {}) do
-    local e = L.map[b.start_row]
-    local f = e and e.file_idx and s.review.files[e.file_idx]
-    if f then
-      local hi = e.hunk_id and tonumber(e.hunk_id:match('#(%d+)$'))
-      local hk = hi and f.hunks[hi]
-      local k = f.path
-      if hk then
-        local parts = { f.path }
-        for _, l in ipairs(hk.lines) do
-          parts[#parts + 1] = l.kind .. l.text
-        end
-        k = vim.fn.sha256(table.concat(parts, '\n'))
-      end
-      keys[i], hunks[i] = k, hk
-      count[k] = (count[k] or 0) + 1
-    end
-  end
-  for i in pairs(keys) do
-    if count[keys[i]] > 1 then
-      local hk = hunks[i]
-      keys[i] = keys[i] .. '@' .. (hk and (hk.old_start .. ',' .. hk.new_start) or i)
-    end
+    local fi, hi = row_hunk(L.map[b.start_row])
+    keys[i] = fi and U.hunk_key[fi] and U.hunk_key[fi][hi] or nil
   end
   L.block_keys = keys
   return keys
+end
+
+---Index of the hunk block containing `row` (blocks are sorted by row), or nil.
+local function block_at(s, row)
+  local blocks = s.layout.blocks or {}
+  local lo, hi = 1, #blocks
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    local b = blocks[mid]
+    if row < b.start_row then
+      hi = mid - 1
+    elseif row > b.end_row then
+      lo = mid + 1
+    else
+      return mid
+    end
+  end
 end
 
 local function block_key_at(s, row)
@@ -1091,18 +1078,20 @@ local function block_key_at(s, row)
   end
 end
 
----Collapsed hunk blocks for the current view mode (a set of block keys). Kept in the session
----rather than read back from the window, because a hunk inside a collapsed file or section can't
----be seen to be collapsed.
-local function hunk_folds(s)
+---Hunk block fold state for a view mode (default: the current one), by block key: true
+---collapsed by the user, 'reviewed' collapsed because it was marked reviewed, false expanded by
+---the user, nil no choice made (a reviewed hunk then starts collapsed; unmarking resets to nil). Kept in the session rather than read back from the window, because a hunk
+---inside a collapsed file or section can't be seen to be collapsed.
+local function hunk_folds(s, mode)
   s.hunk_folds = s.hunk_folds or {}
-  local mode = s.view_mode == 'guide' and 'guide' or 'diff'
+  mode = mode or (s.view_mode == 'guide' and 'guide' or 'diff')
   s.hunk_folds[mode] = s.hunk_folds[mode] or {}
   return s.hunk_folds[mode]
 end
 
----Update the set from the window wherever a hunk's own state is visible (it was toggled with
----`za`, `zc`, `zR`...); hunks inside a collapsed parent keep what the set says.
+---Record the user's own fold changes wherever a hunk's own state is visible (it was toggled with
+---`za`, `zc`, `zR`...): collapsed becomes true, a collapsed one expanded becomes false; hunks
+---inside a collapsed parent keep what the set says.
 local function sync_hunk_folds(s)
   if not api.nvim_win_is_valid(s.diff_win) then
     return
@@ -1113,9 +1102,9 @@ local function sync_hunk_folds(s)
       local k = keys[i]
       if k then
         local c = vim.fn.foldclosed(b.start_row)
-        if c == -1 then
-          set[k] = nil
-        elseif c == b.start_row then
+        if c == -1 and set[k] then
+          set[k] = false
+        elseif c == b.start_row and not set[k] then
           set[k] = true
         end
       end
@@ -1123,16 +1112,40 @@ local function sync_hunk_folds(s)
   end)
 end
 
----Re-collapse the hunks in the set after a re-render (before any file/section fold is closed).
+---Is the file (diff) or section (guide) holding hunk block `i` fully reviewed? Reviewed hunks of
+---a complete file or section are not collapsed on their own: the parent fold is, and opening it
+---shows the code.
+local function parent_complete(s, i, memo)
+  local e = s.layout.map[s.layout.blocks[i].start_row]
+  local key = (s.view_mode == 'guide' and 's' or 'f') .. (e.section_idx or e.file_idx or 0)
+  if memo[key] == nil then
+    if s.view_mode == 'guide' then
+      local sec = e.section_idx and s.guide and s.guide.resolved and s.guide.resolved.sections[e.section_idx]
+      memo[key] = sec ~= nil and guide_view.section_reviewed(s, sec)
+    else
+      memo[key] = review_mod.is_reviewed(s.review, s.review.files[e.file_idx])
+    end
+  end
+  return memo[key]
+end
+
+---Re-collapse the hunks in the set after a re-render (before any file/section fold is closed),
+---and collapse reviewed hunks the user never expanded inside a file or section that is not
+---fully reviewed.
 local function restore_hunk_folds(s)
   local set = hunk_folds(s)
-  if next(set) == nil then
-    return
-  end
   local keys = block_keys(s)
+  local U = review_mod.units(s.review)
+  local st, memo = s.review.state, {}
   api.nvim_win_call(s.diff_win, function()
     for i, b in ipairs(s.layout.blocks or {}) do
-      if keys[i] and set[keys[i]] then
+      local k = keys[i]
+      local close = k and set[k]
+      if k and close == nil and units.all_reviewed(st, U.by_hunk[k] or {}) and not parent_complete(s, i, memo) then
+        close = true
+        set[k] = 'reviewed'
+      end
+      if close then
         pcall(vim.cmd, b.start_row .. 'foldclose')
       end
     end
@@ -1161,7 +1174,7 @@ function M.fold_key()
       if e.meta == 'hunk' then
         local k = block_key_at(s, top)
         if k then
-          hunk_folds(s)[k] = (c ~= top) or nil -- `za` is about to flip it
+          hunk_folds(s)[k] = c ~= top -- `za` is about to flip it
         end
       end
       return 'za'
@@ -1198,6 +1211,304 @@ function M.toggle_all_folds()
       end
     end
   end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Reviewed marks (`mr`): the units of a hunk, a file, a guide section or a selection
+-- ---------------------------------------------------------------------------
+
+---What `mr` on `row` marks: {level = 'hunk'|'file'|'section', units, block?, file?, section?}.
+---Inside a hunk block (header, note or code line): that hunk's units. Diff view elsewhere: the
+---file. Guide view elsewhere in a section (heading, prose): the section.
+local function mark_target(s, row)
+  local e = s.layout.map[row]
+  if not e then
+    return nil
+  end
+  local U = review_mod.units(s.review)
+  local bi = block_at(s, row)
+  if bi then
+    local k = block_keys(s)[bi]
+    local fi = row_hunk(s.layout.map[s.layout.blocks[bi].start_row])
+    return { level = 'hunk', units = k and U.by_hunk[k] or {}, block = bi, file = fi, section = e.section_idx }
+  end
+  if s.view_mode == 'guide' then
+    local si = e.section_idx or (e.kind ~= 'diagram' and section_at_row(s, row)) or nil
+    local sec = si and s.guide and s.guide.resolved and s.guide.resolved.sections[si]
+    if not sec then
+      return nil
+    end
+    return { level = 'section', units = guide_view.section_units(s, sec), section = si }
+  end
+  local fi = e.file_idx
+  if not fi or not s.review.files[fi] then
+    return nil
+  end
+  return { level = 'file', units = U.by_file[fi] or {}, file = fi }
+end
+
+---Which files and guide sections are fully reviewed.
+local function completeness(s)
+  local st, U = s.review.state, review_mod.units(s.review)
+  local files, secs = {}, {}
+  for fi in ipairs(s.review.files) do
+    files[fi] = units.file_reviewed(st, U, fi)
+  end
+  for si, sec in ipairs(s.guide and s.guide.resolved and s.guide.resolved.sections or {}) do
+    secs[si] = units.all_reviewed(st, units.section_units(U, sec))
+  end
+  return files, secs
+end
+
+---Collapse (or expand) hunk block `row` itself, never its file or section: `:foldclose` on an
+---already collapsed block would close the parent.
+local function set_block_fold(row, close)
+  local c = vim.fn.foldclosed(row)
+  if close and c == -1 then
+    pcall(vim.cmd, row .. 'foldclose')
+  elseif not close and c == row then
+    pcall(vim.cmd, row .. 'foldopen')
+  end
+end
+
+---First hunk block after block `bi` (in layout order) whose units are not all reviewed.
+local function next_unreviewed_block(s, bi)
+  local keys, U, st = block_keys(s), review_mod.units(s.review), s.review.state
+  for i = (bi or 0) + 1, #(s.layout.blocks or {}) do
+    local k = keys[i]
+    if k and not units.all_reviewed(st, U.by_hunk[k] or {}) then
+      return s.layout.blocks[i].start_row
+    end
+  end
+end
+
+---Toggle the reviewed state of `target`'s units (all marked when any is unreviewed, else all
+---unmarked), then update both views: headers, panel, folds (complete files or sections fold, and
+---hunks marked on their own fold; unmarked ones unfold), the other view's remembered folds, and
+---move the cursor on to the next unreviewed hunk, file or section.
+local function apply_marks(s, target)
+  local list = target.units or {}
+  if #list == 0 then
+    vim.notify('revuey: nothing to mark reviewed here', vim.log.levels.INFO)
+    return nil
+  end
+  local st, U = s.review.state, review_mod.units(s.review)
+  local f0, s0 = completeness(s)
+  local now, err = units.toggle(st, U, list)
+  if err then
+    vim.notify(tostring(err), vim.log.levels.ERROR)
+  end
+  local f1, s1 = completeness(s)
+  local hunks, files = {}, {}
+  for _, u in ipairs(list) do
+    hunks[u.hunk] = true
+    files[u.file_idx] = true
+  end
+  local per_hunk = target.level == 'hunk' or target.level == 'selection'
+  -- hunk folds, remembered for both views (block keys are the same in both). Marking hunks on
+  -- their own folds them, unmarking them unfolds them; unmarking a whole file or section unfolds
+  -- only the hunks that were folded because they were reviewed (not the user's own <Tab> folds).
+  local fold = {} -- [hunk key] = true collapse / false expand, in this view
+  local cur = hunk_folds(s)
+  for k in pairs(hunks) do
+    if per_hunk then
+      fold[k] = now and units.all_reviewed(st, U.by_hunk[k] or {})
+    elseif not now and cur[k] == 'reviewed' then
+      fold[k] = false
+    end
+  end
+  for _, mode in ipairs({ 'diff', 'guide' }) do
+    local set = hunk_folds(s, mode)
+    for k in pairs(hunks) do
+      if per_hunk then
+        set[k] = fold[k] and (set[k] == true or 'reviewed') or nil
+      elseif not now and set[k] == 'reviewed' then
+        set[k] = nil
+      end
+    end
+  end
+  -- decorations
+  local guide_mode = s.view_mode == 'guide'
+  if not guide_mode then
+    for fi in pairs(files) do
+      set_header_mark(s, fi)
+    end
+  end
+  local keys = block_keys(s)
+  for i, b in ipairs(s.layout.blocks or {}) do
+    if keys[i] and hunks[keys[i]] then
+      set_hunk_mark(s, b.start_row)
+    end
+  end
+  for si in ipairs(guide_mode and s.layout.sections or {}) do
+    set_section_mark(s, si)
+  end
+  panel.render(s)
+  -- folds in this view: parents that are no longer complete open first, then hunks, then
+  -- parents that became complete close
+  if guide_mode then
+    for si in ipairs(s.layout.sections or {}) do
+      if s0[si] and not s1[si] then
+        section_fold(s, si, false)
+      end
+    end
+  else
+    for fi in ipairs(s.layout.files) do
+      if f0[fi] and not f1[fi] then
+        close_file_fold(s, fi, false)
+      end
+    end
+  end
+  if next(fold) then
+    api.nvim_win_call(s.diff_win, function()
+      for i, b in ipairs(s.layout.blocks or {}) do
+        local k = keys[i]
+        if k and fold[k] ~= nil then
+          set_block_fold(b.start_row, fold[k])
+        end
+      end
+    end)
+  end
+  if guide_mode then
+    for si in ipairs(s.layout.sections or {}) do
+      if s1[si] and not s0[si] then
+        section_fold(s, si, true)
+      end
+    end
+  else
+    for fi in ipairs(s.layout.files) do
+      if f1[fi] and not f0[fi] then
+        close_file_fold(s, fi, true)
+      end
+    end
+  end
+  -- the other view: remembered file / section folds follow what became (in)complete
+  local other = s.mode_views and s.mode_views[guide_mode and 'diff' or 'guide']
+  if other and other.folds and guide_mode then
+    for fi, f in ipairs(s.review.files) do
+      if f0[fi] ~= f1[fi] then
+        other.folds[f.path] = f1[fi]
+        if other.complete then
+          other.complete[f.path] = f1[fi]
+        end
+      end
+    end
+  elseif other and other.section_folds and not guide_mode then
+    for si, sec in ipairs(s.guide and s.guide.resolved and s.guide.resolved.sections or {}) do
+      if s0[si] ~= s1[si] then
+        other.section_folds[sec.id or ('#' .. si)] = s1[si]
+      end
+    end
+  end
+  -- move on, like GitHub's "Viewed" checkbox
+  if not now or target.level == 'selection' or api.nvim_get_current_win() ~= s.diff_win then
+    return now
+  end
+  if guide_mode then
+    local si = target.section
+    local r = si and s.layout.sections[si]
+    if target.level == 'section' or (si and s1[si]) then
+      for j = (si or 0) + 1, #s.layout.sections do
+        if not s1[j] then
+          goto_row(s, s.layout.sections[j].start_row, 'top')
+          return now
+        end
+      end
+      -- the last one: stay on its heading without reopening the fold just closed
+      if r then
+        goto_row(s, r.start_row, 'nofold')
+      end
+      return now
+    end
+  elseif target.level == 'file' or f1[target.file] then
+    local fi = target.file
+    for j = fi + 1, #s.layout.files do
+      if not f1[j] then
+        goto_row(s, s.layout.files[j].start_row, 'top')
+        return now
+      end
+    end
+    goto_row(s, s.layout.files[fi].start_row, 'nofold')
+    return now
+  end
+  -- a hunk in a file or section that still has unreviewed hunks: on to the next one
+  local nxt = next_unreviewed_block(s, target.block)
+  goto_row(s, nxt or s.layout.blocks[target.block].start_row, 'nofold')
+  return now
+end
+
+---`mr`: toggle the reviewed state of the hunk, file or guide section under the cursor (see
+---mark_target), or of file `fi` (the panel). Returns the new state.
+function M.toggle_reviewed(fi)
+  local s = M.session
+  if not s or #s.review.files == 0 then
+    return
+  end
+  local target
+  if fi then
+    target = { level = 'file', file = fi, units = review_mod.units(s.review).by_file[fi] or {} }
+  elseif api.nvim_win_is_valid(s.diff_win) then
+    target = mark_target(s, cursor_row(s))
+  end
+  if not target then
+    return vim.notify('revuey: move to a hunk, file or section to mark it reviewed', vim.log.levels.INFO)
+  end
+  return apply_marks(s, target)
+end
+
+---Toggle guide section `si` (or the one under the cursor) reviewed: all of its units.
+function M.toggle_section(si)
+  local s = M.session
+  if not s or s.view_mode ~= 'guide' or not s.guide or not s.guide.resolved then
+    return
+  end
+  si = si or section_at_row(s, cursor_row(s))
+  local sec = si and s.guide.resolved.sections[si]
+  if not sec then
+    return vim.notify('revuey: move to a section to mark it reviewed', vim.log.levels.INFO)
+  end
+  if #sec.items == 0 then
+    return vim.notify('revuey: this section shows no hunks', vim.log.levels.INFO)
+  end
+  return apply_marks(s, { level = 'section', section = si, units = guide_view.section_units(s, sec) })
+end
+
+---Visual `mr`: toggle every unit the selected rows touch (a hunk header row: the whole hunk; a
+---file header: a file without hunks).
+function M.toggle_selection(first, last)
+  local s = M.session
+  if not s or #s.review.files == 0 then
+    return
+  end
+  if first > last then
+    first, last = last, first
+  end
+  local U = review_mod.units(s.review)
+  local seen, list = {}, {}
+  local function add(us)
+    for _, u in ipairs(us or {}) do
+      if not seen[u] then
+        seen[u] = true
+        list[#list + 1] = u
+      end
+    end
+  end
+  for row = first, last do
+    local e = s.layout.map[row]
+    if e and e.file_idx and e.file_idx > 0 then
+      if e.line_idx and e.hunk_idx then
+        add({ units.at_line(U, e.file_idx, e.hunk_idx, e.line_idx) })
+      elseif e.meta == 'hunk' then
+        add(header_units(s, row))
+      elseif e.meta == 'file' or e.meta == 'note' then
+        local us = U.by_file[e.file_idx] or {}
+        if us[1] and us[1].whole_file then
+          add(us)
+        end
+      end
+    end
+  end
+  return apply_marks(s, { level = 'selection', units = list })
 end
 
 -- ---------------------------------------------------------------------------
@@ -1254,7 +1565,16 @@ local function diff_keymaps(s)
   map(buf, k.hover, M.hover, 'LSP hover')
   map(buf, k.toggle_reviewed, function()
     M.toggle_reviewed()
-  end, 'toggle file reviewed')
+  end, 'toggle reviewed: hunk, file or guide section')
+  if k.toggle_reviewed then
+    for _, l in ipairs(type(k.toggle_reviewed) == 'table' and k.toggle_reviewed or { k.toggle_reviewed }) do
+      vim.keymap.set('x', l, function()
+        local a, b = vim.fn.line('v'), vim.fn.line('.')
+        api.nvim_feedkeys(vim.keycode('<Esc>'), 'nx', false)
+        M.toggle_selection(a, b)
+      end, { buffer = buf, nowait = true, silent = true, desc = 'revuey: toggle reviewed: the hunks in the selection' })
+    end
+  end
   map(buf, k.refresh, function()
     M.refresh({ force = true, notify = true })
   end, 'refresh review')
@@ -1408,7 +1728,7 @@ local function capture_view(s)
   if s.view_mode == 'guide' then
     return M.capture_guide(s)
   end
-  local saved = { folds = {}, mode = 'diff' }
+  local saved = { folds = {}, complete = {}, mode = 'diff' }
   if not api.nvim_win_is_valid(s.diff_win) then
     return saved
   end
@@ -1421,6 +1741,7 @@ local function capture_view(s)
       local r = s.layout.files[fi]
       if r then
         saved.folds[f.path] = vim.fn.foldclosed(r.start_row) ~= -1
+        saved.complete[f.path] = review_mod.is_reviewed(s.review, f)
       end
     end
     sync_hunk_folds(s)
@@ -1645,6 +1966,14 @@ local function render(s, saved)
   s.render_count = (s.render_count or 0) + 1
   set_diff_name(s)
   s.numw = compute_numw(s.review)
+  if not s.review.units_migrated then
+    -- file marks without unit marks behind them (the old format) become unit marks
+    s.review.units_migrated = true
+    local _, err = units.migrate(s.review.state, review_mod.units(s.review))
+    if err then
+      vim.notify(tostring(err), vim.log.levels.ERROR)
+    end
+  end
   guide_view.prepare(s)
   if s.view_mode == 'guide' then
     s.prose_width, s.diagram_width = prose_width(s), diagram_width(s)
@@ -1708,9 +2037,13 @@ local function render(s, saved)
     for _, h in ipairs(f.hunks) do
       size = size + #h.lines
     end
-    local closed = review_mod.is_reviewed(s.review, f) or size > config.options.collapse_large_files
+    local complete = review_mod.is_reviewed(s.review, f)
+    local closed = complete or size > config.options.collapse_large_files
     if saved and saved.folds and saved.folds[f.path] ~= nil then
       closed = saved.folds[f.path] -- keep the user's fold state across refreshes
+      if closed and saved.complete and saved.complete[f.path] and not complete then
+        closed = false -- a reviewed file was edited: show what is left to review
+      end
     end
     if closed then
       close_file_fold(s, fi, true)

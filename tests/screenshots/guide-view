@@ -18,7 +18,7 @@
 17|   M  math.ts  src                +14 −8│  A       src/components/Total.tsx  @@ -0,0 +1,5 @@   +5 −0  added                       
 18|   R  text.ts  src                 +2 −2│      1 + import { formatCurrency } from "../format";                                    
 19|                                        │      2 +                                                                                
-20| ]] [[ section  mr section reviewed     │      3 + export function Total(props: { amount: number }) {                             
+20| ]] [[ section  mr reviewed             │      3 + export function Total(props: { amount: number }) {                             
 21| ]c [c hunk  <Tab> fold  gp diff        │      4 +   return <strong className="total">{formatCurrency(props.amount)}</strong>;    
 22| gd def  K hover  go open  R refresh    │      5 + }                                                                              
 23| gG diff view  gR regenerate  q close   │                                                                                         
@@ -60,7 +60,7 @@
 17|;<;CF;444444499999;;;;;;;;;;;;;;;;<<<>>>4<<<<<<<<<<GGGGGGGGGGGGGGGGGGGGGGGGIIIIIIIIIIIIIIIIIHHHJJKKKJJJJJJJHHHHHHHHHHHHHHHHHHHHHHH
 18|;<;CF;444444499999;;;;;;;;;;;;;;;;;<<>>>4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 19|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-20|99999999999999999999999999999999999;;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+20|999999999999999999999999999;;;;;;;;;;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 21|99999999999999999999999999999999;;;;;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 22|999999999999999999999999999999999999;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 23|9999999999999999999999999999999999999;;;4==========;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

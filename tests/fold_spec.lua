@@ -299,8 +299,8 @@ end)
 h.test('mr folds every file kind, including the last file', function()
   for fi, f in ipairs(s.review.files) do
     local r = s.layout.files[fi]
-    -- from a code line when the file has one, else from the header
-    vim.api.nvim_win_set_cursor(s.diff_win, { r.hunk_rows[1] and r.hunk_rows[1] + 1 or r.start_row, 0 })
+    -- on the file header: the whole file (inside a hunk `mr` marks that hunk, see below)
+    vim.api.nvim_win_set_cursor(s.diff_win, { r.start_row, 0 })
     keys(s, 'mr')
     h.eq(true, review_mod.is_reviewed(s.review, f), f.path)
     h.eq(r.start_row, closed_at(s, r.start_row), f.status .. ' ' .. f.path .. ' folded')

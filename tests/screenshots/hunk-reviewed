@@ -1,0 +1,83 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//feat..main                                                                                            X
+02| Files                                  │ M m.txt +3 −3  ◐ 1/3                                                      2/2 
+03| feat → main                            │  M     ▾ m.txt   +3 −3  ◐ 1/3                                                 
+04| 2 files  +5 −3  ✓ 0/2                  │          @@ -1,6 +1,6 @@  ✓ reviewed  (7 lines folded)                        
+05| base 1f2ed75d  head eac31334           │          @@ -17,7 +17,7 @@ line 16                                            
+06| working tree  ● uncommitted            │ 17  17   line 17                                                              
+07|                                        │ 18  18   line 18                                                              
+08|   A  a.txt                        +2 −0│ 19  19   line 19                                                              
+09| ◐ M  m.txt                    1/3 +3 −3│ 20     - line 20                                                              
+10|                                        │     20 + line twenty                                                          
+11| <CR> show  mr reviewed  gp diff        │ 21  21   line 21                                                              
+12| ]c [c hunk  ]f [f file  <Tab> fold     │ 22  22   line 22                                                              
+13| gd def  K hover  go open  R refresh    │ 23  23   line 23                                                              
+14| gu committed/working tree  q close     │          @@ -32,7 +32,7 @@ line 31                                            
+15| gG AI guide                            │ 32  32   line 32                                                              
+16|~                                       │ 33  33   line 33                                                              
+17|~                                       │ 34  34   line 34                                                              
+18|~                                       │ 35     - line 35                                                              
+19|~                                       │     35 + line thirty-five                                                     
+20|~                                       │ 36  36   line 36                                                              
+21|~                                       │ 37  37   line 37                                                              
+22|~                                       │ 38  38   line 38                                                              
+23|~                                       │                                                                               
+24|~                                       │                                                                               
+25|~                                       │                                                                               
+26|~                                       │                                                                               
+27|~                                       │                                                                               
+28|~                                       │                                                                               
+29|~                                       │                                                                               
+30|~                                       │                                                                               
+31|~                                       │                                                                               
+32|~                                       │                                                                               
+33|~                                       │                                                                               
+34|~                                       │                                                                               
+35|~                                       │                                                                               
+36|~                                       │                                                                               
+37|~                                       │                                                                               
+38|~                                       │                                                                               
+39|revuey://files [-]    7,1            All revuey://feat..main [-]                                      15,1           Bot
+40|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345666666667778888666665555555555555555555555555555555555555555555555555555555555
+03|22222222222299999999999999999999999999994::::::::::;;;;;<<<==>>>;;;;;;;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9999999999??@@@AAAAAAA9999999999999999994BBBBBBBBBBCCCCCCCCCCCCCCCDDDDDDDDDDDDCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+05|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994EEEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+06|:::::::::::::AAAAAAAAAAAAAAA9999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+07|99999999999999999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+08|9?9?I944444999999999999999999999999??@@@4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+09|JKJKLJMMMMMJJJJJJJJJJJJJJJJJJJJ::::??@@@4NNNNNNNOOOPPPPPQQPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+10|99999999999999999999999999999999999999994HHHHRRRSSSTTTTTUUUUUUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+11|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+13|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+14|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+15|AAAAAAAAAAAA99999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+16|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+17|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+18|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4NNNNNNNOOOPPPPPQQPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+19|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHRRRSSSTTTTTUUUUUUUUUUUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+20|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+21|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+22|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
+24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+29|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+30|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+31|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+32|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+33|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+34|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+36|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+37|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+38|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+39|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+40|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW

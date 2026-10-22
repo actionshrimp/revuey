@@ -6,19 +6,19 @@
 05|   2 Follow-up wiring                  3│                                                                                         
 06|                                        │          • one                                                                          
 07| feature/cart → main                    │          • two                                                                          
-08| 7 files  +57 −22  ✓ 0/7                │                                                                                         
+08| 7 files  +57 −22  ✓ 4/7                │                                                                                         
 09| base ee2e6fcf  head 6b2be8a3           │  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added                                  
 10| working tree  ● uncommitted            │      1 + import { multiply, sum } from "./math";                                        
 11|                                        │      2 + import { formatCurrency } from "./format";                                     
-12|   M  logo.png  assets               bin│      3 + import { capitalize } from "./text";                                           
+12| ✓ M  logo.png  assets               bin│      3 + import { capitalize } from "./text";                                           
 13|   A  cart.ts  src                +27 −0│      4 +                                                                                
-14|   A  Total.tsx  src/components    +5 −0│      5 + export interface LineItem {                                                    
+14| ✓ A  Total.tsx  src/components    +5 −0│      5 + export interface LineItem {                                                    
 15|   M  index.ts  src                +9 −6│      6 +   name: string;                                                                
-16|   D  legacy.ts  src               +0 −6│      7 +   price: number;                                                               
+16| ✓ D  legacy.ts  src               +0 −6│      7 +   price: number;                                                               
 17|   M  math.ts  src                +14 −8│      8 +   quantity: number;                                                            
-18|   R  text.ts  src                 +2 −2│      9 + }                                                                              
+18| ✓ R  text.ts  src                 +2 −2│      9 + }                                                                              
 19|                                        │     10 +                                                                                
-20| ]] [[ section  mr section reviewed     │     11 + export class Cart {                                                            
+20| ]] [[ section  mr reviewed             │     11 + export class Cart {                                                            
 21| ]c [c hunk  <Tab> fold  gp diff        │     12 +   private items: LineItem[] = [];                                              
 22| gd def  K hover  go open  R refresh    │     13 +                                                                                
 23| gG diff view  gR regenerate  q close   │     14 +   addItem(item: LineItem): this {                                              
@@ -52,15 +52,15 @@
 09|88888888888888888888888888888777777777774>>>>>>>>>>FFFFFFFFFFFGGGGGGGGGGGGGGGGGGHHHIIIJJJIIIIIIIHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 10|DDDDDDDDDDDDD8888888888888887777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 11|77777777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-12|7>7DO744444444888888887777777777777778884KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+12|7>7DO788888888888888887777777777777778884KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 13|7>7>O74444444888887777777777777777>>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-14|7>7>O744444444488888888888888887777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+14|7>7>O788888888888888888888888887777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 15|7>7DO744444444888887777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-16|7>7EO744444444488888777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+16|7>7EO788888888888888777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 17|7>7DO74444444888887777777777777777>>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-18|7>7DO744444448888877777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+18|7>7DO788888888888877777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 19|77777777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-20|88888888888888888888888888888888888777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+20|88888888888888888888888888877777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 21|88888888888888888888888888888888777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 22|88888888888888888888888888888888888877774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 23|88888888888888888888888888888888888887774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN

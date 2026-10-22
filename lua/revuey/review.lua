@@ -390,16 +390,38 @@ function M.raw_keys(root, from, to, with_old)
   return keys
 end
 
+---The review's units (units.lua), derived once per loaded review.
+---@param review revuey.Review
+---@return revuey.Units
+function M.units(review)
+  if not review._units then
+    review._units = require('revuey.units').derive(review.files, { key_old = review.key_old })
+  end
+  return review._units
+end
+
+---A file is reviewed when all of its units are.
 ---@param review revuey.Review
 ---@param f revuey.FileDiff
 function M.is_reviewed(review, f)
-  return state.is_reviewed(review.state, f.path, state.content_key(f, review.key_old))
+  local U = M.units(review)
+  local fi = U.by_path[f.path]
+  return fi ~= nil and require('revuey.units').file_reviewed(review.state, U, fi)
 end
 
+---Reviewed and total units of a file.
+---@param review revuey.Review
+---@return integer done, integer total
+function M.file_progress(review, fi)
+  return require('revuey.units').file_progress(review.state, M.units(review), fi)
+end
+
+---Toggle a whole file: mark all its units when any is unreviewed, else unmark them all.
 ---@param review revuey.Review
 ---@param f revuey.FileDiff
 function M.toggle_reviewed(review, f)
-  local v, err = state.toggle(review.state, f.path, state.content_key(f, review.key_old))
+  local U = M.units(review)
+  local v, err = require('revuey.units').toggle(review.state, U, U.by_file[U.by_path[f.path]] or {})
   if err then
     vim.notify(tostring(err), vim.log.levels.ERROR)
   end
