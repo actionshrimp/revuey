@@ -292,6 +292,11 @@ function M.render(s)
     s.panel_rows[fi] = row
     s.panel_files[row] = fi
   end
+  local orphans = require('revuey.comments_view').orphans(s)
+  if orphans > 0 then
+    local t = (' ✎%d on files no longer in this review'):format(orphans)
+    add(t, { { 0, #t, 'RevueyCommentOutdated' } })
+  end
   add('')
   local help
   if s.view_mode == 'guide' then
