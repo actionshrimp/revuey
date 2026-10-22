@@ -366,4 +366,80 @@ h.test('marking a file with split hunks stores hunk-level marks', function()
   end
 end)
 
+-- Two instances of the same review (two Neovims): marks merge per key on save, and the coverage
+-- marks (parent hunk key, file mark) are derived from the merged result, never from one
+-- instance's stale memory.
+local function reviewed_list(st, list)
+  return vim.tbl_map(function(u)
+    return units.reviewed(st, u)
+  end, list)
+end
+
+local function two(name)
+  local dir = vim.fs.dirname(fresh_state(name)._path)
+  return function()
+    return state.load(dir, '/repo', 'feat', 'main')
+  end
+end
+
+h.test("two instances: an unmark is not undone by the other instance's file mark", function()
+  local U = units.derive(base_files())
+  local a = U.by_file[1]
+  local ld = two('two-s1')
+  local A, B = ld(), ld()
+  assert(units.set(B, U, { a[1] }, true))
+  assert(units.set(A, U, { a[2] }, true)) -- A's save reads B's mark
+  assert(units.set(A, U, { a[3] }, true)) -- A completes the file: file mark stored
+  h.eq(true, units.file_reviewed(ld(), U, 1))
+  assert(units.set(B, U, { a[1] }, false)) -- B never saw the file mark
+  h.eq({ false, true, true }, reviewed_list(ld(), a))
+  h.eq(false, units.migrate(ld(), U), 'nothing for migration to bring back')
+  h.eq({ false, true, true }, reviewed_list(ld(), a))
+end)
+
+h.test("two instances: a stale completion never stores a file mark over the other's unmark", function()
+  local U = units.derive(base_files())
+  local a = U.by_file[1]
+  local ld = two('two-s2')
+  local A = ld()
+  assert(units.set(A, U, a, true))
+  local B = ld()
+  assert(units.set(A, U, { a[2] }, false))
+  assert(units.set(B, U, { a[3] }, false))
+  assert(units.set(B, U, { a[3] }, true)) -- B still thinks a[2] is reviewed
+  h.eq({ true, false, true }, reviewed_list(ld(), a))
+  h.eq(false, state.is_reviewed(ld(), 'src/a.ts', a[1].file_key))
+end)
+
+h.test('two instances: each marking part of a file completes it, with its file mark', function()
+  local U = units.derive(base_files())
+  local a = U.by_file[1]
+  local ld = two('two-s3')
+  local A, B = ld(), ld()
+  assert(units.set(A, U, { a[1], a[2] }, true))
+  assert(units.set(B, U, { a[3] }, true))
+  local c = ld()
+  h.eq(true, units.file_reviewed(c, U, 1))
+  h.eq(true, state.is_reviewed(c, 'src/a.ts', a[1].file_key), 'file mark for layer stats')
+  h.eq(true, state.is_reviewed(B, 'src/a.ts', a[1].file_key), 'the saving instance sees it too')
+end)
+
+h.test('migrating a legacy file mark over split hunks stores each piece too', function()
+  local files = base_files()
+  local U = units.derive(files, { split = split_lines })
+  local st = legacy_state('legacy-split')
+  assert(units.migrate(st, U))
+  local again = state.load(vim.fs.dirname(st._path), '/repo', 'feat', 'main')
+  for _, u in ipairs(U.by_file[1]) do
+    h.ok(again.units[u.key], 'piece ' .. u.key)
+    h.ok(again.units[u.hunk], 'hunk ' .. u.hunk)
+  end
+  -- editing one piece keeps the other pieces of that hunk
+  local edited = diff.parse(difftext({
+    { path = 'src/a.ts', new = blob('9'), hunks = { { '@@ -1,3 +1,3 @@ function a', ' one', '-two', '+TWO!', ' three' }, A2, A3 } },
+  }))
+  local Ue = units.derive(edited, { split = split_lines })
+  h.eq({ true, false }, reviewed_list(again, Ue.by_hunk[Ue.hunks[1].hash]))
+end)
+
 h.run()
