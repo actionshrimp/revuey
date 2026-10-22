@@ -404,7 +404,8 @@ are in `reports/Terminal code review tool landscape.md`.
    - **Model.** `{id, anchor, body (md), author {kind = user|ai|agent, name?}, status (draft|saved|resolved,
      room for dismissed|accepted), in_review, thread [{id, author, body, created_at, updated_at}],
      created_at, updated_at (ms), file_level, outdated (derived)}`, plus `draft`/`reply_draft` for unsaved
-     edits of a saved comment. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
+     edits of a saved comment, and the delivery fields of a comment sent to an agent (decision 12):
+     `sent_at`, `sent_reply` (the follow-up reply sent, else the body), `acked_at`, `answered_at`. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
      unique. Only `user` comments are made today; AI review findings (`ai`, `dismissed`/`accepted`), agent
      replies (`agent`) and the forge's "add to review" (`in_review`) fill the rest.
    - **Anchor.** `{path, side = new|old, start_line, end_line, unit_key, unit_line, hunk_key, hunk_line,
@@ -438,7 +439,7 @@ are in `reports/Terminal code review tool landscape.md`.
      long-idle instance can never resurrect a deleted comment. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
      with an 80ms debounce.
    - **Event feed.** Each change appends one JSON line to `<state file>.events.jsonl`: `{id (sortable),
-     kind = created|updated|deleted|resolved|replied|sent (reserved), at, comment_id, review {repo,
+     kind = created|updated|deleted|resolved|replied|sent|acked, at, comment_id, review {repo,
      branch, base, state_branch, scope, layers?, head, merge_base, mode}, location, anchor, snippet, body,
      author, status, file_level, outdated, reply?}`. Past 1 MB the file is renamed to `.1` before the next
      append. `cli.lua watch` polls every events file of the state dir (new ones too) every 250ms: files
@@ -451,13 +452,70 @@ are in `reports/Terminal code review tool landscape.md`.
      exits when its parent goes away. `reply` merges and saves like the UI, then appends a `replied`
      event; the running UI picks the file change up.
    - **Send hook.** The editor's `<C-a>` calls `comments_view.actions.send({session, kind, anchor,
-     comment?, text})`; today it reports "not available". The roadmap's Ask AI and "send to the
-     launching agent session" plug in there and append `sent` events.
+     comment?, text, store})`. The default is `send_to_agent` (decision 12); the later chat panel
+     plugs in here.
+
+12. **Agent link** (`sessions.lua` pure registry and presence; `agent_link.lua` UI glue;
+   `comments_view.send_to_agent`; `cli.lua` the agent side; `skill/revuey` the Claude Code skill).
+   A coding agent receives comments sent from a running review and answers in their threads,
+   whether it launched revuey or connects to a review the user started.
+   - **Registry.** A base is a directory with `sessions/` and `watchers/`: first the worktree's own
+     git dir (`git rev-parse --absolute-git-dir`, so linked worktrees are separate and nothing
+     shows in `git status`) + `/revuey`, then the state dir when that is not writable. Each review
+     writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, base, mode,
+     scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
+     server (v:servername), started_at, updated_at}`) atomically after its first render, rewrites
+     it at the end of any render that changed it (scope, layer, branch), and removes it on
+     cleanup and `VimLeavePre`. Listing removes entries whose pid is dead on this host (other
+     hosts are kept) and unreadable files. `--all` scans the common dir's base and each
+     `worktrees/*` base.
+   - **Presence.** `watch` writes `watchers/<pid>.json` `{pid, session|null, worktree,
+     heartbeat_at, mode}` at start, on (re)attach and every 5 s, and removes it on exit. The UI
+     polls every 2 s: connected when a watcher attached to its id (or attached to no session, in
+     its worktree) has a heartbeat under 30 s and a live pid. A change redraws the panel's winbar
+     (`agent_link.winbar`, kept by the winbar guard) and the comment markers.
+   - **Delivery** is separate from `status` (draft/saved/resolved, AI review dismissed/accepted)
+     and `in_review`, so sending never interferes with triage or the forge. `comments.delivery`
+     derives `sent` (sent_at newer than any ack), `seen` (acked_at >= sent_at), `answered`
+     (answered_at, or an agent reply created after sent_at). The timestamps merge by maximum
+     (an ack from the CLI survives a concurrent edit in the UI; the newest send carries its
+     `sent_reply`). A re-send sets `sent_at` past every earlier ack, answer and agent reply.
+   - **Sending.** `<C-a>` (new comment, edit, or a reply as a follow-up), `cs` (existing comment)
+     and `ga` (the editor titled "Ask agent" on a line or selection) save the comment, set
+     `sent_at`, and append the usual event plus a `sent` event: the comment event fields (full
+     anchor, snippet, body, review {repo, branch, base, scope, layers...}) and `message`,
+     `message_kind` (comment|reply), `sent_at`, `session`. Without a connected agent the send is
+     recorded all the same and marked "queued".
+   - **watch.** Attaches to the worktree's single live session (`--session` when several; with
+     none it waits, and it re-attaches when its session's entry disappears and one new session
+     appears). It follows the event files of the default state dir and the session's; files in a
+     directory seen for the first time are followed from their end. Then a catch-up: every
+     unacknowledged sent comment in the repo's comments files (`comments.unacked`, rebuilt as
+     `sent` events), after the feeds were opened, so a message sent in between appears in both
+     and is printed once (dedupe by `<comment id>:<sent_at>`). Sent events match by repo only
+     (any branch or scope of the worktree); other events keep the `--scope` filter.
+     `--messages` prints only sent events as `revuey message <id> <loc> (<side>) [<branch or full
+     stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
+     `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path.
+   - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
+     sets `acked_at`/`answered_at` on a sent comment; `ack` sets `acked_at` and appends an `acked`
+     event (hidden from `watch` unless `--all`); `inbox` prints the catch-up and exits. All of
+     them search the default state dir plus the live sessions' state dirs, so a review whose
+     config sets another `state_dir` is still found while it runs.
+   - **Skill.** `skill/revuey/SKILL.md` (connect, Monitor with the 30-minute maximum and re-arm,
+     `show`/`reply`/`ack`, `inbox` without Monitor, no edits unless asked), `revuey` (finds
+     `bin/revuey` via `.revuey-bin`, the skill's real path, or PATH) and `launch.sh` (a tmux or
+     herdr pane to the right, returning at once and printing the session once registered).
+     `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey` (`--copy` copies and
+     writes `.revuey-bin`); an existing install is replaced only with `--force` or a yes on a
+     terminal.
+   - **Later: the chat panel** sends through the same hook and can reuse the delivery fields and
+     the thread as its transcript.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
 - Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `guide.lua`, `guide_prompt.lua`,
-  `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `cli.lua`) free of window/buffer UI so it is testable with
+  `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
 - Shell out to `git`/`gh` with `vim.system`; never block the UI for long-running work.

@@ -376,5 +376,52 @@ h.test('comments: inline thread, editor float, comments list', function()
   child.type_keys('q')
 end)
 
+-- The agent link: "● agent connected" in the panel header (a watcher with a fresh heartbeat),
+-- a comment sent and waiting for the agent, and one the agent answered.
+h.test('agent link: connected indicator, sent and answered markers', function()
+  start(fixture, 'main', 34, 120)
+  child.lua([[
+    local s = require('revuey.view').session
+    local comments = require('revuey.comments')
+    local sessions = require('revuey.sessions')
+    local link = require('revuey.agent_link')
+    local function row_of(path, kind, lnum)
+      for row, e in ipairs(s.layout.map) do
+        if e.path == path and e.kind == kind and e.new_lnum == lnum then
+          return row
+        end
+      end
+    end
+    local cv = require('revuey.comments_view')
+    local ed = require('revuey.comment_editor')
+    local store = cv.sync_store(s)
+    local function add(lnum, text)
+      local row = row_of('src/cart.ts', 'add', lnum)
+      cv.add(s, row, row)
+      vim.api.nvim_buf_set_lines(ed.current.buf, 0, -1, false, { text })
+      ed.save(ed.current)
+      for _, c in pairs(store.comments) do
+        if c.body == text then
+          return c
+        end
+      end
+    end
+    local a = add(1, 'Why import both?')
+    comments.mark_sent(store, a.id)
+    local b = add(4, 'Is this tested?')
+    comments.mark_sent(store, b.id)
+    comments.reply(store, b.id, 'Yes, in cart.test.ts.', { kind = 'agent', name = 'claude' })
+    comments.save(store)
+    -- an agent watching this review
+    sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
+      started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms() })
+    link.poll(s)
+    require('revuey.comments_view').refresh(s)
+    vim.api.nvim_win_set_cursor(s.diff_win, { row_of('src/cart.ts', 'add', 1), 0 })
+    vim.cmd('normal! zt')
+  ]])
+  screenshot('agent-link')
+end)
+
 child.stop()
 h.run()

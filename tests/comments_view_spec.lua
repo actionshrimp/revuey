@@ -407,16 +407,21 @@ h.test('a held lock never freezes the UI: saves are retried and complete once it
   keys(s, 'mr')
 end)
 
-h.test('editor: the send key is reserved (not yet available), and pluggable', function()
+h.test('editor: the send key sends to the agent session (empty text refused), and is pluggable', function()
   local row = row_of('m.txt', 'ctx', 37)
   vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
   keys(s, 'gc')
   local st = editor.current
-  vim.api.nvim_buf_set_lines(st.buf, 0, -1, false, { 'to the agent' })
   msgs = {}
   vim.api.nvim_feedkeys(vim.keycode('<C-a>'), 'mtx', false)
   h.eq(false, st.done)
-  h.ok(msgs[#msgs] and msgs[#msgs].msg:find('not available yet', 1, true), vim.inspect(msgs))
+  h.ok(msgs[#msgs] and msgs[#msgs].msg:find('empty message not sent', 1, true), vim.inspect(msgs))
+  vim.api.nvim_feedkeys(vim.keycode('<Esc>'), 'mtx', false)
+  vim.api.nvim_feedkeys('q', 'mtx', false)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+  keys(s, 'gc')
+  st = editor.current
+  vim.api.nvim_buf_set_lines(st.buf, 0, -1, false, { 'to the agent' })
   local got
   local orig = cv.actions.send
   cv.actions.send = function(ctx)

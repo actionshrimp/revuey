@@ -26,7 +26,7 @@ M.VERSION = 1
 M.EVENTS_MAX = 1024 * 1024
 M.EVENT_SNIPPET_MAX = 200 -- snippet lines in an event (the comment keeps all of them)
 M.CONTEXT = 2 -- lines of context either side in context_hash
-M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true }
+M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true }
 
 ---@class revuey.CommentAnchor
 ---@field path string
@@ -65,6 +65,10 @@ M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = tru
 ---@field outdated boolean          derived: could not be placed in the current review
 ---@field draft? string             unsaved edit of a saved comment (editor closed by accident)
 ---@field deleted? boolean          tombstone
+---@field sent_at? integer          last sent to an agent session (ms); see M.delivery
+---@field sent_reply? string        the thread reply that was sent (a follow-up), else the body
+---@field acked_at? integer         the agent acknowledged it (`bin/revuey ack`, or a reply)
+---@field answered_at? integer      the agent replied (`bin/revuey reply`)
 
 ---Milliseconds since the epoch.
 function M.now_ms()
@@ -570,6 +574,18 @@ function M.merge(a, b, prefer_a)
     return win
   end
   local out = vim.deepcopy(win)
+  -- delivery timestamps only move forward: an ack from the CLI survives a concurrent edit in the
+  -- UI, and the newest send (with the reply it sent) wins
+  if not lose.deleted then
+    if (lose.sent_at or 0) > (out.sent_at or 0) then
+      out.sent_at, out.sent_reply = lose.sent_at, lose.sent_reply
+    end
+    for _, k in ipairs({ 'acked_at', 'answered_at' }) do
+      if (lose[k] or 0) > (out[k] or 0) then
+        out[k] = lose[k]
+      end
+    end
+  end
   if not lose.deleted and (lose.thread and #lose.thread > 0) then
     local by = {}
     local order = {}
@@ -898,6 +914,151 @@ function M.find(store, query)
 end
 
 -- ---------------------------------------------------------------------------
+-- Sending to an agent session
+-- ---------------------------------------------------------------------------
+-- A sent comment keeps `status` (saved, resolved, and later an AI review's dismissed/accepted)
+-- and its `in_review` flag: delivery is separate, as timestamps that only move forward (merge).
+
+---Delivery state of a comment sent to an agent: nil (never sent), 'sent' (not acknowledged yet),
+---'seen' (acknowledged without a reply) or 'answered' (an agent replied after the last send).
+---@return nil|'sent'|'seen'|'answered'
+function M.delivery(c)
+  if not c or c.deleted or not c.sent_at then
+    return nil
+  end
+  local sent = c.sent_at
+  if (c.answered_at or 0) >= sent then
+    return 'answered'
+  end
+  for _, r in ipairs(c.thread or {}) do
+    if not r.deleted and r.author and r.author.kind == 'agent' and (r.created_at or 0) >= sent then
+      return 'answered'
+    end
+  end
+  if (c.acked_at or 0) >= sent then
+    return 'seen'
+  end
+  return 'sent'
+end
+
+---Mark a comment sent (again). `opts.reply_id`: the thread reply being sent as a follow-up.
+---@param opts? {now?:integer, reply_id?:string}
+---@return revuey.Comment?
+function M.mark_sent(store, id, opts)
+  opts = opts or {}
+  local cur = M.get(store, id)
+  if not cur then
+    return nil
+  end
+  local now = opts.now or M.now_ms()
+  local c = vim.deepcopy(cur)
+  -- strictly after anything that would count as handling an earlier send
+  local after = math.max(c.sent_at or 0, c.acked_at or 0, c.answered_at or 0)
+  for _, r in ipairs(c.thread or {}) do
+    if r.author and r.author.kind == 'agent' then
+      after = math.max(after, r.created_at or 0)
+    end
+  end
+  c.sent_at = math.max(now, after + 1)
+  c.sent_reply = opts.reply_id
+  return M.put(store, c, now)
+end
+
+local function stamp(store, id, keys, now)
+  local cur = M.get(store, id)
+  if not cur then
+    return nil
+  end
+  now = now or M.now_ms()
+  local c = vim.deepcopy(cur)
+  for _, k in ipairs(keys) do
+    c[k] = math.max(now, c.sent_at or 0)
+  end
+  return M.put(store, c, now)
+end
+
+---The agent acknowledged the comment (`bin/revuey ack`): it is not delivered again.
+function M.ack(store, id, now)
+  return stamp(store, id, { 'acked_at' }, now)
+end
+
+---The agent answered (`bin/revuey reply`): acknowledged and answered.
+function M.mark_answered(store, id, now)
+  return stamp(store, id, { 'acked_at', 'answered_at' }, now)
+end
+
+---What was sent: the follow-up reply when one was sent, else the comment's body.
+function M.message_text(c)
+  if c.sent_reply then
+    for _, r in ipairs(c.thread or {}) do
+      if r.id == c.sent_reply and not r.deleted then
+        return r.body
+      end
+    end
+  end
+  return c.body
+end
+
+---Sent comments the agent has not acknowledged yet, oldest send first (watch's catch-up, inbox).
+---@return revuey.Comment[]
+function M.unacked(store)
+  local out = {}
+  for _, c in pairs(store.comments) do
+    if not c.deleted and M.delivery(c) == 'sent' then
+      out[#out + 1] = c
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.sent_at ~= b.sent_at then
+      return a.sent_at < b.sent_at
+    end
+    return a.id < b.id
+  end)
+  return out
+end
+
+---The `sent` event of a comment: the usual event (full anchor, snippet, body, review) plus the
+---message (body or follow-up reply), its kind and sent_at. `extra`: session id etc.
+function M.sent_event(c, review, extra, now)
+  local ev = M.event('sent', c, review, nil, now)
+  ev.message = M.message_text(c)
+  ev.message_kind = c.sent_reply and 'reply' or 'comment'
+  ev.sent_at = c.sent_at
+  for k, v in pairs(extra or {}) do
+    ev[k] = v
+  end
+  return ev
+end
+
+---Identity of one send (a comment sent again is a new message): "<comment id>:<sent_at>".
+function M.message_key(x)
+  return tostring(x.comment_id or x.id) .. ':' .. tostring(x.sent_at)
+end
+
+---One line for agents: `revuey message <id> src/cart.ts:12-14 (new) [stack/cart]: <first
+---line>  (<bin> show <id> for full context)`.
+function M.message_line(ev, bin)
+  local r = ev.review or {}
+  local scope = r.scope == 'full' and 'full stack' or (r.branch or r.state_branch or '?')
+  local side = ev.file_level and 'file' or (ev.anchor and ev.anchor.side or 'new')
+  local loc = ev.location or (ev.anchor and ev.anchor.path) or '?'
+  local tag = ev.message_kind == 'reply' and ' follow-up' or ''
+  if ev.outdated then
+    tag = tag .. ' [outdated]'
+  end
+  return ('revuey message %s %s (%s) [%s]%s: %s  (%s show %s for full context)'):format(
+    ev.comment_id,
+    loc,
+    side,
+    scope,
+    tag,
+    M.first_line(ev.message or ev.body),
+    bin or 'revuey',
+    ev.comment_id
+  )
+end
+
+-- ---------------------------------------------------------------------------
 -- Events
 -- ---------------------------------------------------------------------------
 
@@ -1020,7 +1181,7 @@ function M.first_line(text)
   return l
 end
 
-local VERB = { created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send' }
+local VERB = { created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send', acked = 'ack' }
 
 ---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
 function M.event_line(ev)

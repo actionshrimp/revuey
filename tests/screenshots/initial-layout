@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//f/cart..main                                                                                          X
-02| Files                                  │ M assets/logo.png binary                                                  1/7 
+02| Files                       ○ no agent │ M assets/logo.png binary                                                  1/7 
 03| feature/cart → main                    │  M     ▾ assets/logo.png   binary                                             
 04| 7 files  +57 −22  ✓ 0/7                │          Binary file not shown                                                
 05| base ee2e6fcf  head 6b2be8a3           │                                                                               
