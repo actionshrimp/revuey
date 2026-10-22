@@ -623,6 +623,24 @@ function M.add(s, first, last)
   })
 end
 
+---The comment as it is now, after reading the file (another instance or the CLI may have
+---deleted it since this one last looked); nil when it is gone. `text`: what the user was about to
+---save, kept in the unnamed register with a message.
+local function still_there(store, id, text)
+  pcall(comments.reload, store)
+  local cur = comments.get(store, id)
+  if not cur then
+    if text and text ~= '' then
+      vim.fn.setreg('"', text)
+    end
+    vim.notify(
+      'revuey: this comment was deleted elsewhere' .. ((text and text ~= '') and '; your text is in the unnamed register' or ''),
+      vim.log.levels.WARN
+    )
+  end
+  return cur
+end
+
 ---Comments covering the cursor row (sign range or thread). Calls fn with one comment, asking
 ---which when several cover the row.
 function M.with_comment(s, fn, row)
@@ -674,8 +692,11 @@ function M.edit(s)
   M.with_comment(s, function(cmt)
     local store = cm(s).store
     local was_draft = cmt.status == 'draft'
-    local function update(fn)
-      local cur = comments.get(store, cmt.id) or cmt
+    local function update(fn, text)
+      local cur = still_there(store, cmt.id, text)
+      if not cur then
+        return nil -- deleted elsewhere: never resurrect it
+      end
       local copy = vim.deepcopy(cur)
       fn(copy)
       comments.put(store, copy)
@@ -695,24 +716,28 @@ function M.edit(s)
           if was_draft then
             x.status = 'saved'
           end
-        end)
-        save_and_emit(s, was_draft and 'created' or 'updated', c2, nil, store)
+        end, text)
+        if c2 then
+          save_and_emit(s, was_draft and 'created' or 'updated', c2, nil, store)
+        else
+          M.refresh(s)
+        end
       end,
       on_draft = function(text)
-        update(function(x)
+        if update(function(x)
           if x.status == 'draft' then
             x.body = text
           else
             x.draft = text
           end
-        end)
-        save_and_emit(s, nil, nil, nil, store)
+        end, text) then
+          save_and_emit(s, nil, nil, nil, store)
+        end
       end,
       on_cancel = function()
-        if cmt.draft then
-          update(function(x)
-            x.draft = nil
-          end)
+        if cmt.draft and update(function(x)
+          x.draft = nil
+        end) then
           save_and_emit(s, nil, nil, nil, store)
         end
       end,
@@ -735,8 +760,11 @@ function M.reply(s)
       text = cmt.reply_draft,
       startinsert = true,
       on_save = function(text)
-        local cur = comments.get(store, cmt.id)
-        if cur and cur.reply_draft then
+        local cur = still_there(store, cmt.id, text)
+        if not cur then
+          return M.refresh(s)
+        end
+        if cur.reply_draft then
           local copy = vim.deepcopy(cur)
           copy.reply_draft = nil
           comments.put(store, copy)
@@ -747,7 +775,7 @@ function M.reply(s)
         end
       end,
       on_draft = function(text)
-        local cur = comments.get(store, cmt.id)
+        local cur = still_there(store, cmt.id, text)
         if cur then
           local copy = vim.deepcopy(cur)
           copy.reply_draft = text
@@ -766,8 +794,12 @@ function M.resolve(s)
     if cmt.status == 'draft' then
       return vim.notify('revuey: save the draft first', vim.log.levels.INFO)
     end
-    local copy = vim.deepcopy(cmt)
-    copy.status = cmt.status == 'resolved' and 'saved' or 'resolved'
+    local cur = still_there(cm(s).store, cmt.id)
+    if not cur then
+      return M.refresh(s)
+    end
+    local copy = vim.deepcopy(cur)
+    copy.status = cur.status == 'resolved' and 'saved' or 'resolved'
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
   end)
