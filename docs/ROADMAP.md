@@ -9,6 +9,9 @@ sequence; later items build on earlier ones.
 - Local PR stacks: layer and full-stack scopes, restack/override/squash-merge notes.
 - AI guided review: hunk-level sections, staleness, section reviewed marks, read-only restricted `claude -p`.
 - CI on GitHub Actions.
+- Local comments and export: comments on lines, ranges (either side) and files in the diff and guide views,
+  inline threads, drafts, re-anchoring and outdated comments, per-review storage with merge-on-save, Markdown/JSON
+  export, `bin/revuey comments|watch|reply` and the comment event feed for agents.
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.

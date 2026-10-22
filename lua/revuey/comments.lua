@@ -1,0 +1,778 @@
+-- Review comments: the data model, anchoring and re-anchoring, storage with merge-on-save, and
+-- the event feed. Pure data (JSON files, no window or buffer UI), so it runs headless (tests and
+-- the `bin/revuey comments|watch|reply` CLI).
+--
+--   * A comment is anchored to a line range on one side of a file's diff (`new` for added and
+--     context lines, `old` for deleted ones), or to a whole file (`file_level`). The anchor keeps
+--     the review unit and parent hunk it was made in (units.lua) with the offset of its first
+--     line there, plus `context_hash`: a hash of the commented lines and two lines either side.
+--   * Placement (`place`), on every render: the same unit (content identical, so only shifted)
+--     or the same hunk puts the comment at the same offset; otherwise the nearest window of the
+--     same file and side whose hash matches; then (within TEXT_RADIUS lines) the nearest window
+--     with the same lines when only their context changed (lines with a few word characters);
+--     otherwise the comment is `outdated` and keeps its last known lines and the code snippet
+--     stored when it was made.
+--   * Storage: one `<state file>.comments.json` per review scope, next to the reviewed marks.
+--     Saves re-read the file and merge per comment: last writer wins by `updated_at`, deletes
+--     are tombstones (so a delete and an older edit elsewhere resolve to the delete), and thread
+--     replies merge by reply id (an agent's reply survives a concurrent edit of the body).
+--     Comments are never pruned.
+--   * Events: one JSON line per change in `<state file>.events.jsonl` (rotated to `.1` past
+--     EVENTS_MAX bytes), for `bin/revuey watch`.
+local M = {}
+
+M.VERSION = 1
+M.EVENTS_MAX = 1024 * 1024
+M.CONTEXT = 2 -- lines of context either side in context_hash
+M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true }
+
+---@class revuey.CommentAnchor
+---@field path string
+---@field side 'new'|'old'
+---@field start_line? integer       nil for a file-level comment
+---@field end_line? integer
+---@field unit_key? string          review unit the range was made in (units.lua)
+---@field unit_line? integer        offset of the first commented line in that unit (0-based)
+---@field hunk_key? string          its parent hunk
+---@field hunk_line? integer        index of the first commented line in the hunk's lines
+---@field context_hash? string
+---@field text_hash? string        the commented lines alone (when they hold some words)
+---@field snippet? string[]         the commented diff rows when made, with +/-/space markers
+
+---@class revuey.CommentReply
+---@field id string
+---@field author {kind:'user'|'ai'|'agent', name?:string}
+---@field body string
+---@field created_at integer        ms since the epoch
+---@field updated_at integer
+---@field deleted? boolean
+
+---@class revuey.Comment
+---@field id string                 sortable (creation time first), unique
+---@field anchor revuey.CommentAnchor
+---@field body string               markdown
+---@field author {kind:'user'|'ai'|'agent', name?:string}
+---@field status 'draft'|'saved'|'resolved'|'dismissed'|'accepted'
+---@field in_review boolean         "add to review" for a later forge post
+---@field thread revuey.CommentReply[]
+---@field created_at integer        ms since the epoch
+---@field updated_at integer
+---@field file_level boolean
+---@field outdated boolean          derived: could not be placed in the current review
+---@field draft? string             unsaved edit of a saved comment (editor closed by accident)
+---@field deleted? boolean          tombstone
+
+---Milliseconds since the epoch.
+function M.now_ms()
+  local s, us = vim.uv.gettimeofday()
+  return s * 1000 + math.floor(us / 1000)
+end
+
+local seeded = false
+---A sortable unique id: 11 hex digits of milliseconds, then 5 random ones.
+function M.new_id(ms)
+  if not seeded then
+    seeded = true
+    math.randomseed((vim.uv.hrtime() + vim.uv.os_getpid() * 7919) % 2147483647)
+  end
+  return ('%011x%05x'):format(ms or M.now_ms(), math.random(0, 0xfffff))
+end
+
+-- ---------------------------------------------------------------------------
+-- Anchors
+-- ---------------------------------------------------------------------------
+
+local MARK = { add = '+', del = '-', ctx = ' ' }
+
+---The side a line kind belongs to and its line number there.
+local function side_lnum(l, side)
+  if side == 'new' then
+    return l.kind ~= 'del' and l.new_lnum or nil
+  end
+  return l.kind ~= 'add' and l.old_lnum or nil
+end
+M.side_lnum = side_lnum
+
+---Hash of lines `first..last` of a side and CONTEXT lines either side. `get_line(lnum)` returns
+---the text or nil (outside the file).
+function M.window_hash(get_line, first, last)
+  local parts = {}
+  for l = first - M.CONTEXT, last + M.CONTEXT do
+    local t = get_line(l)
+    parts[#parts + 1] = t or '\1'
+  end
+  return vim.fn.sha256(table.concat(parts, '\n')):sub(1, 16)
+end
+
+---Hash of lines `first..last` alone (no context), for the last re-anchoring tier.
+function M.text_hash(get_line, first, last)
+  local parts = {}
+  for l = first, last do
+    parts[#parts + 1] = get_line(l) or '\1'
+  end
+  return vim.fn.sha256(table.concat(parts, '\n')):sub(1, 16)
+end
+
+M.TEXT_RADIUS = 100 -- the text-only tier only looks this many lines either side
+
+---Anchor for diff rows of one file (side-table entries of kind add/del/ctx, in order). The side
+---is `new` when any row has a new-side line (deleted rows between them stay in the snippet),
+---`old` when all rows are deleted lines.
+---@param files revuey.FileDiff[]
+---@param U revuey.Units
+---@param entries revuey.LineEntry[]
+---@param get_line fun(path:string, side:string, lnum:integer):string?
+---@return revuey.CommentAnchor?
+function M.anchor_from_rows(files, U, entries, get_line)
+  local code = {}
+  for _, e in ipairs(entries) do
+    if (e.kind == 'add' or e.kind == 'del' or e.kind == 'ctx') and e.file_idx and e.hunk_idx then
+      if not code[1] or code[1].file_idx == e.file_idx then
+        code[#code + 1] = e
+      end
+    end
+  end
+  if #code == 0 then
+    return nil
+  end
+  local fi = code[1].file_idx
+  local f = files[fi]
+  local side = 'old'
+  for _, e in ipairs(code) do
+    if e.kind ~= 'del' then
+      side = 'new'
+      break
+    end
+  end
+  local first_e, last_e, lo, hi
+  local snippet = {}
+  for _, e in ipairs(code) do
+    local l = f.hunks[e.hunk_idx].lines[e.line_idx]
+    snippet[#snippet + 1] = MARK[l.kind] .. l.text
+    local n = side_lnum(l, side)
+    if n then
+      first_e = first_e or e
+      last_e = e
+      lo = math.min(lo or n, n)
+      hi = math.max(hi or n, n)
+    end
+  end
+  local a = { path = f.path, side = side, start_line = lo, end_line = hi, snippet = snippet }
+  local u = require('revuey.units').at_line(U, fi, first_e.hunk_idx, first_e.line_idx)
+  if u then
+    a.unit_key, a.hunk_key = u.key, u.hunk
+    if last_e.hunk_idx == first_e.hunk_idx then
+      a.hunk_line = first_e.line_idx
+      if u.whole_file or last_e.line_idx <= u.last then
+        a.unit_line = first_e.line_idx - (u.first or 1)
+      end
+    end
+  end
+  local function get(l)
+    return get_line(f.path, side, l)
+  end
+  a.context_hash = M.window_hash(get, lo, hi)
+  -- lines that say something (not just `}` or blank): the text alone can re-anchor them
+  local words = 0
+  for l = lo, hi do
+    words = words + select(2, (get(l) or ''):gsub('%w', ''))
+  end
+  if words >= 3 then
+    a.text_hash = M.text_hash(get, lo, hi)
+  end
+  return a
+end
+
+---Anchor for a whole file.
+function M.file_anchor(path)
+  return { path = path, side = 'new' }
+end
+
+---New comment (not stored yet).
+---@param anchor revuey.CommentAnchor
+---@param body string
+---@param opts? {author?:table, status?:string, now?:integer, id?:string}
+---@return revuey.Comment
+function M.new(anchor, body, opts)
+  opts = opts or {}
+  local now = opts.now or M.now_ms()
+  return {
+    id = opts.id or M.new_id(now),
+    anchor = anchor,
+    body = body,
+    author = opts.author or { kind = 'user' },
+    status = opts.status or 'saved',
+    in_review = false,
+    thread = {},
+    created_at = now,
+    updated_at = now,
+    file_level = anchor.start_line == nil,
+    outdated = false,
+  }
+end
+
+---"src/cart.ts:12-14", "src/cart.ts:12" or "src/cart.ts" (file level).
+function M.location(c)
+  local a = c.anchor
+  if c.file_level or not a.start_line then
+    return a.path
+  end
+  if a.end_line and a.end_line ~= a.start_line then
+    return ('%s:%d-%d'):format(a.path, a.start_line, a.end_line)
+  end
+  return ('%s:%d'):format(a.path, a.start_line)
+end
+
+-- ---------------------------------------------------------------------------
+-- Placement (re-anchoring)
+-- ---------------------------------------------------------------------------
+
+---@class revuey.CommentPlacement
+---@field start_line? integer
+---@field end_line? integer
+---@field outdated boolean
+---@field how 'file'|'unit'|'hunk'|'hash'|'outdated'|'missing'
+---@field unit? revuey.Unit         unit holding the first line (when placed)
+---@field hunk_line? integer
+
+---Placement context for a review: its files and units, and full side texts when available.
+---@param files revuey.FileDiff[]
+---@param U revuey.Units
+---@param get_text? fun(path:string, side:string):string?  full text of a side (nil: shown lines only)
+function M.context(files, U, get_text)
+  local ctx = { files = files, U = U, shown = {}, lines = {} }
+  ---lnum -> {fi, hi, li} of the rows shown on a side, built lazily per path and side
+  function ctx.rows(path, side)
+    local key = path .. '\0' .. side
+    if ctx.shown[key] then
+      return ctx.shown[key]
+    end
+    local t = { by_lnum = {}, sorted = {} }
+    local fi = U.by_path[path]
+    local f = fi and files[fi]
+    for hi, hk in ipairs(f and f.hunks or {}) do
+      for li, l in ipairs(hk.lines) do
+        local n = side_lnum(l, side)
+        if n and not t.by_lnum[n] then
+          t.by_lnum[n] = { fi = fi, hi = hi, li = li, text = l.text }
+          t.sorted[#t.sorted + 1] = n
+        end
+      end
+    end
+    table.sort(t.sorted)
+    ctx.shown[key] = t
+    return t
+  end
+  function ctx.get_line(path, side, lnum)
+    local key = path .. '\0' .. side
+    local lines = ctx.lines[key]
+    if lines == nil then
+      local text = get_text and get_text(path, side)
+      lines = text and vim.split((text:gsub('\r\n', '\n'):gsub('\n$', '')), '\n', { plain = true }) or false
+      ctx.lines[key] = lines
+    end
+    if lines then
+      return lines[lnum]
+    end
+    local r = ctx.rows(path, side).by_lnum[lnum]
+    return r and r.text or nil
+  end
+  return ctx
+end
+
+local function at_offset(ctx, u, li, a)
+  local f = ctx.files[u.file_idx]
+  local hk = f and u.hunk_idx and f.hunks[u.hunk_idx]
+  local l = hk and hk.lines[li]
+  local n = l and side_lnum(l, a.side)
+  if not n then
+    return nil
+  end
+  local first = n
+  return { start_line = first, end_line = first + (a.end_line - a.start_line), outdated = false, unit = u, hunk_line = li }
+end
+
+---Where comment `c` goes in the review described by `ctx` (see M.context).
+---@param c revuey.Comment
+---@return revuey.CommentPlacement
+function M.place(c, ctx)
+  local a = c.anchor
+  local U = ctx.U
+  local fi = U.by_path[a.path]
+  if c.file_level or not a.start_line then
+    return { outdated = fi == nil, how = fi and 'file' or 'missing' }
+  end
+  local out = { start_line = a.start_line, end_line = a.end_line, outdated = true, how = fi and 'outdated' or 'missing' }
+  if not fi then
+    return out
+  end
+  -- 1. the same unit (identical content, maybe shifted), then the same hunk
+  local u = a.unit_key and U.by_key[a.unit_key]
+  if u and u.path == a.path and a.unit_line and not u.whole_file then
+    local p = at_offset(ctx, u, (u.first or 1) + a.unit_line, a)
+    if p then
+      p.how = 'unit'
+      return p
+    end
+  end
+  local hunk_units = a.hunk_key and U.by_hunk[a.hunk_key]
+  if hunk_units and hunk_units[1] and hunk_units[1].path == a.path and a.hunk_line and not hunk_units[1].whole_file then
+    local p = at_offset(ctx, hunk_units[1], a.hunk_line, a)
+    if p then
+      p.unit = require('revuey.units').at_line(U, p.unit.file_idx, p.unit.hunk_idx, a.hunk_line) or p.unit
+      p.how = 'hunk'
+      return p
+    end
+  end
+  -- 2. the nearest window of shown lines with the same context hash; 3. the nearest one (not too
+  -- far) with the same lines, when only the context around them changed
+  local rows = ctx.rows(a.path, a.side)
+  local n = a.end_line - a.start_line
+  local function get(l)
+    return ctx.get_line(a.path, a.side, l)
+  end
+  local function search(hash, fn, radius)
+    local best
+    for _, p in ipairs(rows.sorted) do
+      local d = math.abs(p - a.start_line)
+      if rows.by_lnum[p + n] and (not radius or d <= radius) and (not best or d < math.abs(best - a.start_line)) then
+        local all = true
+        for l = p + 1, p + n - 1 do
+          if not rows.by_lnum[l] then
+            all = false
+            break
+          end
+        end
+        if all and fn(get, p, p + n) == hash then
+          best = p
+        end
+      end
+    end
+    return best
+  end
+  for _, tier in ipairs({
+    { hash = a.context_hash, fn = M.window_hash, how = 'hash' },
+    { hash = a.text_hash, fn = M.text_hash, how = 'text', radius = M.TEXT_RADIUS },
+  }) do
+    local best = tier.hash and search(tier.hash, tier.fn, tier.radius)
+    if best then
+      local r = rows.by_lnum[best]
+      local unit = require('revuey.units').at_line(U, r.fi, r.hi, r.li)
+      return { start_line = best, end_line = best + n, outdated = false, how = tier.how, unit = unit, hunk_line = r.li }
+    end
+  end
+  return out
+end
+
+---Update a comment's stored anchor from its placement ("last known" lines, unit and hunk; the
+---outdated flag). Returns true when anything changed. `updated_at` is left alone: this is
+---derived state, and every instance derives the same.
+function M.apply_placement(c, p)
+  local changed = false
+  local function set(t, k, v)
+    if t[k] ~= v then
+      t[k] = v
+      changed = true
+    end
+  end
+  set(c, 'outdated', p.outdated and true or false)
+  if not p.outdated and p.start_line then
+    local a = c.anchor
+    set(a, 'start_line', p.start_line)
+    set(a, 'end_line', p.end_line)
+    if p.unit then
+      set(a, 'unit_key', p.unit.key)
+      set(a, 'hunk_key', p.unit.hunk)
+      if a.hunk_line ~= nil or a.unit_line ~= nil then
+        set(a, 'hunk_line', p.hunk_line)
+        set(a, 'unit_line', p.hunk_line - (p.unit.first or 1))
+      end
+    end
+  end
+  return changed
+end
+
+-- ---------------------------------------------------------------------------
+-- Merging
+-- ---------------------------------------------------------------------------
+
+local function newer(a, b, prefer_a)
+  local ta, tb = a.updated_at or 0, b.updated_at or 0
+  if ta ~= tb then
+    return ta > tb
+  end
+  return prefer_a
+end
+
+---Merge two versions of one comment (either may be nil): last writer wins by `updated_at`
+---(ties: `a` when `prefer_a`), a tombstone wins over older versions, thread replies are
+---merged by id (each reply last writer wins too).
+---@return revuey.Comment?
+function M.merge(a, b, prefer_a)
+  if not a then
+    return b
+  end
+  if not b then
+    return a
+  end
+  local win, lose
+  if newer(a, b, prefer_a) then
+    win, lose = a, b
+  else
+    win, lose = b, a
+  end
+  if win.deleted then
+    return win
+  end
+  local out = vim.deepcopy(win)
+  if not lose.deleted and (lose.thread and #lose.thread > 0) then
+    local by = {}
+    local order = {}
+    for _, src in ipairs({ { t = win.thread or {}, pref = true }, { t = lose.thread, pref = false } }) do
+      for _, r in ipairs(src.t) do
+        local cur = by[r.id]
+        if not cur then
+          order[#order + 1] = r.id
+          by[r.id] = r
+        elseif newer(r, cur, false) then
+          by[r.id] = r
+        end
+      end
+    end
+    out.thread = {}
+    for _, id in ipairs(order) do
+      out.thread[#out.thread + 1] = vim.deepcopy(by[id])
+    end
+    table.sort(out.thread, function(x, y)
+      if (x.created_at or 0) ~= (y.created_at or 0) then
+        return (x.created_at or 0) < (y.created_at or 0)
+      end
+      return x.id < y.id
+    end)
+    -- a reply newer than the winning body still counts as the latest change
+    for _, r in ipairs(out.thread) do
+      out.updated_at = math.max(out.updated_at or 0, r.updated_at or 0)
+    end
+  end
+  return out
+end
+
+---Merge two id -> comment maps. `prefer` (set of ids, or true for all) breaks ties toward `a`.
+function M.merge_all(a, b, prefer)
+  local out = {}
+  for id, c in pairs(b) do
+    out[id] = c
+  end
+  for id, c in pairs(a) do
+    out[id] = M.merge(c, out[id], prefer == true or (type(prefer) == 'table' and prefer[id]) or false)
+  end
+  return out
+end
+
+-- ---------------------------------------------------------------------------
+-- Storage
+-- ---------------------------------------------------------------------------
+
+---Comments file of a review scope: next to its reviewed-marks file (state.file_for).
+function M.path_for(state_path)
+  return (state_path:gsub('%.json$', '')) .. '.comments.json'
+end
+
+---Events file of a review scope.
+function M.events_path_for(state_path)
+  return (state_path:gsub('%.json$', '')) .. '.events.jsonl'
+end
+
+local backup_seq = 0
+
+---Decoded comments file, or nil (missing; an undecodable file is moved aside).
+function M.read(path)
+  local fd = io.open(path, 'r')
+  if not fd then
+    return nil
+  end
+  local text = fd:read('*a')
+  fd:close()
+  local ok, data = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
+  if ok and type(data) == 'table' and type(data.comments) == 'table' then
+    -- an empty object may come back as a list
+    if vim.islist(data.comments) and #data.comments == 0 then
+      data.comments = {}
+    end
+    for _, c in pairs(data.comments) do
+      if type(c) == 'table' and not c.deleted then
+        c.thread = type(c.thread) == 'table' and c.thread or {}
+        c.anchor = type(c.anchor) == 'table' and c.anchor or { path = '?', side = 'new' }
+      end
+    end
+    return data
+  end
+  if text ~= '' then
+    backup_seq = backup_seq + 1
+    os.rename(path, ('%s.corrupt-%d-%d-%d'):format(path, os.time(), vim.uv.os_getpid(), backup_seq))
+  end
+  return nil
+end
+
+---@class revuey.CommentStore
+---@field path string
+---@field review table              review info (repo, branch, base, scope...) as last saved
+---@field comments table<string, revuey.Comment>  includes tombstones
+---@field _dirty table<string, boolean>
+
+---@return revuey.CommentStore
+function M.load(path)
+  local data = M.read(path) or {}
+  return { path = path, review = data.review or {}, comments = data.comments or {}, _dirty = {} }
+end
+
+local function encode(store)
+  local comments = next(store.comments) and store.comments or vim.empty_dict()
+  return vim.json.encode({ version = M.VERSION, review = store.review, comments = comments })
+end
+
+---Persist: re-read the file, merge (this instance's changed comments win ties), write a temp
+---file and rename it. Pending changes are kept on failure. Errors on failure.
+---@param store revuey.CommentStore
+---@param review? table review info to record (repo, branch, base, scope...)
+function M.save(store, review)
+  vim.fn.mkdir(vim.fs.dirname(store.path), 'p')
+  local disk = M.read(store.path) or {}
+  local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
+  local out = { path = store.path, review = review or store.review or disk.review or {}, comments = merged }
+  if not review and disk.review and next(disk.review) then
+    out.review = vim.tbl_extend('keep', store.review or {}, disk.review)
+  end
+  local tmp = ('%s.tmp.%d.%d'):format(store.path, vim.uv.os_getpid(), math.random(0, 0xffffff))
+  local fd, err = io.open(tmp, 'w')
+  if not fd then
+    error('revuey: cannot write comments: ' .. tostring(err))
+  end
+  local ok, werr = fd:write(encode(out))
+  local cok, cerr = fd:close()
+  if not ok or not cok then
+    os.remove(tmp)
+    error('revuey: cannot write comments: ' .. tostring(werr or cerr))
+  end
+  local rok, rerr = os.rename(tmp, store.path)
+  if not rok then
+    os.remove(tmp)
+    error('revuey: cannot write comments: ' .. tostring(rerr))
+  end
+  store.comments = merged
+  store.review = out.review
+  store._dirty = {}
+end
+
+---Merge the file into memory (another instance or the CLI changed it). Pending local changes win
+---ties. Returns true when anything visible changed.
+---@param store revuey.CommentStore
+function M.reload(store)
+  local disk = M.read(store.path)
+  if not disk then
+    return false
+  end
+  local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
+  local changed = not vim.deep_equal(merged, store.comments)
+  store.comments = merged
+  if disk.review and next(disk.review) then
+    store.review = store.review and next(store.review) and store.review or disk.review
+  end
+  return changed
+end
+
+local function touch(store, c, now)
+  now = now or M.now_ms()
+  local prev = store.comments[c.id]
+  c.updated_at = math.max(now, ((prev and prev.updated_at) or 0) + 1, (c.updated_at or 0))
+  store.comments[c.id] = c
+  store._dirty[c.id] = true
+  return c
+end
+
+---Add or replace a comment (bumps updated_at). In memory until `save`.
+function M.put(store, c, now)
+  return touch(store, c, now)
+end
+
+---Get a live (not deleted) comment.
+function M.get(store, id)
+  local c = store.comments[id]
+  if c and not c.deleted then
+    return c
+  end
+end
+
+---Delete: a tombstone that wins over older versions elsewhere.
+function M.delete(store, id, now)
+  local c = store.comments[id]
+  if not c or c.deleted then
+    return nil
+  end
+  local t = { id = id, deleted = true, deleted_at = now or M.now_ms(), updated_at = c.updated_at }
+  touch(store, t, now)
+  return c
+end
+
+---Append a reply to a comment's thread.
+---@return revuey.CommentReply?
+function M.reply(store, id, body, author, now)
+  local c = M.get(store, id)
+  if not c then
+    return nil
+  end
+  now = now or M.now_ms()
+  local r = { id = M.new_id(now), author = author or { kind = 'user' }, body = body, created_at = now, updated_at = now }
+  c = vim.deepcopy(c)
+  c.thread[#c.thread + 1] = r
+  touch(store, c, now)
+  return r
+end
+
+---Live comments, ordered by file, line (file-level first), side and creation.
+---@param opts? {include_resolved?:boolean, include_drafts?:boolean}
+---@return revuey.Comment[]
+function M.list(store, opts)
+  opts = opts or {}
+  local out = {}
+  for _, c in pairs(store.comments) do
+    if not c.deleted then
+      local hide = (c.status == 'resolved' or c.status == 'dismissed') and not opts.include_resolved
+      hide = hide or (c.status == 'draft' and not opts.include_drafts)
+      if not hide then
+        out[#out + 1] = c
+      end
+    end
+  end
+  return M.sort(out)
+end
+
+function M.sort(list)
+  table.sort(list, function(x, y)
+    local ax, ay = x.anchor, y.anchor
+    if ax.path ~= ay.path then
+      return ax.path < ay.path
+    end
+    local lx, ly = ax.start_line or 0, ay.start_line or 0
+    if lx ~= ly then
+      return lx < ly
+    end
+    if ax.side ~= ay.side then
+      return ax.side == 'old'
+    end
+    return x.id < y.id
+  end)
+  return list
+end
+
+---Find a comment by full id, unique prefix or unique substring.
+---@return revuey.Comment? c, string? err
+function M.find(store, query)
+  local exact = M.get(store, query)
+  if exact then
+    return exact
+  end
+  local hits = {}
+  for id, c in pairs(store.comments) do
+    if not c.deleted and id:find(query, 1, true) then
+      hits[#hits + 1] = c
+    end
+  end
+  if #hits == 1 then
+    return hits[1]
+  end
+  return nil, #hits == 0 and ('no comment ' .. query) or ('ambiguous comment id ' .. query)
+end
+
+-- ---------------------------------------------------------------------------
+-- Events
+-- ---------------------------------------------------------------------------
+
+---One event line: the comment's full anchor, snippet and body, plus the reply for `replied`.
+---@param kind string one of M.EVENT_KINDS
+---@param c revuey.Comment
+---@param review table review info
+---@param extra? table merged in (e.g. reply = {...})
+function M.event(kind, c, review, extra, now)
+  assert(M.EVENT_KINDS[kind], 'unknown comment event ' .. tostring(kind))
+  now = now or M.now_ms()
+  local ev = {
+    id = M.new_id(now),
+    kind = kind,
+    at = now,
+    comment_id = c.id,
+    review = review or {},
+    location = M.location(c),
+    anchor = c.anchor,
+    snippet = c.anchor and c.anchor.snippet or {},
+    body = c.body,
+    author = c.author,
+    status = c.status,
+    file_level = c.file_level or false,
+    outdated = c.outdated or false,
+  }
+  for k, v in pairs(extra or {}) do
+    ev[k] = v
+  end
+  return ev
+end
+
+---Append an event (rotating the file to `.1` past EVENTS_MAX bytes).
+function M.append_event(path, ev)
+  vim.fn.mkdir(vim.fs.dirname(path), 'p')
+  local st = vim.uv.fs_stat(path)
+  if st and st.size > M.EVENTS_MAX then
+    os.rename(path, path .. '.1')
+  end
+  local fd, err = io.open(path, 'a')
+  if not fd then
+    return false, err
+  end
+  fd:write(vim.json.encode(ev) .. '\n')
+  fd:close()
+  return true
+end
+
+---Decode event lines (bad lines skipped).
+function M.decode_events(text)
+  local out = {}
+  for line in text:gmatch('[^\n]+') do
+    local ok, ev = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
+    if ok and type(ev) == 'table' and ev.id then
+      out[#out + 1] = ev
+    end
+  end
+  return out
+end
+
+---The first line of a text, trimmed (for one-line summaries).
+function M.first_line(text)
+  local l = vim.trim((text or ''):match('^%s*([^\n]*)') or '')
+  return l
+end
+
+local VERB = { created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send' }
+
+---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
+function M.event_line(ev)
+  local verb = VERB[ev.kind] or ev.kind
+  if ev.kind == 'resolved' and ev.status ~= 'resolved' then
+    verb = 'reopen'
+  end
+  local loc = ev.location or (ev.anchor and ev.anchor.path) or '?'
+  local side = ev.file_level and 'file' or (ev.anchor and ev.anchor.side or 'new')
+  local text = ev.body
+  local who = ''
+  if ev.kind == 'replied' and ev.reply then
+    text = ev.reply.body
+    local a = ev.reply.author or {}
+    who = ' from ' .. (a.name or a.kind or 'user')
+  end
+  local out = ('%s %s (%s)%s: %s'):format(verb, loc, side, who, M.first_line(text))
+  if ev.outdated then
+    out = out .. ' [outdated]'
+  end
+  return out .. '  #' .. tostring(ev.comment_id)
+end
+
+return M

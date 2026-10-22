@@ -105,6 +105,16 @@ function M.setup()
   set('RevueyStackWarn', { link = 'DiagnosticWarn' })
   set('RevueyStackTitle', { link = 'Title' })
   set('RevueyStackBranch', { link = 'Identifier' })
+  -- comments
+  set('RevueyCommentSign', { link = 'DiagnosticInfo' })
+  set('RevueyCommentBorder', { link = 'FloatBorder' })
+  set('RevueyCommentAuthor', { link = 'Title' })
+  set('RevueyCommentMeta', { link = 'Comment' })
+  set('RevueyCommentText', { link = 'Normal' })
+  set('RevueyCommentDraft', { link = 'DiagnosticWarn' })
+  set('RevueyCommentResolved', { link = 'DiagnosticOk' })
+  set('RevueyCommentOutdated', { link = 'DiagnosticWarn' })
+  set('RevueyCommentTitle', { link = 'FloatTitle' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })
