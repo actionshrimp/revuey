@@ -182,7 +182,8 @@ end
 
 ---Document for layout.compose_guide (see revuey.GuideDocItem).
 ---@param width integer prose wrap width
-function M.doc(s, width)
+---@param diagram_width? integer overview diagram width (default: `width`)
+function M.doc(s, width, diagram_width)
   local g = s.guide or M.prepare(s)
   local doc = {}
   s.guide_status_line = nil
@@ -234,7 +235,7 @@ function M.doc(s, width)
   end
   if res.diagram then
     line(doc, '', nil, 'blank')
-    M.add_diagram(doc, res.diagram, width)
+    M.add_diagram(doc, res.diagram, diagram_width or width)
   end
   for si, sec in ipairs(res.sections) do
     line(doc, '', nil, 'blank')

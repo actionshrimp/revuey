@@ -198,7 +198,9 @@ Boxes are coloured by kind (`RevueyDiagramNew`, `RevueyDiagramChanged`, `RevueyD
 The drawing is redone when the window is resized; when it can't fit, it becomes a list
 (`index.ts ──new Cart──▶ cart.ts`). `<CR>` on a box jumps to the section that covers it, and
 `<Tab>` (or `<CR>`, `za`) on the "Overview" heading folds the diagram. `:RevueyGuideDiagram mermaid`
-copies it as Mermaid text. Small changes get no diagram.
+copies it as Mermaid text. Small changes get no diagram. The diagram uses the full window
+width (prose is capped at 100 columns). It assumes `ambiwidth=single`: box-drawing characters
+are ambiguous-width, so with `ambiwidth=double` the boxes misalign (the list form still reads).
 
 **Branch labels (full stack).** In the full-stack scope each hunk header shows, right-aligned,
 the branch that introduced it, for example `[stack/cart]`, or several (`[stack/cart, stack/ui]`)

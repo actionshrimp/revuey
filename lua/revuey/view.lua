@@ -1577,7 +1577,8 @@ function M.capture_guide(s)
   elseif e and e.meta == 'section' then
     saved.anchor = { section_idx = e.section_idx }
   elseif e and e.kind == 'diagram' then
-    saved.anchor = { diagram = true }
+    -- the same row of the diagram (it may be laid out again at another width), clamped on restore
+    saved.anchor = { diagram = saved.row - (s.layout.diagram and s.layout.diagram.start_row or saved.row), col = saved.col }
   end
   return saved
 end
@@ -1600,7 +1601,10 @@ find_guide_anchor = function(s, a)
     elseif a.section_idx and e.meta == 'section' and e.section_idx == a.section_idx then
       return row
     elseif a.diagram and e.kind == 'diagram' then
-      return row
+      local r = s.layout.diagram or { start_row = row, end_row = row }
+      local target = math.min(r.start_row + a.diagram, r.end_row)
+      local len = #(s.layout.lines[target] or '')
+      return target, math.max(math.min(a.col or 0, len - 1), 0)
     end
   end
   if best then
@@ -1610,6 +1614,12 @@ find_guide_anchor = function(s, a)
 end
 
 ---Prose wrap width for the guide: the diff window minus the line-number columns, capped.
+---Diagram width: the whole text area (not capped like prose, so wide graphs keep their boxes).
+local function diagram_width(s)
+  local w = api.nvim_win_is_valid(s.diff_win) and api.nvim_win_get_width(s.diff_win) or 100
+  return math.max(30, w - (2 * (s.numw or 3) + 4) - 2)
+end
+
 local function prose_width(s)
   local w = api.nvim_win_is_valid(s.diff_win) and api.nvim_win_get_width(s.diff_win) or 100
   return math.max(30, math.min(w - (2 * (s.numw or 3) + 4) - 2, 100))
@@ -1637,8 +1647,8 @@ local function render(s, saved)
   s.numw = compute_numw(s.review)
   guide_view.prepare(s)
   if s.view_mode == 'guide' then
-    s.prose_width = prose_width(s)
-    s.layout = layout_mod.compose_guide(s.review.files, guide_view.doc(s, s.prose_width))
+    s.prose_width, s.diagram_width = prose_width(s), diagram_width(s)
+    s.layout = layout_mod.compose_guide(s.review.files, guide_view.doc(s, s.prose_width, s.diagram_width))
   else
     s.layout = layout_mod.compose(s.review.files)
   end
@@ -1882,7 +1892,7 @@ function M.show(review, opts)
       if M.session ~= s or s.view_mode ~= 'guide' or not api.nvim_win_is_valid(s.diff_win) then
         return
       end
-      if prose_width(s) ~= s.prose_width then
+      if prose_width(s) ~= s.prose_width or (s.layout.diagram and diagram_width(s) ~= s.diagram_width) then
         M.rerender(s)
       end
     end,
