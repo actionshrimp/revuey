@@ -34,11 +34,12 @@ h.test('composes lines with side table', function()
   h.eq({ start_row = 1, end_row = 7, hunk_rows = { 2 } }, l.files[1])
   h.eq({ start_row = 8, end_row = 10, hunk_rows = {} }, l.files[2])
   h.eq({ { row = 2, file_idx = 1, first_change = 4 } }, l.hunks)
+  h.eq({ { start_row = 2, end_row = 6 } }, l.blocks, 'one fold block per hunk')
   h.eq(6, layout.find_new_row(l, files, 'a.ts', 3))
   h.eq(nil, layout.find_new_row(l, files, 'a.ts', 99))
 end)
 
-h.test('fold levels: file folds and long context runs', function()
+h.test('fold levels: file folds, hunk folds and long context runs', function()
   local lines = { 'diff --git a/x b/x', 'index ' .. string.rep('a', 40) .. '..' .. string.rep('b', 40), '--- a/x', '+++ b/x' }
   lines[#lines + 1] = '@@ -1,21 +1,21 @@'
   lines[#lines + 1] = '-old'
@@ -50,11 +51,13 @@ h.test('fold levels: file folds and long context runs', function()
   local l = layout.compose(files)
   local f = layout.fold_levels(l, 12, 3)
   h.eq('>1', f[1])
-  h.eq('1', f[2])
+  -- the hunk (header row 2, lines 3..24) is a level-2 fold
+  h.eq('>2', f[2])
+  h.eq('2', f[3])
   -- ctx rows are 5..24; the run touches the end of the file, so fold from row 5+3=8 to 24
-  h.eq('1', f[7])
-  h.eq('>2', f[8])
-  h.eq('2', f[24])
+  h.eq('2', f[7])
+  h.eq('>3', f[8])
+  h.eq('3', f[24])
   h.eq('1', f[25])
 end)
 

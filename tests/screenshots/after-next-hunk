@@ -15,7 +15,7 @@
 14|   R  text.ts  src                 +2 −2│     10 +                                                                      
 15|                                        │     11 + export class Cart {                                                  
 16| <CR> show  mr reviewed  gp diff        │     12 +   private items: LineItem[] = [];                                    
-17| ]c [c hunk  ]f [f file  za fold        │     13 +                                                                      
+17| ]c [c hunk  ]f [f file  <Tab> fold     │     13 +                                                                      
 18| gd def  K hover  go open  R refresh    │     14 +   addItem(item: LineItem): this {                                    
 19| gu committed/working tree  q close     │     15 +     this.items.push(item);                                           
 20| gG AI guide                            │     16 +     return this;                                                     
@@ -47,7 +47,7 @@
 14|9:9IL94444444@@@@@99999999999999999::???4JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 15|99999999999999999999999999999999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 16|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
-17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@99994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 20|@@@@@@@@@@@@99999999999999999999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH

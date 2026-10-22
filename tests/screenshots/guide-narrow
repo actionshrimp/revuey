@@ -19,7 +19,7 @@
 18|   R  text.ts  src                 +2 −2│      2 + import { formatCurrency } from "./format";       
 19|                                        │      3 + import { capitalize } from "./text";             
 20| ]] [[ section  mr section reviewed     │      4 +                                                  
-21| ]c [c hunk  za fold  gp diff           │      5 + export interface LineItem {                      
+21| ]c [c hunk  <Tab> fold  gp diff        │      5 + export interface LineItem {                      
 22| gd def  K hover  go open  R refresh    │      6 +   name: string;                                  
 23| gG diff view  gR regenerate  q close   │      7 +   price: number;                                 
 24|~                                       │      8 +   quantity: number;                              
@@ -61,7 +61,7 @@
 18|7<7CF744444448888877777777777777777<<@@@4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 19|77777777777777777777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 20|88888888888888888888888888888888888777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-21|88888888888888888888888888888777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+21|88888888888888888888888888888888777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 22|88888888888888888888888888888888888877774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 23|88888888888888888888888888888888888887774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 24|========================================4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO

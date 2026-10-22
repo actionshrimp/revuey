@@ -40,6 +40,7 @@ local M = {}
 ---@field hunks {row:integer, file_idx:integer, first_change:integer}[]
 ---@field hunk_base table<integer, table<integer, integer>> [file_idx][hunk_idx] = row such that
 ---  line k of the hunk is at row + k
+---@field blocks {start_row:integer, end_row:integer}[] one per hunk (header to last row): level-2 folds
 ---@field sections? {start_row:integer, end_row:integer, section_idx:integer}[] guide only
 ---@field file_rows? table<integer, integer> guide only: first row showing each file
 
@@ -139,7 +140,7 @@ end
 ---@param files revuey.FileDiff[]
 ---@return revuey.Layout
 function M.compose(files)
-  local lines, map, ranges, hunks, base = {}, {}, {}, {}, {}
+  local lines, map, ranges, hunks, base, blocks = {}, {}, {}, {}, {}, {}
   local push = pusher(lines, map)
 
   for fi, f in ipairs(files) do
@@ -155,11 +156,12 @@ function M.compose(files)
       range.hunk_rows[#range.hunk_rows + 1] = header_row
       base[fi][hi] = header_row
       hunks[#hunks + 1] = { row = header_row, file_idx = fi, first_change = first_change }
+      blocks[#blocks + 1] = { start_row = header_row, end_row = #lines }
     end
     range.end_row = push('', { kind = 'meta', meta = 'blank', file_idx = fi, path = f.path })
     ranges[fi] = range
   end
-  return { kind = 'diff', lines = lines, map = map, files = ranges, hunks = hunks, hunk_base = base }
+  return { kind = 'diff', lines = lines, map = map, files = ranges, hunks = hunks, hunk_base = base, blocks = blocks }
 end
 
 ---@class revuey.GuideDocItem
@@ -181,7 +183,7 @@ end
 ---@param doc revuey.GuideDocItem[]
 ---@return revuey.Layout
 function M.compose_guide(files, doc)
-  local lines, map, hunks, base, sections, first_row = {}, {}, {}, {}, {}, {}
+  local lines, map, hunks, base, sections, first_row, blocks = {}, {}, {}, {}, {}, {}, {}
   local push = pusher(lines, map)
   local cur
   -- a buffer line can never hold a newline (model text is sanitised; this is the last guard)
@@ -249,6 +251,7 @@ function M.compose_guide(files, doc)
         end
         push(M.file_note(f) or '', { kind = 'meta', meta = 'note', file_idx = fi, path = f.path, section_idx = item.section_idx })
       end
+      blocks[#blocks + 1] = { start_row = header_row, end_row = #lines }
       first_row[fi] = first_row[fi] or header_row
     else
       prose(item)
@@ -264,6 +267,7 @@ function M.compose_guide(files, doc)
     files = {},
     hunks = hunks,
     hunk_base = base,
+    blocks = blocks,
     sections = sections,
     file_rows = first_row,
   }
@@ -296,9 +300,10 @@ function M.find_new_row(layout, files, path, lnum)
   end
 end
 
----Fold levels for 'foldexpr': each file is a level-1 fold starting at its header; runs of
----more than `ctx_threshold` context lines get a level-2 fold over their middle (keeping `keep`
----lines visible at each end).
+---Fold levels for 'foldexpr': each file (guide: each section) is a level-1 fold starting at its
+---header; each hunk block is a level-2 fold starting at its header row; runs of more than
+---`ctx_threshold` context lines get a level-3 fold over their middle (keeping `keep` lines visible
+---at each end). The window's 'foldlevel' is 2, so only the context folds start closed.
 ---@param layout revuey.Layout
 ---@param ctx_threshold integer
 ---@param keep integer
@@ -310,6 +315,12 @@ function M.fold_levels(layout, ctx_threshold, keep)
     levels[r.start_row] = '>1'
     for row = r.start_row + 1, r.end_row do
       levels[row] = '1'
+    end
+  end
+  for _, b in ipairs(layout.blocks or {}) do
+    levels[b.start_row] = '>2'
+    for row = b.start_row + 1, b.end_row do
+      levels[row] = '2'
     end
   end
   local map = layout.map
@@ -332,9 +343,9 @@ function M.fold_levels(layout, ctx_threshold, keep)
           fe = e
         end
         if fe - fs + 1 >= 4 then
-          levels[fs] = '>2'
+          levels[fs] = '>3'
           for r2 = fs + 1, fe do
-            levels[r2] = '2'
+            levels[r2] = '3'
           end
         end
       end

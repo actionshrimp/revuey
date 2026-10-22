@@ -19,7 +19,7 @@
 18|   R  text.ts  src                 +2 −2│      9 + }                                                                              
 19|                                        │     10 +                                                                                
 20| ]] [[ section  mr section reviewed     │     11 + export class Cart {                                                            
-21| ]c [c hunk  za fold  gp diff           │     12 +   private items: LineItem[] = [];                                              
+21| ]c [c hunk  <Tab> fold  gp diff        │     12 +   private items: LineItem[] = [];                                              
 22| gd def  K hover  go open  R refresh    │     13 +                                                                                
 23| gG diff view  gR regenerate  q close   │     14 +   addItem(item: LineItem): this {                                              
 24|~                                       │     15 +     this.items.push(item);                                                     
@@ -61,7 +61,7 @@
 18|7>7DO744444448888877777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 19|77777777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 20|88888888888888888888888888888888888777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-21|88888888888888888888888888888777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+21|88888888888888888888888888888888777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 22|88888888888888888888888888888888888877774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 23|88888888888888888888888888888888888887774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 24|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN

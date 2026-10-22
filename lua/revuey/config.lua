@@ -35,7 +35,11 @@ M.defaults = {
     definition = 'gd',
     hover = 'K',
     toggle_reviewed = 'mr',
-    focus_panel = 'gp', -- not <Tab>: that is <C-i> (jumplist forward)
+    focus_panel = 'gp',
+    -- <Tab> on a title line (file header, hunk header, guide section heading) collapses/expands that
+    -- block; on any other line it is <C-i> (jumplist forward), since most terminals send the same key
+    toggle_fold = '<Tab>',
+    toggle_all_folds = '<S-Tab>', -- collapse every file (guide: section), or expand them all
     refresh = 'R',
     toggle_mode = 'gu', -- working tree <-> committed only
     -- stacks (only active when a stack is detected). ]s/[s shadow spell navigation, which is

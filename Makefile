@@ -1,5 +1,5 @@
 NVIM ?= nvim
-SPECS := tests/stack_spec.lua tests/stack_view_spec.lua tests/diff_spec.lua tests/layout_spec.lua tests/state_spec.lua tests/linemap_spec.lua tests/syntax_spec.lua tests/e2e_spec.lua tests/worktree_spec.lua tests/worktree_edge_spec.lua tests/guide_spec.lua tests/guide_view_spec.lua tests/lsp_spec.lua tests/screen_spec.lua tests/bin_spec.lua
+SPECS := tests/stack_spec.lua tests/stack_view_spec.lua tests/diff_spec.lua tests/layout_spec.lua tests/state_spec.lua tests/linemap_spec.lua tests/syntax_spec.lua tests/e2e_spec.lua tests/fold_spec.lua tests/worktree_spec.lua tests/worktree_edge_spec.lua tests/guide_spec.lua tests/guide_view_spec.lua tests/lsp_spec.lua tests/screen_spec.lua tests/bin_spec.lua
 
 .PHONY: test fixture
 

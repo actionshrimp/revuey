@@ -15,7 +15,7 @@
 14|   R  text.ts  src                 +2 −2│      7 +   price: number;                                                     
 15|                                        │      8 +   quantity: number;                                                  
 16| <CR> show  mr reviewed  gp diff        │      9 + }                                                                    
-17| ]c [c hunk  ]f [f file  za fold        │     10 +                                                                      
+17| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
 18| gd def  K hover  go open  R refresh    │     11 + export class Cart {                                                  
 19| gu committed/working tree  q close     │     12 +   private items: LineItem[] = [];                                    
 20| gG AI guide                            │     13 +                                                                      
@@ -47,7 +47,7 @@
 14|=>=BQ=4444444@@@@@=================>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 15|========================================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 16|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@========4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@========4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 20|@@@@@@@@@@@@============================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
