@@ -172,7 +172,10 @@ are in `reports/Terminal code review tool landscape.md`.
    no UI calls so it can be tested headless. Format version 2: `files` (file marks by content key), `units` (unit
    and parent hunk marks by key) and, read only, version 1's `sections` (guide section marks by identity). Saves
    re-read the file and apply only this instance's changes (file marks per path and key, unit marks per key), then
-   write a temp file and rename it.
+   write a temp file and rename it. Read, merge and rename hold a cross-process lock (`lock.lua`: an
+   atomic `mkdir <file>.lock`, retried with backoff for up to 5s, broken when older than 15s, always
+   released), so two processes saving at once cannot both start from the old file. The stack ignore
+   list, the comments file and the comment event feed use the same lock.
 
 9. **AI guide** (`guide.lua` pure model, `guide_prompt.lua` prompt + schema, `ai.lua` provider, `prose.lua`
    markdown, `diagram.lua` overview diagram, `attribution.lua` branch labels, `guide_view.lua` glue).
@@ -417,8 +420,10 @@ are in `reports/Terminal code review tool landscape.md`.
      an older revuey rewriting the marks file cannot drop comments). Saves re-read the file and merge per
      id: last writer wins by `updated_at` (ties: this instance for its changed ids), deletes are tombstones
      (`{id, deleted, updated_at}`), replies are merged by reply id (an agent reply survives a concurrent
-     edit of the body). Atomic write (temp + rename); an undecodable file is moved to `.corrupt-*`. Never
-     pruned. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
+     edit of the body). Read, merge and rename hold `lock.lua`'s lock (see decision 8): without it 20
+     parallel `bin/revuey reply` calls kept only 14 replies. Atomic write (temp + rename); an
+     undecodable file is moved to `.corrupt-*`. Comments are never pruned; tombstones are dropped after
+     30 days. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
      with an 80ms debounce.
    - **Event feed.** Each change appends one JSON line to `<state file>.events.jsonl`: `{id (sortable),
      kind = created|updated|deleted|resolved|replied|sent (reserved), at, comment_id, review {repo,

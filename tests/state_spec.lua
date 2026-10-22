@@ -132,4 +132,61 @@ h.test('stale unmark does not delete a newer mark', function()
   h.eq(true, state.is_reviewed(c, 'x.ts', 'v2'))
 end)
 
+-- Regression (comments review): read, merge and rename were not locked, so of several processes
+-- saving at once only the last rename survived.
+h.test('saves from many processes at once keep every mark (lock around read-merge-rename)', function()
+  local d = h.tmpdir('state-parallel')
+  local script = d .. '/mark.lua'
+  vim.fn.writefile({
+    ('vim.opt.rtp:prepend(%q)'):format(h.root),
+    'local state = require("revuey.state")',
+    'local i = _G.arg[1]',
+    ('local st = state.load(%q, "/repo", "b", "main")'):format(d),
+    'state.set_unit(st, "k" .. i, "p" .. i, true)',
+    'state.save(st)',
+  }, script)
+  local procs = {}
+  for i = 1, 12 do
+    procs[i] = vim.system({ vim.v.progpath, '--clean', '--headless', '-l', script, tostring(i) })
+  end
+  for i = 1, 12 do
+    h.eq(0, procs[i]:wait(30000).code)
+  end
+  local st = state.load(d, '/repo', 'b', 'main')
+  for i = 1, 12 do
+    h.ok(state.unit_marked(st, 'k' .. i), 'mark ' .. i .. ' lost')
+  end
+end)
+
+h.test('lock: waits for a held lock, breaks a stale one, never leaves one behind', function()
+  local lock = require('revuey.lock')
+  local d = h.tmpdir('lock')
+  local path = d .. '/f.json'
+  h.eq(42, lock.with(path, function()
+    h.ok(vim.uv.fs_stat(path .. '.lock'), 'held')
+    return 42
+  end))
+  h.eq(nil, vim.uv.fs_stat(path .. '.lock'), 'released')
+  -- an error inside releases it too
+  h.eq(false, (pcall(lock.with, path, function()
+    error('boom')
+  end)))
+  h.eq(nil, vim.uv.fs_stat(path .. '.lock'))
+  -- held by someone else: times out
+  vim.uv.fs_mkdir(path .. '.lock', 448)
+  local saved = lock.TIMEOUT_MS
+  lock.TIMEOUT_MS = 200
+  local ok, err = pcall(lock.with, path, function() end)
+  lock.TIMEOUT_MS = saved
+  h.eq(false, ok)
+  h.ok(tostring(err):find('lock', 1, true), err)
+  -- stale (a writer that died holding it): broken
+  local old = os.time() - 3600
+  vim.uv.fs_utime(path .. '.lock', old, old)
+  h.eq('ran', lock.with(path, function()
+    return 'ran'
+  end))
+  h.eq(nil, vim.uv.fs_stat(path .. '.lock'))
+end)
+
 h.run()
