@@ -2535,7 +2535,7 @@ local function stack_trunk(root, opts)
   end
 end
 
----@return revuey.Stack?, string[]? notes for a plain review when there is no stack
+---@return revuey.Stack?, string[]? notes, string? from for a plain review when there is no stack
 local function detect_stack(root, opts, cache)
   local trunk = stack_trunk(root, opts)
   if not trunk then
@@ -2803,17 +2803,17 @@ function M.open(opts)
   opts = opts or {}
   git.async(function()
     local cache, stack_cache = {}, {}
-    local stack, scope, root, notes
+    local stack, scope, root, notes, from
     if wants_stack(opts) then
       root = git.root(opts.cwd or vim.fn.getcwd())
       if root then
-        stack, notes = detect_stack(root, opts, stack_cache)
+        stack, notes, from = detect_stack(root, opts, stack_cache)
       end
       if stack then
         scope = opts.scope == 'full' and { kind = 'full' } or { kind = 'layer', index = stack.current }
       end
     end
-    local lo = load_opts(vim.tbl_extend('force', opts, { cache = cache }), stack, scope)
+    local lo = load_opts(vim.tbl_extend('force', opts, { cache = cache, from = from }), stack, scope)
     local review, err = review_mod.load(lo)
     if not review then
       vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
@@ -2864,11 +2864,11 @@ function M.refresh(o)
   end
   git.async(function()
     local mode = s.target_mode
-    local old_stack, stack, scope, notes = s.review.stack, nil, nil, nil
+    local old_stack, stack, scope, notes, from = s.review.stack, nil, nil, nil, nil
     if wants_stack(s.opts) then
       -- cheap when refs are unchanged (fingerprint cache)
       s.stack_cache = s.stack_cache or {}
-      stack, notes = detect_stack(s.review.root, s.opts, s.stack_cache)
+      stack, notes, from = detect_stack(s.review.root, s.opts, s.stack_cache)
       scope = rescope(old_stack, stack, o.scope or s.scope)
       if old_stack and not stack then
         vim.notify('revuey: no stack detected any more; showing the plain branch review', vim.log.levels.WARN)
@@ -2882,6 +2882,7 @@ function M.refresh(o)
     local review, err = review_mod.load(load_opts(vim.tbl_extend('force', s.opts, {
       cwd = s.review.root,
       base = not stack and (s.opts.base or (not s.review.target and s.review.base)) or nil,
+      from = from,
       mode = mode,
       cache = s.load_cache,
     }), stack, scope))

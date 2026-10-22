@@ -36,7 +36,7 @@ Requirements:
 
 | Command | |
 |---|---|
-| `:Revuey` | Review the current branch, uncommitted work included. If the branch is part of a local stack, the review opens at its layer with the stack shown (see [Stacks](#stacks)); otherwise it diffs `merge-base(default branch, HEAD)` against the working tree. |
+| `:Revuey` | Review the current branch, uncommitted work included. If the branch is part of a local stack, the review opens at its layer with the stack shown (see [Stacks](#stacks)); otherwise it diffs `merge-base(default branch, HEAD)` against the working tree, skipping commits at the bottom that the default branch already has as squash merges. |
 | `:Revuey --stack` | The whole stack: trunk merge-base to the top of the stack. |
 | `:Revuey <base>` | Single-branch review against `base`, exactly as before (no stack detection). `:Revuey <base> --stack` uses `base` as the stack's trunk. |
 | `:Revuey ... --committed` | Committed changes only (`merge-base..HEAD`). |
@@ -111,10 +111,13 @@ A stack is a chain of local branches, each based on the one below, for example
   below the trunk merge-base.
 - **Landed bottom layers:** a bottom layer whose changed files are identical in trunk
   (squash-merged) is dimmed with "looks landed in main". The layers above still diff against it.
-- **Squash-merged commits under a layer** (lower PRs merged, the branch not restacked onto
-  trunk): commits at the bottom of a layer that trunk already has, one squash per run of commits,
-  are left out of its diff with a note, so it shows what its PR shows. A layer that landed
-  entirely keeps its own squash-merged commits.
+- **Squash-merged commits under the bottom layer** (lower PRs merged, the branch not restacked
+  onto trunk): commits at its bottom that trunk already has, one squash per run of commits and
+  not reverted since, are left out of its diff and the full scope, with a note, so it shows what
+  its PR shows. A layer that landed entirely keeps its own squash-merged commits. The same
+  applies to a lone branch once the lower branches are deleted and no stack is left. Squashes
+  that needed conflict resolution, or that a later trunk change touches within a line, don't
+  match, and the diff is unchanged.
 
 The guess cannot tell a parent from a child branch cut part-way through it, so it is only a
 suggestion and nothing guessed is ever saved. If a stack looks wrong, fix it with
@@ -127,7 +130,7 @@ scope, then a **full stack** row. Notes about duplicate tips, forks and ignored 
 
 - **Layer scope** (default): parent tip to layer tip. Uncommitted work belongs to the HEAD layer
   only. Other layers are committed-only, and `gu` says so.
-- **Full stack scope:** trunk merge-base to the top. It includes the working tree only when HEAD
+- **Full stack scope:** trunk merge-base (after any skipped squash-merged commits) to the top. It includes the working tree only when HEAD
   is the top layer.
 - Reviewed marks are kept per layer: keyed by layer branch and parent (normalised, so
   `origin/main` and `main` match), plus content hashes as before. For layers above another

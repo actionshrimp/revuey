@@ -611,58 +611,134 @@ local function read_tail(path, bytes)
 end
 
 local MAX_RUN = 20
-local NO_CONTEXT = { '-U0', '--no-renames', '--no-ext-diff', '--no-color' }
+-- One line of context: the same line added somewhere else does not match, a trunk change two
+-- lines away does.
+local PATCH = { '-U1', '--no-prefix', '--no-renames', '--no-ext-diff', '--no-color' }
 
----Patch ids (`git patch-id --stable`) of a stream of `commit <sha>`-headed patches: sha -> id.
+---Patch ids of a stream of `commit <label>`-headed patches: label -> id. Whitespace counts.
 local function patch_ids(root, patches)
-  local res = git.system({ 'git', 'patch-id', '--stable' }, { cwd = root, stdin = patches })
+  local res = git.system({ 'git', 'patch-id', '--verbatim' }, { cwd = root, stdin = patches })
   local ids = {}
-  for id, sha in (res.code == 0 and res.stdout or ''):gmatch('(%x+) (%x+)') do
-    ids[sha] = id
+  for id, label in (res.code == 0 and res.stdout or ''):gmatch('(%x+) (%x+)') do
+    ids[label] = id
   end
   return ids
 end
 
----Patch id of the change `from..to`, labelled `to`; nil when there is no change.
-local function range_patch_id(root, from, to)
-  local d = git.git(vim.list_extend({ 'diff', from, to }, NO_CONTEXT), root)
-  return d and d ~= '' and patch_ids(root, 'commit ' .. to .. '\n' .. d)[to] or nil
+---Patch ids of trunk commits (`-R`: of their reverts): commit -> id.
+local function commit_patch_ids(root, shas, reverse)
+  local args = vim.list_extend({ 'git', 'log', '--stdin', '--no-walk', '-p', '--format=commit %H' }, PATCH)
+  if reverse then
+    args[#args + 1] = '-R'
+  end
+  local res = git.system(args, { cwd = root, stdin = table.concat(shas, '\n') .. '\n' })
+  return patch_ids(root, res.code == 0 and res.stdout or '')
 end
 
----The oldest commits on `tip`'s first-parent line above trunk that are already in trunk as
----commits of their own (squash merges, cherry-picks), grouped into runs: one run per trunk commit,
----oldest first. Patches are compared without context lines, so a trunk change next to a hunk does
----not stop a match. Stops at the first commit no run starting there matches.
+---Commits listed by `git log <args> --name-only`, newest first, each with its changed paths.
+local function changed_paths(root, args)
+  local res = {}
+  local out = git.git(vim.list_extend({ 'log', '--no-renames', '--format=%x00%H', '--name-only' }, args), root)
+  for rec in (out or ''):gmatch('%z([^%z]*)') do
+    local sha, rest = rec:match('^(%x+)\n?(.*)$')
+    if sha then
+      res[#res + 1] = { sha = sha, paths = vim.split(rest, '\n', { trimempty = true }) }
+    end
+  end
+  return res
+end
+
+---Order-independent key of a set of paths.
+local function key_of(set)
+  local t = vim.tbl_keys(set)
+  table.sort(t)
+  return table.concat(t, '\0')
+end
+
+local function set_of(list, set)
+  set = set or {}
+  for _, x in ipairs(list) do
+    set[x] = true
+  end
+  return set
+end
+
+---The oldest commits on `tip`'s first-parent line above trunk that trunk already has as commits of
+---their own (squash merges, cherry-picks) and has not reverted since, grouped into runs, oldest
+---first. A run must change the same paths as a trunk commit and have the same patch id; each trunk
+---commit accounts for one run. The longest run starting at a commit wins; matching stops at the
+---first commit no run starts at. Runs longer than MAX_RUN, branches over 200 commits or 500 paths,
+---and trunk commits beyond the latest 2000 touching the branch's paths are not matched.
 ---@return string[][]
 function M.landed_runs(root, trunk_rev, tip)
   local mb = git.merge_base(trunk_rev, tip, root)
-  local out = mb and git.git({ 'rev-list', '--reverse', '--first-parent', '--max-count=200', mb .. '..' .. tip }, root)
-  local commits = vim.split(out or '', '\n', { trimempty = true })
-  if #commits == 0 then
+  local commits = mb and changed_paths(root, { '--first-parent', '--max-count=201', mb .. '..' .. tip }) or {}
+  if #commits == 0 or #commits > 200 then
     return {}
   end
-  local out_paths = git.git({ 'log', '--format=', '--name-only', '--no-renames', mb .. '..' .. tip }, root) or ''
-  local paths = vim.fn.uniq(vim.fn.sort(vim.split(out_paths, '\n', { trimempty = true })))
+  commits = vim.iter(commits):rev():totable()
+  local all = {}
+  for _, c in ipairs(commits) do
+    set_of(c.paths, all)
+  end
+  local paths = vim.tbl_map(function(p)
+    return ':(literal)' .. p
+  end, vim.tbl_keys(all))
   if #paths == 0 or #paths > 500 then
     return {}
   end
-  local args = vim.list_extend({ 'log', '-p', '--full-diff', '--no-merges', '--max-count=2000', '--format=commit %H' }, NO_CONTEXT)
-  vim.list_extend(args, { mb .. '..' .. trunk_rev, '--' })
-  vim.list_extend(args, vim.tbl_map(function(p)
-    return ':(literal)' .. p
-  end, paths))
-  local in_trunk = {}
-  for _, id in pairs(patch_ids(root, git.git(args, root) or '')) do
-    in_trunk[id] = true
+  local trunk_range = vim.list_extend({ '--full-diff', '--no-merges', '--max-count=2000', mb .. '..' .. trunk_rev, '--' }, paths)
+  local trunk_by_key = {}
+  for _, c in ipairs(changed_paths(root, trunk_range)) do
+    local k = key_of(set_of(c.paths))
+    trunk_by_key[k] = trunk_by_key[k] or {}
+    table.insert(trunk_by_key[k], c.sha)
   end
-  if next(in_trunk) == nil then
+  -- candidate runs i..j whose paths match some trunk commit's
+  local cands, patches, trunk_shas = {}, {}, {}
+  for i = 1, #commits do
+    local set = {}
+    for j = i, math.min(#commits, i + MAX_RUN - 1) do
+      local same = trunk_by_key[key_of(set_of(commits[j].paths, set))]
+      if same then
+        local label = ('%040x'):format(#patches + 1)
+        local from = i == 1 and mb or commits[i - 1].sha
+        local d = git.git(vim.list_extend({ 'diff', from, commits[j].sha }, PATCH), root)
+        if d and d ~= '' then
+          cands[i .. ':' .. j] = label
+          patches[#patches + 1] = 'commit ' .. label .. '\n' .. d
+          set_of(same, trunk_shas)
+        end
+      end
+    end
+  end
+  if #patches == 0 then
     return {}
   end
-  local runs, from, i = {}, mb, 1
+  local ids = patch_ids(root, table.concat(patches))
+  local shas, unused, any = vim.tbl_keys(trunk_shas), {}, false
+  for _, id in pairs(commit_patch_ids(root, shas)) do
+    unused[id] = (unused[id] or 0) + 1
+  end
+  for _, id in pairs(ids) do
+    any = any or unused[id] ~= nil
+  end
+  if not any then
+    return {}
+  end
+  -- trunk commits not reverted since: a revert's reversed patch cancels the commit it reverts
+  for _, id in pairs(commit_patch_ids(root, shas, true)) do
+    if unused[id] then
+      unused[id] = unused[id] - 1
+    end
+  end
+  local runs, i = {}, 1
   while i <= #commits do
     local matched
-    for j = i, math.min(#commits, i + MAX_RUN - 1) do
-      if in_trunk[range_patch_id(root, from, commits[j]) or ''] then
+    for j = math.min(#commits, i + MAX_RUN - 1), i, -1 do
+      local id = ids[cands[i .. ':' .. j] or '']
+      if id and (unused[id] or 0) > 0 then
+        unused[id] = unused[id] - 1
         matched = j
         break
       end
@@ -670,40 +746,54 @@ function M.landed_runs(root, trunk_rev, tip)
     if not matched then
       break
     end
-    runs[#runs + 1] = vim.list_slice(commits, i, matched)
-    from, i = commits[matched], matched + 1
+    runs[#runs + 1] = vim.tbl_map(function(c)
+      return c.sha
+    end, vim.list_slice(commits, i, matched))
+    i = matched + 1
   end
   return runs
 end
 
----Layers diffed from trunk start after the commits at their bottom that trunk already has as
----squash merges (lower PRs merged, the branch not restacked). A layer that landed entirely keeps
----its last run, its own squash-merged PR, as its diff.
+---Where a branch diffed from trunk should start instead: after the commits at its bottom that
+---trunk already has as squash merges (lower PRs merged, the branch not restacked). A branch that
+---landed entirely keeps its last run, its own squash-merged PR, as its diff.
+---@return {rev:string, skipped:integer, note:string}?
+function M.squash_skip(root, trunk, trunk_rev, name, tip)
+  local runs = M.landed_runs(root, trunk_rev, tip)
+  local last = runs[#runs]
+  if last and last[#last] == tip then
+    runs[#runs] = nil
+  end
+  if #runs == 0 then
+    return nil
+  end
+  local skipped = vim.iter(runs):fold(0, function(n, r)
+    return n + #r
+  end)
+  local top = runs[#runs]
+  return {
+    rev = top[#top],
+    skipped = skipped,
+    note = ('%s skips %d commit%s already squash-merged into %s (not restacked?)'):format(
+      name,
+      skipped,
+      skipped == 1 and '' or 's',
+      trunk
+    ),
+  }
+end
+
+---The bottom layer, when diffed from trunk, skips squash-merged commits (`M.squash_skip`); so does
+---the full scope.
 local function skip_squashed(root, stack)
-  for i, l in ipairs(stack.layers) do
-    if l.parent_rev == stack.trunk_rev then
-      local runs = M.landed_runs(root, stack.trunk_rev, l.tip)
-      local last = runs[#runs]
-      if last and last[#last] == l.tip then
-        runs[#runs] = nil
-      end
-      if #runs > 0 then
-        local skipped = vim.iter(runs):fold(0, function(n, r)
-          return n + #r
-        end)
-        local top = runs[#runs]
-        l.parent_rev, l.skipped = top[#top], skipped
-        stack.notes[#stack.notes + 1] = ('%s skips %d commit%s already squash-merged into %s (not restacked?)'):format(
-          l.name,
-          skipped,
-          skipped == 1 and '' or 's',
-          stack.trunk
-        )
-        if i == 1 then
-          stack.base_rev = l.parent_rev
-        end
-      end
-    end
+  local l = stack.layers[1]
+  if not l or l.parent_rev ~= stack.trunk_rev or l.stale then
+    return
+  end
+  local skip = M.squash_skip(root, stack.trunk, stack.trunk_rev, l.name, l.tip)
+  if skip then
+    l.parent_rev, l.skipped, stack.base_rev = skip.rev, skip.skipped, skip.rev
+    stack.notes[#stack.notes + 1] = skip.note
   end
 end
 
@@ -836,12 +926,14 @@ end
 ---@param cache? table reused across refreshes: unchanged refs skip detection entirely
 ---@return revuey.Stack?
 ---@return string[]? notes when there is no stack: suggestions for the plain review
+---@return string? from when there is no stack: where the plain review's diff starts, when the
+---branch's bottom commits are already squash-merged into trunk
 function M.detect(root, trunk, cache)
   local key, refs, cfg, head, trunk_rev, current = M.fingerprint(root, trunk)
   if cache and cache.key == key then
-    return cache.stack, cache.notes
+    return cache.stack, cache.notes, cache.from
   end
-  local stack, notes
+  local stack, notes, from
   if head ~= '' and trunk_rev ~= '' and current ~= '' then
     local remotes = git.remotes(root)
     local function normalize(n)
@@ -979,14 +1071,19 @@ function M.detect(root, trunk, cache)
       vim.list_extend(stack.notes, extra)
       skip_squashed(root, stack)
       mark_landed(root, stack)
-    elseif #extra > 0 then
-      notes = extra
+    else
+      local skip = input.graph[head] ~= nil and M.squash_skip(root, trunk, trunk_rev, current, head)
+      if skip then
+        extra[#extra + 1] = skip.note
+        from = skip.rev
+      end
+      notes = #extra > 0 and extra or nil
     end
   end
   if cache then
-    cache.key, cache.stack, cache.notes = key, stack, notes
+    cache.key, cache.stack, cache.notes, cache.from = key, stack, notes, from
   end
-  return stack, notes
+  return stack, notes, from
 end
 
 return M
