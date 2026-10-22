@@ -166,10 +166,10 @@ h.test('place: identical code at two places goes to the nearest window with the 
   local b2 = lines(40, { [9] = 'nine', [10] = 'dup a', [11] = 'DUP', [12] = 'dup c', [29] = 'x29', [30] = 'dup a', [31] = 'DUP', [32] = 'dup c' })
   local R2 = review(a, b2)
   -- the contexts differ (line 9 / line 29 changed): no context hash matches; the lines alone
-  -- do, at both places: each comment takes the copy nearest to where it was
+  -- match at both places, which is ambiguous: outdated rather than possibly wrong
   local q1, q0 = comments.place(c1, R2.ctx), comments.place(c0, R2.ctx)
-  h.eq({ 'text', 30, 32 }, { q1.how, q1.start_line, q1.end_line })
-  h.eq({ 'text', 10, 12 }, { q0.how, q0.start_line, q0.end_line })
+  h.eq({ 'outdated', 30, true }, { q1.how, q1.start_line, q1.outdated })
+  h.eq({ 'outdated', 10, true }, { q0.how, q0.start_line, q0.outdated })
   -- same surroundings at both places: the window nearest to the last known line wins
   local same = lines(40, { [11] = 'DUP', [31] = 'DUP' })
   local a2 = lines(40)
@@ -195,12 +195,12 @@ h.test('place: identical code at two places goes to the nearest window with the 
 end)
 
 h.test('place: lines at the top of an added file survive lines inserted above them (text tier)', function()
-  local body = 'import { a } from "a";\nimport { b } from "b";\n\nexport const x = 1;\n}\n'
+  local body = 'import { formatCurrency } from "./format";\nimport { b } from "b";\n\nexport const x = 1;\n}\n'
   local R1 = review('', body)
   local c = comments.new(R1.anchor('new', 1, 1), 'import')
   local brace = comments.new(R1.anchor('new', 5, 5), 'brace')
-  h.ok(c.anchor.text_hash, 'lines with words get a text hash')
-  h.eq(nil, brace.anchor.text_hash, 'a lone brace does not')
+  h.ok(c.anchor.context_lines, 'lines with distinctive words may use the text tier')
+  h.eq(nil, brace.anchor.context_lines, 'a lone brace may not')
   -- three lines prepended: one hunk (new key), and line 1's context was the file start
   local R2 = review('', '// header\n// more\n\n' .. body)
   local p = comments.place(c, R2.ctx)
@@ -214,6 +214,76 @@ h.test('place: lines at the top of an added file survive lines inserted above th
   end
   local R3 = review('', table.concat(far, '\n') .. '\n' .. body)
   h.eq(true, comments.place(c, R3.ctx).outdated)
+end)
+
+-- Regression (review): the text tier anchored `end` and `return nil` to another function.
+local LUA = {
+  'local M = {}', 'function M.alpha(x)', '  if x then', '    return nil', '  end', '  return x', 'end', '',
+  'function M.beta(y)', '  if y then', '    return nil', '  end', '  return y + 1', 'end', '', 'return M', '',
+}
+
+h.test('place: boilerplate lines (end, return nil) never use the text tier; they go outdated', function()
+  local R1 = review('', table.concat(LUA, '\n'))
+  local c_end = comments.new(R1.anchor('new', 7, 7), 'end of alpha')
+  local c_ret = comments.new(R1.anchor('new', 4, 4), 'return nil in alpha')
+  h.eq(nil, c_end.anchor.context_lines, 'no text tier for `end`')
+  h.eq(nil, c_ret.anchor.context_lines, 'keywords are not distinctive words')
+  -- alpha is removed: beta has the same lines
+  local without = { 'local M = {}', '' }
+  for i = 9, #LUA do
+    without[#without + 1] = LUA[i]
+  end
+  local R2 = review('', table.concat(without, '\n'))
+  for _, c in ipairs({ c_end, c_ret }) do
+    local p = comments.place(c, R2.ctx)
+    h.eq(true, p.outdated, c.body .. ' -> ' .. tostring(p.how) .. ' ' .. tostring(p.start_line))
+    local before = c.anchor.start_line
+    comments.apply_placement(c, p)
+    h.eq({ before, true }, { c.anchor.start_line, c.outdated }, 'last known line kept')
+  end
+end)
+
+h.test('place: a distinctive line repeated within the radius is ambiguous (outdated); unique, it moves', function()
+  local function file(top, copies)
+    local t = vim.deepcopy(top)
+    for i = 1, 30 do
+      t[#t + 1] = (i % 2 == 0) and '}' or '  call()'
+      if copies[i] then
+        t[#t + 1] = 'log.debug("checkpoint reached")'
+      end
+    end
+    return table.concat(t, '\n') .. '\n'
+  end
+  local base = file({}, {})
+  local R1 = review(base, file({}, { [5] = true, [25] = true }))
+  local c = comments.new(R1.anchor('new', 27, 27), 'second copy')
+  h.ok(c.anchor.context_lines, 'distinctive')
+  -- an edit right above the second copy changes its context and its hunk
+  local edited = vim.split(file({}, { [5] = true, [25] = true }), '\n')
+  edited[25] = '  call(changed)'
+  local R2 = review(base, table.concat(edited, '\n'))
+  local p = comments.place(c, R2.ctx)
+  h.eq(true, p.outdated, "two copies within the radius: ambiguous " .. tostring(p.how))
+  -- a single copy: the same edit re-anchors it (text tier, with part of the context matching)
+  local R3 = review(base, file({}, { [25] = true }))
+  local one = comments.new(R3.anchor('new', 26, 26), 'only copy')
+  local e3 = vim.split(file({}, { [25] = true }), '\n')
+  e3[25] = '  call(changed)'
+  table.insert(e3, 1, 'inserted at the top')
+  local p3 = comments.place(one, review(base, table.concat(e3, '\n')).ctx)
+  h.eq({ 'text', 27, false }, { p3.how, p3.start_line, p3.outdated })
+end)
+
+h.test('place: the text tier needs part of the old context around the new place', function()
+  local R1 = review('', 'alpha\nbravo\nconst totalPrice = items.sum();\ncharlie\ndelta\n')
+  local c = comments.new(R1.anchor('new', 3, 3), 'x')
+  h.ok(c.anchor.context_lines)
+  -- the line moved somewhere with entirely new surroundings
+  local R2 = review('', 'one\ntwo\nthree\nfour\nfive\nsix\nconst totalPrice = items.sum();\nseven\neight\n')
+  h.eq(true, comments.place(c, R2.ctx).outdated)
+  -- one neighbour kept
+  local R3 = review('', 'one\nbravo\nconst totalPrice = items.sum();\nnew\nother\n')
+  h.eq({ 'text', 3 }, { comments.place(c, R3.ctx).how, comments.place(c, R3.ctx).start_line })
 end)
 
 h.test('merge: last writer wins per comment; replies merge by id; tombstones beat older edits', function()
