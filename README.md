@@ -5,7 +5,9 @@
 Code review inside Neovim (>= 0.12). It shows a composed unified diff of the current branch
 against its base, or of one layer of a local branch stack (or the whole stack) before you push. Tree-sitter syntax is projected onto the diff lines, LSP go-to-definition and hover
 work from inside the diff (your own LSP mappings and pickers too), and "reviewed" marks persist. An [AI guide](#ai-guide) (your own `claude`
-CLI) can reorganise the review into ordered, explained sections. Design notes:
+CLI) can reorganise the review into ordered, explained sections. [Comments](#comments) on lines,
+ranges or files show inline as threads and export as Markdown for an AI session; coding agents
+read them, follow them live and reply from the shell. Design notes:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install (lazy.nvim, local checkout)
@@ -13,7 +15,7 @@ CLI) can reorganise the review into ordered, explained sections. Design notes:
 ```lua
 {
   dir = '~/dev/revuey/main',
-  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyStackIgnore', 'RevueyGuide', 'RevueyGuideDiagram' },
+  cmd = { 'Revuey', 'RevueyClose', 'RevueyStackParent', 'RevueyStackIgnore', 'RevueyGuide', 'RevueyGuideDiagram', 'RevueyComments', 'RevueyCommentsExport' },
   opts = {
     -- default_branch = 'develop', -- default: origin/HEAD, else main, master, develop
     -- ai = { model = 'sonnet' }, -- AI guide; default: Claude Code's default model
@@ -24,7 +26,7 @@ CLI) can reorganise the review into ordered, explained sections. Design notes:
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
 (`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
-`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `ai`).
+`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `comments`, `ai`).
 
 Requirements:
 - `git`.
@@ -47,8 +49,11 @@ Requirements:
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
 | `:RevueyGuide cancel` | Stop a running generation. |
 | `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
+| `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
+| `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
+| `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
 
 **Uncommitted work is included by default** (working-tree mode): committed, staged and unstaged
 changes to tracked files, files deleted on disk, and untracked (non-ignored) files as additions.
@@ -332,6 +337,113 @@ still never load). **Warning:** your settings' permission allow rules and hooks 
 run that reads the repo's content, so a rule such as `Bash(make:*)` plus a prompt injection in
 the code could run commands. Only turn it off if your settings have no such allow rules or hooks.
 
+## Comments
+
+Comment while you review, in the diff or the guide view:
+
+- `gc` on a line comments on it: added and context lines on the new side, deleted lines on the
+  old side. In visual mode `gc` comments on the selected lines (one file; the range is on the new
+  side when it holds any added or context line, and the deleted lines inside it are kept with the
+  code). On a file header, or a hunk header, it is a comment on the whole file.
+- The editor is a small markdown float under the line, titled with the anchor
+  (`src/cart.ts:12-14 (new)`). `<C-s>` or `:w` saves; `q` or `<Esc><Esc>` cancels (asking first
+  when there is text). Closing it any other way (`:q`, another window) keeps the text as a
+  **draft**, shown inline; `ce` continues it. `<C-a>` is reserved for sending the comment to an AI
+  or agent session (a later feature; for now it says so).
+- Comments show **inline under their last line** as a thread box (author, time, body with light
+  markdown, replies), wrapped to the window, with a `▍` bar in the gutter on the commented lines.
+  They are virtual lines: the buffer text, folds, `mr`, LSP and selections are unaffected. Long
+  comments (and resolved ones) are cut with `… N more lines`; `cz` expands them. `gC` hides or
+  shows every thread (the gutter bars stay). The panel shows `✎2` on files with open comments.
+- On a commented line (or its range): `ce` edit, `cr` reply, `cx` resolve / reopen, `cd` delete
+  (asks first), `cz` expand. `]m` / `[m` move to the next / previous comment. `cl` (also in the
+  panel) or `:RevueyComments` lists them all.
+- **Moving code.** Each comment remembers the hunk it was made in and a hash of its lines plus two
+  lines of context either side. When the hunk is unchanged (edits elsewhere just shift it) the
+  comment moves with it; otherwise it goes to the nearest place with the same lines and context,
+  or failing that (only the lines around it changed) the nearest place within 100 lines with the
+  same lines, unless they are trivial (a lone `}`). When its lines changed it is **outdated**: it stays at its last known line (or, when that line
+  is no longer in the diff, in an "Outdated comments" group at the end of the file) and keeps the
+  code it was made on.
+- Comments are kept per review (branch or stack layer, like reviewed marks) in
+  `stdpath('data')/revuey/*.comments.json`, and never pruned. Several Neovims can comment on the
+  same review: saves merge per comment (the latest change wins; a delete wins over older edits;
+  replies are merged), and each instance picks up the others' changes live.
+
+`gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
+where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl` shadow `c{motion}` and
+`]m`/`[m` the method motions, which do nothing in a read-only diff. Remap them under `keymaps`
+(`comment_add`, `comment_edit`, ...; `false` disables one).
+
+**Export** with `:RevueyCommentsExport`: Markdown meant for pasting into an AI session. A short
+header names the review (repo, branch, scope, base and merge-base), then each comment in file and
+line order: `path:start-end (new|old)`, the diff lines it is about in a fenced `diff` block, the
+comment, and its replies. Outdated comments say so; resolved comments and drafts are left out
+unless you pass `--all`. `json` gives the full data for tools. For example:
+
+````markdown
+# Review comments: stack/cart → stack/math
+
+- Repo: revuey-stack (/tmp/revuey-stack)
+- Branch: stack/cart
+- Scope: stack layer stack/cart
+- Base: stack/math (merge-base 41f287d7)
+
+2 comments, ordered by file and line. Each gives the file, the line range and side (new: the code after the change, old: the code before it), the diff lines it is about, and the reviewer's note.
+
+## 1. src/cart.ts:4 (new)
+
+```diff
++import { multiply, sum } from "./math";
+```
+
+Is `multiply` still needed here?
+
+Replies:
+- **agent**: Yes: `total()` uses it.
+
+## 2. src/index.ts:7 (old)
+
+```diff
+-  const total = oldTotal([1, 2, 3]);
+```
+
+Keep a test for oldTotal before removing this.
+````
+
+### Comments for coding agents
+
+`bin/revuey` gives agents the comments of the current repo and branch without opening the UI
+(it runs `nvim --clean --headless`, so it ignores your config; set `$REVUEY_STATE_DIR` if your
+config moves `state_dir`):
+
+```sh
+bin/revuey comments              # the Markdown export (--json: JSON; --all: resolved and drafts too)
+bin/revuey watch                 # follow comment events, one line each
+bin/revuey reply <id> "Fixed."   # reply in the comment's thread (- reads the text from stdin)
+```
+
+`--scope current` (default) covers the checked-out branch's reviews (its branch review, its stack
+layer and full-stack reviews that include it); `--scope all` every review of the repo; `--scope
+<branch>` another branch.
+
+Every change to a comment (created, updated, deleted, resolved, replied; `sent` is reserved for
+the later send action) is appended as one JSON line to `*.events.jsonl` next to the comments
+(rotated at 1 MB). `watch` prints one line per event and flushes it at once, so it works under
+Claude Code's Monitor tool (each stdout line is an event), and it exits cleanly on SIGTERM:
+
+```
+comment src/cart.ts:1 (new): Is `multiply` still needed here?  #1a163fedcc13a6b5
+comment src/index.ts:7 (old): Keep a test for oldTotal before removing this.  #1a163fee6381dbb5
+resolve src/index.ts:7 (old): Keep a test for oldTotal before removing this.  #1a163fee6381dbb5
+```
+
+`--json` prints the full event instead (kind, review, anchor with line range and side, the code,
+the body, author, and the reply for `replied`). `--since <event id>` (or `all`) first replays
+earlier events. The agent's own replies are not echoed back unless `--all` is given. A reply
+made with `bin/revuey reply` (author `agent`, or `$REVUEY_AGENT_NAME`) shows up in a running
+revuey's thread within a moment. The comment id may be shortened to any unique part of it.
+
 ## Layout
 
 The review opens in a new tab:
@@ -371,13 +483,19 @@ Diff buffer:
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
+| `gc` | [Comment](#comments) on this line (visual: the selected lines; a file or hunk header: the whole file) |
+| `ce` / `cr` / `cx` / `cd` | Edit / reply to / resolve or reopen / delete the comment on this line |
+| `cz` | Expand / collapse a long or resolved comment |
+| `]m` / `[m` | Next / previous comment (takes a count) |
+| `gC` | Hide / show comment threads |
+| `cl` | List all comments (`<CR>` jumps) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 
 File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
-- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - In the guide view the panel also lists the guide's sections: `<CR>` jumps to one, `mr` marks it reviewed.
 - `mr` on a file row marks the whole file, in either view.
 
@@ -401,7 +519,9 @@ All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddT
 the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
 `RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the diagram's `RevueyDiagramNew`,
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
-stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, and others (see
+stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, the comments'
+`RevueyCommentSign`, `RevueyCommentBorder`, `RevueyCommentAuthor`, `RevueyCommentDraft`,
+`RevueyCommentResolved` and `RevueyCommentOutdated`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it
@@ -427,6 +547,16 @@ Things to try:
 - `<Tab>` on a file header or an `@@` hunk header to collapse it, `<Tab>` again to expand it;
   `<S-Tab>` collapses every file.
 - `q` to quit.
+
+Comments:
+- `gc` on `+ import { multiply, sum } ...` in `src/cart.ts`, type a note, `<C-s>`. `Vjgc` on two
+  lines, `gc` on a `-` line (old side), `gc` on a file header (whole file).
+- `cr` to reply, `cx` to resolve, `]m` / `[m` between comments, `cl` for the list.
+- `:RevueyCommentsExport` and paste the clipboard into an AI chat.
+- In a second terminal in the fixture: `~/dev/revuey/main/bin/revuey watch`, then comment again:
+  each comment prints one line. `~/dev/revuey/main/bin/revuey reply <id from that line> "On it"`
+  shows the reply in the thread.
+- Add three lines at the top of `src/cart.ts` and save: the comments move with their lines.
 
 Uncommitted work: in another terminal (or Neovim split) edit `/tmp/revuey-fixture/src/math.ts`
 and save, or create a new file under `src/`; the review updates with a `●` on those files. Press
@@ -525,6 +655,13 @@ cd /tmp/revuey-guide
   The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
   and replays canned stream-json (good, diagram, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.
+- **Comments:** the model, re-anchoring (shifted, moved, outdated, deleted lines on the old side,
+  identical code at two places), merging with tombstones, the export formats (golden) and event
+  lines (unit); `gc` in normal and visual mode on added, deleted and context lines and file
+  headers in both views, the editor, edit/reply/resolve/delete, drafts, a working-tree edit
+  moving and then outdating comments, export to a register, live reload, two Neovim instances
+  merging, and `bin/revuey comments`/`watch`/`reply` round trips with `watch` as a subprocess
+  (integration).
 - **Screen:** a child Neovim (vendored `mini.test`, `tests/vendor/mini`) renders the review and its
   screen grid, highlight attributes included, is compared to `tests/screenshots/*`. After an
   intended UI change, regenerate them with `REVUEY_UPDATE_SCREENSHOTS=1 make test` and review the

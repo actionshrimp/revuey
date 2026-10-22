@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Launch Neovim with a revuey review of the current branch (in the current directory).
 #   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
+#   revuey comments|watch|reply ...                    (review comments from the shell; see below)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
 # directory containing this script's parent (so it works straight from a checkout).
 # Pressing `q` in the review quits Neovim.
@@ -18,15 +19,53 @@ while [ -L "$script" ]; do
 done
 default_dir=$(cd "$(dirname "$script")/.." && pwd)
 export REVUEY_PLUGIN_DIR=${REVUEY_PLUGIN_DIR:-$default_dir}
-# arguments travel to Lua joined by the unit separator (\x1f), so spaces survive
-IFS=$'\x1f'
-export REVUEY_ARGS="$*"
-unset IFS
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "revuey: not inside a git repository" >&2
   exit 1
 fi
+
+# Review comments from the shell, without the UI (no user config: fast and quiet):
+#   revuey comments [--json] [--all] [--scope current|all|<branch>]
+#   revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]
+#   revuey reply <comment id> <text|->
+# The state dir is $REVUEY_STATE_DIR, else Neovim's data dir/revuey (set it when your config
+# gives revuey another state_dir).
+cli=("${REVUEY_NVIM:-nvim}" --clean --headless -l "$REVUEY_PLUGIN_DIR/lua/revuey/cli.lua")
+case "${1:-}" in
+  comments|reply)
+    exec "${cli[@]}" "$@"
+    ;;
+  watch)
+    # Neovim treats SIGTERM as a deadly signal (exit 1 and a message); stop it with SIGUSR1
+    # instead, so `watch` ends cleanly on SIGTERM/SIGINT/SIGHUP (e.g. from Claude Code's Monitor).
+    # It also stops by itself when whoever started this script goes away.
+    child=
+    stop() {
+      if [ -n "$child" ]; then
+        kill -USR1 "$child" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+          kill -0 "$child" 2>/dev/null || break
+          sleep 0.1
+        done
+        kill -KILL "$child" 2>/dev/null || true
+      fi
+      exit 0
+    }
+    trap stop TERM INT HUP
+    REVUEY_WATCH_OWNER=$PPID "${cli[@]}" "$@" &
+    child=$!
+    status=0
+    wait "$child" || status=$?
+    # `wait` returns early when a trapped signal arrives; the trap exits
+    exit "$status"
+    ;;
+esac
+
+# arguments travel to Lua joined by the unit separator (\x1f), so spaces survive
+IFS=$'\x1f'
+export REVUEY_ARGS="$*"
+unset IFS
 
 # -c runs after the user's config and plugins, so lazy.nvim's runtimepath reset can't drop us.
 exec "${REVUEY_NVIM:-nvim}" \

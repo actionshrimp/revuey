@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  3 [Scratch]                                                                                                X
+02| Files                                  │ A src/cart.ts +27 −0                                                      2/7 
+03| feature/cart → main                    │      1▍+ import { multiply, sum } from "./math";                              
+04| 7 files  +57 −22  ✓ 0/7                │      2▍+ import { formatCurrency } from "./format";                           
+05| base ee2e6fcf  head 6b2be8a3           │          ╭─ You · just now ────────────────────────────────────────────────── 
+06| working tree  ● uncommitted            │          │ Is multiply still needed here? Check the callers.                  
+07|                                        │          │ ↳ claude · just now                                                
+08|   M  logo.png  assets               bin│          │   Yes: totals use it.                                              
+09|   A  cart.ts  src             ✎2 +27 −0│          ╰─                                                                   
+10|   A  Total.tsx  src/components    +5 −0│      3▍+ import { capitalize } from "./text";                                 
+11|   M  index.ts  src                +9 −6│          ╭─ You · just now ────────────────────────────────────────────────── 
+12|   D  legacy.ts  src               +0 −6│          │ Looks off by one.                                                  
+13|   M  math.ts  src                +14 −8│          ╰─                                                                   
+14|   R  text.ts  src                 +2 −2│      4 +                                                                      
+15|                   ╭ Comments (2) ───────────────────────────────────────────────────────────────────╮                  
+16| <CR> show  mr revi│src/cart.ts                                                                      │                  
+17| ]c [c hunk  ]f [f │  1-2 (new)  Is `multiply` still needed here? **Check** the callers.  [1 reply]  │                  
+18| gd def  K hover  g│  3 (new)  Looks off by one.                                                     │                  
+19| gu committed/worki╰───────────────────────────────────────────────────────────── <CR> jump  q close ╯                  
+20| gG AI guide                            │     10 +                                                                      
+21|~                                       │     11 + export class Cart {                                                  
+22|~                                       │     12 +   private items: LineItem[] = [];                                    
+23|~                                       │     13 +                                                                      
+24|~                                       │     14 +   addItem(item: LineItem): this {                                    
+25|~                                       │     15 +     this.items.push(item);                                           
+26|~                                       │     16 +     return this;                                                     
+27|~                                       │     17 +   }                                                                  
+28|~                                       │     18 +                                                                      
+29|~                                       │     19 +   total(): number {                                                  
+30|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+31|~                                       │     21 +   }                                                                  
+32|~                                       │     22 +                                                                      
+33|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              8,1             5%
+34|                                                                                                      2,1           All 
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333343556666666666665555773333333333333333333333333333333333333333333333333333333333
+03|222222222222222222228888888888888888888849999:::;<<=====================================================================
+04|8888888888>>>????@@@@@@@888888888888888849999:::;<<=====================================================================
+05|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@888888888884AAAAAAAAAABBB222@@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB8
+06|;;;;;;;;;;;;;@@@@@@@@@@@@@@@8888888888884AAAAAAAAAABB444CCCCCCCC44444444444444444444DDDDD4444444444444888888888888888888
+07|88888888888888888888888888888888888888884AAAAAAAAAABBBB222222@@@@@@@@@@@888888888888888888888888888888888888888888888888
+08|8>8;E844444444@@@@@@@@888888888888888@@@4AAAAAAAAAABBBB44444444444444444448888888888888888888888888888888888888888888888
+09|FGFGHFIIIIIIIJJJJJFFFFFFFFFFFFF;;;>>>???4AAAAAAAAAABB8888888888888888888888888888888888888888888888888888888888888888888
+10|8>8>E8444444444@@@@@@@@@@@@@@@@8888>>???4KKKKLLLM<<NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN=================================
+11|8>8;E844444444@@@@@8888888888888888>>???4AAAAAAAAAABBB222@@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB8
+12|8>8?E8444444444@@@@@888888888888888>>???4AAAAAAAAAABB4444444444444444488888888888888888888888888888888888888888888888888
+13|8>8;E84444444@@@@@8888888888888888>>>???4AAAAAAAAAABB8888888888888888888888888888888888888888888888888888888888888888888
+14|8>8;E84444444@@@@@88888888888888888>>???49999:::<<<=====================================================================
+15|8888888888888888888B22222222222222BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB==================
+16|@@@@@@@@@@@@@@@@@@@BOOOOOOOOOOOBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB==================
+17|@@@@@@@@@@@@@@@@@@@BJJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFHHHHHHHHHHHFFB==================
+18|@@@@@@@@@@@@@@@@@@@BPPPPPPPPPBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB==================
+19|@@@@@@@@@@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB22222222222222222222B==================
+20|@@@@@@@@@@@@888888888888888888888888888849999:::<<<=====================================================================
+21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+26|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+29|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+30|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+31|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+32|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+33|000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+34|QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ

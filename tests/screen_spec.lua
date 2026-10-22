@@ -338,5 +338,43 @@ h.test('partial progress: a reviewed hunk in the diff, then in the guide', funct
   screenshot('guide-partial')
 end)
 
+-- Comments: an inline thread (with a reply) under a commented range with gutter bars, the
+-- editor float opened by `gc`, and the comments list.
+h.test('comments: inline thread, editor float, comments list', function()
+  start(fixture, 'main', 34, 120)
+  child.lua([[
+    local s = require('revuey.view').session
+    local cv = require('revuey.comments_view')
+    local ed = require('revuey.comment_editor')
+    local comments = require('revuey.comments')
+    local function row_of(path, kind, lnum)
+      for row, e in ipairs(s.layout.map) do
+        if e.path == path and e.kind == kind and e.new_lnum == lnum then
+          return row
+        end
+      end
+    end
+    local first, last = row_of('src/cart.ts', 'add', 1), row_of('src/cart.ts', 'add', 2)
+    vim.api.nvim_win_set_cursor(s.diff_win, { first, 0 })
+    cv.add(s, first, last)
+    vim.api.nvim_buf_set_lines(ed.current.buf, 0, -1, false, { 'Is `multiply` still needed here? **Check** the callers.' })
+    ed.save(ed.current)
+    local c = comments.list(s.cm.store)[1]
+    comments.reply(s.cm.store, c.id, 'Yes: totals use it.', { kind = 'agent', name = 'claude' })
+    comments.save(s.cm.store)
+    cv.refresh(s)
+    vim.api.nvim_win_set_cursor(s.diff_win, { first, 0 })
+    vim.cmd('normal! zt')
+  ]])
+  screenshot('comment-thread')
+  child.type_keys('j', 'j', 'gc')
+  child.type_keys('Looks off by one.')
+  child.type_keys('<Esc>')
+  screenshot('comment-editor')
+  child.type_keys('<C-s>', 'cl')
+  screenshot('comment-list')
+  child.type_keys('q')
+end)
+
 child.stop()
 h.run()
