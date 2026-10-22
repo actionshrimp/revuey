@@ -36,7 +36,9 @@ M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = tru
 ---@field hunk_key? string          its parent hunk
 ---@field hunk_line? integer        index of the first commented line in the hunk's lines
 ---@field context_hash? string
----@field text_hash? string        the commented lines alone (when they hold some words)
+---@field text_hash? string        the commented lines alone (to spot repeated copies)
+---@field context_lines? string[]   short hashes of the context lines (before, after; '' trivial),
+---                                 only when the lines hold distinctive words (text tier allowed)
 ---@field snippet? string[]         the commented diff rows when made, with +/-/space markers
 
 ---@class revuey.CommentReply
@@ -115,6 +117,65 @@ end
 
 M.TEXT_RADIUS = 100 -- the text-only tier only looks this many lines either side
 
+-- Words that say nothing about where a line is (keywords and fillers of common languages).
+local BOILERPLATE = {}
+for w in ([[and break do else elseif end false for function if in local nil not or repeat return
+  then true until while const let var new this self class def import from export default public
+  private protected static void int string bool boolean null undefined async await try catch
+  finally throw throws switch case break continue pub fn mut use struct enum impl type interface
+  package func range yield lambda with as is elif pass none module require val get set]]):gmatch('%S+') do
+  BOILERPLATE[w] = true
+end
+
+---Distinct words of at least three letters that are not boilerplate, in `lines`.
+function M.distinctive_words(lines)
+  local seen, n = {}, 0
+  for _, l in ipairs(lines) do
+    for w in (l or ''):gmatch('[%a_][%w_]*') do
+      local lw = w:lower()
+      if #w >= 3 and not BOILERPLATE[lw] and not seen[lw] then
+        seen[lw] = true
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
+M.MIN_WORDS = 2 -- distinctive words the commented lines need for the text tier
+
+local function line_hash(t)
+  if not t or not t:find('%w') then
+    return '' -- missing or trivial (`}`, blank): never counts as a context match
+  end
+  return vim.fn.sha256(t):sub(1, 8)
+end
+
+---Hashes of the CONTEXT lines either side of `first..last` (before, then after), '' for lines that
+---are missing or trivial.
+function M.context_lines(get_line, first, last)
+  local out = {}
+  for l = first - M.CONTEXT, first - 1 do
+    out[#out + 1] = line_hash(get_line(l))
+  end
+  for l = last + 1, last + M.CONTEXT do
+    out[#out + 1] = line_hash(get_line(l))
+  end
+  return out
+end
+
+---How many of the stored context lines match around `first..last`.
+local function context_matches(stored, get_line, first, last)
+  local now = M.context_lines(get_line, first, last)
+  local n = 0
+  for i, hsh in ipairs(stored or {}) do
+    if hsh ~= '' and hsh == now[i] then
+      n = n + 1
+    end
+  end
+  return n
+end
+
 ---Anchor for diff rows of one file (side-table entries of kind add/del/ctx, in order). The side
 ---is `new` when any row has a new-side line (deleted rows between them stay in the snippet),
 ---`old` when all rows are deleted lines.
@@ -172,13 +233,15 @@ function M.anchor_from_rows(files, U, entries, get_line)
     return get_line(f.path, side, l)
   end
   a.context_hash = M.window_hash(get, lo, hi)
-  -- lines that say something (not just `}` or blank): the text alone can re-anchor them
-  local words = 0
+  -- lines that say something distinctive (not `end`, `return nil` or `}`): the text alone, with
+  -- part of its old context, can re-anchor them
+  local texts = {}
   for l = lo, hi do
-    words = words + select(2, (get(l) or ''):gsub('%w', ''))
+    texts[#texts + 1] = get(l)
   end
-  if words >= 3 then
-    a.text_hash = M.text_hash(get, lo, hi)
+  a.text_hash = M.text_hash(get, lo, hi)
+  if M.distinctive_words(texts) >= M.MIN_WORDS then
+    a.context_lines = M.context_lines(get, lo, hi)
   end
   return a
 end
@@ -331,11 +394,12 @@ function M.place(c, ctx)
   local function get(l)
     return ctx.get_line(a.path, a.side, l)
   end
+  ---All shown windows whose hash matches (within `radius` of the last known line), nearest first.
   local function search(hash, fn, radius)
-    local best
+    local hits = {}
     for _, p in ipairs(rows.sorted) do
       local d = math.abs(p - a.start_line)
-      if rows.by_lnum[p + n] and (not radius or d <= radius) and (not best or d < math.abs(best - a.start_line)) then
+      if rows.by_lnum[p + n] and (not radius or d <= radius) then
         local all = true
         for l = p + 1, p + n - 1 do
           if not rows.by_lnum[l] then
@@ -344,17 +408,40 @@ function M.place(c, ctx)
           end
         end
         if all and fn(get, p, p + n) == hash then
-          best = p
+          hits[#hits + 1] = p
         end
       end
     end
-    return best
+    table.sort(hits, function(x, y)
+      local dx, dy = math.abs(x - a.start_line), math.abs(y - a.start_line)
+      if dx ~= dy then
+        return dx < dy
+      end
+      return x < y
+    end)
+    return hits
   end
+  -- every copy of the commented lines (whatever their context), nearest first
+  local copies = a.text_hash and search(a.text_hash, M.text_hash) or nil
   for _, tier in ipairs({
     { hash = a.context_hash, fn = M.window_hash, how = 'hash' },
-    { hash = a.text_hash, fn = M.text_hash, how = 'text', radius = M.TEXT_RADIUS },
+    { hash = a.context_lines and a.text_hash, fn = M.text_hash, how = 'text', radius = M.TEXT_RADIUS },
   }) do
-    local best = tier.hash and search(tier.hash, tier.fn, tier.radius)
+    local hits = tier.hash and search(tier.hash, tier.fn, tier.radius) or {}
+    local best = hits[1]
+    if best and tier.how == 'hash' and copies and #copies > 1 and copies[1] ~= best then
+      -- the lines are repeated, and the window with the old context is not the nearest copy:
+      -- the comment's own copy changed around it, and this is another one (when in doubt the
+      -- comment is outdated, never misplaced)
+      return out
+    end
+    if tier.how == 'text' then
+      -- the lines alone are weaker evidence: they must be the only copy around, and keep some of
+      -- their old neighbours
+      if #hits ~= 1 or context_matches(a.context_lines, get, best, best + n) == 0 then
+        best = nil
+      end
+    end
     if best then
       local r = rows.by_lnum[best]
       local unit = require('revuey.units').at_line(U, r.fi, r.hi, r.li)
