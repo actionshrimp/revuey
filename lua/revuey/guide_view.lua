@@ -202,6 +202,27 @@ local function placeholder(s, doc, width)
   ), width, 'placeholder', nil, 'RevueyGuideMeta')
 end
 
+---The guide's meta line ("2 sections · 1/2 reviewed · model · when"), wrapped like prose (no
+---markdown in it). Also used to update it in place after `mr`.
+function M.meta_rows(s, width)
+  local res = s.guide.resolved
+  local gen = res.generator or {}
+  local done, total = M.progress(s)
+  local meta = { plural(#res.sections, 'section'), ('%d/%d reviewed'):format(done, total) }
+  if gen.model then
+    meta[#meta + 1] = gen.model
+  end
+  if gen.generated_at then
+    meta[#meta + 1] = ago(gen.generated_at)
+  end
+  local plain = table.concat(meta, ' · ')
+  local out = {}
+  for _, l in ipairs(prose.wrap(plain, { { 0, #plain, 'RevueyGuideMeta' } }, width)) do
+    out[#out + 1] = { kind = 'prose', text = l.text, hls = l.hls, role = 'meta', block = 'meta', para = 1, off = l.off, pre = l.pre }
+  end
+  return out
+end
+
 ---Document for layout.compose_guide (see revuey.GuideDocItem).
 ---@param width integer prose wrap width
 ---@param diagram_width? integer overview diagram width (default: `width`)
@@ -215,20 +236,7 @@ function M.doc(s, width, diagram_width)
     return doc
   end
   add_prose(doc, res.title, width, 'title', nil, 'RevueyGuideTitle')
-  local gen = res.generator or {}
-  local done, total = M.progress(s)
-  local meta = { plural(#res.sections, 'section'), ('%d/%d reviewed'):format(done, total) }
-  if gen.model then
-    meta[#meta + 1] = gen.model
-  end
-  if gen.generated_at then
-    meta[#meta + 1] = ago(gen.generated_at)
-  end
-  -- (wrapped like prose; no markdown in it)
-  local plain = table.concat(meta, ' · ')
-  for _, l in ipairs(prose.wrap(plain, { { 0, #plain, 'RevueyGuideMeta' } }, width)) do
-    doc[#doc + 1] = { kind = 'prose', text = l.text, hls = l.hls, role = 'meta', block = 'meta', para = 1, off = l.off, pre = l.pre }
-  end
+  vim.list_extend(doc, M.meta_rows(s, width))
   if M.jobs[g.ks] then
     s.guide_status_line = #doc + 1
     line(doc, '', nil, 'status')
