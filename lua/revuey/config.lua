@@ -77,7 +77,12 @@ M.defaults = {
     comment_next = ']m', -- ]m/[m shadow the method motions, which mean nothing in a diff
     comment_prev = '[m',
     comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
-    comment_send = '<C-a>', -- in the comment editor: reserved for sending to an AI / agent session
+    comment_send = '<C-a>', -- in the comment editor: save and send to the coding-agent session
+    send_comment = 'cs', -- send the comment on this line to the agent session
+    -- ask the agent about this line or the visual selection: the comment editor, where
+    -- comment_send sends. `ga` (show the character code) means nothing in a review buffer, and
+    -- unlike <leader>a it cannot collide with a user's global leader mappings.
+    ask_agent = 'ga',
   },
   comments = {
     max_lines = 6, -- longer threads are cut ("… N more lines", comment_expand shows all)

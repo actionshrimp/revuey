@@ -142,6 +142,82 @@ function M.json(reviews)
   return vim.json.encode({ version = comments.VERSION, reviews = list }) .. '\n'
 end
 
+local DELIVERY = {
+  sent = 'waiting for the agent',
+  seen = 'acknowledged by the agent',
+  answered = 'answered by the agent',
+}
+
+---One message sent to an agent (`bin/revuey show <id>`): where it is, the review it belongs to,
+---the code, the comment and its thread, then how to answer.
+---@param c revuey.Comment
+---@param r table review info
+---@param bin? string how to call bin/revuey in the hints
+function M.message(c, r, bin)
+  bin = bin or 'revuey'
+  r = r or {}
+  local out = {}
+  local function add(s)
+    out[#out + 1] = s
+  end
+  local where = c.file_level and (c.anchor.path .. ' (whole file)') or (comments.location(c) .. ' (' .. (c.anchor.side or 'new') .. ')')
+  add('# Message ' .. c.id)
+  add('')
+  add('- Location: ' .. where .. (c.outdated and ' (outdated: the code changed since)' or ''))
+  add(('- Repo: %s%s'):format(r.repo and vim.fs.basename(r.repo) or '?', r.repo and (' (' .. r.repo .. ')') or ''))
+  add('- Branch: ' .. (r.branch or '?'))
+  add('- Scope: ' .. M.scope_label(r))
+  add('- Base: ' .. (r.base or '?') .. (r.merge_base and (' (merge-base ' .. r.merge_base:sub(1, 8) .. ')') or ''))
+  local d = comments.delivery(c)
+  if c.sent_at then
+    add(('- Sent: %s (%s)'):format(os.date('!%Y-%m-%d %H:%M:%S UTC', math.floor(c.sent_at / 1000)), DELIVERY[d] or d))
+  end
+  if c.status ~= 'saved' then
+    add('- Status: ' .. tostring(c.status))
+  end
+  add('')
+  add('Side: new is the code after the change, old the code before it. The file is in the repo; read more of it as needed.')
+  local snippet = c.anchor.snippet or {}
+  if not c.file_level and #snippet > 0 then
+    local fence = fence_for(snippet)
+    add('')
+    add('## Code')
+    add('')
+    add(fence .. 'diff')
+    for _, l in ipairs(snippet) do
+      add(l)
+    end
+    add(fence)
+  end
+  add('')
+  add('## Comment (' .. author_name(c.author) .. ')')
+  add('')
+  add(vim.trim(c.body or ''))
+  local replies = {}
+  for _, rep in ipairs(c.thread or {}) do
+    if not rep.deleted then
+      replies[#replies + 1] = rep
+    end
+  end
+  if #replies > 0 then
+    add('')
+    add('## Thread')
+    for _, rep in ipairs(replies) do
+      local body = vim.split(vim.trim(rep.body or ''), '\n', { plain = true })
+      local mark = rep.id == c.sent_reply and ' (the message sent to you)' or ''
+      add('')
+      add(('- **%s**%s: %s'):format(author_name(rep.author), mark, body[1] or ''))
+      for k = 2, #body do
+        add('  ' .. body[k])
+      end
+    end
+  end
+  add('')
+  add('---')
+  add(('Answer: `%s reply %s "<text>"` (`-` reads it from stdin). Handled without a reply: `%s ack %s`.'):format(bin, c.id, bin, c.id))
+  return table.concat(out, '\n') .. '\n'
+end
+
 ---Export in `format` ('markdown' default, or 'json').
 function M.render(format, reviews)
   if format == 'json' then

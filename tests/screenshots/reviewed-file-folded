@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//f/cart..main                                                                                          X
-02| Files                                  │ A src/cart.ts +27 −0  ✓ reviewed                                          2/7 
+02| Files                       ○ no agent │ A src/cart.ts +27 −0  ✓ reviewed                                          2/7 
 03| feature/cart → main                    │  A     ▸ src/cart.ts  +27 −0  added  ✓ reviewed  (27 lines folded)            
 04| 7 files  +57 −22  ✓ 1/7                │  A     ▾ src/components/Total.tsx   +5 −0  added                              
 05| base ee2e6fcf  head 6b2be8a3           │          @@ -0,0 +1,5 @@                                                      

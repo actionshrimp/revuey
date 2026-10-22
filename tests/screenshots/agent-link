@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//f/cart..main                                                                                          X
+02| Files                ● agent connected │ A src/cart.ts +27 −0                                                      2/7 
+03| feature/cart → main                    │      1▍+ import { multiply, sum } from "./math";                              
+04| 7 files  +57 −22  ✓ 0/7                │          ╭─ You · just now · sent → agent ─────────────────────────────────── 
+05| base ee2e6fcf  head 6b2be8a3           │          │ Why import both?                                                   
+06| working tree  ● uncommitted            │          ╰─                                                                   
+07|                                        │      2 + import { formatCurrency } from "./format";                           
+08|   M  logo.png  assets               bin│      3 + import { capitalize } from "./text";                                 
+09|   A  cart.ts  src             ✎2 +27 −0│      4▍+                                                                      
+10|   A  Total.tsx  src/components    +5 −0│          ╭─ You · just now · answered ─────────────────────────────────────── 
+11|   M  index.ts  src                +9 −6│          │ Is this tested?                                                    
+12|   D  legacy.ts  src               +0 −6│          │ ↳ claude · just now                                                
+13|   M  math.ts  src                +14 −8│          │   Yes, in cart.test.ts.                                            
+14|   R  text.ts  src                 +2 −2│          ╰─                                                                   
+15|                                        │      5 + export interface LineItem {                                          
+16| <CR> show  mr reviewed  gp diff        │      6 +   name: string;                                                      
+17| ]c [c hunk  ]f [f file  <Tab> fold     │      7 +   price: number;                                                     
+18| gd def  K hover  go open  R refresh    │      8 +   quantity: number;                                                  
+19| gu committed/working tree  q close     │      9 + }                                                                    
+20| gG AI guide                            │     10 +                                                                      
+21|~                                       │     11 + export class Cart {                                                  
+22|~                                       │     12 +   private items: LineItem[] = [];                                    
+23|~                                       │     13 +                                                                      
+24|~                                       │     14 +   addItem(item: LineItem): this {                                    
+25|~                                       │     15 +     this.items.push(item);                                           
+26|~                                       │     16 +     return this;                                                     
+27|~                                       │     17 +   }                                                                  
+28|~                                       │     18 +                                                                      
+29|~                                       │     19 +   total(): number {                                                  
+30|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+31|~                                       │     21 +   }                                                                  
+32|~                                       │     22 +                                                                      
+33|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              6,1             5%
+34|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333344444444444444444356778888888888887777996666666666666666666666666666666666666666666666666666666666
+03|22222222222222222222::::::::::::::::::::5;;;;<<<=>>???????????????????????????????????????@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+04|::::::::::AAABBBBCCCCCCC::::::::::::::::5DDDDDDDDDDEEE222CCCCCCCCCCCCCCFFFFFFFFFFFFEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE:
+05|CCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::::::::5DDDDDDDDDDEE5555555555555555:::::::::::::::::::::::::::::::::::::::::::::::::::
+06|FFFFFFFFFFFFFCCCCCCCCCCCCCCC::::::::::::5DDDDDDDDDDEE:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+07|::::::::::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+08|:A:FI:55555555CCCCCCCC:::::::::::::::CCC5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+09|JKJKLJMMMMMMMNNNNNJJJJJJJJJJJJJFFFAAABBB5GGGGHHHF>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+10|:A:AI:555555555CCCCCCCCCCCCCCCC::::AABBB5DDDDDDDDDDEEE222CCCCCCCCCCCCCCAAAAAAAAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE:
+11|:A:FI:55555555CCCCC::::::::::::::::AABBB5DDDDDDDDDDEE555555555555555::::::::::::::::::::::::::::::::::::::::::::::::::::
+12|:A:BI:555555555CCCCC:::::::::::::::AABBB5DDDDDDDDDDEEEE222222CCCCCCCCCCC::::::::::::::::::::::::::::::::::::::::::::::::
+13|:A:FI:5555555CCCCC::::::::::::::::AAABBB5DDDDDDDDDDEEEE555555555555555555555::::::::::::::::::::::::::::::::::::::::::::
+14|:A:FI:5555555CCCCC:::::::::::::::::AABBB5DDDDDDDDDDEE:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+15|::::::::::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+16|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+17|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+18|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+20|CCCCCCCCCCCC::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+21|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+22|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+23|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+24|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+25|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+29|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+30|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+31|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+32|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+33|00000000000000000000000000000000000000000OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+34|PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
