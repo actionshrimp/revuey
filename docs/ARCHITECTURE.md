@@ -396,7 +396,7 @@ are in `reports/Terminal code review tool landscape.md`.
      unique. Only `user` comments are made today; AI review findings (`ai`, `dismissed`/`accepted`), agent
      replies (`agent`) and the forge's "add to review" (`in_review`) fill the rest.
    - **Anchor.** `{path, side = new|old, start_line, end_line, unit_key, unit_line, hunk_key, hunk_line,
-     context_hash, text_hash, snippet}`. A range is on the new side when any selected row has a new-side line
+     context_hash, text_hash, context_lines, snippet, sort_line}`. `sort_line` is the anchor's place in new-side order (a deleted line sits just before the next new-side line of its hunk, `n - 0.5`), kept up to date by placement and used to order lists and exports. A range is on the new side when any selected row has a new-side line
      (deleted rows inside it stay in the snippet), else on the old side. `context_hash` is a sha256 of
      the side's lines `start-2 .. end+2` (from the full side text: the reviewed snapshot or new blob, the
      old blob; positions outside the file hash as a marker). `snippet` is the selected rows with

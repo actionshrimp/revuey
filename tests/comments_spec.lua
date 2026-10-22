@@ -304,6 +304,49 @@ h.test('place: a comment follows its file when it is renamed', function()
   h.eq('g.txt', c.anchor.path)
 end)
 
+h.test('order: by file, then new-side position; deleted lines sit where their hunk puts them', function()
+  -- line 30 deleted, two lines added at 25..26 instead (new side shifts by -4 after line 25)
+  local a = lines(40)
+  local t = vim.split(a, '\n')
+  for i = 26, 30 do
+    t[i] = nil
+  end
+  local b = {}
+  for i = 1, 40 do
+    if t[i] then
+      b[#b + 1] = t[i]
+    end
+  end
+  local R = review(a, table.concat(b, '\n') .. '\n')
+  local old30 = comments.new(R.anchor('old', 30, 30), 'deleted 30')
+  local new20 = comments.new(R.anchor('new', 25, 25), 'new 25')
+  local new26 = comments.new(R.anchor('new', 26, 26), 'new 26 (was 31)')
+  local S = { comments = {}, _dirty = {} }
+  for _, c in ipairs({ old30, new26, new20 }) do
+    comments.put(S, c)
+  end
+  h.eq({ 'new 25', 'deleted 30', 'new 26 (was 31)' }, vim.tbl_map(function(c)
+    return c.body
+  end, comments.list(S)))
+  -- and after re-anchoring (the position is kept up to date)
+  local p = comments.place(old30, R.ctx)
+  comments.apply_placement(old30, p)
+  h.eq(old30.anchor.sort_line, comments.place(old30, R.ctx).sort_line)
+end)
+
+h.test('events: snippets are capped (with a marker)', function()
+  local big = {}
+  for i = 1, 500 do
+    big[i] = '+line ' .. i
+  end
+  local c = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 500, snippet = big }, 'x')
+  local ev = comments.event('created', c, {})
+  h.eq(comments.EVENT_SNIPPET_MAX + 1, #ev.snippet)
+  h.ok(ev.snippet[#ev.snippet]:find('300 more lines', 1, true), ev.snippet[#ev.snippet])
+  h.eq(comments.EVENT_SNIPPET_MAX + 1, #ev.anchor.snippet)
+  h.eq(500, #c.anchor.snippet, 'the comment itself keeps all of it')
+end)
+
 h.test('merge: last writer wins per comment; replies merge by id; tombstones beat older edits', function()
   local c = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 1 }, 'v1', { now = 100, id = 'c1' })
   local a = vim.deepcopy(c)
