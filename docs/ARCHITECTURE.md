@@ -159,7 +159,9 @@ are in `reports/Terminal code review tool landscape.md`.
    - **View.** The diff window, buffer and panel are shared; `s.view_mode` picks `layout.compose` or
      `layout.compose_guide`. Prose lines are side-table entries of kind `prose` (styled by extmarks,
      skipped by syntax, word diff, LSP and EOL notes); section headings are `meta = 'section'` rows and
-     fold level 1; hunk rows are identical to the diff's (plus `section_idx`). `hunk_base[fi][hi]`
+     fold level 1 (files in the diff view); every hunk block (`layout.blocks`: header, notes, lines)
+     is fold level 2 and long context runs level 3, with `foldlevel=2`. `<Tab>` is an expr mapping:
+     `za` on a title row, else `<C-i>`, so the jumplist is untouched; hunk rows are identical to the diff's (plus `section_idx`). `hunk_base[fi][hi]`
      replaces "header row + k" so note rows can sit between a hunk header and its lines. Each mode
      keeps its own cursor/scroll/folds. Jobs live in `guide_view.jobs` by review key, so they outlive
      scope switches and even closing the review; a 100ms timer redraws the spinner via extmarks only.

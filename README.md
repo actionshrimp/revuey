@@ -140,6 +140,9 @@ checkbox and its hunk count, followed by the explanation and its hunks. Each hun
 with light markdown styling.
 
 - `]]` / `[[`: next / previous section.
+- `<Tab>` on a section heading collapses / expands the section; on a hunk's `path  @@ … @@`
+  header it collapses / expands that hunk. `<S-Tab>` collapses every section (or expands them all).
+  Elsewhere `<Tab>` is `<C-i>` as in the diff.
 - `mr`: mark the section under the cursor reviewed. It folds, and the cursor moves to the next
   section. The panel shows `✓` per section and "n/m reviewed".
 - Section marks are separate from file marks (both are shown: file marks appear on each hunk
@@ -215,14 +218,20 @@ Diff buffer:
 
 | Key | Action |
 |---|---|
-| `]c` / `[c` | Next / previous hunk (skips collapsed files; takes a count) |
+| `]c` / `[c` | Next / previous hunk (skips collapsed files and hunks; takes a count) |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `go` | Open the working-tree file at this line (in a split below) |
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
 | `K` | LSP hover |
 | `mr` | Toggle file reviewed (collapses the file and moves to the next one) |
-| `za` etc. | Normal fold commands: each file is a fold, and long unchanged runs are folded |
-| `gp` | Focus the file panel (`<Tab>` is left alone: it is `<C-i>`, jump forward) |
+| `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
+| `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
+
+`<Tab>` and `<S-Tab>` are buffer-local, so in revuey's diff/guide buffer they override your own
+`<Tab>`/`<C-i>`/`<S-Tab>` mappings (only there). A count (`3<Tab>`) always means jump forward. Set
+`keymaps = { toggle_fold = false, toggle_all_folds = false }` to leave those keys alone.
+| `za` etc. | Normal fold commands: each file is a fold, each hunk a fold inside it, and long unchanged runs are folded |
+| `gp` | Focus the file panel |
 | `gu` | Toggle working tree (default) / committed only |
 | `R` | Refresh (re-runs git; also automatic in working-tree mode) |
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
@@ -264,6 +273,8 @@ Things to try:
 - `gd` on `formatCurrency(`: opens `src/format.ts` below.
 - `K` on a call.
 - `mr` to mark a file reviewed.
+- `<Tab>` on a file header or an `@@` hunk header to collapse it, `<Tab>` again to expand it;
+  `<S-Tab>` collapses every file.
 - `q` to quit.
 
 Uncommitted work: in another terminal (or Neovim split) edit `/tmp/revuey-fixture/src/math.ts`
@@ -303,6 +314,7 @@ cd /tmp/revuey-guide
   while it runs. The guide appears after about 10 seconds.
 - `]]` / `[[` between sections, `]c` within them, `gd` on `sum(` or `K` on a call.
 - `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
+- `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
 - Edit `src/cart.ts` and save: the section with that hunk turns "outdated", the edited hunk
   appears under "Not in guide", and a banner offers `gR`.
 - `gs` for a layer: it has no guide of its own yet. `gs` again: the full-stack guide is back.
