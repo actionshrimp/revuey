@@ -170,7 +170,7 @@ dim (`RevueyStackNote`) and don't affect the review.
 | Parent setting out of date (explicit parent that isn't an ancestor) | yes: compared with trunk instead |
 | Parent setting names a missing branch | yes: the parent is guessed instead |
 | Parent settings form a loop | yes: compared with trunk instead |
-| Built on an old version of another branch (that branch ends at a newer copy of the bottom commits of your stack, like a parent amended without restacking) | maybe: old commits of that branch can show up |
+| Built on an old version of another branch (that branch has newer copies of commits at the bottom of your stack, like a parent amended without restacking) | maybe: old commits of that branch can show up |
 | Shares commits with your stack (no reflog links it; perhaps a parent that moved on) | maybe: its commits can be part of the layer's diff |
 | Related branches outside the stack (`○`): an outdated copy of your stack, another version of a stack commit (backports, backups, clock skew), side branch | no |
 | Looks landed, the stack stops at a fork, same commit as a layer, parent already merged | no |

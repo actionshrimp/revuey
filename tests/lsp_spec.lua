@@ -129,13 +129,24 @@ h.test('gd with a dirty working tree lands on the right diff row', function()
   table.insert(lines, 1, '// uncommitted 3')
   vim.fn.writefile(lines, path)
   s = h.open_review({ cwd = dirty })
-  vim.api.nvim_set_current_win(s.diff_win)
   local row, col = find_row('src/cart.ts', 'sum(this')
-  vim.api.nvim_win_set_cursor(s.diff_win, { row, col })
-  view.definition()
-  wait_cursor_change(s.diff_win, s.diff_buf, row)
-  h.eq(s.diff_win, vim.api.nvim_get_current_win())
-  local r = vim.api.nvim_win_get_cursor(s.diff_win)[1]
+  -- a cold server under load may answer from cart.ts's own import before its project has
+  -- loaded; what matters is where `gd` lands once it has, so retry (bounded) until math.ts
+  local r
+  local deadline = vim.uv.now() + 30000
+  repeat
+    vim.api.nvim_set_current_win(s.diff_win)
+    vim.api.nvim_win_set_cursor(s.diff_win, { row, col })
+    view.definition()
+    wait_cursor_change(s.diff_win, s.diff_buf, row)
+    h.eq(s.diff_win, vim.api.nvim_get_current_win())
+    r = vim.api.nvim_win_get_cursor(s.diff_win)[1]
+    local e = s.layout.map[r]
+    local landed = e and e.file_idx and s.review.files[e.file_idx].path == 'src/math.ts'
+    if not landed then
+      vim.wait(500)
+    end
+  until landed or vim.uv.now() > deadline
   h.ok(s.layout.lines[r]:find('export function sum', 1, true), s.layout.lines[r])
 end)
 

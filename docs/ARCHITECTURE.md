@@ -32,7 +32,9 @@ are in `reports/Terminal code review tool landscape.md`.
 3. **Projected LSP.** For `add`/`ctx` lines, load the real working-tree file into a hidden buffer (bufadd/bufload,
    set filetype so the user's LSP config attaches), translate cursor position (subtract any prefix columns), and
    send `textDocument/definition` / `hover` via that buffer. Wait for the client to be ready before first request
-   (TypeScript returns the import alias until the project has loaded). Proven in a spike; see report notes.
+   (TypeScript returns the import alias until the project has loaded): initialized, at least `lsp_settle_ms`
+   old, and no `$/progress` report begun and not ended (a cold server loading its project on a busy
+   machine), capped at 15s. Proven in a spike; see report notes.
    `del` lines get no LSP.
    **Proxy client** (`lsp_proxy.lua`), so the user's own `vim.lsp.buf.*` mappings, `<C-]>` and
    pickers work in review buffers, which otherwise have no client ("not supported by any server").
@@ -142,8 +144,10 @@ are in `reports/Terminal code review tool landscape.md`.
    date and changed paths, different commit = another copy; commits marked `(cherry picked from commit`
    are skipped). Committer dates give a direction: older elsewhere = `outdated_copy` (that branch is built
    on an outdated copy of the stack). Newer elsewhere is `newer_copy` only when shaped like a parent amended
-   under the stack: the matched commits are the bottom run of the bottom layer, the layer has commits of
-   its own above them, and the branch ends at the newer copy of the top one. Anything else (backports,
+   under the stack: the matched commits are a contiguous run of the bottom layer below commits of its own;
+   under the run the branch holds exactly the stack's commits (a parent amended only at its top); and
+   the branch tip is the newer copy of the run's top or a descendant of it (amended, then extended). A
+   non-`-x` cherry-pick onto a fresh branch whose tip is the copy looks the same and also warns ("may"). Anything else (backports,
    whole-stack rebases with a backup branch, clock skew) is `other_copy`, informational. Copies are grouped
    by the branch `--source` names, and one `for-each-ref --contains` per group (capped at 30 groups) finds
    every branch holding them. "Set as parent" is offered only when `merge-base --is-ancestor` says the

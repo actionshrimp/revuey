@@ -20,7 +20,8 @@ M.defaults = {
   -- Start the TypeScript/other LSP for changed files when the review opens, so `gd` is ready.
   lsp_warmup = true,
   -- Minimum age (ms) of an LSP client before the first request (tsserver answers with the import
-  -- alias until its project has loaded).
+  -- alias until its project has loaded). Requests also wait while the server reports work in
+  -- progress ($/progress), up to 15s.
   lsp_settle_ms = 3000,
   -- Attach an in-process LSP client named "revuey" to review buffers. It forwards definition,
   -- type definition, declaration, implementation, references and hover to the real language
