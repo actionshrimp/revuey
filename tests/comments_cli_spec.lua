@@ -257,6 +257,51 @@ h.test('parallel replies from the shell and a concurrent UI save: every reply is
   fd:close()
 end)
 
+-- Regression (review): option parsing went on after the positionals, so a reply text starting
+-- with `--` failed with exit 2; `--` was not supported either.
+h.test('reply: text starting with --, and -- ending the options', function()
+  local c = by_body('context note')
+  local r1 = run({ 'reply', c.id, '-- see above' })
+  h.eq(0, r1.code, r1.stderr)
+  local r2 = run({ 'reply', '--', c.id, '--flag-like text' })
+  h.eq(0, r2.code, r2.stderr)
+  local r3 = run({ 'reply', c.id, '--', '--after the separator' })
+  h.eq(0, r3.code, r3.stderr)
+  local disk = comments.get(comments.load(s.cm.path), c.id)
+  local bodies = {}
+  for _, r in ipairs(disk.thread) do
+    bodies[r.body] = true
+  end
+  h.ok(bodies['-- see above'] and bodies['--flag-like text'] and bodies['--after the separator'], vim.inspect(bodies))
+end)
+
+h.test('comments is read-only: an unreadable comments file is reported, not moved aside', function()
+  local bad = state_dir .. '/broken-0000.comments.json'
+  vim.fn.writefile({ '{not json' }, bad)
+  local r = run({ 'comments' })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stderr:find('broken-0000.comments.json', 1, true), r.stderr)
+  h.ok(vim.uv.fs_stat(bad), 'left where it was')
+  h.eq(0, #vim.fn.glob(bad .. '.corrupt-*', false, true))
+  vim.fn.delete(bad)
+end)
+
+h.test('bin/revuey: an unknown subcommand prints usage and fails; a base still opens the UI', function()
+  local function bin(args)
+    local cmd = { BIN }
+    vim.list_extend(cmd, args)
+    return vim.system(cmd, { cwd = repo, env = { REVUEY_NVIM = 'false', REVUEY_STATE_DIR = state_dir }, text = true }):wait(10000)
+  end
+  local r = bin({ 'bogus' })
+  h.eq(2, r.code)
+  h.ok(r.stderr:find('unknown command bogus', 1, true), r.stderr)
+  h.ok(r.stderr:find('usage', 1, true), r.stderr)
+  -- a branch name, flags or nothing: the UI (here the stand-in `false`, exit 1)
+  h.eq(1, bin({ 'main' }).code)
+  h.eq(1, bin({ '--stack' }).code)
+  h.eq(1, bin({}).code)
+end)
+
 h.test('watch stops by itself when whoever started it goes away', function()
   local marker = 'owner-gone-' .. vim.fn.getpid()
   local script = ('%s watch --scope %s >/dev/null 2>&1 & sleep 1; exit 0'):format(vim.fn.shellescape(BIN), marker)
