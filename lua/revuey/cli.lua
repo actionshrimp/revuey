@@ -69,15 +69,17 @@ For coding agents (no UI; run inside the reviewed worktree):
         revuey message <id> <path>:<lines> (<side>) [<branch>]: <first line>  (revuey show <id> ...)
       Messages no watch has printed yet come first (catch-up), then new ones as they are sent.
       A printed message is not printed again by the next watch (--replay: print every message
-      not yet answered or acknowledged). Messages of another running review are left to it.
+      not yet answered or acknowledged). Messages of another running review (even a suspended
+      one) are left to it; a review that ended is replaced by the next one of its scope.
       Lines are flushed one by one (fit for Claude Code's Monitor tool); SIGTERM exits 0.
       Without --messages every comment event is printed; --json prints full events.
       Several reviews in this worktree: pick one with --session <id> (see `revuey sessions`).
   revuey show <id>               the message in Markdown: file, lines, code, comment, thread
   revuey reply <id> <text|->     answer in the comment's thread (- reads stdin); marks it answered
   revuey ack <id>                mark it handled without replying (it is not delivered again)
-  revuey inbox [--json]          messages not answered or acknowledged yet, then exit (also when
-                                 Monitor is missing); printed ones say "(delivered, not handled)"
+  revuey inbox [--session <id>] [--json]
+      messages not answered or acknowledged yet, then exit (also when Monitor is missing);
+      printed ones say "(delivered, not handled)". Same review and routing as watch.
   revuey comments [--json] [--all] [--scope current|all|<branch>]
       all review comments of this branch (Markdown export)
   revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]
@@ -370,11 +372,53 @@ local function pending(dirs, ctx, undelivered_only)
   return list
 end
 
+local session_list_text
+
+---The review session a watch or inbox works for: --session, else the worktree's only live one
+---(nil when none runs). Several and no --session: exit 2 with the list.
+local function pick_session(o, ctx, list)
+  if o.session then
+    for _, e in ipairs(list) do
+      if e.id == o.session then
+        return e
+      end
+    end
+    die(('no live revuey session %s in %s%s'):format(o.session, ctx.root, #list > 0 and (':\n' .. session_list_text(list)) or ''), 2)
+  elseif #list > 1 then
+    die(('several revuey sessions in %s; pick one with --session <id>:\n%s'):format(ctx.root, session_list_text(list)), 2)
+  end
+  return list[1]
+end
+
+---Is a message for the agent of review `attached`? Its own messages, messages without a sender,
+---and those of a review confirmed dead (not in `live`, the worktree's live session ids).
+function M.routed(ev, attached, live)
+  local sender = ev.session and tostring(ev.session)
+  if not sender or (attached and sender == attached.id) then
+    return true
+  end
+  return not live[sender]
+end
+
+local function id_set(list)
+  local set = {}
+  for _, e in ipairs(list) do
+    set[e.id] = true
+  end
+  return set
+end
+
 function M.inbox(o)
   local ctx = here()
-  local list = pending(state_dirs(o, ctx), ctx)
-  for _, ev in ipairs(list) do
-    ev._file = nil
+  local live = sessions.list(sessions.bases(ctx.root, state_dir(o)), { worktree = ctx.root })
+  local attached = pick_session(o, ctx, live)
+  local live_ids = id_set(live)
+  local list = {}
+  for _, ev in ipairs(pending(state_dirs(o, ctx), ctx)) do
+    if M.routed(ev, attached, live_ids) then
+      ev._file = nil
+      list[#list + 1] = ev
+    end
   end
   if o.json then
     out((#list > 0 and vim.json.encode(list) or '[]') .. '\n')
@@ -456,7 +500,7 @@ function M.sessions(o)
   end
 end
 
-local function session_list_text(list)
+function session_list_text(list)
   local t = {}
   for _, e in ipairs(list) do
     t[#t + 1] = ('  %s  %s (%s)  started %s'):format(e.id, e.branch or '?', scope_text(e), ago(e.started_at))
@@ -489,22 +533,8 @@ function M.watch(o)
   end
 
   -- the session to attach to
-  local attached
   local list = sessions.list(bases, { worktree = ctx.root })
-  if o.session then
-    for _, e in ipairs(list) do
-      if e.id == o.session then
-        attached = e
-      end
-    end
-    if not attached then
-      die(('no live revuey session %s in %s%s'):format(o.session, ctx.root, #list > 0 and (':\n' .. session_list_text(list)) or ''), 2)
-    end
-  elseif #list > 1 then
-    die(('several revuey sessions in %s; pick one with --session <id>:\n%s'):format(ctx.root, session_list_text(list)), 2)
-  else
-    attached = list[1]
-  end
+  local attached = pick_session(o, ctx, list)
 
   -- presence: a watcher record with a heartbeat, removed on exit
   local me = { pid = vim.uv.os_getpid(), worktree = ctx.root, started_at = sessions.now_ms(), mode = o.messages and 'messages' or 'events' }
@@ -524,18 +554,11 @@ function M.watch(o)
   -- to its own watchers only; one whose review is gone goes to whoever watches
   local live_ids = {}
   local function refresh_live(list_now)
-    live_ids = {}
-    for _, e in ipairs(list_now) do
-      live_ids[e.id] = true
-    end
+    live_ids = id_set(list_now)
   end
   refresh_live(list)
   local function for_me(ev)
-    local sender = ev.session and tostring(ev.session)
-    if not sender or (attached and sender == attached.id) then
-      return true
-    end
-    return not live_ids[sender]
+    return M.routed(ev, attached, live_ids)
   end
 
   ---Record that an agent was shown the message (agent mode): catch-up skips it from now on.
@@ -716,6 +739,7 @@ function M.watch(o)
   err(('revuey: watching %s for %s\n'):format(describe(), o.messages and 'messages sent to the agent' or ('comment events (' .. (o.scope or ('branch ' .. ctx.branch)) .. ')')))
   local last_beat, last_check = vim.uv.now(), vim.uv.now()
   local several_noted = false
+  local lost, waiting_noted -- the session that ended, and whether we said we are waiting
   while running do
     vim.wait(250, function()
       return not running
@@ -735,9 +759,11 @@ function M.watch(o)
       local before = ids()
       refresh_live(l)
       local live_changed = before ~= ids()
-      -- the session ended (or crashed): wait for the next one (a review restarted here)
+      -- the session ended (or crashed): wait for the review that replaces it (same worktree and
+      -- scope), or, when none was attached yet, for the worktree's only one
       if attached and not live_ids[attached.id] then
-        err(('revuey: session %s ended; waiting for the next review in %s\n'):format(attached.id, ctx.root))
+        err(('revuey: session %s ended; waiting for a new review of %s in %s\n'):format(attached.id, attached.branch or '?', ctx.root))
+        lost, waiting_noted = attached, false
         attached = nil
         heartbeat()
       end
@@ -746,13 +772,36 @@ function M.watch(o)
         catch_up()
       end
       if not attached then
-        if #l == 1 then
-          attached = l[1]
-          heartbeat()
-          err(('revuey: attached to %s\n'):format(describe()))
+        local pick
+        if lost then
+          local same = {}
+          for _, e in ipairs(l) do
+            if e.scope_key == lost.scope_key then
+              same[#same + 1] = e
+            end
+          end
+          if #same == 1 then
+            pick = same[1]
+          elseif #l > 0 and not waiting_noted then
+            waiting_noted = true
+            err(('revuey: still waiting: %d review(s) run in %s, %s; restart with --session <id> to watch one:\n%s\n'):format(
+              #l,
+              ctx.root,
+              #same == 0 and ('none of ' .. (lost.branch or '?') .. ' (the scope of session ' .. lost.id .. ')') or 'several of that scope',
+              session_list_text(l)
+            ))
+          end
+        elseif #l == 1 then
+          pick = l[1]
         elseif #l > 1 and not several_noted then
           several_noted = true
           err(('revuey: several revuey sessions in %s; restart with --session <id>:\n%s\n'):format(ctx.root, session_list_text(l)))
+        end
+        if pick then
+          attached, lost = pick, nil
+          heartbeat()
+          err(('revuey: attached to %s\n'):format(describe()))
+          catch_up()
         end
       else
         -- follow scope switches (the feed of another scope may live in another state dir)
@@ -820,13 +869,18 @@ function M.install_skill(o)
     if st.type == 'link' then
       os.remove(dest) -- only a link: nothing of the user's is lost
     else
-      -- the user's own skill directory (or file) is kept aside, never deleted
-      local bak = ('%s.bak-%s'):format(dest, os.date('%Y%m%d-%H%M%S'))
+      -- the user's own skill directory (or file) is kept aside, never deleted, and outside
+      -- skills/ (Claude Code would load a copy there as a second "revuey" skill)
+      local backups = vim.fs.joinpath(home, '.claude', 'revuey-skill-backups')
+      local stamp = os.date('%Y%m%d-%H%M%S')
+      local slot = vim.fs.joinpath(backups, stamp)
       local n = 1
-      while vim.uv.fs_lstat(bak) do
+      while vim.uv.fs_lstat(slot) do
         n = n + 1
-        bak = ('%s.bak-%s-%d'):format(dest, os.date('%Y%m%d-%H%M%S'), n)
+        slot = vim.fs.joinpath(backups, stamp .. '-' .. n)
       end
+      vim.fn.mkdir(slot, 'p')
+      local bak = vim.fs.joinpath(slot, 'revuey')
       local ok, e = os.rename(dest, bak)
       if not ok then
         die('cannot move ' .. dest .. ' aside: ' .. tostring(e))

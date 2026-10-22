@@ -466,9 +466,11 @@ are in `reports/Terminal code review tool landscape.md`.
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
      server (v:servername), common_dir, started_at, updated_at}`) atomically after its first
      render, rewrites it at the end of any render that changed it (scope, layer, branch) and on
-     every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is live
-     while its pid is alive, `updated_at` is under 30 s old and its `server`, when a path,
-     exists: a crashed review whose pid was reused is not live. Listing removes the others and
+     every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is dead
+     when its pid is dead or its `server` (a path) is gone. Staleness alone does not kill it (a
+     review suspended with Ctrl-Z or blocked stops refreshing): an entry older than 30 s is
+     dead only when its socket does not accept a connection (`sockconnect`; the kernel accepts
+     for a stopped process), which is how a crashed review whose pid was reused looks. Listing removes the others and
      unreadable files. `--all` scans the common dir's base and each `worktrees/*` base, and
      keeps entries of this repo's `common_dir` only (the state dir fallback is shared).
    - **Presence.** `watch` writes `watchers/<pid>.json` `{pid, session|null, worktree,
@@ -503,7 +505,10 @@ are in `reports/Terminal code review tool landscape.md`.
      comments file, so the next watch (Monitor re-armed, new pid) does not print it again; no
      per-watcher cursor. Routing: a message whose `session` is another live review is left to
      that review's watchers; one from a review that is gone (or with no session) goes to any
-     watcher, and a change in the live set triggers another catch-up. Sent events match by repo
+     watcher, and a change in the live set triggers another catch-up. `inbox` picks its review
+     the same way (`--session`, else the only one, else exit 2) and filters with the same rule
+     (`cli.routed`). When the attached review ends, `watch` re-attaches to the one live review
+     with the same `scope_key` (the review restarted), else prints that it waits. Sent events match by repo
      (any branch or scope of the worktree); other events keep the `--scope` filter.
      `--messages` prints only sent events as `revuey message <id> <loc> (<side>) [<branch or full
      stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
@@ -526,7 +531,7 @@ are in `reports/Terminal code review tool landscape.md`.
      thread entries as requests, and answers instead of editing when the message's branch is
      not checked out. `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey`
      (`--copy` copies and writes `.revuey-bin`); an existing install is replaced only with
-     `--force` or a yes on a terminal, a directory being moved to `revuey.bak-<time>`; a link to
+     `--force` or a yes on a terminal, a directory being moved to `~/.claude/revuey-skill-backups/<time>/` (outside `skills/`); a link to
      the same checkout by another path counts as installed; installing from a worktree or temp
      path warns.
    - **Tests never reach the user's multiplexer.** `tests/helpers.lua` drops `TMUX*`, `HERDR_*`,
