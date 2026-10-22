@@ -207,6 +207,21 @@ h.test('visual gc: a range with the diff markers of every selected row', functio
   h.ok(vlines(row_of('m.txt', 'ctx', 21)):find('a range', 1, true))
 end)
 
+h.test('visual gc across files: comments on the first file and says so', function()
+  msgs = {}
+  add(row_of('a.txt', 'add', 2), 'across files', row_of('m.txt', 'ctx', 17))
+  local c = by_body('across files')
+  h.eq({ 'a.txt', 2, 2 }, { c.anchor.path, c.anchor.start_line, c.anchor.end_line })
+  local warned = false
+  for _, m in ipairs(msgs) do
+    warned = warned or (m.msg:find('several files', 1, true) ~= nil)
+  end
+  h.ok(warned, vim.inspect(msgs))
+  comments.delete(store(), c.id)
+  comments.save(store())
+  cv.refresh(s)
+end)
+
 h.test('gc on a file header: a file-level comment shown under the header', function()
   add(file_row('a.txt'), 'whole file')
   local c = by_body('whole file')

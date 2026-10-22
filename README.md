@@ -376,8 +376,9 @@ where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl` sh
 (`comment_add`, `comment_edit`, ...; `false` disables one).
 
 **Export** with `:RevueyCommentsExport`: Markdown meant for pasting into an AI session. A short
-header names the review (repo, branch, scope, base and merge-base), then each comment in file and
-line order: `path:start-end (new|old)`, the diff lines it is about in a fenced `diff` block, the
+header names the review (repo, branch, scope, base and merge-base), then each comment in file
+order and, within a file, in the order the diff shows them (comments on deleted lines where their
+hunk puts them): `path:start-end (new|old)`, the diff lines it is about in a fenced `diff` block, the
 comment, and its replies. Outdated comments say so; resolved comments and drafts are left out
 unless you pass `--all`. `json` gives the full data for tools. For example:
 
@@ -414,8 +415,9 @@ Keep a test for oldTotal before removing this.
 ### Comments for coding agents
 
 `bin/revuey` gives agents the comments of the current repo and branch without opening the UI
-(it runs `nvim --clean --headless`, so it ignores your config; set `$REVUEY_STATE_DIR` if your
-config moves `state_dir`):
+(it runs `nvim --clean --headless`, so it ignores your config). Both the UI and the CLI use
+`$REVUEY_STATE_DIR` when it is set, so set it rather than `state_dir` in your config if you move
+the state; a `state_dir` in `setup()` only applies to the UI:
 
 ```sh
 bin/revuey comments              # the Markdown export (--json: JSON; --all: resolved and drafts too)
@@ -429,7 +431,8 @@ layer and full-stack reviews that include it); `--scope all` every review of the
 
 Every change to a comment (created, updated, deleted, resolved, replied; `sent` is reserved for
 the later send action) is appended as one JSON line to `*.events.jsonl` next to the comments
-(rotated at 1 MB). `watch` prints one line per event and flushes it at once, so it works under
+(rotated at 1 MB; a snippet longer than 200 lines is cut in events). Writes to the comments
+file and the feed hold a lock, so any number of Neovims and `reply` calls can write at once. `watch` prints one line per event and flushes it at once, so it works under
 Claude Code's Monitor tool (each stdout line is an event), and it exits cleanly on SIGTERM:
 
 ```

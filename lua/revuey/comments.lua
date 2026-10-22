@@ -23,6 +23,7 @@ local M = {}
 
 M.VERSION = 1
 M.EVENTS_MAX = 1024 * 1024
+M.EVENT_SNIPPET_MAX = 200 -- snippet lines in an event (the comment keeps all of them)
 M.CONTEXT = 2 -- lines of context either side in context_hash
 M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true }
 
@@ -85,6 +86,27 @@ end
 -- ---------------------------------------------------------------------------
 
 local MARK = { add = '+', del = '-', ctx = ' ' }
+
+---Where line `li` of a hunk sits in new-side order: its new line, or for a deleted line just
+---before the next new-side line of the hunk (n - 0.5), so comments sort as the diff shows them.
+local function sort_line(hk, li)
+  local l = hk.lines[li]
+  if l.new_lnum then
+    return l.new_lnum
+  end
+  for k = li + 1, #hk.lines do
+    if hk.lines[k].new_lnum then
+      return hk.lines[k].new_lnum - 0.5
+    end
+  end
+  for k = li - 1, 1, -1 do
+    if hk.lines[k].new_lnum then
+      return hk.lines[k].new_lnum + 0.5
+    end
+  end
+  return math.max(hk.new_start, 1) - 0.5
+end
+M.sort_line = sort_line
 
 ---The side a line kind belongs to and its line number there.
 local function side_lnum(l, side)
@@ -219,6 +241,7 @@ function M.anchor_from_rows(files, U, entries, get_line)
     end
   end
   local a = { path = f.path, side = side, start_line = lo, end_line = hi, snippet = snippet }
+  a.sort_line = sort_line(f.hunks[first_e.hunk_idx], first_e.line_idx)
   local u = require('revuey.units').at_line(U, fi, first_e.hunk_idx, first_e.line_idx)
   if u then
     a.unit_key, a.hunk_key = u.key, u.hunk
@@ -352,7 +375,14 @@ local function at_offset(ctx, u, li, a)
     return nil
   end
   local first = n
-  return { start_line = first, end_line = first + (a.end_line - a.start_line), outdated = false, unit = u, hunk_line = li }
+  return {
+    start_line = first,
+    end_line = first + (a.end_line - a.start_line),
+    outdated = false,
+    unit = u,
+    hunk_line = li,
+    sort_line = sort_line(hk, li),
+  }
 end
 
 ---Where comment `c` goes in the review described by `ctx` (see M.context).
@@ -457,7 +487,16 @@ function M.place(c, ctx)
     if best then
       local r = rows.by_lnum[best]
       local unit = require('revuey.units').at_line(U, r.fi, r.hi, r.li)
-      return { start_line = best, end_line = best + n, outdated = false, how = tier.how, unit = unit, hunk_line = r.li, path = path ~= a.path and path or nil }
+      return {
+        start_line = best,
+        end_line = best + n,
+        outdated = false,
+        how = tier.how,
+        unit = unit,
+        hunk_line = r.li,
+        sort_line = sort_line(ctx.files[r.fi].hunks[r.hi], r.li),
+        path = path ~= a.path and path or nil,
+      }
     end
   end
   return out
@@ -482,6 +521,9 @@ function M.apply_placement(c, p)
     local a = c.anchor
     set(a, 'start_line', p.start_line)
     set(a, 'end_line', p.end_line)
+    if p.sort_line then
+      set(a, 'sort_line', p.sort_line)
+    end
     if p.unit then
       set(a, 'unit_key', p.unit.key)
       set(a, 'hunk_key', p.unit.hunk)
@@ -771,7 +813,8 @@ function M.sort(list)
     if ax.path ~= ay.path then
       return ax.path < ay.path
     end
-    local lx, ly = ax.start_line or 0, ay.start_line or 0
+    -- new-side order (deleted lines where their hunk puts them); file-level comments first
+    local lx, ly = ax.sort_line or ax.start_line or 0, ay.sort_line or ay.start_line or 0
     if lx ~= ly then
       return lx < ly
     end
@@ -814,6 +857,14 @@ end
 function M.event(kind, c, review, extra, now)
   assert(M.EVENT_KINDS[kind], 'unknown comment event ' .. tostring(kind))
   now = now or M.now_ms()
+  -- a huge selection must not make huge event lines: the snippet is capped
+  local anchor, snippet = c.anchor, c.anchor and c.anchor.snippet or {}
+  if #snippet > M.EVENT_SNIPPET_MAX then
+    local cut = vim.list_slice(snippet, 1, M.EVENT_SNIPPET_MAX)
+    cut[#cut + 1] = ('… (%d more lines)'):format(#snippet - M.EVENT_SNIPPET_MAX)
+    snippet = cut
+    anchor = vim.tbl_extend('force', anchor, { snippet = cut })
+  end
   local ev = {
     id = M.new_id(now),
     kind = kind,
@@ -821,8 +872,8 @@ function M.event(kind, c, review, extra, now)
     comment_id = c.id,
     review = review or {},
     location = M.location(c),
-    anchor = c.anchor,
-    snippet = c.anchor and c.anchor.snippet or {},
+    anchor = anchor,
+    snippet = snippet,
     body = c.body,
     author = c.author,
     status = c.status,
