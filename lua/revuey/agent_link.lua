@@ -30,6 +30,7 @@ local function entry(s)
     pid = vim.uv.os_getpid(),
     worktree = r.root,
     git_dir = s.link.git_dir,
+    common_dir = s.link.common_dir,
     branch = r.branch,
     base = r.base,
     mode = r.mode,
@@ -43,15 +44,16 @@ local function entry(s)
   }
 end
 
----Write the registry entry when it changed (a scope switch, another branch checked out).
-function M.update(s)
+---Write the registry entry when it changed (a scope switch, another branch checked out), or
+---with `refresh` anyway: its `updated_at` tells listers this review is still alive.
+function M.update(s, refresh)
   local l = s and s.link
   if not l or s.cleaned then
     return
   end
   local e = entry(s)
   local sig = vim.json.encode(e)
-  if sig == l.sig and l.path and vim.uv.fs_stat(l.path) then
+  if not refresh and sig == l.sig and l.path and vim.uv.fs_stat(l.path) then
     return
   end
   local path = sessions.register(l.bases, e)
@@ -81,11 +83,8 @@ function M.poll(s)
   end
   local ok, on = pcall(sessions.connected, l.bases, { id = l.id, worktree = s.review.root })
   on = ok and on or false
-  -- the registry entry may have been removed (cleaned up by mistake, the git dir recreated)
-  if l.path and not vim.uv.fs_stat(l.path) then
-    l.sig = nil
-    M.update(s)
-  end
+  -- keep the registry entry fresh (and write it again if it was removed)
+  M.update(s, true)
   if on ~= l.connected then
     l.connected = on
     if s.panel_win and api.nvim_win_is_valid(s.panel_win) then
@@ -111,6 +110,7 @@ function M.attach(s)
   local config = require('revuey.config')
   local state_dir = s.opts.state_dir or config.options.state_dir or require('revuey.state').default_dir()
   local gd = sessions.git_dir(s.review.root)
+  local common = sessions.common_dir(s.review.root)
   local bases = {}
   if gd then
     bases[#bases + 1] = vim.fs.joinpath(gd, 'revuey')
@@ -119,6 +119,7 @@ function M.attach(s)
   s.link = {
     id = tostring(vim.uv.os_getpid()),
     git_dir = gd,
+    common_dir = common,
     bases = bases,
     started_at = sessions.now_ms(),
     connected = false,

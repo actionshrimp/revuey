@@ -464,11 +464,13 @@ are in `reports/Terminal code review tool landscape.md`.
      shows in `git status`) + `/revuey`, then the state dir when that is not writable. Each review
      writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, base, mode,
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
-     server (v:servername), started_at, updated_at}`) atomically after its first render, rewrites
-     it at the end of any render that changed it (scope, layer, branch), and removes it on
-     cleanup and `VimLeavePre`. Listing removes entries whose pid is dead on this host (other
-     hosts are kept) and unreadable files. `--all` scans the common dir's base and each
-     `worktrees/*` base.
+     server (v:servername), common_dir, started_at, updated_at}`) atomically after its first
+     render, rewrites it at the end of any render that changed it (scope, layer, branch) and on
+     every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is live
+     while its pid is alive, `updated_at` is under 30 s old and its `server`, when a path,
+     exists: a crashed review whose pid was reused is not live. Listing removes the others and
+     unreadable files. `--all` scans the common dir's base and each `worktrees/*` base, and
+     keeps entries of this repo's `common_dir` only (the state dir fallback is shared).
    - **Presence.** `watch` writes `watchers/<pid>.json` `{pid, session|null, worktree,
      heartbeat_at, mode}` at start, on (re)attach and every 5 s, and removes it on exit. The UI
      polls every 2 s: connected when a watcher attached to its id (or attached to no session, in
@@ -476,39 +478,62 @@ are in `reports/Terminal code review tool landscape.md`.
      (`agent_link.winbar`, kept by the winbar guard) and the comment markers.
    - **Delivery** is separate from `status` (draft/saved/resolved, AI review dismissed/accepted)
      and `in_review`, so sending never interferes with triage or the forge. `comments.delivery`
-     derives `sent` (sent_at newer than any ack), `seen` (acked_at >= sent_at), `answered`
-     (answered_at, or an agent reply created after sent_at). The timestamps merge by maximum
-     (an ack from the CLI survives a concurrent edit in the UI; the newest send carries its
-     `sent_reply`). A re-send sets `sent_at` past every earlier ack, answer and agent reply.
+     derives `sent` (queued: no watch printed it), `delivered` (delivered_at >= sent_at),
+     `seen` (acked_at >= sent_at), `answered` (answered_at, or an agent reply created after
+     sent_at). The timestamps merge by maximum (an ack from the CLI survives a concurrent edit
+     in the UI; the newest send carries its `sent_reply` and `sent_session`). A re-send sets
+     `sent_at` past every earlier delivery, ack, answer and agent reply. Markers follow this
+     state: only an undelivered message depends on presence ("queued" or "sending").
    - **Sending.** `<C-a>` (new comment, edit, or a reply as a follow-up), `cs` (existing comment)
      and `ga` (the editor titled "Ask agent" on a line or selection) save the comment, set
-     `sent_at`, and append the usual event plus a `sent` event: the comment event fields (full
-     anchor, snippet, body, review {repo, branch, base, scope, layers...}) and `message`,
-     `message_kind` (comment|reply), `sent_at`, `session`. Without a connected agent the send is
-     recorded all the same and marked "queued".
+     `sent_at` and `sent_session` (this review's id), and append the usual event plus a `sent`
+     event: the comment event fields (full anchor, snippet, body, review {repo, branch, base,
+     scope, layers...}) and `message`, `message_kind` (comment|reply), `sent_at`, `session`. The
+     sent event is appended through `lock.after`, so when a busy lock deferred the comments
+     save it waits until the comment is on disk (`show`, `reply` and catch-up read the file).
+     Without a connected agent the send is recorded all the same and marked "queued".
    - **watch.** Attaches to the worktree's single live session (`--session` when several; with
      none it waits, and it re-attaches when its session's entry disappears and one new session
      appears). It follows the event files of the default state dir and the session's; files in a
      directory seen for the first time are followed from their end. Then a catch-up: every
-     unacknowledged sent comment in the repo's comments files (`comments.unacked`, rebuilt as
-     `sent` events), after the feeds were opened, so a message sent in between appears in both
-     and is printed once (dedupe by `<comment id>:<sent_at>`). Sent events match by repo only
+     undelivered sent comment in the repo's comments files (`comments.undelivered`, rebuilt as
+     `sent` events; `--replay`: every unacknowledged one), after the feeds were opened, so a
+     message sent in between appears in both and is printed once (dedupe by `<comment
+     id>:<sent_at>`). In `--messages` mode each printed message is stamped `delivered_at` in its
+     comments file, so the next watch (Monitor re-armed, new pid) does not print it again; no
+     per-watcher cursor. Routing: a message whose `session` is another live review is left to
+     that review's watchers; one from a review that is gone (or with no session) goes to any
+     watcher, and a change in the live set triggers another catch-up. Sent events match by repo
      (any branch or scope of the worktree); other events keep the `--scope` filter.
      `--messages` prints only sent events as `revuey message <id> <loc> (<side>) [<branch or full
      stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
      `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path.
    - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
      sets `acked_at`/`answered_at` on a sent comment; `ack` sets `acked_at` and appends an `acked`
-     event (hidden from `watch` unless `--all`); `inbox` prints the catch-up and exits. All of
+     event (hidden from `watch` unless `--all`; refused for a comment never sent); `inbox`
+     prints every unacknowledged message, delivered ones marked "(delivered, not handled)", and
+     exits. A short id matching several comments is refused with the candidates. All of
      them search the default state dir plus the live sessions' state dirs, so a review whose
      config sets another `state_dir` is still found while it runs.
    - **Skill.** `skill/revuey/SKILL.md` (connect, Monitor with the 30-minute maximum and re-arm,
      `show`/`reply`/`ack`, `inbox` without Monitor, no edits unless asked), `revuey` (finds
-     `bin/revuey` via `.revuey-bin`, the skill's real path, or PATH) and `launch.sh` (a tmux or
-     herdr pane to the right, returning at once and printing the session once registered).
-     `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey` (`--copy` copies and
-     writes `.revuey-bin`); an existing install is replaced only with `--force` or a yes on a
-     terminal.
+     `bin/revuey` via `.revuey-bin`, the skill's real path, or PATH) and `launch.sh --in
+     tmux|herdr|none <dir>`: an explicit target, verified (`tmux display-message -t
+     $TMUX_PANE`, `herdr pane get $HERDR_PANE_ID`) or refused, never guessed; the pane runs
+     `bash <temp script>`, so no quoting reaches the pane's shell (bash, zsh or fish). The skill
+     runs `inbox` once on connect (messages a crashed agent was shown), puts `cd <worktree> &&`
+     before every command (Monitor has its own cwd), treats only the Comment and the user's
+     thread entries as requests, and answers instead of editing when the message's branch is
+     not checked out. `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey`
+     (`--copy` copies and writes `.revuey-bin`); an existing install is replaced only with
+     `--force` or a yes on a terminal, a directory being moved to `revuey.bak-<time>`; a link to
+     the same checkout by another path counts as installed; installing from a worktree or temp
+     path warns.
+   - **Tests never reach the user's multiplexer.** `tests/helpers.lua` drops `TMUX*`, `HERDR_*`,
+     `ZELLIJ*` and `CMUX_*`, sets a private `TMUX_TMPDIR` and puts failing `herdr`/`zellij`/`cmux`
+     blockers first on PATH; `guard_spec.lua` (first in `make test`) checks this from a
+     subprocess, requires `-L` on every tmux call in the specs, and drives `launch.sh` against
+     fake multiplexers only.
    - **Later: the chat panel** sends through the same hook and can reuse the delivery fields and
      the thread as its transcript.
 

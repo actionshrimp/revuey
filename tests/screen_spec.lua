@@ -408,6 +408,7 @@ h.test('agent link: connected indicator, sent and answered markers', function()
     end
     local a = add(1, 'Why import both?')
     comments.mark_sent(store, a.id)
+    comments.mark_delivered(store, a.id) -- a watch printed it
     local b = add(4, 'Is this tested?')
     comments.mark_sent(store, b.id)
     comments.reply(store, b.id, 'Yes, in cart.test.ts.', { kind = 'agent', name = 'claude' })
