@@ -471,7 +471,7 @@ The keys are `comment_send`, `send_comment` and `ask_agent` under `keymaps`.
 
 **With Claude Code.** Install the skill once (it links `skill/revuey` from this checkout into
 `~/.claude/skills/revuey`; `--copy` copies it instead, `--force` replaces an existing one,
-moving a directory aside as `revuey.bak-<time>`). Install it from your main checkout: a link
+moving a directory aside to `~/.claude/revuey-skill-backups/<time>/`). Install it from your main checkout: a link
 into a worktree or temp dir breaks when that is removed (it warns):
 
 ```sh
@@ -500,7 +500,8 @@ bin/revuey watch --messages      # one line per message; ones no watch printed y
 bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
 bin/revuey reply <id> "Because…" # answer in the thread (- reads stdin); marks it answered
 bin/revuey ack <id>              # handled without a reply: not delivered again
-bin/revuey inbox                 # messages not handled yet, then exit (no Monitor needed); --json
+bin/revuey inbox                 # messages not handled yet, then exit (no Monitor needed);
+                                 # --json; --session <id> like watch
 ```
 
 A `watch --messages` line looks like this (`--json` prints the full event instead, with the
@@ -514,8 +515,9 @@ How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the
 comments and event feed paths, Neovim's PID and RPC socket); it falls back to revuey's state dir
 when the git dir is not writable, rewrites the entry when you switch layers or scopes, and
-refreshes it every 2 s and removes it on exit (an entry not refreshed for 30 s, whose process
-is gone or whose Neovim socket is gone, is dead and cleaned up). Sending marks the comment with
+refreshes it every 2 s and removes it on exit (an entry is dead when its process or its Neovim
+socket is gone, or when it was not refreshed for 30 s and its socket does not answer: a crashed
+review whose pid was reused; a suspended review stays alive). Sending marks the comment with
 `sent_at` and the sending review, and appends a `sent` event to the comment feed once the
 comment is saved; its `status` stays as it was. `watch` attaches to the worktree's single live
 review (several: pick one with `--session <id>`; none yet: it waits for one, and it re-attaches
@@ -523,7 +525,9 @@ when the review restarts), registers a watcher with a heartbeat in the same plac
 counts an agent as connected while a heartbeat is under 30 s old and its process lives), prints
 the messages no watch has printed yet, then new ones, and records each one it prints as
 delivered, so a restarted watch (Monitor re-armed) never repeats one. It prints only its own
-review's messages, and those of a review that is gone. A message counts as handled once the
+review's messages, and those of a review that is gone (one that is only suspended keeps its
+own), and when its review restarts it follows the new one of the same scope; `inbox` takes
+`--session` and routes the same way. A message counts as handled once the
 agent acknowledges it or replies; `inbox` lists the rest, delivered or not.
 
 `skill/revuey/launch.sh --in tmux|herdr|none <dir>` opens the review pane for the agent. It

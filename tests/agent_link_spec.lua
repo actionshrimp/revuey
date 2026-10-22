@@ -441,26 +441,62 @@ h.test('ids: an ambiguous short id lists the candidates', function()
   h.eq(0, run({ 'show', 'abcabc0000000002' }).code)
 end)
 
--- Review: with two reviews of one worktree, a watcher of one printed the other's messages, so
--- two agents acted on them.
-h.test('two sessions: each watcher gets its own review\'s messages; a gone review\'s go to anyone', function()
-  local other = vim.system({ 'sleep', '120' })
-  local B = tostring(other.pid)
+---A fake second review of this worktree: a live pid, a listening RPC socket, its registry
+---entry refreshed every second like a running review's (`quiet()` stops that, `crash()` kills it).
+local function fake_review(scope_key)
+  local proc = vim.system({ 'sleep', '120' })
+  local id = tostring(proc.pid)
+  local sock = h.tmpdir('link-sock-' .. id) .. '/s'
+  local listener = vim.uv.new_pipe(false)
+  assert(listener:bind(sock))
+  assert(listener:listen(16, function() end))
   local base = sessions.bases(repo)[1]
-  local reg = sessions.register({ base }, {
-    pid = other.pid,
-    worktree = s.review.root,
-    common_dir = sessions.common_dir(repo),
-    branch = 'feat',
-    scope = { kind = 'branch' },
-    state_dir = state_dir,
-    started_at = 1,
-  })
-  -- keep B alive in the registry while the test runs
+  local function entry()
+    return {
+      pid = proc.pid,
+      worktree = s.review.root,
+      common_dir = sessions.common_dir(repo),
+      branch = 'feat',
+      scope = { kind = 'branch' },
+      scope_key = scope_key,
+      state_dir = state_dir,
+      server = sock,
+      started_at = 1,
+    }
+  end
+  local f = { id = id, path = sessions.register({ base }, entry()) }
   local keep = vim.uv.new_timer()
   keep:start(1000, 1000, vim.schedule_wrap(function()
-    sessions.register({ base }, { pid = other.pid, worktree = s.review.root, branch = 'feat', scope = { kind = 'branch' }, state_dir = state_dir, started_at = 1 })
+    sessions.register({ base }, entry())
   end))
+  function f.quiet()
+    -- suspended (Ctrl-Z) or blocked: no more refreshes, and its last one is long ago
+    if not keep:is_closing() then
+      keep:stop()
+      keep:close()
+    end
+    local e = entry()
+    e.updated_at = sessions.now_ms() - sessions.STALE_MS - 5000
+    vim.fn.writefile({ vim.json.encode(vim.tbl_extend('force', e, { id = id, version = 1, host = sessions.host })) }, f.path)
+  end
+  function f.crash()
+    if not keep:is_closing() then
+      keep:stop()
+      keep:close()
+    end
+    listener:close()
+    proc:kill('sigkill')
+    proc:wait()
+  end
+  return f
+end
+
+-- Review: with two reviews of one worktree, a watcher of one printed the other's messages, so
+-- two agents acted on them. Re-review: a review that was only quiet (suspended) lost its
+-- messages to the other review's watcher, and `inbox` was not scoped to a review.
+h.test('two sessions: watch and inbox get their own review\'s messages; a quiet review keeps its own; a dead one\'s go to anyone', function()
+  local b = fake_review('kB')
+  local B = b.id
   local function send_from_b(body, row)
     local c = add(row, body)
     local sent = comments.mark_sent(s.cm.store, c.id, { session = B })
@@ -482,16 +518,52 @@ h.test('two sessions: each watcher gets its own review\'s messages; a gone revie
   -- this review's messages do reach A
   vim.api.nvim_win_set_cursor(s.diff_win, { row_of('ctx', 19), 0 })
   keys('cs')
-  h.ok(wait_out(wa, 'revuey message ' .. by_body('just a note').id), wa.out)
+  local mine = by_body('just a note')
+  h.ok(wait_out(wa, 'revuey message ' .. mine.id), wa.out)
+  -- inbox is per review too: two reviews and no --session is refused
+  local ib = run({ 'inbox' })
+  h.eq(2, ib.code)
+  h.ok(ib.stderr:find('--session', 1, true), ib.stderr)
+  local ia = run({ 'inbox', '--session', ME }).stdout
+  h.ok(ia:find(mine.id, 1, true), ia)
+  h.eq(nil, ia:find(m1.id, 1, true), ia)
+  h.eq(nil, ia:find(m2.id, 1, true), ia)
+  local ibb = run({ 'inbox', '--session', B }).stdout
+  h.ok(ibb:find(m1.id, 1, true) and ibb:find(m2.id, 1, true), ibb)
+  h.eq(nil, ibb:find(mine.id, 1, true), ibb)
+  -- B goes quiet (suspended): still alive while its socket answers, and its message stays its own
+  b.quiet()
+  h.ok(run({ 'sessions' }).stdout:find(B, 1, true), 'a quiet review is still listed')
+  vim.wait(3000)
+  h.eq(nil, wa.out:find(m2.id, 1, true), wa.out)
+  h.eq('sent', comments.delivery(comments.get(comments.load(s.cm.path), m2.id)), 'not taken by A')
   -- B is gone (it crashed): its undelivered message is now anyone's; the delivered one is not repeated
-  keep:stop()
-  keep:close()
-  other:kill('sigkill')
-  other:wait()
+  b.crash()
   h.ok(wait_out(wa, 'revuey message ' .. m2.id), wa.out)
   h.eq(nil, wa.out:find(m1.id, 1, true), wa.out)
   h.eq(0, stop(wa).code)
-  sessions.remove(reg)
+end)
+
+h.test('a watch whose review restarted re-attaches to the one replacing it (same scope), else says it waits', function()
+  local old = fake_review('k-same')
+  local w = watch({ '--messages', '--session', old.id })
+  old.crash()
+  h.ok(vim.wait(10000, function()
+    return w.err:find('session ' .. old.id .. ' ended', 1, true) ~= nil
+  end, 50), w.err)
+  -- another scope only (this review, and a review of another layer): it says so and waits
+  local other = fake_review('k-other')
+  h.ok(vim.wait(10000, function()
+    return w.err:find('still waiting', 1, true) ~= nil
+  end, 50), w.err)
+  -- the replacement of the same scope appears: attached
+  local new = fake_review('k-same')
+  h.ok(vim.wait(10000, function()
+    return w.err:find('attached to session ' .. new.id, 1, true) ~= nil
+  end, 50), w.err)
+  h.eq(0, stop(w).code)
+  new.crash()
+  other.crash()
 end)
 
 -- Review: a send whose comments save was deferred by a busy lock appended its event first, so
@@ -557,7 +629,8 @@ h.test('install-skill: symlinks the skill into $HOME/.claude/skills; asks before
   r = run({ 'install-skill', '--force' }, { env = env, cwd = home })
   h.eq(0, r.code, r.stderr)
   h.eq(h.root .. '/skill/revuey', vim.uv.fs_readlink(dest))
-  local baks = vim.fn.glob(dest .. '.bak-*', false, true)
+  h.eq({ 'revuey' }, vim.fn.readdir(home .. '/.claude/skills'), 'no second skill in skills/')
+  local baks = vim.fn.glob(home .. '/.claude/revuey-skill-backups/*/revuey', false, true)
   h.eq(1, #baks, vim.inspect(vim.fn.readdir(vim.fs.dirname(dest))) .. r.stderr)
   h.ok(vim.uv.fs_stat(baks[1] .. '/NOTES.md'), 'the old directory is kept')
   h.ok(r.stderr:find('moved the existing', 1, true), r.stderr)
