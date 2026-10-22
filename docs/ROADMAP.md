@@ -1,0 +1,42 @@
+# Roadmap
+
+Work lands chunk by chunk as pull requests gated on CI (see [TESTING.md](TESTING.md)). Order below is the planned
+sequence; later items build on earlier ones.
+
+## Done
+- Local branch review: composed diff buffer, file panel, projected syntax and word diff, `gd`/`K`, reviewed marks.
+- Working-tree mode with auto-refresh.
+- Local PR stacks: layer and full-stack scopes, restack/override/squash-merge notes.
+- AI guided review: hunk-level sections, staleness, section reviewed marks, read-only restricted `claude -p`.
+- CI on GitHub Actions.
+
+## In flight
+- `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.
+- Proxy LSP client so the user's own LSP mappings and pickers work in revuey buffers; clearer guide scope wording.
+- Guide overview diagram (structured graph rendered as box-drawing text, Mermaid export) and branch labels on hunks
+  in full-stack guides.
+
+## Next
+1. **Local comments and export.** Comments on a line or range in the diff or guide view, on either side,
+   rendered inline as threads. Anchored by path, side, line range and content hash so they re-anchor or show as
+   outdated when code moves. Stored locally per review. Export to a paste-friendly text format (file, line range,
+   the commented code, the comment body) via a command, the clipboard and `bin/revuey comments`, for handing to an
+   AI session. This is the foundation for the forge items below.
+2. **Ask AI and chat panel.** Ask a question about a visual selection in the diff or guide view; the answer
+   streams into a float and can be pinned as a thread. A chat side panel seeded with the diff and guide resumes the
+   guide's Claude session, so follow-ups keep context. Read-only, restricted `claude -p` as for the guide.
+3. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
+   `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
+   (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
+4. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
+   and render them inline alongside local comments, including resolved and outdated state.
+5. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
+   posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
+   Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
+   to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
+
+## Later / ideas
+- Optional image rendering of the guide diagram via snacks.nvim when available.
+- Codex as a second AI provider.
+- Side-by-side diff mode.
+- Standalone non-Neovim frontend reusing the JSON state, if there is demand.
