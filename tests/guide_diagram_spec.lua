@@ -152,11 +152,11 @@ h.test('the diagram re-renders on resize and keeps its fold', function()
   keys(s, '<CR>')
   resize(45)
   h.ok(s.render_count > renders, 're-rendered')
-  h.ok(s.prose_width < 40)
+  h.ok(s.diagram_width < 40)
   h.eq(s.layout.diagram.start_row, vim.fn.foldclosed(s.layout.diagram.start_row), 'still folded')
   keys(s, '<CR>')
   for row = s.layout.diagram.start_row, s.layout.diagram.end_row do
-    h.ok(vim.api.nvim_strwidth(lines(s)[row]) <= s.prose_width, lines(s)[row])
+    h.ok(vim.api.nvim_strwidth(lines(s)[row]) <= s.diagram_width, lines(s)[row])
   end
   -- <CR> on a node in the list form jumps too
   local crow, ccol = find(s, 'cart.ts', 'diagram')
@@ -165,6 +165,44 @@ h.test('the diagram re-renders on resize and keeps its fold', function()
   h.eq(s.layout.sections[1].start_row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   vim.cmd('wincmd =')
   vim.cmd('doautocmd WinResized')
+end)
+
+h.test('the cursor on a diagram row stays on that row after a refresh and a re-wrap', function()
+  local s = view.session
+  local function resize(width)
+    vim.api.nvim_win_set_width(s.diff_win, width)
+    vim.cmd('doautocmd WinResized')
+  end
+  local crow, ccol = find(s, 'cart.ts', 'diagram')
+  local rel = crow - s.layout.diagram.start_row
+  h.ok(rel > 2, 'a row well inside the diagram')
+  vim.api.nvim_win_set_cursor(s.diff_win, { crow, ccol })
+  view.refresh({ force = true })
+  idle(s)
+  h.eq({ crow, ccol }, vim.api.nvim_win_get_cursor(s.diff_win), 'refresh')
+  resize(70)
+  local cur = vim.api.nvim_win_get_cursor(s.diff_win)
+  h.eq(s.layout.diagram.start_row + rel, cur[1], 're-wrap: same row of the diagram')
+  h.ok(cur[2] < math.max(#lines(s)[cur[1]], 1), 'column clamped to the line')
+  -- the last row of a taller layout clamps to the shorter one
+  vim.api.nvim_win_set_cursor(s.diff_win, { s.layout.diagram.end_row, 0 })
+  view.refresh({ force = true })
+  idle(s)
+  h.eq(s.layout.diagram.end_row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  vim.cmd('wincmd =')
+  vim.cmd('doautocmd WinResized')
+end)
+
+h.test('the diagram uses the full window width, not the prose cap', function()
+  local s = view.session
+  vim.cmd('only')
+  vim.cmd('doautocmd WinResized')
+  idle(s)
+  h.ok(s.diagram_width > s.prose_width, ('%d > %d'):format(s.diagram_width, s.prose_width))
+  view.close()
+  s = open(h.fixture())
+  view.guide_command(false)
+  idle(s)
 end)
 
 h.test('<Tab> on the diagram heading folds it; <S-Tab> includes it; the fold survives a refresh', function()
