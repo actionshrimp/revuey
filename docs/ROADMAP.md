@@ -31,9 +31,11 @@ sequence; later items build on earlier ones.
    or ask a follow-up that resumes the agent's session. Nothing is posted anywhere. An optional skill's `SKILL.md`
    (from `~/.claude/skills`, the repo's `.claude/skills`, or a path) is read by revuey and passed as review
    guidance; skills that need to run scripts are treated as guidance only.
-3. **Ask AI and chat panel.** Ask a question about a visual selection in the diff or guide view; the answer
-   streams into a float and can be pinned as a thread. A chat side panel seeded with the diff and guide resumes the
-   guide's Claude session, so follow-ups keep context. Read-only, restricted `claude -p` as for the guide.
+3. **Ask AI and chat panel.** Built on local comments: from the comment editor (or a visual selection), a key
+   sends the draft as a question instead of saving it, carrying its anchor (file, lines, code, guide section). The
+   answer streams into a chat side panel that resumes the guide's Claude session, so it has the review context, and
+   can be pinned back as a reply in that comment's thread, then kept as a review comment or discarded. Follow-ups on
+   AI review findings use the same path. Read-only, restricted `claude -p` as for the guide.
 4. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
