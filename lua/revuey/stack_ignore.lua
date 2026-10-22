@@ -116,6 +116,13 @@ end
 ---@param o {add?:string[], remove?:string[]}
 ---@return string[] patterns after the change
 function M.update(dir, repo, o)
+  vim.fn.mkdir(dir, 'p')
+  return require('revuey.lock').with(M.file_for(dir, repo), function()
+    return M._update_locked(dir, repo, o)
+  end)
+end
+
+function M._update_locked(dir, repo, o)
   local remove = {}
   for _, p in ipairs(o.remove or {}) do
     remove[p] = true

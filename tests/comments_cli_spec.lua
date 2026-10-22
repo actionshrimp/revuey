@@ -216,6 +216,47 @@ h.test('reply: an agent reply from the shell shows up live in the running review
   h.eq(2, run({ 'reply' }).code)
 end)
 
+-- Regression (review): 20 parallel `reply` calls stored only 14 replies (no lock around
+-- read-merge-rename), although all of them wrote their event and exited 0.
+h.test('parallel replies from the shell and a concurrent UI save: every reply is kept', function()
+  local c = by_body('context note')
+  local before = #comments.get(s.cm.store, c.id).thread
+  local fd = io.open(s.cm.events)
+  local events_before = #comments.decode_events(fd:read('*a'))
+  fd:close()
+  local procs = {}
+  for i = 1, 20 do
+    procs[i] = vim.system({ BIN, 'reply', c.id, 'parallel reply ' .. i }, { cwd = repo, env = ENV, text = true })
+  end
+  -- meanwhile the UI saves comments of its own
+  local ui = {}
+  for i = 1, 5 do
+    local x = comments.new({ path = 'm.txt', side = 'new', start_line = 30 + i, end_line = 30 + i }, 'ui note ' .. i)
+    comments.put(s.cm.store, x)
+    comments.save(s.cm.store)
+    ui[#ui + 1] = x.id
+  end
+  for i = 1, 20 do
+    local r = procs[i]:wait(30000)
+    h.eq(0, r.code, r.stderr)
+  end
+  local disk = comments.load(s.cm.path)
+  local bodies = {}
+  for _, r in ipairs(comments.get(disk, c.id).thread) do
+    bodies[r.body] = true
+  end
+  for i = 1, 20 do
+    h.ok(bodies['parallel reply ' .. i], 'reply ' .. i .. ' lost')
+  end
+  h.eq(before + 20, #comments.get(disk, c.id).thread)
+  for _, id in ipairs(ui) do
+    h.ok(comments.get(disk, id), 'UI comment lost')
+  end
+  fd = io.open(s.cm.events)
+  h.eq(events_before + 20, #comments.decode_events(fd:read('*a')), 'one event per reply')
+  fd:close()
+end)
+
 h.test('watch stops by itself when whoever started it goes away', function()
   local marker = 'owner-gone-' .. vim.fn.getpid()
   local script = ('%s watch --scope %s >/dev/null 2>&1 & sleep 1; exit 0'):format(vim.fn.shellescape(BIN), marker)
