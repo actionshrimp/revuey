@@ -362,6 +362,19 @@ h.test('storage: two instances editing different comments, and edit versus delet
   h.eq(1, #vim.fn.glob(path .. '.corrupt-*', false, true))
 end)
 
+h.test('storage: tombstones older than TOMBSTONE_DAYS are pruned on save; recent ones stay', function()
+  local dir = h.tmpdir('comments-tomb')
+  local S = comments.load(dir .. '/x.comments.json')
+  local old = comments.now_ms() - (comments.TOMBSTONE_DAYS + 1) * 86400 * 1000
+  S.comments.old = { id = 'old', deleted = true, deleted_at = old, updated_at = old }
+  S.comments.new = { id = 'new', deleted = true, deleted_at = comments.now_ms(), updated_at = comments.now_ms() }
+  comments.save(S)
+  local disk = comments.read(S.path)
+  h.eq(nil, disk.comments.old)
+  h.eq(true, disk.comments.new.deleted)
+  h.eq(nil, vim.uv.fs_stat(S.path .. '.lock'), 'the lock is released')
+end)
+
 h.test('find: full id, unique prefix or substring', function()
   local S = { comments = {}, _dirty = {} }
   local c1 = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 1 }, 'x', { id = '0000000000aabbb1' })

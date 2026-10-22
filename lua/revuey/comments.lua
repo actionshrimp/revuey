@@ -624,8 +624,24 @@ end
 ---@param review? table review info to record (repo, branch, base, scope...)
 function M.save(store, review)
   vim.fn.mkdir(vim.fs.dirname(store.path), 'p')
+  -- read, merge and rename under a lock: two processes (two Neovims, the CLI) saving at once
+  -- must not both start from the old file
+  return require('revuey.lock').with(store.path, function()
+    return M._save_locked(store, review)
+  end)
+end
+
+M.TOMBSTONE_DAYS = 30 -- deletes are remembered this long (so older copies elsewhere stay deleted)
+
+function M._save_locked(store, review)
   local disk = M.read(store.path) or {}
   local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
+  local cutoff = M.now_ms() - M.TOMBSTONE_DAYS * 86400 * 1000
+  for id, c in pairs(merged) do
+    if c.deleted and (c.deleted_at or c.updated_at or 0) < cutoff then
+      merged[id] = nil
+    end
+  end
   local out = { path = store.path, review = review or store.review or disk.review or {}, comments = merged }
   if not review and disk.review and next(disk.review) then
     out.review = vim.tbl_extend('keep', store.review or {}, disk.review)
@@ -807,6 +823,18 @@ end
 ---Append an event (rotating the file to `.1` past EVENTS_MAX bytes).
 function M.append_event(path, ev)
   vim.fn.mkdir(vim.fs.dirname(path), 'p')
+  -- rotation and append under the lock: a rename between another writer's size check and its
+  -- append would otherwise put its event into the rotated file or lose a generation
+  local ok, res, err = pcall(require('revuey.lock').with, path, function()
+    return M._append_locked(path, ev)
+  end)
+  if not ok then
+    return false, res
+  end
+  return res, err
+end
+
+function M._append_locked(path, ev)
   local st = vim.uv.fs_stat(path)
   if st and st.size > M.EVENTS_MAX then
     os.rename(path, path .. '.1')

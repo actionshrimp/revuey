@@ -122,6 +122,14 @@ end
 function M.save(st)
   local dir = vim.fs.dirname(st._path)
   vim.fn.mkdir(dir, 'p')
+  -- read, merge and rename under a lock: two processes saving at once must not both start
+  -- from the old file (the last rename would drop the other's change)
+  return require('revuey.lock').with(st._path, function()
+    return M._save_locked(st)
+  end)
+end
+
+function M._save_locked(st)
   local files, sections, units = read_files(st._path)
   for path, ch in pairs(st._changes or {}) do
     if ch.entry then
