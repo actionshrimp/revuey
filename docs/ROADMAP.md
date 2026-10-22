@@ -22,19 +22,26 @@ sequence; later items build on earlier ones.
    outdated when code moves. Stored locally per review. Export to a paste-friendly text format (file, line range,
    the commented code, the comment body) via a command, the clipboard and `bin/revuey comments`, for handing to an
    AI session. This is the foundation for the forge items below.
-2. **Ask AI and chat panel.** Ask a question about a visual selection in the diff or guide view; the answer
+2. **AI reviews (local-first).** `:RevueyAIReview [skill]` asks the user's `claude` CLI (read-only, restricted, as
+   for the guide) to review the current scope. Findings come back structured (severity, title, body, optional
+   suggested change), anchored to review units plus a line range, and land as AI-authored local comment threads.
+   The user triages each: accept (becomes their own comment, editable, eligible for a later forge review), dismiss,
+   or ask a follow-up that resumes the agent's session. Nothing is posted anywhere. An optional skill's `SKILL.md`
+   (from `~/.claude/skills`, the repo's `.claude/skills`, or a path) is read by revuey and passed as review
+   guidance; skills that need to run scripts are treated as guidance only.
+3. **Ask AI and chat panel.** Ask a question about a visual selection in the diff or guide view; the answer
    streams into a float and can be pinned as a thread. A chat side panel seeded with the diff and guide resumes the
    guide's Claude session, so follow-ups keep context. Read-only, restricted `claude -p` as for the guide.
-3. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
+4. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
-4. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
+5. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
    and render them inline alongside local comments, including resolved and outdated state.
-5. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
+6. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
    posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
    Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
    to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
-6. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
+7. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
    sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
    (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
