@@ -270,14 +270,14 @@ function M.render(s)
   if s.view_mode == 'guide' then
     help = {
       ' ]] [[ section  mr section reviewed',
-      ' ]c [c hunk  za fold  gp diff',
+      ' ]c [c hunk  <Tab> fold  gp diff',
       ' gd def  K hover  go open  R refresh',
       ' gG diff view  gR regenerate  q close',
     }
   else
     help = {
       ' <CR> show  mr reviewed  gp diff',
-      ' ]c [c hunk  ]f [f file  za fold',
+      ' ]c [c hunk  ]f [f file  <Tab> fold',
       ' gd def  K hover  go open  R refresh',
       ' gu committed/working tree  q close',
       ' gG AI guide',

@@ -188,13 +188,21 @@ h.test('toggle reviewed persists, folds file and updates panel', function()
   end))
 end)
 
-h.test('focus-panel key does not shadow <Tab>/<C-i>', function()
+h.test('focus panel is gp; <Tab> is an expr map that falls back to <C-i>', function()
   local maps = {}
   for _, m in ipairs(vim.api.nvim_buf_get_keymap(s.diff_buf, 'n')) do
-    maps[m.lhs] = true
+    maps[m.lhs] = m
   end
-  h.eq(nil, maps['<Tab>'])
   h.ok(maps['gp'], vim.inspect(vim.tbl_keys(maps)))
+  local tab = maps['<Tab>']
+  h.ok(tab and tab.expr == 1 and tab.noremap == 1, vim.inspect(tab))
+  -- off a title line it returns <C-i> (jumplist forward); fold_spec drives both behaviours
+  vim.api.nvim_set_current_win(s.diff_win)
+  local fi = 4 -- not reviewed, so not folded
+  vim.api.nvim_win_set_cursor(s.diff_win, { s.layout.files[fi].hunk_rows[1] + 1, 0 })
+  h.eq('<C-i>', view.fold_key())
+  vim.api.nvim_win_set_cursor(s.diff_win, { s.layout.files[fi].hunk_rows[1], 0 })
+  h.eq('za', view.fold_key())
 end)
 
 -- Regression (lower-confidence item): gd/K with no LSP for the filetype must fail fast.

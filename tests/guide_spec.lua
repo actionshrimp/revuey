@@ -565,6 +565,10 @@ h.test('guide layout: prose rows, hunks as in the diff, sections and side table'
   h.eq({ '>1', '1' }, { folds[2], folds[3] })
   h.eq(nil, folds[1], 'the title is outside every fold')
   h.eq('>1', folds[9])
+  -- each hunk block (header, notes, lines; or header + note for a file without a text diff) is a
+  -- level-2 fold inside its section
+  h.eq({ { start_row = 4, end_row = 8 }, { start_row = 10, end_row = 14 }, { start_row = 15, end_row = 16 } }, l.blocks)
+  h.eq({ '>2', '2', '2', '>2', '2', '>2', '2' }, { folds[4], folds[5], folds[8], folds[10], folds[14], folds[15], folds[16] })
 end)
 
 h.run()

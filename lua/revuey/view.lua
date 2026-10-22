@@ -382,6 +382,18 @@ function M.foldtext()
     chunks[#chunks + 1] = { '  (' .. (fe - fs) .. ' lines folded)', 'Comment' }
     return chunks
   end
+  if e and e.meta == 'hunk' then
+    local text = s.layout.lines[fs]
+    local chunks
+    if e.path_len then
+      chunks = { { text:sub(1, e.path_len), 'RevueyFilePath' }, { text:sub(e.path_len + 1), 'RevueyHunkHeader' } }
+      vim.list_extend(chunks, guide_hunk_virt(s, e))
+    else
+      chunks = { { text, 'RevueyHunkHeader' } }
+    end
+    chunks[#chunks + 1] = { '  (' .. (fe - fs) .. ' lines folded)', 'Comment' }
+    return chunks
+  end
   return { { '⋯ ' .. (fe - fs + 1) .. ' unchanged lines', 'RevueyFold' } }
 end
 
@@ -472,11 +484,13 @@ local function current(s)
   return e, row
 end
 
+---Move the diff window's cursor to `row`. `how`: 'top' scrolls it to the top; 'nofold' leaves
+---folds alone (default: open folds at the cursor, like `zv`).
 local function goto_row(s, row, how, col)
   api.nvim_win_call(s.diff_win, function()
     local top, bot = vim.fn.line('w0'), vim.fn.line('w$')
     api.nvim_win_set_cursor(0, { row, col or 0 })
-    if how ~= 'top' then
+    if how ~= 'top' and how ~= 'nofold' then
       vim.cmd('normal! zv')
     end
     if how == 'top' then
@@ -487,10 +501,12 @@ local function goto_row(s, row, how, col)
   end)
 end
 
+---Is `row` inside a collapsed file, section or hunk (not just a folded context run)?
 local function in_closed_file_fold(s, row)
   return api.nvim_win_call(s.diff_win, function()
     local c = vim.fn.foldclosed(row)
-    return c ~= -1 and s.layout.map[c] and (s.layout.map[c].meta == 'file' or s.layout.map[c].meta == 'section')
+    local m = c ~= -1 and s.layout.map[c] and s.layout.map[c].meta
+    return m == 'file' or m == 'section' or m == 'hunk'
   end)
 end
 
@@ -829,7 +845,8 @@ function M.toggle_reviewed(fi)
   if now and api.nvim_get_current_win() == s.diff_win then
     -- move on to the next file, like GitHub's "Viewed" checkbox
     local nxt = s.layout.files[fi + 1]
-    goto_row(s, nxt and nxt.start_row or s.layout.files[fi].start_row, nxt and 'top' or nil)
+    -- the last file: stay on its header without reopening the fold just closed
+    goto_row(s, nxt and nxt.start_row or s.layout.files[fi].start_row, nxt and 'top' or 'nofold')
   end
 end
 
@@ -928,9 +945,161 @@ function M.toggle_section(si)
   section_fold(s, si, now)
   if now and api.nvim_get_current_win() == s.diff_win then
     local nxt = s.layout.sections[si + 1]
-    goto_row(s, nxt and nxt.start_row or s.layout.sections[si].start_row, nxt and 'top' or nil)
+    goto_row(s, nxt and nxt.start_row or s.layout.sections[si].start_row, nxt and 'top' or 'nofold')
   end
   return now
+end
+
+-- ---------------------------------------------------------------------------
+-- Folding: <Tab> on title lines, <S-Tab> for every file / section
+-- ---------------------------------------------------------------------------
+
+---Identities of the layout's hunk blocks (cached on the layout), for keeping a collapsed hunk
+---collapsed across re-renders: a hash of the path and the hunk's lines (so it survives line
+---shifts), or the path for a file without hunks. Identical blocks get `@old_start,new_start`
+---appended, like the guide's hunk hashes, so one never takes another's fold.
+local function block_keys(s)
+  local L = s.layout
+  if L.block_keys then
+    return L.block_keys
+  end
+  local keys, hunks, count = {}, {}, {}
+  for i, b in ipairs(L.blocks or {}) do
+    local e = L.map[b.start_row]
+    local f = e and e.file_idx and s.review.files[e.file_idx]
+    if f then
+      local hi = e.hunk_id and tonumber(e.hunk_id:match('#(%d+)$'))
+      local hk = hi and f.hunks[hi]
+      local k = f.path
+      if hk then
+        local parts = { f.path }
+        for _, l in ipairs(hk.lines) do
+          parts[#parts + 1] = l.kind .. l.text
+        end
+        k = vim.fn.sha256(table.concat(parts, '\n'))
+      end
+      keys[i], hunks[i] = k, hk
+      count[k] = (count[k] or 0) + 1
+    end
+  end
+  for i in pairs(keys) do
+    if count[keys[i]] > 1 then
+      local hk = hunks[i]
+      keys[i] = keys[i] .. '@' .. (hk and (hk.old_start .. ',' .. hk.new_start) or i)
+    end
+  end
+  L.block_keys = keys
+  return keys
+end
+
+local function block_key_at(s, row)
+  for i, b in ipairs(s.layout.blocks or {}) do
+    if b.start_row == row then
+      return block_keys(s)[i]
+    end
+  end
+end
+
+---Collapsed hunk blocks for the current view mode (a set of block keys). Kept in the session
+---rather than read back from the window, because a hunk inside a collapsed file or section can't
+---be seen to be collapsed.
+local function hunk_folds(s)
+  s.hunk_folds = s.hunk_folds or {}
+  local mode = s.view_mode == 'guide' and 'guide' or 'diff'
+  s.hunk_folds[mode] = s.hunk_folds[mode] or {}
+  return s.hunk_folds[mode]
+end
+
+---Update the set from the window wherever a hunk's own state is visible (it was toggled with
+---`za`, `zc`, `zR`...); hunks inside a collapsed parent keep what the set says.
+local function sync_hunk_folds(s)
+  if not api.nvim_win_is_valid(s.diff_win) then
+    return
+  end
+  local set, keys = hunk_folds(s), block_keys(s)
+  api.nvim_win_call(s.diff_win, function()
+    for i, b in ipairs(s.layout.blocks or {}) do
+      local k = keys[i]
+      if k then
+        local c = vim.fn.foldclosed(b.start_row)
+        if c == -1 then
+          set[k] = nil
+        elseif c == b.start_row then
+          set[k] = true
+        end
+      end
+    end
+  end)
+end
+
+---Re-collapse the hunks in the set after a re-render (before any file/section fold is closed).
+local function restore_hunk_folds(s)
+  local set = hunk_folds(s)
+  if next(set) == nil then
+    return
+  end
+  local keys = block_keys(s)
+  api.nvim_win_call(s.diff_win, function()
+    for i, b in ipairs(s.layout.blocks or {}) do
+      if keys[i] and set[keys[i]] then
+        pcall(vim.cmd, b.start_row .. 'foldclose')
+      end
+    end
+  end)
+end
+
+---Title rows: file headers, hunk headers (diff and guide) and guide section headings.
+local fold_titles = { file = true, hunk = true, section = true }
+
+---Expr mapping for `toggle_fold` (<Tab>): `za` on a title line (or a fold closed at one), else
+---<C-i>, so jumplist-forward is untouched everywhere else (<Tab> is <C-i> in most terminals). A
+---count always means the jumplist (the typed count still applies to the returned <C-i>).
+---Returned keys are not remapped.
+function M.fold_key()
+  local s = M.session
+  if vim.v.count == 0 and s and api.nvim_get_current_buf() == s.diff_buf and #s.review.files > 0 then
+    local row = api.nvim_win_get_cursor(0)[1]
+    local c = vim.fn.foldclosed(row)
+    local top = c ~= -1 and c or row
+    local e = s.layout.map[top]
+    if e and fold_titles[e.meta] then
+      if e.meta == 'hunk' then
+        local k = block_key_at(s, top)
+        if k then
+          hunk_folds(s)[k] = (c ~= top) or nil -- `za` is about to flip it
+        end
+      end
+      return 'za'
+    end
+  end
+  return '<C-i>'
+end
+
+---`toggle_all_folds` (<S-Tab>): collapse every file (guide: every section), or expand them all when
+---they are all collapsed. Does not mark anything reviewed.
+function M.toggle_all_folds()
+  local s = M.session
+  if not current(s) then
+    return
+  end
+  local ranges = s.view_mode == 'guide' and (s.layout.sections or {}) or s.layout.files
+  api.nvim_win_call(s.diff_win, function()
+    local any_open = false
+    for _, r in ipairs(ranges) do
+      if vim.fn.foldclosed(r.start_row) == -1 then
+        any_open = true
+        break
+      end
+    end
+    for _, r in ipairs(ranges) do
+      local closed = vim.fn.foldclosed(r.start_row) ~= -1
+      if any_open and not closed then
+        pcall(vim.cmd, r.start_row .. 'foldclose')
+      elseif not any_open and closed then
+        pcall(vim.cmd, r.start_row .. 'foldopen')
+      end
+    end
+  end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1001,6 +1170,12 @@ local function diff_keymaps(s)
   map(buf, k.prev_section, function()
     M.next_section(-1)
   end, 'previous guide section (diff: previous file)')
+  if k.toggle_fold then
+    for _, l in ipairs(type(k.toggle_fold) == 'table' and k.toggle_fold or { k.toggle_fold }) do
+      vim.keymap.set('n', l, M.fold_key, { buffer = buf, expr = true, nowait = true, silent = true, desc = 'revuey: toggle fold on a title line (else <C-i>)' })
+    end
+  end
+  map(buf, k.toggle_all_folds, M.toggle_all_folds, 'collapse / expand every file (guide: section)')
   map(buf, k.focus_panel, function()
     if api.nvim_win_is_valid(s.panel_win) then
       api.nvim_set_current_win(s.panel_win)
@@ -1149,10 +1324,14 @@ local function capture_view(s)
         saved.folds[f.path] = vim.fn.foldclosed(r.start_row) ~= -1
       end
     end
+    sync_hunk_folds(s)
   end)
   local e = s.layout.map[saved.row]
   local f = e and s.review.files[e.file_idx]
   if f then
+    if e.meta == 'hunk' then
+      saved.block = block_key_at(s, saved.row) -- keep the cursor on this hunk's header
+    end
     saved.path, saved.kind = f.path, e.kind
     saved.new_lnum, saved.old_lnum = e.new_lnum or e.anchor_lnum, e.old_lnum
     saved.text = M.head_text(s, f) -- new-side text the cursor's line numbers refer to
@@ -1173,6 +1352,13 @@ end
 local function find_saved_row(s, saved)
   if not saved.path then
     return math.min(saved.row or 1, #s.layout.lines)
+  end
+  if saved.block then
+    for i, k in pairs(block_keys(s)) do
+      if k == saved.block then
+        return s.layout.blocks[i].start_row
+      end
+    end
   end
   local index = {}
   for fi, f in ipairs(s.review.files) do
@@ -1273,6 +1459,7 @@ function M.capture_guide(s)
         saved.section_folds[sec.id or ('#' .. si)] = vim.fn.foldclosed(r.start_row) ~= -1
       end
     end
+    sync_hunk_folds(s)
   end)
   saved.section_idx = section_at_row(s, saved.row)
   local r = saved.section_idx and s.layout.sections[saved.section_idx]
@@ -1378,6 +1565,8 @@ local function render(s, saved)
   api.nvim_win_call(s.diff_win, function()
     vim.cmd('normal! zx')
   end)
+  -- collapsed hunks first: closing a hunk inside an already collapsed file would not work
+  restore_hunk_folds(s)
   if s.view_mode == 'guide' then
     -- reviewed sections start folded; otherwise keep the user's fold state
     for si, sec in ipairs(s.guide.resolved and s.guide.resolved.sections or {}) do
@@ -1511,7 +1700,7 @@ function M.show(review, opts)
     foldmethod = 'expr',
     foldexpr = "v:lua.require'revuey.view'.foldexpr()",
     foldtext = "v:lua.require'revuey.view'.foldtext()",
-    foldlevel = 1,
+    foldlevel = 2, -- hunk folds (level 2) start open, long context runs (level 3) closed
     foldenable = true,
     foldminlines = 0,
     winbar = WINBAR,
