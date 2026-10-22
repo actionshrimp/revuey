@@ -158,6 +158,15 @@ h.test('saves from many processes at once keep every mark (lock around read-merg
   end
 end)
 
+h.test('default_dir honours $REVUEY_STATE_DIR (as the CLI does)', function()
+  local saved = vim.env.REVUEY_STATE_DIR
+  vim.env.REVUEY_STATE_DIR = '/tmp/revuey-elsewhere'
+  h.eq('/tmp/revuey-elsewhere', state.default_dir())
+  vim.env.REVUEY_STATE_DIR = ''
+  h.eq(vim.fs.joinpath(vim.fn.stdpath('data'), 'revuey'), state.default_dir())
+  vim.env.REVUEY_STATE_DIR = saved
+end)
+
 h.test('lock: waits for a held lock, breaks a stale one, never leaves one behind', function()
   local lock = require('revuey.lock')
   local d = h.tmpdir('lock')

@@ -578,6 +578,25 @@ function M.add(s, first, last)
   end
   local anchor = comments.anchor_from_rows(s.review.files, review_mod.units(s.review), entries, context(s).get_line)
   local file_level = false
+  if anchor then
+    local files_seen = {}
+    for _, e in ipairs(entries) do
+      if e and (e.kind == 'add' or e.kind == 'del' or e.kind == 'ctx') then
+        files_seen[e.file_idx] = true
+      end
+    end
+    if vim.tbl_count(files_seen) > 1 then
+      vim.notify('revuey: the selection spans several files; the comment is on ' .. anchor.path .. ' only', vim.log.levels.WARN)
+      -- the editor goes under that file's last selected row
+      for r = last, first, -1 do
+        local e = map[r]
+        if e and e.path == anchor.path and (e.kind == 'add' or e.kind == 'del' or e.kind == 'ctx') then
+          last = r
+          break
+        end
+      end
+    end
+  end
   local row = last
   if anchor then
     -- attach the editor under the last row of the range

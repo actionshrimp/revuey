@@ -25,6 +25,11 @@ M.VERSION = 2
 ---@field _path string
 
 function M.default_dir()
+  -- the same default as `bin/revuey comments|watch|reply`
+  local env = vim.env.REVUEY_STATE_DIR
+  if env and env ~= '' then
+    return env
+  end
   return vim.fs.joinpath(vim.fn.stdpath('data'), 'revuey')
 end
 
