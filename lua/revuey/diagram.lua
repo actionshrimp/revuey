@@ -276,46 +276,91 @@ end
 -- Legend and list form
 -- ---------------------------------------------------------------------------
 
-local function legend(d)
+---Append one line built from parts {text, hl?, node = id?, shrink = bool?} to `out` ({lines, hls,
+---nodes}), fitted to `width` display cells: the longest shrinkable part loses a cell at a time
+---(ending in "…"), then, if that is not enough, parts are cut from the end.
+local function emit(out, parts, width)
+  local function total()
+    local n = 0
+    for _, p in ipairs(parts) do
+      n = n + strwidth(p[1])
+    end
+    return n
+  end
+  while total() > width do
+    local best, bw
+    for _, p in ipairs(parts) do
+      local w = strwidth(p[1])
+      if p.shrink and w > 1 and (not bw or w > bw) then
+        best, bw = p, w
+      end
+    end
+    if not best then
+      break
+    end
+    best[1] = M.truncate(best[1], bw - 1)
+  end
+  local over = total() - width
+  for k = #parts, 1, -1 do
+    if over <= 0 then
+      break
+    end
+    local w = strwidth(parts[k][1])
+    local keep = math.max(w - over, 0)
+    parts[k][1] = keep == 0 and '' or M.truncate(parts[k][1], keep)
+    over = over - (w - strwidth(parts[k][1]))
+  end
+  local text, row = '', #out.lines + 1
+  for _, p in ipairs(parts) do
+    local s0 = #text
+    text = text .. p[1]
+    if p[2] and #text > s0 then
+      out.hls[#out.hls + 1] = { row, s0, #text, p[2] }
+    end
+    if p.node and #text > s0 then
+      out.nodes[#out.nodes + 1] = { row, s0, #text, p.node }
+    end
+  end
+  out.lines[row] = text
+end
+
+---Legend of the kinds used ("■ new  ■ changed"), wrapped to `width`.
+local function legend(out, d, width)
   local used = {}
   for _, n in ipairs(d.nodes) do
     used[n.kind] = true
   end
-  local text, hls = '', {}
+  local items = {}
   for _, k in ipairs(M.KINDS) do
     if used[k] then
-      if text ~= '' then
-        text = text .. '  '
-      end
-      local s = #text
-      text = text .. '■ ' .. k
-      hls[#hls + 1] = { s, #text, M.KIND_HL[k] }
+      items[#items + 1] = k
     end
   end
-  return text, hls
+  out.lines[#out.lines + 1] = ''
+  local parts, w = {}, 0
+  for _, k in ipairs(items) do
+    local t = '■ ' .. k
+    if #parts > 0 and w + 2 + strwidth(t) > width then
+      emit(out, parts, width)
+      parts, w = {}, 0
+    end
+    if #parts > 0 then
+      parts[#parts + 1] = { '  ' }
+      w = w + 2
+    end
+    parts[#parts + 1] = { t, M.KIND_HL[k] }
+    w = w + strwidth(t)
+  end
+  emit(out, parts, width)
 end
 
 ---Compact list form: one line per edge (`A ──label──▶ B`), then nodes without edges.
 ---@return {lines:string[], hls:table, nodes:table, mode:'list'}
 function M.list(d, width)
-  local lines, hls, nodes = {}, {}, {}
+  local out = { lines = {}, hls = {}, nodes = {}, mode = 'list' }
   local by_id = {}
   for _, n in ipairs(d.nodes) do
     by_id[n.id] = n
-  end
-  local function add(parts)
-    local text, row = '', #lines + 1
-    for _, p in ipairs(parts) do
-      local s = #text
-      text = text .. p[1]
-      if p[2] then
-        hls[#hls + 1] = { row, s, #text, p[2] }
-      end
-      if p.node then
-        nodes[#nodes + 1] = { row, s, #text, p.node }
-      end
-    end
-    lines[row] = text
   end
   local linked = {}
   for _, e in ipairs(d.edges) do
@@ -323,29 +368,21 @@ function M.list(d, width)
     if a and b then
       linked[a.id], linked[b.id] = true, true
       local arrow = e.label and e.label ~= '' and (' ──' .. e.label .. '──▶ ') or ' ───▶ '
-      local left = { { a.label, M.KIND_HL[a.kind], node = a.id } }
-      local mid = { arrow, M.EDGE_HL }
-      local right = { b.label, M.KIND_HL[b.kind], node = b.id }
       if strwidth(a.label .. arrow .. b.label) <= width then
-        add({ left[1], mid, right })
+        emit(out, { { a.label, M.KIND_HL[a.kind], node = a.id }, { arrow, M.EDGE_HL }, { b.label, M.KIND_HL[b.kind], node = b.id } }, width)
       else
-        add({ left[1], { vim.trim(arrow):gsub('^', ' '), M.EDGE_HL } })
-        add({ { '    ' }, right })
+        emit(out, { { a.label, M.KIND_HL[a.kind], node = a.id, shrink = true }, { vim.trim(arrow):gsub('^', ' '), M.EDGE_HL } }, width)
+        emit(out, { { '    ' }, { b.label, M.KIND_HL[b.kind], node = b.id, shrink = true } }, width)
       end
     end
   end
   for _, n in ipairs(d.nodes) do
     if not linked[n.id] then
-      add({ { '• ', M.EDGE_HL }, { n.label, M.KIND_HL[n.kind], node = n.id } })
+      emit(out, { { '• ', M.EDGE_HL }, { n.label, M.KIND_HL[n.kind], node = n.id, shrink = true } }, width)
     end
   end
-  local lt, lhs = legend(d)
-  lines[#lines + 1] = ''
-  lines[#lines + 1] = lt
-  for _, sp in ipairs(lhs) do
-    hls[#hls + 1] = { #lines, sp[1], sp[2], sp[3] }
-  end
-  return { lines = lines, hls = hls, nodes = nodes, mode = 'list' }
+  legend(out, d, width)
+  return out
 end
 
 -- ---------------------------------------------------------------------------
@@ -622,6 +659,65 @@ function M.render(d, width)
     assign_ports(i, vim.list_slice(succs[i], 1), 'sx', 'to')
     assign_ports(i, vim.list_slice(preds[i], 1), 'tx', 'from')
   end
+  -- A line arriving at a column another line leaves from must turn below that line; two lines
+  -- that swap columns would each have to turn below the other, and then merge. Move such arrival
+  -- ports (or, failing that, departure ports) along their box to a column nothing leaves from or
+  -- arrives at, so the constraint never arises where there is room.
+  local function nudge(i, sg, key, taken)
+    local it = items[i]
+    if it.dummy then
+      return false
+    end
+    local c0 = sg[key]
+    for _, dc in ipairs({ 1, -1, 2, -2, 3, -3 }) do
+      local c = c0 + dc
+      if c > it.x and c < it.x + it.w - 1 and not taken[c] then
+        sg[key] = c
+        return true
+      end
+    end
+    return false
+  end
+  for r = 0, maxr - 1 do
+    local leave, arrive = {}, {}
+    for _, sg in ipairs(between[r]) do
+      leave[sg.sx] = true
+      arrive[sg.tx] = true
+    end
+    for _, sg in ipairs(between[r]) do
+      if sg.sx ~= sg.tx and leave[sg.tx] then
+        local taken = vim.tbl_extend('force', {}, leave, arrive)
+        taken[sg.sx] = nil -- straight down is fine
+        local old = sg.tx
+        if nudge(sg.to, sg, 'tx', taken) then
+          arrive[old], arrive[sg.tx] = nil, true
+          for _, o in ipairs(between[r]) do
+            if o.tx == old then
+              arrive[old] = true
+            end
+          end
+        else
+          -- move the line that leaves from this column instead
+          for _, o in ipairs(between[r]) do
+            if o ~= sg and o.sx == sg.tx and o.sx ~= o.tx then
+              local taken2 = vim.tbl_extend('force', {}, leave, arrive)
+              taken2[o.tx] = nil
+              local olds = o.sx
+              if nudge(o.from, o, 'sx', taken2) then
+                leave[o.sx] = true
+                leave[olds] = nil
+                for _, x in ipairs(between[r]) do
+                  if x.sx == olds then
+                    leave[olds] = true
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
 
   -- gaps: tracks for lines that change column, rows for labels, the arrow row
   local gaps = {}
@@ -726,7 +822,7 @@ function M.render(d, width)
         end
       end
       for _, iv in ipairs(row) do
-        if not (b + 1 < iv[1] or a - 1 > iv[2]) then
+        if not (b + 2 < iv[1] or a - 2 > iv[2]) then -- two columns between labels
           return false
         end
       end
@@ -877,23 +973,22 @@ function M.render(d, width)
     end
     return a[2] < b[2]
   end)
+  local out = { lines = lines, hls = hls, nodes = nodes, mode = 'boxes' }
   if #footnotes > 0 then
     lines[#lines + 1] = ''
     for _, sg in ipairs(footnotes) do
       local e = edges[sg.edge]
-      local text = M.truncate(d.nodes[e.u].label .. ' → ' .. d.nodes[e.v].label .. ': ', math.max(width - strwidth(sg.label), 8))
-      lines[#lines + 1] = text .. sg.label
-      hls[#hls + 1] = { #lines, 0, #text, M.EDGE_HL }
-      hls[#hls + 1] = { #lines, #text, #lines[#lines], M.LABEL_HL }
+      emit(out, {
+        { d.nodes[e.u].label, M.EDGE_HL, shrink = true },
+        { ' → ', M.EDGE_HL },
+        { d.nodes[e.v].label, M.EDGE_HL, shrink = true },
+        { ': ', M.EDGE_HL },
+        { sg.label, M.LABEL_HL, shrink = true },
+      }, width)
     end
   end
-  local lt, lhs = legend(d)
-  lines[#lines + 1] = ''
-  lines[#lines + 1] = lt
-  for _, sp in ipairs(lhs) do
-    hls[#hls + 1] = { #lines, sp[1], sp[2], sp[3] }
-  end
-  return { lines = lines, hls = hls, nodes = nodes, mode = 'boxes' }
+  legend(out, d, width)
+  return out
 end
 
 -- ---------------------------------------------------------------------------
@@ -901,7 +996,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function mm_escape(s)
-  return (s:gsub('&', '#amp;'):gsub('"', '#quot;'):gsub('|', '#124;'):gsub('<', '#lt;'):gsub('>', '#gt;'))
+  return (s:gsub('#', '#35;'):gsub('&', '#amp;'):gsub('"', '#quot;'):gsub('|', '#124;'):gsub('<', '#lt;'):gsub('>', '#gt;'))
 end
 
 ---Mermaid flowchart text for a diagram (node ids become n1..nk, kinds become classes).

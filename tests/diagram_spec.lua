@@ -345,7 +345,85 @@ h.test('every layout fits its width', function()
   end
 end)
 
+local check = dofile(h.root .. '/tests/diagram_check.lua').check
+
+h.test('opposite edges between two columns get separate lines (no merged ┤ joins)', function()
+  local d = guide.validate_diagram({
+    nodes = { N('n1', 'changed', 'cde'), N('n2', 'changed', 'ab'), N('n3', 'changed', 'abcdex'), N('n4', 'changed', 'cdex'), N('n5', 'changed', 'ababx') },
+    edges = { E('n1', 'n5'), E('n4', 'n2'), E('n4', 'n5'), E('n2', 'n3'), E('n1', 'n2') },
+  })
+  local errs, out = check(d, 80)
+  h.eq({}, errs)
+  h.eq('boxes', out.mode)
+  for _, l in ipairs(out.lines) do
+    h.ok(not l:find('┤', 1, true) and not l:find('├', 1, true), table.concat(out.lines, '\n'))
+  end
+end)
+
+h.test('fuzz (fixed seed): every edge traces from its port to the right box, nothing too wide', function()
+  math.randomseed(20261022)
+  local alphabet = { 'ab', 'cde', 'x', 'Module', '漢字', 'é', 'long_identifier_name', '#', '|' }
+  local function label()
+    local t = {}
+    for i = 1, math.random(1, 3) do
+      t[i] = alphabet[math.random(#alphabet)]
+    end
+    return table.concat(t)
+  end
+  local failures = {}
+  for it = 1, 700 do
+    local caps = it % 4 == 0
+    local n = caps and 12 or math.random(2, 7)
+    local nodes, edges = {}, {}
+    for i = 1, n do
+      nodes[i] = N('n' .. i, ({ 'new', 'changed', 'context' })[math.random(3)], label())
+    end
+    for _ = 1, caps and 30 or math.random(0, 9) do
+      edges[#edges + 1] = E('n' .. math.random(n), 'n' .. math.random(n), math.random() < 0.5 and label() or nil)
+    end
+    local d = guide.validate_diagram({ nodes = nodes, edges = edges })
+    local width = math.random(10, 140)
+    local errs = check(d, width)
+    if #errs > 0 then
+      failures[#failures + 1] = ('iter %d width %d %s\n%s'):format(it, width, vim.json.encode(d), errs[1])
+    end
+  end
+  h.eq(0, #failures, failures[1])
+end)
+
+h.test('legend, list and footnote lines fit narrow widths', function()
+  local d = guide.validate_diagram({
+    nodes = { N('a', 'new', 'a rather long module name'), N('b', 'changed', 'another long name'), N('c', 'context', 'ctx') },
+    edges = { E('a', 'b', 'calls into'), E('b', 'c') },
+  })
+  for _, w in ipairs({ 10, 14, 20, 25 }) do
+    for _, l in ipairs(dg.render(d, w).lines) do
+      h.ok(vim.api.nvim_strwidth(l) <= w, w .. ': ' .. l)
+    end
+  end
+  h.eq({ '■ new', '■ changed', '■ context' }, vim.list_slice(dg.render(d, 10).lines, #dg.render(d, 10).lines - 2))
+end)
+
+h.test('labels placed in one row keep two columns apart', function()
+  for _, w in ipairs({ 40, 60, 80, 100 }) do
+    local d = guide.validate_diagram({
+      nodes = { N('r', 'new', 'root'), N('a'), N('b'), N('c'), N('d') },
+      edges = { E('r', 'a', 'one'), E('r', 'b', 'two'), E('r', 'c', 'three'), E('r', 'd', 'four') },
+    })
+    local out = dg.render(d, w)
+    for _, sp in ipairs(out.hls) do
+      for _, sp2 in ipairs(out.hls) do
+        if sp ~= sp2 and sp[1] == sp2[1] and sp[4] == 'RevueyDiagramLabel' and sp2[4] == 'RevueyDiagramLabel' and sp2[2] >= sp[3] then
+          local between = out.lines[sp[1]]:sub(sp[3] + 1, sp2[2])
+          h.ok(vim.api.nvim_strwidth(between) >= 2, out.lines[sp[1]])
+        end
+      end
+    end
+  end
+end)
+
 h.test('mermaid: flowchart with escaped labels and kind classes', function()
+  h.eq('  n1["C#35; #35;quot;"]', vim.split(dg.mermaid(guide.validate_diagram({ nodes = { N('a', 'new', 'C# #quot;'), N('b') }, edges = {} })), '\n')[2])
   local d = guide.validate_diagram({
     nodes = { N('parse', 'new', 'parser "v2"'), N('lay', 'changed', 'a|b <c>'), N('view', 'context') },
     edges = { E('parse', 'lay', 'feeds'), E('lay', 'view') },
