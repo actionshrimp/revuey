@@ -20,6 +20,7 @@
 --   * Events: one JSON line per change in `<state file>.events.jsonl` (rotated to `.1` past
 --     EVENTS_MAX bytes), for `bin/revuey watch`.
 local M = {}
+local event_queue -- path -> encoded event lines not yet appended (the lock was busy)
 
 M.VERSION = 1
 M.EVENTS_MAX = 1024 * 1024
@@ -688,9 +689,13 @@ end
 function M.save(store, review)
   vim.fn.mkdir(vim.fs.dirname(store.path), 'p')
   -- read, merge and rename under a lock: two processes (two Neovims, the CLI) saving at once
-  -- must not both start from the old file
-  return require('revuey.lock').with(store.path, function()
-    return M._save_locked(store, review)
+  -- must not both start from the old file. In the UI a busy lock defers the save to a timer
+  -- (lock.save); the changes stay dirty in memory meanwhile.
+  local lock = require('revuey.lock')
+  return lock.save(store.path, function()
+    return lock.with(store.path, function()
+      return M._save_locked(store, review)
+    end)
   end)
 end
 
@@ -890,17 +895,33 @@ end
 function M.append_event(path, ev)
   vim.fn.mkdir(vim.fs.dirname(path), 'p')
   -- rotation and append under the lock: a rename between another writer's size check and its
-  -- append would otherwise put its event into the rotated file or lose a generation
-  local ok, res, err = pcall(require('revuey.lock').with, path, function()
-    return M._append_locked(path, ev)
+  -- append would otherwise put its event into the rotated file or lose a generation. Events
+  -- wait in a queue (in order) while the lock is busy in the UI.
+  local lock = require('revuey.lock')
+  local queue = event_queue[path] or {}
+  event_queue[path] = queue
+  queue[#queue + 1] = vim.json.encode(ev) .. '\n'
+  local ok, res, err = pcall(lock.save, path, function()
+    return lock.with(path, function()
+      return M._flush_events(path)
+    end)
   end)
   if not ok then
     return false, res
   end
+  if res == nil and #queue > 0 then
+    return true -- deferred
+  end
   return res, err
 end
 
-function M._append_locked(path, ev)
+event_queue = {}
+
+function M._flush_events(path)
+  local queue = event_queue[path] or {}
+  if #queue == 0 then
+    return true
+  end
   local st = vim.uv.fs_stat(path)
   if st and st.size > M.EVENTS_MAX then
     os.rename(path, path .. '.1')
@@ -909,8 +930,9 @@ function M._append_locked(path, ev)
   if not fd then
     return false, err
   end
-  fd:write(vim.json.encode(ev) .. '\n')
+  fd:write(table.concat(queue))
   fd:close()
+  event_queue[path] = {}
   return true
 end
 

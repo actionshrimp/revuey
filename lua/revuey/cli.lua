@@ -32,6 +32,8 @@ local function out(s)
 end
 
 local function die(msg, code)
+  -- errors from the modules already say "revuey: "
+  msg = tostring(msg):gsub('^revuey: ', '')
   io.stderr:write('revuey: ' .. msg .. '\n')
   io.stderr:flush()
   os.exit(code or 1)
