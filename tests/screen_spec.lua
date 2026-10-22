@@ -223,6 +223,24 @@ h.test('stack: panel stack section at the HEAD layer, then full scope', function
   screenshot('stack-full')
 end)
 
+-- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
+-- panel, and `!` opens the details float.
+h.test('stack notes: panel summary line and the details float', function()
+  local d = h.old_branches_repo('screen-stack-notes')
+  start(d, '', 32, 110)
+  h.ok(child.lua([[
+    return vim.wait(5000, function()
+      local s = require('revuey.view').session
+      return s and not s.refreshing and s.review.stack and s.review.stack.full_stats ~= nil
+    end, 10)
+  ]]), 'stack stats did not load')
+  screenshot('stack-notes-summary')
+  child.lua([[vim.api.nvim_set_current_win(require('revuey.view').session.panel_win)]])
+  child.type_keys('!')
+  screenshot('stack-notes-float')
+  child.type_keys('q')
+end)
+
 -- AI guide view (fake `claude` from tests/bin): title, meta, prose, numbered sections with
 -- checkboxes, hunks rendered by the shared renderer, and the panel's section list.
 h.test('guide view and the panel section list', function()

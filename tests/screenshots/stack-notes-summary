@@ -1,0 +1,67 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//s/b/a                                                                                       X
+02| Files                                  │ A b.txt +1 −0                                                   1/1 
+03| Stack: 3 layers on main                │  A     ▾ b.txt   +1 −0  added                                       
+04|    stack/a                   2c 2f ✓0/2│          @@ -0,0 +1 @@                                              
+05| ▶@ stack/b                   1c 1f ✓0/1│      1 + b                                                          
+06|    stack/c                   1c 1f ✓0/1│                                                                     
+07|    full stack                4c 4f ✓0/4│                                                                     
+08| ⚠ 3 related branches outside this stack│                                                                     
+09|                                        │                                                                     
+10| stack/b → stack/a                      │                                                                     
+11| 1 files  +1 −0  ✓ 0/1                  │                                                                     
+12| base 12242f94  head 26284bf3           │                                                                     
+13| layer 2/3                              │                                                                     
+14| working tree  ● uncommitted            │                                                                     
+15|                                        │                                                                     
+16|   A  b.txt                        +1 −0│                                                                     
+17|                                        │                                                                     
+18| <CR> show  mr reviewed  gp diff        │                                                                     
+19| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                     
+20| gd def  K hover  go open  R refresh    │                                                                     
+21| gu committed/working tree  q close     │                                                                     
+22| gG AI guide                            │                                                                     
+23| ]s [s layer  gs full stack  ! notes    │                                                                     
+24|~                                       │                                                                     
+25|~                                       │                                                                     
+26|~                                       │                                                                     
+27|~                                       │                                                                     
+28|~                                       │                                                                     
+29|~                                       │                                                                     
+30|~                                       │                                                                     
+31|revuey://files [-]    14,1           All revuey://stack/b..stack/a [-]                      1,1            All
+32|                                                                                                              
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|00000000000121111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|33333333333333333333333333333333333333334566777777666885555555555555555555555555555555555555555555555555555555
+03|22222222222222222222222299999999999999994::::::::::;;;;;<<<==>>>=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9?@944444449999999999999999999AAAAAAAAAA4BBBBBBBBBBCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+05|9?@922222229999999999999999999AAAAAAAAAA4EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+06|9?@944444449999999999999999999AAAAAAAAAA4BBBBBBBBBB99999999999999999999999999999999999999999999999999999999999
+07|9?99AAAAAAAAAA9999999999999999AAAAAAAAAA4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+08|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+09|99999999999999999999999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+10|22222222222222222299999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+11|9999999999IIJJJAAAAAAA9999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+13|??????????9999999999999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+14|?????????????AAAAAAAAAAAAAAA9999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+15|99999999999999999999999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+16|KLKLMKNNNNNKKKKKKKKKKKKKKKKKKKKKKKKIIJJJ4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+17|99999999999999999999999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+18|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+19|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+22|AAAAAAAAAAAA99999999999999999999999999994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+29|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+30|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+31|00000000000000000000000000000000000000000OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+32|PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP

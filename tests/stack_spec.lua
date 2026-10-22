@@ -1,6 +1,9 @@
 -- Stack detection: unit tests of the pure resolver, then detect() against real git repos.
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 local stack = require('revuey.stack')
+-- hermetic: the stack ignore list lives in the state dir, never the developer's own
+local state_dir = h.tmpdir('stack-spec-state')
+require('revuey.config').set({ state_dir = state_dir })
 
 -- ---------------------------------------------------------------------------
 -- Unit: resolve()
@@ -38,13 +41,16 @@ local function names(st)
   end, st.layers)
 end
 
-local function has_note(st, text)
-  for _, n in ipairs(st.notes) do
-    if n:find(text, 1, true) then
-      return true
+local function note_of(notes, kind, branch)
+  for _, n in ipairs(notes or {}) do
+    if n.kind == kind and (branch == nil or n.branch == branch) then
+      return n
     end
   end
-  return false
+end
+
+local function has_note(st, kind, branch)
+  return note_of(st.notes, kind, branch) ~= nil
 end
 
 local function parents(st)
@@ -106,7 +112,7 @@ h.test('fork above: stop and report it', function()
   local st = stack.resolve(input({ commits = commits, branches = branches, current = 'feat/b', above = { 'feat/b', 'feat/c', 'feat/d' } }))
   h.eq({ 'feat/a', 'feat/b' }, names(st))
   h.eq({ { at = 'feat/b', children = { 'feat/c', 'feat/d' } } }, st.forks)
-  h.ok(st.notes[1]:find('2 child branches', 1, true), vim.inspect(st.notes))
+  h.ok(note_of(st.notes, 'fork', 'feat/b') and #note_of(st.notes, 'fork').branches == 2, vim.inspect(st.notes))
   -- a fork right above a lone branch is still worth showing
   local lone = stack.resolve(input({
     commits = { a1 = '', c1 = 'a1', d1 = 'a1' },
@@ -185,13 +191,13 @@ h.test('explicit parent that is not an ancestor: history is requested, layer dif
   -- feat/a's tip is not under feat/b: diffing from it (or their merge-base) would be wrong
   h.eq('T', st.layers[2].parent_rev)
   h.eq(true, st.layers[2].stale)
-  h.ok(has_note(st, 'feat/a (config parent of feat/b) is not an ancestor of feat/b: showing feat/b against main'), vim.inspect(st.notes))
+  h.eq({ 'feat/b', 'feat/a', 'config' }, (function(n) return { n.branch, n.parent, n.source } end)(note_of(st.notes, 'stale_parent')), vim.inspect(st.notes))
   -- with feat/a's reflog showing it used to be at a2, it is a parent that moved: diff from a2
   inp.owned = { a2 = { 'feat/a' } }
   st = stack.resolve(inp)
   h.eq('a2', st.layers[2].parent_rev)
   h.eq(true, st.layers[2].diverged)
-  h.ok(has_note(st, 'feat/b is not restacked on feat/a'), vim.inspect(st.notes))
+  h.ok(has_note(st, 'not_restacked', 'feat/b'), vim.inspect(st.notes))
 end)
 
 h.test('explicit children above HEAD that do not contain it are followed', function()
@@ -230,7 +236,7 @@ h.test('merged lower layer: drops out (heuristic) or becomes trunk (explicit, wi
   }))
   h.eq({ 'feat/b', 'feat/c' }, names(st2))
   h.eq('main', st2.layers[1].parent)
-  h.ok(st2.notes[1]:find('feat/a (parent of feat/b) is already in main', 1, true), vim.inspect(st2.notes))
+  h.eq('feat/a', (note_of(st2.notes, 'parent_landed', 'feat/b') or {}).parent, vim.inspect(st2.notes))
 end)
 
 h.test('squash-merged lower layer (not in trunk history) stays a layer', function()
@@ -263,7 +269,7 @@ h.test('explicit parent naming trunk, unknown branch, or a cycle', function()
     explicit = { ['feat/c'] = { parent = 'gone', source = 'graphite' } },
   }))
   h.eq({ 'feat/a', 'feat/b', 'feat/c' }, names(st2))
-  h.ok(st2.notes[1]:find('no such local branch', 1, true))
+  h.eq('gone', (note_of(st2.notes, 'unknown_parent', 'feat/c') or {}).parent, vim.inspect(st2.notes))
   local st3 = stack.resolve(input({
     commits = linear,
     branches = linear_branches,
@@ -360,7 +366,7 @@ h.test('parent moved (new commit, amend or rebase): child stays in the stack, di
       h.eq({ 'feat/a', 'feat/b' }, names(st), msg)
       h.eq('a2', st.layers[2].parent_rev, msg)
       h.eq(true, st.layers[2].diverged, msg)
-      h.ok(has_note(st, "feat/b is not restacked on feat/a (feat/a moved): showing only feat/b's own commits"), msg .. vim.inspect(st.notes))
+      h.eq({ 'feat/a', 'a2' }, (function(n) return { n.parent, n.at } end)(note_of(st.notes, 'not_restacked', 'feat/b') or {}), msg .. vim.inspect(st.notes))
     end
   end
 end)
@@ -620,7 +626,7 @@ h.test('detect: parent moved (new commit, amend, rebase) without restacking its 
       h.ok(st, msg .. ': no stack')
       h.eq({ 'a', 'b', 'c' }, names(st), msg)
       h.eq(true, st.layers[2].diverged, msg)
-      h.ok(has_note(st, "b is not restacked on a (a moved): showing only b's own commits"), msg .. vim.inspect(st.notes))
+      h.eq('a', (note_of(st.notes, 'not_restacked', 'b') or {}).parent, msg .. vim.inspect(st.notes))
       local files = layer_files(d, st)
       h.eq({ 'b.txt' }, files[2], msg .. ': layer b shows only its own commits')
       h.eq({ 'c.txt' }, files[3], msg)
@@ -634,7 +640,7 @@ h.test('detect: without reflogs a moved parent is reported, never silently merge
   vim.fn.delete(d .. '/.git/logs', 'rf')
   local st = detect(d)
   h.eq({ 'b', 'c' }, names(st))
-  h.ok(has_note(st, 'a shares commits with this stack but is not in it (not restacked?)'), vim.inspect(st.notes))
+  h.eq('b', (note_of(st.notes, 'outside', 'a') or {}).layer, vim.inspect(st.notes))
 end)
 
 h.test('detect: a branch reset elsewhere (reset --hard / branch -f) does not own its old tip', function()
@@ -659,7 +665,7 @@ h.test('detect: a branch reset elsewhere (reset --hard / branch -f) does not own
     local st = detect(d)
     if st then
       h.eq(false, vim.tbl_contains(names(st), 'a'), how .. ': ' .. vim.inspect(names(st)))
-      h.eq(false, has_note(st, 'not restacked on a'), how .. vim.inspect(st.notes))
+      h.eq(false, has_note(st, 'not_restacked'), how .. vim.inspect(st.notes))
     end
   end
 end)
@@ -673,8 +679,10 @@ h.test('detect: fresh clone, parent amended before cloning: no stack, but a note
   h.git(src, 'checkout', '-q', '-b', 'b')
   commit(src, 'b.txt', 'b\n')
   h.git(src, 'checkout', '-q', 'a')
+  vim.env.GIT_COMMITTER_DATE = '@' .. tostring(os.time() + 3600) .. ' +0000' -- the amended copy is newer
   h.write(src, 'a.txt', 'a amended\n')
   h.git(src, 'commit', '-q', '-a', '--amend', '-m', 'a amended')
+  vim.env.GIT_COMMITTER_DATE = nil
   h.git(src, 'checkout', '-q', 'main')
   local d = h.tmpdir('st-clone')
   vim.fn.delete(d, 'rf')
@@ -683,7 +691,7 @@ h.test('detect: fresh clone, parent amended before cloning: no stack, but a note
   h.git(d, 'checkout', '-q', '-b', 'b', 'origin/b')
   local st, notes = detect(d)
   h.eq(nil, st)
-  h.ok(notes and notes[1] and notes[1]:find('a has a rewritten copy of a commit on b', 1, true), vim.inspect(notes))
+  h.eq('b', (note_of(notes, 'newer_copy', 'a') or {}).layer, vim.inspect(notes))
   -- the same check runs alongside a stack, and stays quiet for ordinary stacks
   local _, quiet = detect(stack_repo('st-clone-quiet'))
   h.eq(nil, quiet)
@@ -695,7 +703,7 @@ h.test('detect: no stack, but another branch shares commits (parent moved, no re
   vim.fn.delete(d .. '/.git/logs', 'rf')
   local st, notes = detect(d)
   h.eq(nil, st)
-  h.ok(notes and notes[1] and notes[1]:find('a shares commits with this branch', 1, true), vim.inspect(notes))
+  h.eq('b', (note_of(notes, 'outside', 'a') or {}).layer, vim.inspect(notes))
 end)
 
 h.test('detect: stale explicit parent (squash-merged a, b rebased onto main): note, and b shows only b', function()
@@ -715,7 +723,7 @@ h.test('detect: stale explicit parent (squash-merged a, b rebased onto main): no
   local st = detect(d)
   h.eq({ 'a', 'b', 'c' }, names(st))
   h.eq(true, st.layers[2].stale)
-  h.ok(has_note(st, 'a (config parent of b) is not an ancestor of b: showing b against main'), vim.inspect(st.notes))
+  h.eq('a', (note_of(st.notes, 'stale_parent', 'b') or {}).parent, vim.inspect(st.notes))
   local files = layer_files(d, st)
   h.eq({ 'b.txt' }, files[2])
   h.eq({ 'b.txt', 'c.txt' }, files[4])
@@ -731,7 +739,7 @@ h.test('detect: squash-merged bottom layer is dimmed as landed; the child still 
   h.eq({ 'feat/a', 'feat/b', 'feat/c' }, names(st))
   h.eq({ true, true }, { st.layers[1].landed, st.layers[1].dimmed })
   h.eq(nil, st.layers[2].landed)
-  h.ok(has_note(st, 'feat/a looks landed in main'), vim.inspect(st.notes))
+  h.ok(has_note(st, 'landed', 'feat/a'), vim.inspect(st.notes))
   local files = layer_files(d, st)
   h.eq({ 'b.txt' }, files[2])
   -- an unlanded bottom layer is not dimmed
@@ -774,7 +782,7 @@ h.test('detect: commits squash-merged below the bottom layer are skipped, not sh
   local st = detect(d)
   h.eq({ 'z', 'w' }, names(st))
   h.eq(nil, st.layers[1].landed)
-  h.ok(has_note(st, 'z skips 3 commits already squash-merged into main'), vim.inspect(st.notes))
+  h.eq(3, (note_of(st.notes, 'squashed', 'z') or {}).count, vim.inspect(st.notes))
   h.eq({ { 'z.txt' }, { 'w.txt' }, { 'w.txt', 'z.txt' } }, layer_files(d, st))
 end)
 
@@ -783,7 +791,9 @@ h.test('detect: a landed bottom layer keeps its own squash-merged commits as its
   local st = detect(d)
   h.eq({ 'z', 'w' }, names(st))
   h.eq(true, st.layers[1].landed)
-  h.ok(has_note(st, 'z skips 3 commits already squash-merged into main'), vim.inspect(st.notes))
+  -- landed entirely: one note, the landed one, which says how many commits are skipped
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
+  h.eq(3, (note_of(st.notes, 'landed', 'z') or {}).count, vim.inspect(st.notes))
   h.eq({ { 'z.txt' }, { 'w.txt' }, { 'w.txt', 'z.txt' } }, layer_files(d, st))
 end)
 
@@ -794,7 +804,7 @@ h.test('detect: no commits are skipped when trunk only has similar, not identica
   commit(d, 'x.txt', 'x but different\n')
   h.git(d, 'checkout', '-q', 'w')
   local st = detect(d)
-  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
   h.eq({ 'shared.txt', 'x.txt', 'y.txt', 'z.txt' }, layer_files(d, st)[1])
 end)
 
@@ -847,7 +857,7 @@ h.test('detect: a squash-merge trunk has since reverted is not skipped', functio
       h.git(d, 'revert', '--no-edit', 'HEAD')
     end,
   }))
-  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
   h.eq({ 'x.txt', 'z.txt' }, files)
 end)
 
@@ -861,7 +871,7 @@ h.test('detect: the same line added at a different place in trunk is not a squas
       commit(d, 'm.lua', (LUA:gsub('  return 1', '  -- TODO\n  return 1')))
     end,
   }))
-  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
   h.eq({ 'm.lua', 'z.txt' }, files)
 end)
 
@@ -875,7 +885,7 @@ h.test('detect: a whitespace-only difference from trunk is not a squash-merge', 
       commit(d, 'f.lua', 'function f()\n\tg()\nend\n')
     end,
   }))
-  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
   h.eq({ 'f.lua', 'z.txt' }, files)
 end)
 
@@ -890,7 +900,7 @@ h.test('detect: each trunk squash-merge accounts for one run only', function()
     end,
     on_main = squash_x,
   }))
-  h.ok(has_note(st, 'z skips 1 commit already squash-merged'), vim.inspect(st.notes))
+  h.eq(1, (note_of(st.notes, 'squashed', 'z') or {}).count, vim.inspect(st.notes))
   h.eq({ 'm.lua', 'z.txt' }, files)
 end)
 
@@ -912,7 +922,7 @@ h.test('detect: only the bottom layer skips squash-merged commits, never a stale
   local st = detect(d)
   h.eq({ 'a', 'b' }, names(st))
   h.eq(true, st.layers[2].stale)
-  h.eq(false, has_note(st, 'already squash-merged'), vim.inspect(st.notes))
+  h.eq(false, has_note(st, 'squashed'), vim.inspect(st.notes))
   h.eq(nil, st.base_rev)
 end)
 
@@ -944,13 +954,72 @@ h.test('detect: many duplicate tips are listed briefly', function()
     h.git(d, 'branch', 'dup/' .. i, 'feat/a')
   end
   local st = detect(d)
-  local n
+  local n = 0
   for _, x in ipairs(st.notes) do
-    if x:find(' also at ', 1, true) then
-      n = x
+    if x.kind == 'same_commit' then
+      n = n + 1
+      h.eq(st.layers[1].name, x.layer)
     end
   end
-  h.ok(n and n:find('and 37 more also at dup/1', 1, true) and #n < 120, tostring(n))
+  h.eq(40, n)
+  -- one short summary line for all of them
+  local sum = require('revuey.stack_notes').summary(st.notes, st.ignored, { stack = true, trunk = 'main' })
+  h.eq({ { glyph = '●', text = '40 other branches at ' .. st.layers[1].name, level = 'info' } }, sum)
+end)
+
+h.test('detect: old branches built on a pre-amend bottom layer are related, informational notes', function()
+  local d = h.old_branches_repo('st-old-branches')
+  local st = detect(d)
+  h.eq({ 'stack/a', 'stack/b', 'stack/c' }, names(st))
+  local olds = { 'dave/bos-3058-apply-credit-note', 'dave/bos-3058-refund-flow', 'dave/bos-3061-cleanup' }
+  h.eq(3, #st.notes, vim.inspect(st.notes))
+  for i, b in ipairs(olds) do
+    h.eq({ 'outdated_copy', b, 'stack/a' }, { st.notes[i].kind, st.notes[i].branch, st.notes[i].layer })
+    h.eq('info', require('revuey.stack_notes').level(st.notes[i]))
+  end
+  h.ok(st.notes[1].text:find("contains an older version of a commit that's now in your stack", 1, true), st.notes[1].text)
+  h.eq({}, st.ignored)
+  -- the layers are untouched by the notes
+  h.eq({ nil, nil, nil }, { st.layers[1].diverged, st.layers[2].diverged, st.layers[3].diverged })
+end)
+
+h.test('detect: ignore patterns (config and persisted) hide related-branch notes, never layers', function()
+  local ign = require('revuey.stack_ignore')
+  local d = h.old_branches_repo('st-old-ignored')
+  local config = require('revuey.config')
+  config.set({ state_dir = state_dir, stack = { ignore_branches = { 'dave/bos-3058-*' } } })
+  local cache = {}
+  local st = stack.detect(d, 'main', cache)
+  h.eq({ 'dave/bos-3061-cleanup' }, vim.tbl_map(function(n)
+    return n.branch
+  end, st.notes))
+  h.eq(2, #st.ignored)
+  h.eq('dave/bos-3058-*', st.ignored[1].pattern)
+  -- the persisted list adds to the config, and changes the fingerprint (no stale cache)
+  ign.update(state_dir, ign.repo_key(d), { add = { 'dave/bos-3061-cleanup' } })
+  st = stack.detect(d, 'main', cache)
+  h.eq({}, st.notes)
+  h.eq(3, #st.ignored)
+  -- ignoring a layer's name hides nothing about the layer and keeps it in the stack
+  ign.update(state_dir, ign.repo_key(d), { add = { 'stack/*' } })
+  st = stack.detect(d, 'main', cache)
+  h.eq({ 'stack/a', 'stack/b', 'stack/c' }, names(st))
+  config.set({ state_dir = state_dir })
+  ign.update(state_dir, ign.repo_key(d), { remove = { 'dave/bos-3061-cleanup', 'stack/*' } })
+  st = stack.detect(d, 'main', cache)
+  h.eq(3, #st.notes)
+end)
+
+h.test('detect: a side branch off a layer below HEAD is told apart from one sharing commits', function()
+  local d = stack_repo('st-side', 'feat/c')
+  h.git(d, 'checkout', '-q', '-b', 'side', 'feat/a')
+  commit(d, 'side.txt', 'side\n')
+  h.git(d, 'checkout', '-q', 'feat/c')
+  local st = detect(d)
+  h.eq({ 'feat/a', 'feat/b', 'feat/c' }, names(st))
+  local n = note_of(st.notes, 'side', 'side')
+  h.eq('feat/a', n and n.layer, vim.inspect(st.notes))
+  h.eq({}, require('revuey.stack_notes').actions(n)[1].id == 'parent' and { 'parent' } or {}, 'no set-as-parent for a side branch')
 end)
 
 h.test('raw_keys() (layer stats) agree with content keys of the parsed diff', function()
