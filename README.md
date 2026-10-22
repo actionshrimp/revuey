@@ -461,14 +461,18 @@ you keep reviewing; the agent's answer shows up in that comment's thread.
   `<C-a>` sends it (`<C-s>` only saves it). `ga` rather than `<leader>a`: leader mappings are
   global and often taken, while `ga` (show the character code) means nothing in a review, and it
   follows revuey's `g` keys (`gc`, `gC`).
-- The thread shows where the message is: `sent → agent`, `queued: no agent connected` (it is
-  delivered when an agent connects), `seen by agent` (acknowledged), `answered`.
+- The thread shows where the message is: `queued: no agent connected` (it is delivered when an
+  agent connects), `sent → agent` (an agent was shown it), `seen by agent` (acknowledged),
+  `answered`. With two reviews of one worktree open, each review's messages go to the agent
+  watching that review.
 - The file panel's header shows `● agent connected` or `○ no agent`.
 
 The keys are `comment_send`, `send_comment` and `ask_agent` under `keymaps`.
 
 **With Claude Code.** Install the skill once (it links `skill/revuey` from this checkout into
-`~/.claude/skills/revuey`; `--copy` copies it instead, `--force` replaces an existing one):
+`~/.claude/skills/revuey`; `--copy` copies it instead, `--force` replaces an existing one,
+moving a directory aside as `revuey.bak-<time>`). Install it from your main checkout: a link
+into a worktree or temp dir breaks when that is removed (it warns):
 
 ```sh
 ~/dev/revuey/main/bin/revuey install-skill
@@ -491,11 +495,12 @@ Then, in a Claude Code session running in your repo:
 
 ```sh
 bin/revuey sessions              # live reviews of this worktree (--all: every worktree), --json
-bin/revuey watch --messages      # one line per message; unacknowledged ones first (catch-up)
+bin/revuey watch --messages      # one line per message; ones no watch printed yet come first
+                                 # (catch-up; --replay: every one not handled yet)
 bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
 bin/revuey reply <id> "Because…" # answer in the thread (- reads stdin); marks it answered
 bin/revuey ack <id>              # handled without a reply: not delivered again
-bin/revuey inbox                 # unacknowledged messages, then exit (no Monitor needed); --json
+bin/revuey inbox                 # messages not handled yet, then exit (no Monitor needed); --json
 ```
 
 A `watch --messages` line looks like this (`--json` prints the full event instead, with the
@@ -509,13 +514,21 @@ How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the
 comments and event feed paths, Neovim's PID and RPC socket); it falls back to revuey's state dir
 when the git dir is not writable, rewrites the entry when you switch layers or scopes, and
-removes it on exit (entries of dead processes are cleaned up). Sending marks the comment with
-`sent_at` and appends a `sent` event to the comment feed; its `status` stays as it was. `watch`
-attaches to the worktree's single live review (several: pick one with `--session <id>`; none
-yet: it waits for one, and it re-attaches when the review restarts), registers a watcher with a
-heartbeat in the same place (the review counts an agent as connected while a heartbeat is under
-30 s old and its process lives), prints every sent message nobody has acknowledged yet, then new
-ones. A message counts as handled once the agent acknowledges it or replies.
+refreshes it every 2 s and removes it on exit (an entry not refreshed for 30 s, whose process
+is gone or whose Neovim socket is gone, is dead and cleaned up). Sending marks the comment with
+`sent_at` and the sending review, and appends a `sent` event to the comment feed once the
+comment is saved; its `status` stays as it was. `watch` attaches to the worktree's single live
+review (several: pick one with `--session <id>`; none yet: it waits for one, and it re-attaches
+when the review restarts), registers a watcher with a heartbeat in the same place (the review
+counts an agent as connected while a heartbeat is under 30 s old and its process lives), prints
+the messages no watch has printed yet, then new ones, and records each one it prints as
+delivered, so a restarted watch (Monitor re-armed) never repeats one. It prints only its own
+review's messages, and those of a review that is gone. A message counts as handled once the
+agent acknowledges it or replies; `inbox` lists the rest, delivered or not.
+
+`skill/revuey/launch.sh --in tmux|herdr|none <dir>` opens the review pane for the agent. It
+only splits a pane it can verify (`$TMUX_PANE` known to the tmux server, `$HERDR_PANE_ID` found
+by `herdr pane get`) and refuses otherwise; `none` prints the command for you to run.
 
 ## Layout
 

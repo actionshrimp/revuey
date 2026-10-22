@@ -64,17 +64,20 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey sessions [--json] [--all]
       live reviews of this worktree (--all: every worktree of the repo) and whether an agent
       is connected to each
-  revuey watch --messages [--session <id>] [--json]
+  revuey watch --messages [--session <id>] [--json] [--replay]
       attach to the review and print each message the user sends you, one line each:
         revuey message <id> <path>:<lines> (<side>) [<branch>]: <first line>  (revuey show <id> ...)
-      Unacknowledged messages are printed first (catch-up), then new ones as they are sent.
+      Messages no watch has printed yet come first (catch-up), then new ones as they are sent.
+      A printed message is not printed again by the next watch (--replay: print every message
+      not yet answered or acknowledged). Messages of another running review are left to it.
       Lines are flushed one by one (fit for Claude Code's Monitor tool); SIGTERM exits 0.
       Without --messages every comment event is printed; --json prints full events.
       Several reviews in this worktree: pick one with --session <id> (see `revuey sessions`).
   revuey show <id>               the message in Markdown: file, lines, code, comment, thread
   revuey reply <id> <text|->     answer in the comment's thread (- reads stdin); marks it answered
   revuey ack <id>                mark it handled without replying (it is not delivered again)
-  revuey inbox [--json]          messages not acknowledged yet, then exit (when Monitor is missing)
+  revuey inbox [--json]          messages not answered or acknowledged yet, then exit (also when
+                                 Monitor is missing); printed ones say "(delivered, not handled)"
   revuey comments [--json] [--all] [--scope current|all|<branch>]
       all review comments of this branch (Markdown export)
   revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]
@@ -86,7 +89,14 @@ Ids may be shortened to any unique part. Options: --state-dir <dir> (default $RE
 else Neovim's data dir/revuey; live sessions' state dirs are searched too).]]
 
 local VALUE_FLAGS = { ['--scope'] = 'scope', ['--since'] = 'since', ['--state-dir'] = 'state_dir', ['--session'] = 'session' }
-local BOOL_FLAGS = { ['--json'] = 'json', ['--all'] = 'all', ['--messages'] = 'messages', ['--force'] = 'force', ['--copy'] = 'copy' }
+local BOOL_FLAGS = {
+  ['--json'] = 'json',
+  ['--all'] = 'all',
+  ['--messages'] = 'messages',
+  ['--force'] = 'force',
+  ['--copy'] = 'copy',
+  ['--replay'] = 'replay',
+}
 
 ---@return table opts, string[] positional
 function M.parse(args)
@@ -256,15 +266,27 @@ local function find_comment(o, id, readonly)
   local ctx = here()
   local found = {}
   for _, e in ipairs(stores(state_dirs(o, ctx), ctx, o.scope or 'all', readonly)) do
-    local c = comments.find(e.store, id)
-    if c then
-      found[#found + 1] = { e = e, c = c }
+    local exact = comments.get(e.store, id)
+    if exact then
+      return e, exact
+    end
+    for cid, c in pairs(e.store.comments) do
+      if not c.deleted and cid:find(id, 1, true) then
+        found[#found + 1] = { e = e, c = c }
+      end
     end
   end
   if #found == 0 then
     die('no comment ' .. id .. ' in this repository')
   elseif #found > 1 then
-    die('comment id ' .. id .. ' is ambiguous (several reviews)')
+    local lines = {}
+    table.sort(found, function(a, b)
+      return a.c.id < b.c.id
+    end)
+    for _, f in ipairs(found) do
+      lines[#lines + 1] = ('  %s  %s: %s'):format(f.c.id, comments.location(f.c), comments.first_line(f.c.body))
+    end
+    die(('comment id %s is ambiguous; it matches:\n%s'):format(id, table.concat(lines, '\n')))
   end
   return found[1].e, found[1].c
 end
@@ -308,10 +330,13 @@ function M.ack(o, pos)
     die('ack needs a comment id\n' .. M.USAGE, 2)
   end
   local e, c = find_comment(o, id)
+  if not c.sent_at then
+    die(('comment %s (%s) was never sent to an agent: nothing to acknowledge'):format(c.id, comments.location(c)))
+  end
   local acked = comments.ack(e.store, c.id)
   save(e.store)
   comments.append_event(events_path(e.path), comments.event('acked', acked, e.store.review))
-  out(('acknowledged %s (%s)%s\n'):format(c.id, comments.location(c), c.sent_at and '' or ' (it was never sent)'))
+  out(('acknowledged %s (%s)\n'):format(c.id, comments.location(c)))
 end
 
 function M.show(o, pos)
@@ -323,12 +348,17 @@ function M.show(o, pos)
   out(export.message(c, e.store.review, bin()))
 end
 
----Messages (sent events) not acknowledged yet in the repo's reviews, oldest first.
-local function pending(dirs, ctx)
+---Messages (sent events) of the repo's reviews, oldest first: not acknowledged yet, or with
+---`undelivered_only` not printed by any watch yet. Each event knows its comments file (`_file`)
+---and whether it was delivered.
+local function pending(dirs, ctx, undelivered_only)
   local list = {}
   for _, e in ipairs(stores(dirs, ctx, 'all', true)) do
-    for _, c in ipairs(comments.unacked(e.store)) do
-      list[#list + 1] = comments.sent_event(c, e.store.review, { catchup = true })
+    for _, c in ipairs(undelivered_only and comments.undelivered(e.store) or comments.unacked(e.store)) do
+      local ev = comments.sent_event(c, e.store.review, { catchup = true })
+      ev.delivered = comments.delivery(c) == 'delivered'
+      ev._file = e.path
+      list[#list + 1] = ev
     end
   end
   table.sort(list, function(a, b)
@@ -343,6 +373,9 @@ end
 function M.inbox(o)
   local ctx = here()
   local list = pending(state_dirs(o, ctx), ctx)
+  for _, ev in ipairs(list) do
+    ev._file = nil
+  end
   if o.json then
     out((#list > 0 and vim.json.encode(list) or '[]') .. '\n')
     return
@@ -352,7 +385,7 @@ function M.inbox(o)
     return
   end
   for _, ev in ipairs(list) do
-    out(comments.message_line(ev, bin()) .. '\n')
+    out(comments.message_line(ev, bin()) .. (ev.delivered and '  (delivered, not handled)' or '') .. '\n')
   end
 end
 
@@ -381,7 +414,11 @@ end
 function M.sessions(o)
   local ctx = here()
   local bases = o.all and sessions.all_bases(ctx.root, state_dir(o)) or sessions.bases(ctx.root, state_dir(o))
-  local list = sessions.list(bases, { worktree = not o.all and ctx.root or nil })
+  local list = sessions.list(bases, {
+    worktree = not o.all and ctx.root or nil,
+    -- the fallback state dir is shared by every repo: --all means this repo's worktrees
+    common_dir = o.all and sessions.common_dir(ctx.root) or nil,
+  })
   for _, e in ipairs(list) do
     local where = { e._base }
     if e.git_dir then
@@ -483,10 +520,44 @@ function M.watch(o)
   local known_dirs = {}
   local seen = {} -- message keys already printed
 
-  local function emit(ev)
+  -- live sessions of the worktree (refreshed every second): a message sent by one of them goes
+  -- to its own watchers only; one whose review is gone goes to whoever watches
+  local live_ids = {}
+  local function refresh_live(list_now)
+    live_ids = {}
+    for _, e in ipairs(list_now) do
+      live_ids[e.id] = true
+    end
+  end
+  refresh_live(list)
+  local function for_me(ev)
+    local sender = ev.session and tostring(ev.session)
+    if not sender or (attached and sender == attached.id) then
+      return true
+    end
+    return not live_ids[sender]
+  end
+
+  ---Record that an agent was shown the message (agent mode): catch-up skips it from now on.
+  local function stamp_delivered(file, ev)
+    if not o.messages or not file then
+      return
+    end
+    local store = comments.load(file)
+    local c = comments.get(store, ev.comment_id)
+    if c and c.sent_at == ev.sent_at and comments.delivery(c) == 'sent' then
+      comments.mark_delivered(store, c.id)
+      local ok, e = pcall(comments.save, store)
+      if not ok then
+        err('revuey: could not record the delivery of ' .. c.id .. ': ' .. tostring(e) .. '\n')
+      end
+    end
+  end
+
+  local function emit(ev, file)
     local is_msg = ev.kind == 'sent'
     if is_msg then
-      if not M.matches(ev.review, ctx, 'all') then
+      if not M.matches(ev.review, ctx, 'all') or not for_me(ev) then
         return
       end
       local key = comments.message_key(ev)
@@ -494,6 +565,7 @@ function M.watch(o)
         return
       end
       seen[key] = true
+      ev._file = nil
     else
       if o.messages or not M.matches(ev.review, ctx, o.scope) then
         return
@@ -515,6 +587,14 @@ function M.watch(o)
       line = comments.event_line(ev)
     end
     out(line .. '\n')
+    if is_msg then
+      stamp_delivered(file, ev)
+    end
+  end
+
+  ---The comments file next to an events file (or its rotated `.1`).
+  local function comments_file(events_file)
+    return (events_file:gsub('%.1$', ''):gsub('%.events%.jsonl$', '.comments.json'))
   end
 
   local function lines(t, data)
@@ -522,7 +602,7 @@ function M.watch(o)
     local last = text:match('.*\n()') or 1
     t.partial = text:sub(last)
     for _, ev in ipairs(comments.decode_events(text:sub(1, last - 1))) do
-      emit(ev)
+      emit(ev, t.path and comments_file(t.path))
     end
   end
 
@@ -532,7 +612,7 @@ function M.watch(o)
       return nil
     end
     local st = vim.uv.fs_fstat(fd)
-    local t = { fd = fd, ino = st.ino, offset = from_end and st.size or 0, partial = '' }
+    local t = { fd = fd, ino = st.ino, offset = from_end and st.size or 0, partial = '', path = path }
     tracked[path] = t
     return t
   end
@@ -552,7 +632,7 @@ function M.watch(o)
   local function read_whole(path)
     local fd = io.open(path, 'r')
     if fd then
-      local t = { partial = '' }
+      local t = { partial = '', path = path }
       lines(t, fd:read('*a'))
       fd:close()
     end
@@ -567,8 +647,8 @@ function M.watch(o)
   end
 
   local function catch_up()
-    for _, ev in ipairs(pending(dirs(), ctx)) do
-      emit(ev)
+    for _, ev in ipairs(pending(dirs(), ctx, not o.replay)) do
+      emit(ev, ev._file)
     end
   end
 
@@ -646,14 +726,26 @@ function M.watch(o)
     local now = vim.uv.now()
     if now - last_check >= 1000 then
       last_check = now
-      -- the session ended: wait for the next one (a review restarted in this worktree)
-      if attached and not (attached._path and vim.uv.fs_stat(attached._path)) then
+      local l = sessions.list(bases, { worktree = ctx.root })
+      local function ids()
+        local k = vim.tbl_keys(live_ids)
+        table.sort(k)
+        return table.concat(k, ',')
+      end
+      local before = ids()
+      refresh_live(l)
+      local live_changed = before ~= ids()
+      -- the session ended (or crashed): wait for the next one (a review restarted here)
+      if attached and not live_ids[attached.id] then
         err(('revuey: session %s ended; waiting for the next review in %s\n'):format(attached.id, ctx.root))
         attached = nil
         heartbeat()
       end
+      if live_changed then
+        -- messages of a review that is gone are now anyone's
+        catch_up()
+      end
       if not attached then
-        local l = sessions.list(bases, { worktree = ctx.root })
         if #l == 1 then
           attached = l[1]
           heartbeat()
@@ -664,8 +756,7 @@ function M.watch(o)
         end
       else
         -- follow scope switches (the feed of another scope may live in another state dir)
-        local cur = sessions.list(bases, { worktree = ctx.root })
-        for _, e in ipairs(cur) do
+        for _, e in ipairs(l) do
           if e.id == attached.id then
             attached = e
           end
@@ -699,10 +790,19 @@ function M.install_skill(o)
   end
   local parent = vim.fs.joinpath(home, '.claude', 'skills')
   local dest = vim.fs.joinpath(parent, 'revuey')
+  -- a link (or a copy's .revuey-bin) into a checkout that will be removed dangles: say so
+  local real_src = real(src)
+  for _, p in ipairs({ src, real_src }) do
+    if p:find('/.claude/worktrees/', 1, true) or p:match('^/tmp/') or p:match('^/private/tmp/') or p:match('^/var/folders/') then
+      err(('revuey: warning: %s looks temporary (a worktree or temp dir); the installed skill stops working when it is removed. Install from your main checkout instead.\n'):format(src))
+      break
+    end
+  end
   local st = vim.uv.fs_lstat(dest)
   if st then
-    local link = st.type == 'link' and vim.uv.fs_readlink(dest) or nil
-    if link == src and not o.copy then
+    -- the same checkout, whatever path leads to it, is the same install
+    local same = st.type == 'link' and real(dest) == real_src
+    if same and not o.copy then
       out(('the revuey skill is already installed: %s -> %s\n'):format(dest, src))
       return
     end
@@ -717,10 +817,21 @@ function M.install_skill(o)
         die('left ' .. dest .. ' as it was')
       end
     end
-    if st.type == 'directory' then
-      vim.fn.delete(dest, 'rf')
+    if st.type == 'link' then
+      os.remove(dest) -- only a link: nothing of the user's is lost
     else
-      os.remove(dest)
+      -- the user's own skill directory (or file) is kept aside, never deleted
+      local bak = ('%s.bak-%s'):format(dest, os.date('%Y%m%d-%H%M%S'))
+      local n = 1
+      while vim.uv.fs_lstat(bak) do
+        n = n + 1
+        bak = ('%s.bak-%s-%d'):format(dest, os.date('%Y%m%d-%H%M%S'), n)
+      end
+      local ok, e = os.rename(dest, bak)
+      if not ok then
+        die('cannot move ' .. dest .. ' aside: ' .. tostring(e))
+      end
+      err(('revuey: moved the existing %s to %s\n'):format(dest, bak))
     end
   end
   vim.fn.mkdir(parent, 'p')

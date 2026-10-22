@@ -7,7 +7,10 @@
 --     the git dir is not writable (or there is no repo).
 --   * Each running review writes `sessions/<nvim pid>.json` (worktree, git dir, branch, scope,
 --     comments and events paths, pid, host, Neovim's RPC socket, started_at), rewrites it when
---     the scope changes, and removes it on exit. Listing removes entries whose process is gone.
+--     the scope changes, refreshes its `updated_at` every couple of seconds (agent_link's poll),
+--     and removes it on exit. An entry is live while its pid is alive, it was refreshed within
+--     STALE_MS (a crashed review whose pid was reused is not) and its Neovim socket, when it is a
+--     path, exists. Listing removes the others.
 --   * Each `bin/revuey watch` writes `watchers/<pid>.json` with the session it is attached to
 --     (or none yet: then it counts for every session of its worktree) and a heartbeat it
 --     rewrites every HEARTBEAT_MS. An agent is connected while a watcher's heartbeat is younger
@@ -15,7 +18,8 @@
 local M = {}
 
 M.VERSION = 1
-M.FRESH_MS = 30000
+M.FRESH_MS = 30000 -- a watcher's heartbeat counts this long
+M.STALE_MS = 30000 -- a review session's refresh counts this long
 M.HEARTBEAT_MS = 5000
 M.FORGET_MS = 24 * 3600 * 1000 -- a watcher silent this long (its pid alive or reused) is removed
 
@@ -57,6 +61,27 @@ local function real(p)
 end
 M.real = real
 
+---Is a review session entry live: pid alive, refreshed lately, its Neovim socket there?
+function M.session_alive(e, now)
+  if not M.alive(e) then
+    return false
+  end
+  now = now or M.now_ms()
+  if type(e.updated_at) ~= 'number' or now - e.updated_at > M.STALE_MS then
+    return false
+  end
+  if (not e.host or e.host == HOST) and type(e.server) == 'string' and e.server:sub(1, 1) == '/' and not vim.uv.fs_stat(e.server) then
+    return false
+  end
+  return true
+end
+
+---The repo's common git dir (shared by all its worktrees).
+function M.common_dir(cwd)
+  local d = git_out({ 'rev-parse', '--path-format=absolute', '--git-common-dir' }, cwd)
+  return d and d ~= '' and real(d) or nil
+end
+
 ---The worktree's own git dir (a linked worktree's is under the common dir's `worktrees/`).
 function M.git_dir(cwd)
   local gd = git_out({ 'rev-parse', '--absolute-git-dir' }, cwd)
@@ -81,9 +106,8 @@ end
 ---`state_dir`.
 function M.all_bases(cwd, state_dir)
   local out = {}
-  local common = git_out({ 'rev-parse', '--path-format=absolute', '--git-common-dir' }, cwd)
-  if common and common ~= '' then
-    common = real(common)
+  local common = M.common_dir(cwd)
+  if common then
     out[#out + 1] = vim.fs.joinpath(common, 'revuey')
     local wt = vim.fs.joinpath(common, 'worktrees')
     if vim.uv.fs_stat(wt) then
@@ -203,13 +227,18 @@ local function scan(bases, kind, keep)
 end
 
 ---Live review sessions in `bases`, oldest first. `opts.worktree`: only that worktree's.
----@param opts? {worktree?:string}
+---`opts.common_dir`: only sessions of that repo (any worktree).
+---@param opts? {worktree?:string, common_dir?:string}
 function M.list(bases, opts)
   opts = opts or {}
   local want = opts.worktree and real(opts.worktree)
+  local now = M.now_ms()
   local out = {}
-  for _, e in ipairs(scan(bases, 'sessions', M.alive)) do
-    if not want or e.worktree == opts.worktree or real(e.worktree) == want then
+  for _, e in ipairs(scan(bases, 'sessions', function(x)
+    return M.session_alive(x, now)
+  end)) do
+    local repo_ok = not opts.common_dir or (e.common_dir and real(e.common_dir) == opts.common_dir)
+    if repo_ok and (not want or e.worktree == opts.worktree or real(e.worktree) == want) then
       out[#out + 1] = e
     end
   end

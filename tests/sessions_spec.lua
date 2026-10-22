@@ -28,7 +28,7 @@ local function entry(pid, extra)
     events = '/state/one.events.jsonl',
     comments = '/state/one.comments.json',
     state_dir = '/state',
-    server = '/tmp/nvim.sock',
+    server = 'localhost:6789', -- not a path: not checked
     started_at = 1000,
   }, extra or {})
 end
@@ -46,7 +46,7 @@ h.test('registry: write, read back, update in place, remove', function()
   h.eq('feat', e.branch)
   h.eq('one-feat-main-abc', e.scope_key)
   h.eq('/state/one.events.jsonl', e.events)
-  h.eq('/tmp/nvim.sock', e.server)
+  h.eq('localhost:6789', e.server)
   h.eq(1000, e.started_at)
   h.eq(path, e._path)
   -- a scope switch rewrites the same file
@@ -78,6 +78,29 @@ h.test('registry: entries of dead processes are removed when listed; other hosts
   h.eq({ tostring(me), 'remote-1' }, ids)
   h.eq(nil, vim.uv.fs_stat(base .. '/sessions/' .. dead .. '.json'))
   h.eq(nil, vim.uv.fs_stat(base .. '/sessions/junk.json'))
+end)
+
+-- Review (ghost sessions): after a crash the pid may be reused, so a live pid is not enough.
+h.test('registry: an entry not refreshed for STALE_MS, or whose Neovim socket is gone, is dead', function()
+  local base = h.tmpdir('reg-ghost')
+  local p = sessions.register({ base }, entry(me))
+  h.eq(1, #sessions.list({ base }))
+  -- the UI stopped refreshing it (crashed; the pid now belongs to someone else)
+  local e = vim.json.decode(table.concat(vim.fn.readfile(p), '\n'))
+  e.updated_at = sessions.now_ms() - sessions.STALE_MS - 1000
+  vim.fn.writefile({ vim.json.encode(e) }, p)
+  h.eq({}, sessions.list({ base }))
+  h.eq(nil, vim.uv.fs_stat(p), 'removed')
+  -- refreshed, but its RPC socket no longer exists
+  local sock = h.tmpdir('reg-ghost-sock') .. '/nvim.sock'
+  vim.fn.writefile({}, sock)
+  p = sessions.register({ base }, entry(me, { server = sock }))
+  h.eq(1, #sessions.list({ base }))
+  os.remove(sock)
+  h.eq({}, sessions.list({ base }))
+  -- a server address that is not a path (tcp) is not checked
+  sessions.register({ base }, entry(me, { server = '127.0.0.1:6666' }))
+  h.eq(1, #sessions.list({ base }))
 end)
 
 h.test('registry: falls back to the next base when the first is not writable; filters by worktree', function()
@@ -178,6 +201,33 @@ h.test('delivery: sent until acknowledged, seen, answered by an agent reply; a r
   h.eq('Why 3?', comments.message_text(comments.new(A, 'Why 3?')))
   c = comments.mark_answered(st, c.id, 700)
   h.eq('answered', comments.delivery(c))
+end)
+
+-- Review: re-arming Monitor re-delivered every unacknowledged message, so the agent acted twice.
+h.test('delivery: delivered once printed; catch-up skips it, inbox still lists it; a re-send is new', function()
+  local st = store()
+  local c = comments.new(A, 'Why 3?', { now = 100 })
+  comments.put(st, c, 100)
+  c = comments.mark_sent(st, c.id, { now = 200, session = '42' })
+  h.eq('42', c.sent_session)
+  h.eq('sent', comments.delivery(c))
+  h.eq(1, #comments.undelivered(st))
+  c = comments.mark_delivered(st, c.id, 250)
+  h.eq('delivered', comments.delivery(c))
+  h.eq({}, comments.undelivered(st))
+  h.eq(1, #comments.unacked(st), 'still waiting for an answer')
+  -- a stale delivery stamp of an older send does not count for a newer one
+  c = comments.mark_sent(st, c.id, { now = 260 })
+  h.ok(c.sent_at > 250)
+  h.eq('sent', comments.delivery(c))
+  h.eq(nil, c.sent_session)
+  h.eq(1, #comments.undelivered(st))
+  c = comments.ack(st, c.id, 300)
+  h.eq('seen', comments.delivery(c))
+  h.eq({}, comments.unacked(st))
+  -- merged by maximum like the others
+  local a = vim.tbl_extend('force', vim.deepcopy(c), { delivered_at = 900, updated_at = 1 })
+  h.eq(900, comments.merge(c, a, true).delivered_at)
 end)
 
 h.test('merge: delivery timestamps only move forward (an ack survives a concurrent edit)', function()
