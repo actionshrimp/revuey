@@ -199,11 +199,17 @@ local function size(lines)
   return n
 end
 
+---@class revuey.GuideStackContext
+---@field kind 'layer'|'full' one branch (layer scope) or the whole stack (full scope)
+---@field index? integer      layer scope: which layer (1 = bottom)
+---@field trunk string
+---@field layers {name: string, parent: string, commits?: string[]}[] bottom first; commits newest first
+
 ---@class revuey.GuideContext
 ---@field repo string        repo name
 ---@field branch string      new side label (branch or layer)
 ---@field base string        old side label
----@field scope? string      e.g. "layer 2 of a 3-branch stack"
+---@field stack? revuey.GuideStackContext the review's scope when it is part of a stack
 ---@field uncommitted? boolean some changes are uncommitted (working tree)
 ---@field commits? string[]  commit subjects, newest first
 ---@field diff_cmd? string   command that shows this diff, e.g. "git diff <merge-base>"
@@ -229,11 +235,58 @@ function M.user_message(ctx, hunks, opts)
   add('Organize the following code changes into a guided review.')
   add('')
   add(('Repository: %s'):format(ctx.repo))
-  add(('Changes: %s compared with %s%s'):format(ctx.branch, ctx.base, ctx.scope and (' (' .. ctx.scope .. ')') or ''))
+  local st = ctx.stack
+  local by_branch = false
+  if st and st.kind == 'full' then
+    local top = st.layers[#st.layers]
+    add(('Changes: the whole stack from %s up to %s'):format(st.trunk, top and top.name or ctx.branch))
+    add('')
+    add(('This review covers a whole stack of %d branches, each built on the one before it, bottom first:'):format(#st.layers))
+    for i, l in ipairs(st.layers) do
+      add(('%d. %s (on %s)'):format(i, l.name, l.parent))
+    end
+    add('Call it "this stack". When it helps the reader, say which branch introduced a change.')
+    by_branch = vim.iter(st.layers):any(function(l)
+      return l.commits ~= nil
+    end)
+  elseif st and st.kind == 'layer' then
+    add(('Changes: branch %s compared with its parent branch %s'):format(ctx.branch, ctx.base))
+    add('')
+    local chain = { st.trunk }
+    for _, l in ipairs(st.layers) do
+      chain[#chain + 1] = l.name
+    end
+    add(('This review covers only the branch `%s`: its own changes on top of its parent branch `%s`.'):format(ctx.branch, ctx.base))
+    add(('The branch is layer %d of a stack of %d branches (%s), but the other branches are not part of this review.'):format(
+      st.index,
+      #st.layers,
+      table.concat(chain, ' <- ')
+    ))
+    add('Call it "this branch" or "this change", never "this stack". Mention the surrounding stack only when it is needed to explain something.')
+  else
+    add(('Changes: %s compared with %s'):format(ctx.branch, ctx.base))
+  end
   if ctx.uncommitted then
     add('Some of these changes are uncommitted work in the working tree.')
   end
-  if ctx.commits and #ctx.commits > 0 then
+  if by_branch then
+    add('')
+    add('Commits by branch (bottom first, newest first within each):')
+    for _, l in ipairs(st.layers) do
+      add('- ' .. l.name .. ':')
+      local cs = l.commits or {}
+      for i, c in ipairs(cs) do
+        if i > 15 then
+          add(('  - ... and %d more'):format(#cs - 15))
+          break
+        end
+        add('  - ' .. c)
+      end
+      if #cs == 0 then
+        add('  - (no commits)')
+      end
+    end
+  elseif ctx.commits and #ctx.commits > 0 then
     add('')
     add('Commits (newest first):')
     for i, c in ipairs(ctx.commits) do

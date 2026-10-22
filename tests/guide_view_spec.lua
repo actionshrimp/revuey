@@ -569,15 +569,26 @@ h.test('stack: layer and full scope have separate guides', function()
   h.eq('guide', s.view_mode)
   local layer_ks = s.guide.ks
   h.ok(s.guide.resolved)
+  -- the prompt says this is one branch of the stack, and the winbar names the scope
+  local stdin = calls()[#calls()].stdin
+  h.ok(stdin:find('This review covers only the branch `stack/cart`: its own changes on top of its parent branch `stack/math`.', 1, true), stdin)
+  h.ok(stdin:find('(main <- stack/math <- stack/cart <- stack/ui)', 1, true), stdin)
+  h.eq('layer stack/cart', gv.scope_title(s.review))
+  h.ok(view.guide_winbar(s, s.diff_win):find('Guide · layer stack/cart', 1, true), view.guide_winbar(s, s.diff_win))
   keys(s, 'gs')
   h.eq({ kind = 'full' }, s.scope)
   h.eq('guide', s.view_mode, 'stays in the guide view')
   h.eq(nil, s.guide.resolved, 'no guide for the full stack yet')
   h.ok(find(s, 'No guide for this review yet.'), text(s))
   h.ok(s.guide.ks ~= layer_ks)
+  h.eq('full stack', gv.scope_title(s.review))
   view.guide_command(true)
   wait_job(s)
   h.ok(s.guide.resolved)
+  stdin = calls()[#calls()].stdin
+  h.ok(stdin:find('This review covers a whole stack of 3 branches, each built on the one before it, bottom first:\n'
+    .. '1. stack/math (on main)\n2. stack/cart (on stack/math)\n3. stack/ui (on stack/cart)\n', 1, true), stdin)
+  h.ok(stdin:find('Commits by branch (bottom first, newest first within each):\n- stack/math:\n  - ', 1, true), stdin)
   local full_hunks = #s.guide.hunks
   keys(s, 'gs')
   h.eq({ kind = 'layer', index = 2 }, s.scope)

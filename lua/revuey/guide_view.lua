@@ -266,14 +266,38 @@ end
 -- Generation
 -- ---------------------------------------------------------------------------
 
-local function scope_label(r)
+---Short scope name for the guide's title area ("layer stack/cart", "full stack"), or nil when
+---the review is not part of a stack.
+function M.scope_title(r)
   local st = r.stack
   if st and r.scope then
     if r.scope.kind == 'full' then
-      return ('the whole stack of %d branches'):format(#st.layers)
+      return 'full stack'
     end
-    return ('layer %d of a %d-branch stack'):format(r.scope.index, #st.layers)
+    local l = st.layers[r.scope.index]
+    return l and ('layer ' .. l.name) or nil
   end
+end
+
+---Stack context for the prompt (revuey.GuideStackContext). Runs git (call inside git.async):
+---the full scope lists each layer's commit subjects, so the model can say which branch
+---introduced what.
+local function stack_context(r)
+  local st = r.stack
+  if not (st and r.scope) then
+    return nil
+  end
+  local full = r.scope.kind == 'full'
+  local layers = {}
+  for i, l in ipairs(st.layers) do
+    local commits
+    if full then
+      local log = git.git({ 'log', '--format=%s', '--no-merges', '-n', '16', l.parent_rev .. '..' .. l.tip }, r.root) or ''
+      commits = vim.split(vim.trim(log), '\n', { trimempty = true })
+    end
+    layers[i] = { name = l.name, parent = l.parent, commits = commits }
+  end
+  return { kind = full and 'full' or 'layer', index = not full and r.scope.index or nil, trunk = st.trunk, layers = layers }
 end
 
 local ticker
@@ -351,7 +375,7 @@ function M.generate(s, on_change)
       repo = vim.fs.basename(r.root),
       branch = r.branch,
       base = r.base,
-      scope = scope_label(r),
+      stack = stack_context(r),
       uncommitted = vim.iter(r.files):any(function(f)
         return f.uncommitted == true
       end),

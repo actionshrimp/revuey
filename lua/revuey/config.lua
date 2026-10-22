@@ -22,6 +22,10 @@ M.defaults = {
   -- Minimum age (ms) of an LSP client before the first request (tsserver answers with the import
   -- alias until its project has loaded).
   lsp_settle_ms = 3000,
+  -- Attach an in-process LSP client named "revuey" to review buffers. It forwards definition,
+  -- type definition, declaration, implementation, references and hover to the real language
+  -- server of the file under the cursor, so your own LSP mappings and pickers work in the diff.
+  lsp_proxy = true,
   -- Intra-line word highlights for paired -/+ lines.
   word_diff = true,
   -- Directory for persisted review state (nil = stdpath('data')/revuey).
