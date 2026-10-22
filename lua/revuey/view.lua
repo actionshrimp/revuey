@@ -16,6 +16,7 @@ local guide_view = require('revuey.guide_view')
 local attribution = require('revuey.attribution')
 local units = require('revuey.units')
 local comments_view = require('revuey.comments_view')
+local agent_link = require('revuey.agent_link')
 -- the editor never waits long for another process's lock: busy saves retry from a timer
 require('revuey.lock').interactive = true
 
@@ -1728,6 +1729,24 @@ function M.comment_keymaps(s)
       end, { buffer = buf, nowait = true, silent = true, desc = 'revuey: comment on the selected lines' })
     end
   end
+  map(buf, k.ask_agent, function()
+    if M.session == s and current(s) then
+      local row = cursor_row(s)
+      comments_view.ask(s, row, row)
+    end
+  end, 'ask the agent about this line')
+  if k.ask_agent then
+    for _, l in ipairs(type(k.ask_agent) == 'table' and k.ask_agent or { k.ask_agent }) do
+      vim.keymap.set('x', l, function()
+        local a, b = vim.fn.line('v'), vim.fn.line('.')
+        api.nvim_feedkeys(vim.keycode('<Esc>'), 'nx', false)
+        if M.session == s then
+          comments_view.ask(s, math.min(a, b), math.max(a, b))
+        end
+      end, { buffer = buf, nowait = true, silent = true, desc = 'revuey: ask the agent about the selected lines' })
+    end
+  end
+  map(buf, k.send_comment, with(comments_view.send_existing), 'send the comment on this line to the agent')
   map(buf, k.comment_edit, with(comments_view.edit), 'edit the comment on this line')
   map(buf, k.comment_delete, with(comments_view.delete), 'delete the comment on this line')
   map(buf, k.comment_reply, with(comments_view.reply), 'reply to the comment on this line')
@@ -2218,6 +2237,8 @@ local function render(s, saved)
   s.stat_sig = M.stat_signature(s)
   panel.render(s)
   guide_view.draw_status(s)
+  -- the session registry follows the scope and branch shown
+  agent_link.update(s)
   M.load_stats(s)
 end
 
@@ -2273,6 +2294,7 @@ cleanup = function(s)
   end
   require('revuey.notes_float').update(s) -- closes it
   comments_view.detach(s)
+  agent_link.detach(s)
   if s.augroup then
     pcall(api.nvim_del_augroup_by_id, s.augroup)
   end
@@ -2357,6 +2379,9 @@ function M.show(review, opts)
 
   M.session = s
   render(s)
+  -- register the review for coding agents; the panel header shows whether one is connected
+  agent_link.attach(s)
+  set_win_opts(s.panel_win, { winbar = agent_link.winbar(s) })
   -- One augroup per session, deleted on close/wipeout so nothing outlives the review.
   local group = api.nvim_create_augroup('revuey_session', { clear = true })
   s.augroup = group
@@ -2406,7 +2431,7 @@ function M.show(review, opts)
   local function guard_winbar()
     for _, w in ipairs({ s.diff_win, s.panel_win }) do
       if api.nvim_win_is_valid(w) then
-        local want = w == s.diff_win and WINBAR or ' Files'
+        local want = w == s.diff_win and WINBAR or agent_link.winbar(s)
         if vim.wo[w].winbar ~= want then
           set_win_opts(w, { winbar = want })
         end

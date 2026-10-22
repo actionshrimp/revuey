@@ -7,7 +7,9 @@ against its base, or of one layer of a local branch stack (or the whole stack) b
 work from inside the diff (your own LSP mappings and pickers too), and "reviewed" marks persist. An [AI guide](#ai-guide) (your own `claude`
 CLI) can reorganise the review into ordered, explained sections. [Comments](#comments) on lines,
 ranges or files show inline as threads and export as Markdown for an AI session; coding agents
-read them, follow them live and reply from the shell. Design notes:
+read them, follow them live and reply from the shell. You can also [send a comment or question to
+a coding agent](#connect-an-agent) (Claude Code) without leaving the review, and its answer lands
+in the comment's thread. Design notes:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install (lazy.nvim, local checkout)
@@ -54,6 +56,7 @@ Requirements:
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
+| `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
 
 **Uncommitted work is included by default** (working-tree mode): committed, staged and unstaged
 changes to tracked files, files deleted on disk, and untracked (non-ignored) files as additions.
@@ -348,8 +351,8 @@ Comment while you review, in the diff or the guide view:
 - The editor is a small markdown float under the line, titled with the anchor
   (`src/cart.ts:12-14 (new)`). `<C-s>` or `:w` saves; `q` or `<Esc><Esc>` cancels (asking first
   when there is text). Closing it any other way (`:q`, another window) keeps the text as a
-  **draft**, shown inline; `ce` continues it. `<C-a>` is reserved for sending the comment to an AI
-  or agent session (a later feature; for now it says so).
+  **draft**, shown inline; `ce` continues it. `<C-a>` saves it and sends it to the
+  [connected agent](#connect-an-agent) (in a reply editor: the reply, as a follow-up).
 - Comments show **inline under their last line** as a thread box (author, time, body with light
   markdown, replies), wrapped to the window, with a `▍` bar in the gutter on the commented lines.
   They are virtual lines: the buffer text, folds, `mr`, LSP and selections are unaffected. Long
@@ -429,8 +432,7 @@ bin/revuey reply <id> "Fixed."   # reply in the comment's thread (- reads the te
 layer and full-stack reviews that include it); `--scope all` every review of the repo; `--scope
 <branch>` another branch.
 
-Every change to a comment (created, updated, deleted, resolved, replied; `sent` is reserved for
-the later send action) is appended as one JSON line to `*.events.jsonl` next to the comments
+Every change to a comment (created, updated, deleted, resolved, replied, sent, acked) is appended as one JSON line to `*.events.jsonl` next to the comments
 (rotated at 1 MB; a snippet longer than 200 lines is cut in events). Writes to the comments
 file and the feed hold a lock, so any number of Neovims and `reply` calls can write at once. `watch` prints one line per event and flushes it at once, so it works under
 Claude Code's Monitor tool (each stdout line is an event), and it exits cleanly on SIGTERM:
@@ -446,6 +448,74 @@ the body, author, and the reply for `replied`). `--since <event id>` (or `all`) 
 earlier events. The agent's own replies are not echoed back unless `--all` is given. A reply
 made with `bin/revuey reply` (author `agent`, or `$REVUEY_AGENT_NAME`) shows up in a running
 revuey's thread within a moment. The comment id may be shortened to any unique part of it.
+
+## Connect an agent
+
+Send a comment or a question about the code to a coding-agent session (Claude Code first) while
+you keep reviewing; the agent's answer shows up in that comment's thread.
+
+- `<C-a>` in the comment editor saves the comment and sends it. In a reply editor (`cr`) it
+  sends the reply as a follow-up.
+- `cs` on a commented line sends that comment (again, if it was sent before).
+- `ga` on a line or a visual selection opens the editor titled "Ask agent"; type the question and
+  `<C-a>` sends it (`<C-s>` only saves it). `ga` rather than `<leader>a`: leader mappings are
+  global and often taken, while `ga` (show the character code) means nothing in a review, and it
+  follows revuey's `g` keys (`gc`, `gC`).
+- The thread shows where the message is: `sent → agent`, `queued: no agent connected` (it is
+  delivered when an agent connects), `seen by agent` (acknowledged), `answered`.
+- The file panel's header shows `● agent connected` or `○ no agent`.
+
+The keys are `comment_send`, `send_comment` and `ask_agent` under `keymaps`.
+
+**With Claude Code.** Install the skill once (it links `skill/revuey` from this checkout into
+`~/.claude/skills/revuey`; `--copy` copies it instead, `--force` replaces an existing one):
+
+```sh
+~/dev/revuey/main/bin/revuey install-skill
+```
+
+Then, in a Claude Code session running in your repo:
+
+1. **Claude launches revuey**: ask it to "open revuey" (in tmux or herdr it opens revuey in a
+   pane to the right; elsewhere it tells you the command to run). Or **you launch revuey**
+   yourself (`bin/revuey`, or `:Revuey` in your Neovim) and ask Claude to "connect to my revuey
+   review".
+2. Claude finds the review with `bin/revuey sessions` and watches it with its Monitor tool
+   (`bin/revuey watch --messages`, re-armed every 30 minutes). The header turns to
+   `● agent connected`.
+3. Send comments and questions from revuey. Claude reads each one with `bin/revuey show <id>`,
+   answers with `bin/revuey reply <id> "…"`, or acknowledges it with `bin/revuey ack <id>` when
+   it just acts on it. It only edits files when a message asks for a change.
+
+**From the shell** (any agent; run inside the reviewed worktree):
+
+```sh
+bin/revuey sessions              # live reviews of this worktree (--all: every worktree), --json
+bin/revuey watch --messages      # one line per message; unacknowledged ones first (catch-up)
+bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
+bin/revuey reply <id> "Because…" # answer in the thread (- reads stdin); marks it answered
+bin/revuey ack <id>              # handled without a reply: not delivered again
+bin/revuey inbox                 # unacknowledged messages, then exit (no Monitor needed); --json
+```
+
+A `watch --messages` line looks like this (`--json` prints the full event instead, with the
+anchor, the code, the message and the review: repo, branch, scope, base):
+
+```
+revuey message 19a3f0c2d4e1a8b7f src/cart.ts:12-14 (new) [stack/cart]: Why multiply here?  (/home/me/dev/revuey/main/bin/revuey show 19a3f0c2d4e1a8b7f for full context)
+```
+
+How it works: each running review registers itself in
+`$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the
+comments and event feed paths, Neovim's PID and RPC socket); it falls back to revuey's state dir
+when the git dir is not writable, rewrites the entry when you switch layers or scopes, and
+removes it on exit (entries of dead processes are cleaned up). Sending marks the comment with
+`sent_at` and appends a `sent` event to the comment feed; its `status` stays as it was. `watch`
+attaches to the worktree's single live review (several: pick one with `--session <id>`; none
+yet: it waits for one, and it re-attaches when the review restarts), registers a watcher with a
+heartbeat in the same place (the review counts an agent as connected while a heartbeat is under
+30 s old and its process lives), prints every sent message nobody has acknowledged yet, then new
+ones. A message counts as handled once the agent acknowledges it or replies.
 
 ## Layout
 
@@ -489,6 +559,7 @@ Diff buffer:
 | `gc` | [Comment](#comments) on this line (visual: the selected lines; a file or hunk header: the whole file) |
 | `ce` / `cr` / `cx` / `cd` | Edit / reply to / resolve or reopen / delete the comment on this line |
 | `cz` | Expand / collapse a long or resolved comment |
+| `ga` / `cs` | [Ask the agent](#connect-an-agent) about this line or the selection / send the comment on this line to it |
 | `]m` / `[m` | Next / previous comment (takes a count) |
 | `gC` | Hide / show comment threads |
 | `cl` | List all comments (`<CR>` jumps) |
@@ -665,6 +736,10 @@ cd /tmp/revuey-guide
   moving and then outdating comments, export to a register, live reload, two Neovim instances
   merging, and `bin/revuey comments`/`watch`/`reply` round trips with `watch` as a subprocess
   (integration).
+- **Agent link:** the session registry, watcher heartbeats, delivery state and catch-up selection
+  (unit, `sessions_spec.lua`); `<C-a>`, `cs` and `ga` sends, `watch --messages` catch-up and live
+  lines, presence, `reply`/`ack`/`show`/`inbox`, `sessions` with zero, one and several reviews,
+  scope switches and `install-skill` into a temporary `HOME` (integration, `agent_link_spec.lua`).
 - **Screen:** a child Neovim (vendored `mini.test`, `tests/vendor/mini`) renders the review and its
   screen grid, highlight attributes included, is compared to `tests/screenshots/*`. After an
   intended UI change, regenerate them with `REVUEY_UPDATE_SCREENSHOTS=1 make test` and review the

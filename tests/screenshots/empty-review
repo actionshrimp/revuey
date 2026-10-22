@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//f/cart..HEAD                                                                      X
-02| Files                                  │                                                           
+02| Files                       ○ no agent │                                                           
 03| feature/cart → HEAD                    │          No changes between HEAD and the working tree.    
 04| 0 files  +0 −0  ✓ 0/0                  │                                                           
 05| base 6b2be8a3  head 6b2be8a3           │          Edit files or commit on this branch; the review r

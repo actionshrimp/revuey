@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  3 [Scratch]                                                                                                X
-02| Files                                  │ A src/cart.ts +27 −0                                                      2/7 
+02| Files                       ○ no agent │ A src/cart.ts +27 −0                                                      2/7 
 03| feature/cart → main                    │      1▍+ import { multiply, sum } from "./math";                              
 04| 7 files  +57 −22  ✓ 0/7                │      2▍+ import { formatCurrency } from "./format";                           
 05| base ee2e6fcf  head 6b2be8a3           │          ╭─ You · just now ────────────────────────────────────────────────── 

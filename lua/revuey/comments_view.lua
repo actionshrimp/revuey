@@ -16,13 +16,13 @@ local M = {}
 
 M.ns = api.nvim_create_namespace('revuey.comments')
 
----Pluggable actions. `send` is the editor's send key: the later "send to an AI / the launching
----agent session" plugs in here. It gets {session, comment?, anchor, text, kind} and returns
----true when it took the text (the editor then closes).
+---Pluggable actions. `send` is the editor's send key (<C-a>): by default it saves the comment and
+---sends it to the coding-agent session watching this review (M.send_to_agent); the later chat
+---panel can plug in here. It gets {session, comment?, anchor, text, kind, store} and returns true
+---when it took the text (the editor then closes).
 M.actions = {
-  send = function(_)
-    vim.notify('revuey: sending a comment to an AI or agent session is not available yet', vim.log.levels.INFO)
-    return false
+  send = function(req)
+    return M.send_to_agent(req)
   end,
 }
 
@@ -136,9 +136,18 @@ function M.reload(s)
   if not c.store then
     return false
   end
+  local before = {}
+  for id, x in pairs(c.store.comments) do
+    before[id] = comments.delivery(x)
+  end
   local ok, changed = pcall(comments.reload, c.store)
   if ok and changed then
     M.refresh(s)
+    for id, x in pairs(c.store.comments) do
+      if before[id] ~= 'answered' and comments.delivery(x) == 'answered' then
+        vim.notify('revuey: the agent answered on ' .. comments.location(x), vim.log.levels.INFO)
+      end
+    end
     return true
   end
   return false
@@ -322,6 +331,10 @@ local function thread_lines(s, c, p, width)
   if c.draft or c.reply_draft then
     chip('unsaved edit', 'RevueyCommentDraft')
   end
+  local d = M.delivery_label(s, c)
+  if d then
+    chip(d.text, d.hl)
+  end
   if p.outdated then
     chip(p.how == 'missing' and 'file not in this review' or ('outdated · was ' .. comments.location(c)), 'RevueyCommentOutdated')
   end
@@ -367,6 +380,21 @@ local function thread_lines(s, c, p, width)
   end
   lines[#lines + 1] = { { '╰─', B } }
   return lines
+end
+
+---Marker of a comment sent to an agent: {text, hl}, or nil when it was never sent.
+function M.delivery_label(s, c)
+  local d = comments.delivery(c)
+  if d == 'sent' then
+    if require('revuey.agent_link').connected(s) then
+      return { text = 'sent → agent', hl = 'RevueyCommentSent' }
+    end
+    return { text = 'queued: no agent connected', hl = 'RevueyCommentQueued' }
+  elseif d == 'seen' then
+    return { text = 'seen by agent', hl = 'RevueyCommentSent' }
+  elseif d == 'answered' then
+    return { text = 'answered', hl = 'RevueyCommentAnswered' }
+  end
 end
 
 local SIGN_HL = { draft = 'RevueyCommentDraft', resolved = 'RevueyCommentResolved' }
@@ -523,7 +551,7 @@ end
 
 ---Save `store` (default: the session's) and append an event of `kind` (nil: none, e.g. a draft).
 ---An editor opened before a scope switch still saves to the store it was opened for.
-local function save_and_emit(s, kind, cmt, extra, store)
+local function save_and_emit(s, kind, cmt, extra, store, sent)
   local c = cm(s)
   store = store or c.store
   local current = store == c.store
@@ -533,9 +561,14 @@ local function save_and_emit(s, kind, cmt, extra, store)
     vim.notify(tostring(err), vim.log.levels.ERROR)
     return false
   end
+  local events = (store.path:gsub('%.comments%.json$', '.events.jsonl'))
   if kind then
-    local events = (store.path:gsub('%.comments%.json$', '.events.jsonl'))
     comments.append_event(events, comments.event(kind, cmt, info or store.review, extra))
+  end
+  if sent then
+    -- the message for the agent: the comment as saved, with the review it belongs to
+    local id = s.link and s.link.id or tostring(vim.uv.os_getpid())
+    comments.append_event(events, comments.sent_event(sent, info or store.review, { session = id }))
   end
   if current then
     M.refresh(s)
@@ -555,15 +588,16 @@ local function title(anchor, file_level)
   return comments.location(c) .. ' (' .. anchor.side .. ')'
 end
 
-local function send_hook(s, kind, anchor, cmt)
+local function send_hook(s, kind, anchor, cmt, store)
   return function(text)
-    return M.actions.send({ session = s, kind = kind, anchor = anchor, comment = cmt, text = text })
+    return M.actions.send({ session = s, kind = kind, anchor = anchor, comment = cmt, text = text, store = store })
   end
 end
 
 ---`gc`: comment on rows first..last of the diff or guide (a file header or hunk header: the
----whole file).
-function M.add(s, first, last)
+---whole file). `ask` (`ga`): the same editor, titled as a question for the agent, where <C-a>
+---sends (and <C-s> still only saves).
+function M.add(s, first, last, ask)
   if not s or #s.review.files == 0 then
     return
   end
@@ -621,9 +655,11 @@ function M.add(s, first, last)
     comments.put(store, cmt)
     return cmt
   end
+  local send_key = config.options.keymaps.comment_send
   editor.open({
     session = s,
-    title = title(anchor, file_level),
+    title = (ask and 'Ask agent · ' or '') .. title(anchor, file_level),
+    footer = ask and send_key and (' ' .. send_key .. ' send  <C-s> save only  q cancel ') or nil,
     win = s.diff_win,
     return_win = s.diff_win,
     row = row,
@@ -638,7 +674,7 @@ function M.add(s, first, last)
       save_and_emit(s, nil, nil, nil, store)
       vim.notify('revuey: comment kept as a draft (' .. (config.options.keymaps.comment_edit or 'edit') .. ' to continue)', vim.log.levels.INFO)
     end,
-    on_send = send_hook(s, 'comment', anchor, nil),
+    on_send = send_hook(s, ask and 'ask' or 'comment', anchor, nil, store),
   })
 end
 
@@ -760,7 +796,7 @@ function M.edit(s)
           save_and_emit(s, nil, nil, nil, store)
         end
       end,
-      on_send = send_hook(s, 'comment', cmt.anchor, cmt),
+      on_send = send_hook(s, 'comment', cmt.anchor, cmt, store),
     })
   end)
 end
@@ -802,7 +838,7 @@ function M.reply(s)
           save_and_emit(s, nil, nil, nil, store)
         end
       end,
-      on_send = send_hook(s, 'reply', cmt.anchor, cmt),
+      on_send = send_hook(s, 'reply', cmt.anchor, cmt, store),
     })
   end)
 end
@@ -822,6 +858,106 @@ function M.resolve(s)
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
   end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Sending to the coding-agent session
+-- ---------------------------------------------------------------------------
+
+local function notify_sent(s, c)
+  local where = comments.location(c)
+  if require('revuey.agent_link').connected(s) then
+    vim.notify('revuey: sent to the agent (' .. where .. ')', vim.log.levels.INFO)
+  else
+    vim.notify(
+      'revuey: queued: no agent connected (' .. where .. '); an agent running `bin/revuey watch` gets it when it connects',
+      vim.log.levels.INFO
+    )
+  end
+end
+
+---Send to the agent session watching this review (the editor's <C-a>): the text is saved as the
+---comment (new, or an edit of `req.comment`) or, for `kind = 'reply'`, as a reply in its thread;
+---the comment is marked sent and a `sent` event goes to the feed. With no agent connected the
+---message waits there (`bin/revuey watch` catches up on connect).
+---@param req {session:table, kind:'comment'|'ask'|'reply', anchor:table, comment?:table, text:string, store?:table}
+function M.send_to_agent(req)
+  local s = req.session
+  if not s or s.cleaned then
+    return false
+  end
+  local text = vim.trim(req.text or '')
+  if text == '' then
+    vim.notify('revuey: empty message not sent (q cancels)', vim.log.levels.WARN)
+    return false
+  end
+  local store = req.store or M.sync_store(s)
+  local c = req.comment
+  local kind, extra, sent
+  if c then
+    local cur = still_there(store, c.id, text)
+    if not cur then
+      M.refresh(s)
+      return true
+    end
+    if req.kind == 'reply' then
+      if cur.reply_draft then
+        local copy = vim.deepcopy(cur)
+        copy.reply_draft = nil
+        comments.put(store, copy)
+      end
+      local r = comments.reply(store, c.id, text, { kind = 'user' })
+      sent = comments.mark_sent(store, c.id, { reply_id = r.id })
+      kind, extra = 'replied', { reply = r }
+    else
+      local copy = vim.deepcopy(cur)
+      local was_draft = copy.status == 'draft'
+      local changed = copy.body ~= text
+      copy.body, copy.draft = text, nil
+      if was_draft then
+        copy.status = 'saved'
+      end
+      comments.put(store, copy)
+      sent = comments.mark_sent(store, c.id)
+      kind = was_draft and 'created' or (changed and 'updated' or nil)
+    end
+  else
+    local new = comments.new(req.anchor, text, { status = 'saved' })
+    comments.put(store, new)
+    sent = comments.mark_sent(store, new.id)
+    kind = 'created'
+  end
+  if save_and_emit(s, kind, sent, extra, store, sent) then
+    notify_sent(s, sent)
+  end
+  return true
+end
+
+---`cs`: send the comment under the cursor to the agent session (again, when it was sent before).
+function M.send_existing(s)
+  M.with_comment(s, function(cmt)
+    local store = cm(s).store
+    local cur = still_there(store, cmt.id)
+    if not cur then
+      return M.refresh(s)
+    end
+    local kind
+    if cur.status == 'draft' then
+      local copy = vim.deepcopy(cur)
+      copy.status = 'saved'
+      comments.put(store, copy)
+      kind = 'created'
+    end
+    local sent = comments.mark_sent(store, cmt.id)
+    if save_and_emit(s, kind, sent, nil, store, sent) then
+      notify_sent(s, sent)
+    end
+  end)
+end
+
+---`ga`: ask the agent about rows first..last (a line, a selection, a file header).
+function M.ask(s, first, last)
+  return M.add(s, first, last, true)
 end
 
 ---Ask before deleting; tests replace this.
@@ -968,6 +1104,10 @@ function M.list_lines(s)
     end
     if n > 0 then
       tags[#tags + 1] = n .. (n == 1 and ' reply' or ' replies')
+    end
+    local d = M.delivery_label(s, cmt)
+    if d then
+      tags[#tags + 1] = d.text
     end
     local tag = #tags > 0 and ('  [' .. table.concat(tags, ', ') .. ']') or ''
     local text = where .. '  ' .. comments.first_line(cmt.body) .. tag

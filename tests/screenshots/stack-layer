@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//s/c/math                                                                                              X
-02| Files                                  │ A src/cart.ts +20 −0                                                      1/2 
+02| Files                       ○ no agent │ A src/cart.ts +20 −0                                                      1/2 
 03| Stack: 3 layers on main                │  A     ▾ src/cart.ts   +20 −0  added                                          
 04|    stack/math                1c 1f ✓0/1│          @@ -0,0 +1,20 @@                                                     
 05| ▶@ stack/cart                2c 2f ✓0/2│      1 + import { multiply, sum } from "./math";                              

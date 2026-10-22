@@ -115,6 +115,12 @@ function M.setup()
   set('RevueyCommentResolved', { link = 'DiagnosticOk' })
   set('RevueyCommentOutdated', { link = 'DiagnosticWarn' })
   set('RevueyCommentTitle', { link = 'FloatTitle' })
+  -- the link to a coding-agent session: panel header and markers on sent comments
+  set('RevueyAgentOn', { link = 'DiagnosticOk' })
+  set('RevueyAgentOff', { link = 'Comment' })
+  set('RevueyCommentSent', { link = 'DiagnosticInfo' })
+  set('RevueyCommentQueued', { link = 'DiagnosticWarn' })
+  set('RevueyCommentAnswered', { link = 'DiagnosticOk' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })
