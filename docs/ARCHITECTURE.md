@@ -292,11 +292,25 @@ are in `reports/Terminal code review tool landscape.md`.
    - **Files without hunks** (binary, placeholders, pure renames, mode-only changes) get one
      whole-file unit whose mark *is* the file mark, keyed by content key as before.
    - **Coverage.** A unit is reviewed when its key, its parent hunk's key, or a file mark with the
-     file's current content key is set. Marking all pieces of a hunk also stores the hunk key, so a
-     different split later still counts the hunk as reviewed; marking all units of a file also
-     stores the file mark (for layer stats). Unmarking a unit removes its key, its parent's key and
-     the file mark, after spelling out the coverage of its siblings as unit marks. Toggling a group
-     (hunk, file, section, selection) marks all when any unit is unreviewed, else unmarks all.
+     file's current content key is set. When all pieces of a hunk are marked the hunk key is stored
+     too, so a different split later still counts the hunk as reviewed; when all units of a file
+     are, the file mark is (for layer stats). These derived marks are computed by `state.save`
+     (a `_finalize` hook from `units.lua`) on the merged tables, after re-reading the file and
+     applying this instance's changes, so two Neovims marking parts of one file still produce its
+     file mark, and a stale instance never stores a file mark over another's unmark. An unmark
+     always records removal of the unit key, its parent hunk key and the file mark at the current
+     content key, even when this instance never saw them (another instance may have stored them);
+     siblings covered only by those marks are spelled out as unit marks first. A matching file mark
+     with no unit marks behind it at all is a legacy mark and is converted in the same step.
+     Toggling a group (hunk, file, section, selection) marks all when any unit is unreviewed, else
+     unmarks all. On a code line of a split hunk `mr` toggles just the unit holding the line; the
+     header toggles the whole hunk (`review.split` is a test hook for the cut until the engine
+     splits hunks itself).
+   - **Pruning.** On each save, unit marks whose key the current review does not show and has not
+     shown for 30 days are dropped (keys that are shown get a `seen_at` refreshed at most daily).
+     The grace period matters because working-tree and committed mode share a state file, so a
+     review never sees all of its keys at once. Within it, reverting an edit brings the mark back,
+     which is right: the content is the reviewed content again.
    - **Derived state.** A file is reviewed when all its units are; a section when all units of its
      hunks are. Partial progress is shown as `◐ done/total` (units) on diff file headers, hunk
      headers once split, the winbar, the panel's file rows and section list, and guide section
@@ -312,7 +326,11 @@ are in `reports/Terminal code review tool landscape.md`.
      panel are updated in place; folds change in this view (files or sections that became complete
      close, ones that stopped being complete open; hunks marked on their own collapse, unmarked ones
      expand), the other view's remembered folds follow, and the cursor moves to the next unreviewed
-     hunk, file or section, or stays on the last one without reopening it. Hunk fold state is kept
+     hunk (skipping hunks inside a collapsed file, section or hunk), file or section, or stays on
+     the last one without reopening it. Visual `mr` first widens the selection to whole collapsed
+     folds at either end. In the guide the in-buffer meta line ("1/2 reviewed") is rewritten in
+     place, and with a UI attached the winbar is redrawn. A hunk appears in at most one guide section (resolution and validation place each hunk
+     once), so hunk fold keys need no section scope. Hunk fold state is kept
      per view by hunk key: `true` (the user's `<Tab>`), `'reviewed'` (collapsed because reviewed),
      `false` (the user expanded it), nil (no choice: a reviewed hunk in a file or section that is not
      complete starts collapsed). Unmarking a whole file or section only re-expands `'reviewed'`
