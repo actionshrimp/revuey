@@ -34,6 +34,10 @@ sequence; later items build on earlier ones.
    posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
    Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
    to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
+6. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
+   sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
+   (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still
+   only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
 
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
