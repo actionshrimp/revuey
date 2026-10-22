@@ -219,7 +219,9 @@ are in `reports/Terminal code review tool landscape.md`.
      mean centre of its neighbours, keeping order, a 2-4 column gap and the width. Boxes get one
      port per line (`┬` out, `▼` in; back edges `▲` at the top, `┴` below). Between ranks every
      line that changes column gets its own horizontal track, ordered so a line arriving at a
-     column turns after the line leaving it; lines are drawn as direction masks turned into
+     column turns after the line leaving it (arrival, else departure, ports are first moved off
+     columns another line leaves from, so two lines swapping columns never need each other to
+     turn first and merge); lines are drawn as direction masks turned into
      box-drawing characters (crossings become `┼`). Labels go beside the arrow, else beside where
      the line leaves the box, else in a list under the drawing. If any rank is wider than the
      width the list form is used (`A ──label──▶ B`, nodes without edges as `• C`). A legend of
@@ -231,7 +233,10 @@ are in `reports/Terminal code review tool landscape.md`.
      section}`; `layout.diagram` is their row range and a level-1 fold. `<CR>` on a node jumps
      to its section, on the heading toggles the fold, as does `<Tab>` (the heading is a fold
      title like section headings, and `<S-Tab>` collapses it with the sections); the drawing is redone at the prose width on
-     every render, so `WinResized` re-lays it out, and its fold state is kept.
+     every render at the full text width (not the prose cap), so `WinResized` re-lays it out; its
+     fold state and the cursor's row within it (column clamped) are kept. A fixed-seed fuzz test
+     (`tests/diagram_check.lua`) traces every edge from its port to its arrow. Assumes
+     `ambiwidth=single`.
    - **Branch labels** (`attribution.lua`). Full scope only: for each hunk, the layers whose
      commits changed its lines. Each layer is diffed on its own with no context (`parent...tip`,
      `-U0`, plus `git diff -U0 <top>` and the untracked files when the top layer is HEAD in
@@ -242,8 +247,11 @@ are in `reports/Terminal code review tool landscape.md`.
      labelled with every layer that has a position inside its changed span (context lines don't
      count). Chosen over `git blame` because it costs one diff per layer rather than a blame per
      file, attributes pure deletions, and treats the working tree as one more layer; the cost is
-     that a stack that was never restacked (layer bases that are not the parent's tip) maps only
-     approximately (a hunk with no match falls back to the file's only layer, if there is one).
+     that the stack's history must connect: a layer whose child was not restacked (`diverged`,
+     or `stale` with an old tip) is diffed only up to the old tip the child forked from, since
+     its later commits are not in the top; a child diffed from trunk gives no labels at all and a
+     note in the guide (wrong labels are worse than none). Matching runs on the main thread (about
+     80ms for 6,000 hunks).
      Computed in `view` after loading a full-scope review (`review.layer_labels`, cached by
      review signature and layer tips), shown right-aligned on hunk headers in the guide and in
      the full-scope diff (`RevueyLayerLabel`), and appended to the prompt's hunk markers
