@@ -422,8 +422,8 @@ are in `reports/Terminal code review tool landscape.md`.
      (`{id, deleted, updated_at}`), replies are merged by reply id (an agent reply survives a concurrent
      edit of the body). Read, merge and rename hold `lock.lua`'s lock (see decision 8): without it 20
      parallel `bin/revuey reply` calls kept only 14 replies. Atomic write (temp + rename); an
-     undecodable file is moved to `.corrupt-*`. Comments are never pruned; tombstones are dropped after
-     30 days. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
+     undecodable file is moved to `.corrupt-*`. Comments and their tombstones are never pruned, so a
+     long-idle instance can never resurrect a deleted comment. The UI watches the state directory (`uv.fs_event`; renames replace the file) and reloads
      with an 80ms debounce.
    - **Event feed.** Each change appends one JSON line to `<state file>.events.jsonl`: `{id (sortable),
      kind = created|updated|deleted|resolved|replied|sent (reserved), at, comment_id, review {repo,

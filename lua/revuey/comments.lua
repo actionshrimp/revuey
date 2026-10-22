@@ -631,17 +631,11 @@ function M.save(store, review)
   end)
 end
 
-M.TOMBSTONE_DAYS = 30 -- deletes are remembered this long (so older copies elsewhere stay deleted)
-
 function M._save_locked(store, review)
   local disk = M.read(store.path) or {}
   local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
-  local cutoff = M.now_ms() - M.TOMBSTONE_DAYS * 86400 * 1000
-  for id, c in pairs(merged) do
-    if c.deleted and (c.deleted_at or c.updated_at or 0) < cutoff then
-      merged[id] = nil
-    end
-  end
+  -- tombstones are kept forever (one small file per scope), so an instance idle for any length of
+  -- time can never resurrect a deleted comment
   local out = { path = store.path, review = review or store.review or disk.review or {}, comments = merged }
   if not review and disk.review and next(disk.review) then
     out.review = vim.tbl_extend('keep', store.review or {}, disk.review)
