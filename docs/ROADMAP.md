@@ -61,8 +61,14 @@ sequence; later items build on earlier ones.
    working-tree file, folded to that hunk plus context, so undo, LSP and formatters work as normal; saving lets
    working-tree auto-refresh redraw the diff and guide. Guide hunks re-anchor by overlap (as comments do) so an
    edited hunk stays in its section with an "edited since guide" marker instead of moving to "Not in guide"; its
-   reviewed mark resets. Working-tree layer only; editing lower stack layers via fixup commits is a later idea.
-   Direct typing into the composed review buffer is not planned (no per-line read-only in Neovim).
+   reviewed mark resets. Direct typing into the composed review buffer is not planned (no per-line read-only).
+   Editing lower stack layers: a key on a layer (e.g. `gS`) checks out that branch in the current worktree (the
+   worktree is treated as fair game), making it the working-tree layer so the edit float works there; plain
+   `]s`/`[s` stay view-only unless opted in via config. Refuses on a dirty worktree (no auto-stash) and handles
+   branches checked out elsewhere; confirms first when launched by an agent session working in the same worktree.
+   After committing, the existing "not restacked" warning flags the layers above; restacking is handed to the
+   launching agent session (one-key "restack above <branch>" message) rather than done by revuey. Local branches
+   only. Alternative considered: one worktree per layer via worktrunk.
 
 ## Later / ideas
 - Optional image rendering of the guide diagram via snacks.nvim when available.
