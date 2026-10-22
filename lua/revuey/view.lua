@@ -2058,6 +2058,10 @@ local function render(s, saved)
     -- file marks without unit marks behind them (the old format) become unit marks
     s.review.units_migrated = true
     local _, err = units.migrate(s.review.state, review_mod.units(s.review))
+    if not err then
+      -- marks of what this review shows are seen now (pruning keeps them)
+      _, err = units.touch(s.review.state, review_mod.units(s.review))
+    end
     if err then
       vim.notify(tostring(err), vim.log.levels.ERROR)
     end

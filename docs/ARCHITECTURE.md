@@ -307,7 +307,9 @@ are in `reports/Terminal code review tool landscape.md`.
      header toggles the whole hunk (`review.split` is a test hook for the cut until the engine
      splits hunks itself).
    - **Pruning.** On each save, unit marks whose key the current review does not show and has not
-     shown for 30 days are dropped (keys that are shown get a `seen_at` refreshed at most daily).
+     shown for 30 days are dropped. Rendering a review refreshes `seen_at` on the marks of every unit
+     it shows (`units.touch`, at most one save per scope per day), and the save that prunes keeps
+     every key of the review it belongs to, so a mark of a unit on screen is never pruned.
      The grace period matters because working-tree and committed mode share a state file, so a
      review never sees all of its keys at once. Within it, reverting an edit brings the mark back,
      which is right: the content is the reviewed content again.
