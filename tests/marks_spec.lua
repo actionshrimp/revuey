@@ -413,12 +413,21 @@ h.test('an edit resets only that hunk; the working-tree refresh keeps the other 
   h.eq(-1, closed_at(s, r.hunk_rows[2]))
   h.eq(r.hunk_rows[3], closed_at(s, r.hunk_rows[3]))
   h.ok(virt(s, r.start_row):find('◐ 2/3', 1, true))
-  -- the guide: section 2 is outdated, its unchanged hunks are still reviewed
+  -- the guide: the edited hunk stays in section 2 (re-anchored by overlap, marked edited) and is
+  -- not reviewed; the section's unchanged hunks still are
   view.set_view('guide')
-  h.eq(true, sec(2).outdated)
-  h.eq(true, gv.section_reviewed(s, sec(2)))
-  h.eq('Not in guide', sec(3).title)
-  h.eq(false, gv.section_reviewed(s, sec(3)))
+  h.eq({ false, 1 }, { sec(2).outdated, sec(2).edited })
+  h.eq(nil, sec(3), 'no "Not in guide" section')
+  local edited
+  for _, it in ipairs(sec(2).items) do
+    if it.edited then
+      edited = it.hunk
+    end
+  end
+  h.eq({ 'm.txt', 2 }, { edited.path, edited.hunk_idx })
+  local done, total = gv.section_progress(s, sec(2))
+  h.eq(total - 1, done)
+  h.eq(false, gv.section_reviewed(s, sec(2)))
   view.set_view('diff')
   h.write(repo, 'm.txt', edit(long, { [3] = 'three', [20] = 'twenty', [35] = 'thirty-five' }))
   view.refresh()

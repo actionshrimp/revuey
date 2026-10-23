@@ -30,6 +30,18 @@ sequence; later items build on earlier ones.
   an unrelated local branch of the same name or switching under a connected agent; `@` moves, the layer gets
   the working tree, hidden LSP buffers reload. Opt-in `stack.switch_on_navigate` for `]s`/`[s`. A branch
   created for a remote layer keeps the remote layer below it through `branch.<b>.revueyParent`.
+- Edit from the review, part 2: `ge` on a hunk line (diff or guide) opens the real working-tree file in
+  a float near the cursor, folded (window-local, manual) to the hunk plus context, titled with the path
+  and line range. It is the file's one buffer (an open one, else revuey's hidden LSP buffer handed over
+  as a normal listed buffer), so undo, LSP, completion, formatters, autocmds and `:checktime`/W12 work
+  as usual; `:w`/`<C-s>` save and the auto-refresh keeps the review cursor on the edited hunk; `q`/`<Esc>`
+  ask save/discard/cancel with unsaved changes. Only the checked-out layer (`@`) in working-tree mode
+  edits (full stack: hunks attributed to the checked-out top layer only); other layers, remote `ro`
+  layers and committed mode refuse with "press gS to switch" / "switch to working-tree mode (gu)".
+  Deleted lines open at the nearest new-side line. Guide hunks re-anchor by overlap (old or new range,
+  same file, same function context, conservative), so an edited hunk stays in its section marked
+  "✎ edited since guide" with its reviewed mark reset; comments re-anchor by their usual rules.
+  Fixup commits for lower layers are left (see Next).
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.
@@ -86,22 +98,15 @@ sequence; later items build on earlier ones.
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
    Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
    units are cut.
-8. **Edit from the review.** (The `gS` layer switch is done; see Done.) A key on a hunk (diff or guide view) opens an editable float of the real
-   working-tree file, folded to that hunk plus context, so undo, LSP and formatters work as normal; saving lets
-   working-tree auto-refresh redraw the diff and guide. Guide hunks re-anchor by overlap (as comments do) so an
-   edited hunk stays in its section with an "edited since guide" marker instead of moving to "Not in guide"; its
-   reviewed mark resets. Direct typing into the composed review buffer is not planned (no per-line read-only).
-   Editing lower stack layers: a key on a layer (e.g. `gS`) checks out that branch in the current worktree (the
-   worktree is treated as fair game), making it the working-tree layer so the edit float works there; plain
-   `]s`/`[s` stay view-only unless opted in via config. Refuses on a dirty worktree (no auto-stash) and handles
-   branches checked out elsewhere; confirms first when launched by an agent session working in the same worktree.
-   After committing, the existing "not restacked" warning flags the layers above. revuey never restacks and never
-   asks for a restack automatically: the warning's details float offers a "send restack request" action the user
-   triggers when ready, which messages the launching agent session (mentioning Graphite when the repo uses it, so
-   the agent can pick the right tool). revuey itself uses plain git throughout (e.g. `git switch`, also fine for
-   Graphite branches). Layers other than the checked-out one (`@`) stay
-   viewable but refuse edits with a "press gS to switch" message. Local branches only. Alternative considered:
-   one worktree per layer via worktrunk.
+8. **Edit from the review: what is left.** (The `gS` layer switch and the edit float are done; see Done.)
+   Fixup commits for lower layers (an edit made while viewing a lower layer becoming a `fixup!` commit
+   on it) are not done. After committing on a lower layer the existing "not restacked" warning flags
+   the layers above; revuey never restacks and never asks for a restack automatically: a later "send
+   restack request" action in the warning's details float, triggered by the user, would message the
+   launching agent session (mentioning Graphite when the repo uses it, so the agent can pick the right
+   tool). revuey itself uses plain git throughout (e.g. `git switch`, also fine for Graphite
+   branches). Direct typing into the composed review buffer is not planned (no per-line read-only).
+   Alternative considered: one worktree per layer via worktrunk.
 
 ## Known bugs
 - **Comment thread borders in herdr.** The bottom and right borders of inline comment threads (virtual lines)

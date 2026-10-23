@@ -453,39 +453,148 @@ end
 ---@field kind 'section'|'other'|'new'
 ---@field id? string        reviewed-state identity (nil when the section shows no hunks)
 
+---Line ranges and function context of a hunk header ("@@ -a,b +c,d @@ ctx"). An empty range
+---(count 0: git names the line before it) is the point between that line and the next.
+---@return {old:number[], new:number[], ctx:string}?
+local function header_span(header)
+  if type(header) ~= 'string' then
+    return nil
+  end
+  local os_, oc, ns_, nc, rest = header:match('^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@ ?(.*)$')
+  if not os_ then
+    return nil
+  end
+  local function range(s, c)
+    s, c = tonumber(s), c == '' and 1 or tonumber(c)
+    if c == 0 then
+      return { s + 0.5, s + 0.5 }
+    end
+    return { s, s + c - 1 }
+  end
+  return { old = range(os_, oc), new = range(ns_, nc), ctx = vim.trim(rest or '') }
+end
+
+local function overlaps(a, b)
+  return a[1] <= b[2] and b[1] <= a[2]
+end
+
+---Re-anchoring by overlap (as comments re-anchor by position and context): a guide hunk whose
+---content hash no longer matches is matched to a current hunk nobody matched by hash, in the same
+---file, whose old-side or new-side line range overlaps the guide hunk's, when their function
+---context (the text after `@@ ... @@`) does not disagree. Conservative: a guide hunk with
+---several candidates (an edit split it), or a candidate claimed by guide hunks of different
+---sections (an edit joined them), matches nothing. Claimants in one section share the hunk:
+---the first shows it, the others were merged into it.
+---@param anchors {a:table, si:integer}[] unmatched guide anchors with their section index
+---@param free revuey.GuideHunk[] current hunks not matched by hash
+---@return table<table, revuey.GuideHunk|false> anchor -> hunk (false: merged into another)
+local function reanchor(anchors, free)
+  local spans = {}
+  for _, h in ipairs(free) do
+    spans[h] = h.hunk_idx and header_span(h.header) or nil
+  end
+  local cands, claims = {}, {}
+  for _, x in ipairs(anchors) do
+    local sa = header_span(x.a.header)
+    local list = {}
+    for _, h in ipairs(free) do
+      local sh = spans[h]
+      if sa and sh and h.path == x.a.path and (sa.ctx == '' or sh.ctx == '' or sa.ctx == sh.ctx)
+        and (overlaps(sa.old, sh.old) or overlaps(sa.new, sh.new)) then
+        list[#list + 1] = h
+      end
+    end
+    cands[x] = list
+    for _, h in ipairs(list) do
+      claims[h] = claims[h] or {}
+      table.insert(claims[h], x)
+    end
+  end
+  local out, given = {}, {}
+  for _, x in ipairs(anchors) do
+    local list = cands[x]
+    if #list == 1 then
+      local h = list[1]
+      local ok = true
+      for _, y in ipairs(claims[h]) do
+        if #cands[y] ~= 1 or y.si ~= x.si then
+          ok = false
+        end
+      end
+      if ok then
+        out[x.a] = not given[h] and h or false
+        given[h] = true
+      end
+    end
+  end
+  return out
+end
+
 ---Resolve a guide record against the current hunks. Sections render their hunks that still
----exist (by content hash); sections that lost hunks are outdated; hunks the guide doesn't know
----go to a final "Not in guide" section.
+---exist (by content hash); a hunk that changed in place (an edit) is re-anchored by overlap and
+---stays in its section marked `edited`; sections that lost hunks are outdated; hunks the guide
+---doesn't know go to a final "Not in guide" section.
 ---@param rec table guide record
 ---@param hunks revuey.GuideHunk[] current hunks
----@return {title:string, summary:string, sections:revuey.ResolvedSection[], stale:boolean, outdated:integer, new:integer, generator:table}
+---@return {title:string, summary:string, sections:revuey.ResolvedSection[], stale:boolean, outdated:integer, new:integer, edited:integer, generator:table}
 function M.resolve(rec, hunks)
   local by_hash = {}
   for _, h in ipairs(hunks) do
     by_hash[h.hash] = h
   end
-  local used = {}
-  local sections, outdated = {}, 0
-  for _, s in ipairs(rec.sections or {}) do
-    local items, missing, hashes = {}, 0, {}
+  -- hash matches first (unchanged hunks, wherever they moved), then overlap for the rest
+  local used, unmatched = {}, {}
+  for si, s in ipairs(rec.sections or {}) do
     for _, a in ipairs(s.hunks or {}) do
       local h = by_hash[a.hash]
       if h and not used[h.hash] then
+        used[h.hash] = a
+      else
+        unmatched[#unmatched + 1] = { a = a, si = si }
+      end
+    end
+  end
+  local moved = {}
+  if #unmatched > 0 then
+    local free = {}
+    for _, h in ipairs(hunks) do
+      if not used[h.hash] then
+        free[#free + 1] = h
+      end
+    end
+    moved = reanchor(unmatched, free)
+    for _, h in pairs(moved) do
+      if h then
         used[h.hash] = true
+      end
+    end
+  end
+  local sections, outdated, edited_total = {}, 0, 0
+  for _, s in ipairs(rec.sections or {}) do
+    local items, missing, hashes, edited = {}, 0, {}, 0
+    for _, a in ipairs(s.hunks or {}) do
+      local h = by_hash[a.hash]
+      if h and used[h.hash] == a then
         items[#items + 1] = { hunk = h, note = a.note }
         hashes[#hashes + 1] = h.hash
-      else
+      elseif moved[a] then
+        items[#items + 1] = { hunk = moved[a], note = a.note, edited = true }
+        hashes[#hashes + 1] = moved[a].hash
+        edited = edited + 1
+      elseif moved[a] == nil then
         missing = missing + 1
       end
     end
     if missing > 0 then
       outdated = outdated + 1
     end
+    edited_total = edited_total + edited
     sections[#sections + 1] = {
       title = s.title,
       overview = s.overview or '',
       items = items,
       missing = missing,
+      edited = edited,
       outdated = missing > 0,
       kind = s.other and 'other' or 'section',
       id = M.section_id(hashes),
@@ -515,9 +624,10 @@ function M.resolve(rec, hunks)
     title = (rec.title and rec.title ~= '') and rec.title or 'Guided review',
     summary = rec.summary or '',
     sections = sections,
-    stale = outdated > 0 or #new > 0,
+    stale = outdated > 0 or #new > 0 or edited_total > 0,
     outdated = outdated,
     new = #new,
+    edited = edited_total,
     diagram = rec.diagram,
     generator = rec.generator or {},
   }

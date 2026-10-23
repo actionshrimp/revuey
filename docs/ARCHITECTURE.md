@@ -336,9 +336,22 @@ are in `reports/Terminal code review tool landscape.md`.
      with anchors (not ids) plus `generator = {provider, model, session_id, generated_at, head,
      merge_base, mode, duration_ms, cost_usd, abridged, warnings}`. Opening a review loads the guide for
      the exact anchor set, else the newest one for the key.
-   - **Staleness** (`guide.resolve`): hunks are matched by hash. Sections render the hunks that still
-     exist; sections that lost any are `outdated`; hunks the guide doesn't know go to "Not in guide";
-     a banner offers regeneration. Nothing re-runs automatically.
+   - **Staleness** (`guide.resolve`): hunks are matched by hash first. Guide hunks left over are
+     then **re-anchored by overlap**, like comments (position plus context, conservative): a
+     candidate is a current hunk nobody matched by hash, in the same file, whose old-side or
+     new-side range (parsed from the `@@` header stored in the anchor, so older records work;
+     an empty range is the point after its line) overlaps the guide hunk's, and whose function
+     context (text after `@@ … @@`) is empty on either side or equal. A guide hunk matches when it
+     has exactly one candidate and every guide hunk claiming that candidate also has only it and
+     sits in the same section (the first shows it, the others were joined into it and count as
+     neither shown nor missing). Several candidates (an edit split the hunk) or claimants from
+     different sections (an edit joined them) match nothing. A match renders in the guide
+     hunk's place with its note and `edited = true` ("✎ edited since guide" on the header,
+     `edited` counts per section and in total); its unit key is the new hash, so its reviewed
+     mark resets, and the section identity changes with it. Unchanged guides resolve exactly as
+     before (every hash matches, nothing is re-anchored). Sections that lost hunks are
+     `outdated`; hunks the guide doesn't know go to "Not in guide"; a banner (outdated sections,
+     new and edited hunks) offers regeneration. Nothing re-runs automatically.
    - **Section reviewed state** is derived: a section is reviewed when all units of the hunks it shows
      are (decision 10), so marks are shared with the diff view and survive regeneration per hunk. The
      section identity (hash of the sorted hashes of the hunks it shows) still keys the guide's
@@ -729,9 +742,53 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Tests** use `tests/bin/gh` (fake, records argv, answers queries from canned PR nodes per
       `owner/name:branch`); `tests/helpers.lua` blocks the real `gh` on PATH for every spec.
 
+14. **Edit from the review** (`edit.lua` pure decision and mapping; `edit_float.lua` the float;
+    `view.edit` glue). `ge` on a hunk row opens the real working-tree file in a float.
+    - **Who may edit** (`edit.decide(review, entry)`): rows first (add/ctx lines and hunk
+      headers; a `del` row opens at its `anchor_lnum` with a note; prose, diagram, file
+      header, note, blank and section rows refuse). Then the layer: a layer scope must be the
+      `is_head` layer (`@`; a remote `ro` layer below HEAD never is), the full scope needs the
+      top layer to be HEAD, else "<layer> isn't checked out; press gS to switch". Then
+      working-tree mode, else "switch to working-tree mode (gu)". In the full scope the hunk's
+      attribution labels (decision 9, already computed per refresh) must name only the top
+      layer or `uncommitted`; a lower layer is named in the refusal, and missing labels refuse
+      (never guessed). Deleted, binary and placeholder files refuse.
+    - **Mapping.** On the `@` layer in working-tree mode the new side is the working tree, so a
+      row's `new_lnum` is a line of the review's snapshot (`f.new_text`). `edit.map_line` maps
+      it through `linemap` from the snapshot to the buffer's current text (edits saved since the
+      last refresh, or unsaved ones): unchanged lines exactly by diff (duplicated text is never
+      picked), a changed line to the nearest unchanged line above plus the distance, clamped.
+      The hunk's new range (`edit.hunk_range`) is mapped the same way for the folds and title.
+    - **Buffer.** `vim.fn.bufnr(abs)` first (an open buffer, also one opened through a symlink:
+      Neovim stores the resolved name), else `lsp.file_buffer` (the hidden LSP buffer if loaded, else a
+      new one), so there is never a second buffer for the file. `lsp.adopt` drops it from the
+      hidden-buffer set (no silent reloads or wipes by `lsp.checktime`/`cleanup` any more) and
+      lists it: from then on it is an ordinary `:edit` buffer, so undo, swap files, LSP clients
+      already attached, completion, formatters, the user's autocmds and `:checktime`/W12 behave
+      as anywhere. Saving is a plain `:w`; the session's `BufWritePost` refresh does the rest.
+    - **Float.** `relative = 'win'` on the diff window, below the cursor line when it fits,
+      else above, at most 60% of its height. Folds are `foldmethod=manual` in the float only
+      (`zE`, then a fold above and below the hunk plus `edit.CONTEXT` lines). Neovim copies a
+      closing window's local options and folds into the buffer's window info, which the next
+      window showing the buffer inherits, so before any close (`q`, `:q` via `WinClosed`,
+      review cleanup) the float's options are reset to their global values and its folds
+      removed. `q`/`<Esc>`/`<C-s>` are buffer-local expr mappings (there are no window-local
+      ones) that act only when the float is the current window and otherwise return the key
+      itself; existing buffer-local mappings of those keys are saved with `maparg` and put back
+      with `mapset`. Closing with changes asks (`edit_float.ask`, a hook for tests): save,
+      discard (`:undo` back to the `changenr()` taken at open, so edits the buffer already had
+      stay; `:edit!` only when it was unmodified then) or cancel.
+    - **Cursor after a save.** The float's `BufWritePost` stores `s.edit_focus` (path and the
+      float's cursor line); the refresh that re-renders puts the review cursor on the row
+      showing that line (`layout.find_new_row`, both views), else the header of the file's
+      nearest hunk. A refresh that finds no change drops it.
+    - **Guides and comments** follow from the refresh: guide hunks re-anchor by overlap
+      (decision 9, staleness) and comments by their placement rules (decision 11).
+    - Not done: fixup commits for lower layers, typing into the composed buffer, restacking.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

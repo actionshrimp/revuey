@@ -175,6 +175,9 @@ local function guide_hunk_virt(s, e, row)
   if label then
     virt[#virt + 1] = { '  ' .. label, panel.status_hl[f.status] }
   end
+  if e.edited then
+    virt[#virt + 1] = { '  ✎ edited since guide', 'RevueyGuideOutdated' }
+  end
   local p = progress_chunk(units.progress(s.review.state, header_units(s, row)))
   if p then
     virt[#virt + 1] = p
@@ -888,6 +891,64 @@ function M.hover()
     local c = r.contents
     return c == '' or (type(c) == 'table' and (c.value == '' or (c.value == nil and vim.tbl_isempty(c))))
   end)
+end
+
+---Edit the real file at the cursor's line in a float (edit_float.lua), when the row belongs to
+---the checked-out layer in working-tree mode (edit.decide); otherwise say why not.
+function M.edit()
+  local s = M.session
+  if not s or not api.nvim_win_is_valid(s.diff_win) then
+    return
+  end
+  local edit = require('revuey.edit')
+  local row, col = unpack(api.nvim_win_get_cursor(s.diff_win))
+  local e = #s.review.files > 0 and s.layout.map[row] or nil
+  local d = edit.decide(s.review, e)
+  if not d.ok then
+    return vim.notify(d.msg, vim.log.levels.INFO)
+  end
+  local f = s.review.files[d.file_idx]
+  local lo, hi = edit.hunk_range(f.hunks[d.hunk_idx])
+  return require('revuey.edit_float').open(s, {
+    abs = vim.fs.joinpath(s.review.root, f.path),
+    path = f.path,
+    snapshot = M.head_text(s, f),
+    lnum = d.lnum,
+    lo = lo,
+    hi = hi,
+    col = (e.kind == 'add' or e.kind == 'ctx') and col or 0,
+    note = d.note,
+  })
+end
+
+---After a save from the edit float: put the review cursor on the line the float's cursor was on
+---when it is shown, else on the nearest hunk of that file.
+local function focus_edit(s)
+  local fx = s.edit_focus
+  s.edit_focus = nil
+  if not fx or not api.nvim_win_is_valid(s.diff_win) then
+    return
+  end
+  local row = layout_mod.find_new_row(s.layout, s.review.files, fx.path, fx.lnum)
+  if not row then
+    local edit = require('revuey.edit')
+    local best_d = math.huge
+    for _, hk in ipairs(s.layout.hunks) do
+      local f = s.review.files[hk.file_idx]
+      local hi = edit.hunk_index(s.layout.map[hk.row] or {})
+      local h = f and f.path == fx.path and hi and f.hunks[hi]
+      if h then
+        local lo, last = edit.hunk_range(h)
+        local d = (fx.lnum < lo and lo - fx.lnum) or (fx.lnum > last and fx.lnum - last) or 0
+        if d < best_d then
+          row, best_d = hk.row, d
+        end
+      end
+    end
+  end
+  if row then
+    goto_row(s, row)
+  end
 end
 
 local function close_file_fold(s, fi, close)
@@ -1667,6 +1728,7 @@ local function diff_keymaps(s)
     M.refresh({ force = true, notify = true, forge = true })
   end, 'refresh review')
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
+  map(buf, k.edit, M.edit, 'edit the file at this line in a float (checked-out layer, working tree)')
   map(buf, k.close, M.close, 'close review')
   stack_keymaps(buf)
   guide_keymaps(buf)
@@ -2311,6 +2373,7 @@ cleanup = function(s)
     M.session = nil
   end
   require('revuey.notes_float').update(s) -- closes it
+  require('revuey.edit_float').detach(s) -- closes the edit float (its buffer keeps any changes)
   comments_view.detach(s)
   agent_link.detach(s)
   require('revuey.forge_view').detach(s) -- stops a running gh
@@ -3350,9 +3413,11 @@ function M.refresh(o)
         goto_row(s, 1, 'top')
         panel.set_current(s, 1)
       end
+      focus_edit(s)
       lsp.checktime() -- hidden LSP buffers follow the files on disk
     else
       s.stat_sig = M.stat_signature(s)
+      s.edit_focus = nil
     end
     if o.notify then
       vim.notify('revuey: refreshed (' .. #review.files .. ' files)', vim.log.levels.INFO)

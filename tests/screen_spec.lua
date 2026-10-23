@@ -455,6 +455,39 @@ h.test('partial progress: a reviewed hunk in the diff, then in the guide', funct
   screenshot('guide-partial')
 end)
 
+-- Edit from the review: `ge` on a hunk line opens the real file in a float over the diff, folded
+-- to the hunk plus context; after an edit and :w the guide keeps the hunk in its section with an
+-- "edited since guide" marker.
+h.test('edit float over the diff, then the guide with an edited hunk', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude-edit') .. '/calls.ndjson')
+  local t = {}
+  for i = 1, 40 do
+    t[#t + 1] = 'line ' .. i
+  end
+  local long = table.concat(t, '\n') .. '\n'
+  local changed = long:gsub('line 3\n', 'line three\n'):gsub('line 20\n', 'line twenty\n'):gsub('line 35\n', 'line thirty-five\n')
+  local d = h.repo('screen-edit', { ['m.txt'] = long }, { ['a.txt'] = 'new\nfile\n', ['m.txt'] = changed })
+  start(d, 'main', 40, 120)
+  h.ok(generate_guide(), 'guide did not generate')
+  child.type_keys('gG', 'gg', ']f', ']c', ']c')
+  -- the tab line names the current window's file by its (temporary, per-run) path: hide it
+  child.lua('vim.o.showtabline = 0')
+  child.type_keys('ge')
+  child.lua('vim.cmd("redraw")')
+  screenshot('edit-float')
+  child.lua('vim.o.showtabline = 1')
+  child.lua([[
+    vim.api.nvim_set_current_line('line twenty, edited')
+    local s = require('revuey.view').session
+    local n = s.render_count
+    vim.cmd('silent write')
+    vim.wait(5000, function() return s.render_count > n and not s.refreshing end, 10)
+  ]])
+  child.type_keys('q', 'gG', 'gg')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-edited')
+end)
+
 -- Comments: an inline thread (with a reply) under a commented range with gutter bars, the
 -- editor float opened by `gc`, and the comments list.
 h.test('comments: inline thread, editor float, comments list', function()
