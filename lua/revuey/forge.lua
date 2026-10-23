@@ -198,17 +198,19 @@ end
 ---The repo PRs are opened against, resolved like gh does: a remote marked
 ---`remote.<name>.gh-resolved = base` (gh repo set-default), else `upstream`, else the trunk's
 ---remote, else `origin`, else the only GitHub remote. A fork without any of these is still
----covered: the query asks each repo's `parent` too. nil when there is no GitHub remote.
+---covered: the query asks each repo's `parent` too, unless the base was chosen explicitly
+---(`gh-resolved` or `upstream`: an internal fork must not match its public parent's PRs). nil
+---when there is no GitHub remote. Second value: true when chosen explicitly.
 function M.base_remote(trunk, info)
   local names = vim.deepcopy(info.names)
   table.sort(names)
   for _, n in ipairs(names) do
     if info.resolved and info.resolved[n] == 'base' and gh_remote(info, n) then
-      return n
+      return n, true
     end
   end
   if gh_remote(info, 'upstream') then
-    return 'upstream'
+    return 'upstream', true
   end
   if trunk then
     local r = split_known(trunk, info)
@@ -237,7 +239,8 @@ end
 ---branch made with `git switch -c feat origin/main` tracks main).
 ---@param tip? string commit of the branch tip (closed/merged PRs must have their head in it)
 ---@return revuey.ForgeTarget?
-function M.target(name, remote_layer, tip, base, info, trunk_branch)
+---@param explicit? boolean the base repo was chosen explicitly: no `parent` lookups
+function M.target(name, remote_layer, tip, base, info, trunk_branch, explicit)
   if not base or not name or name == '' or name == 'HEAD' then
     return nil
   end
@@ -259,7 +262,7 @@ function M.target(name, remote_layer, tip, base, info, trunk_branch)
       -- a fork: its PR is usually in the base repo (head owner = the fork's owner), else in the fork
       repos[2] = own
     end
-    t.candidates[#t.candidates + 1] = { branch = branch, remote = remote, head_owner = own.owner, repos = repos }
+    t.candidates[#t.candidates + 1] = { branch = branch, remote = remote, head_owner = own.owner, repos = repos, parent = not explicit }
   end
   local b = info.branches[name]
   local remote, short = split_known(name, info)
@@ -286,17 +289,17 @@ end
 function M.targets(review, info)
   local out = {}
   local trunk = review.stack and review.stack.trunk or review.base
-  local base = M.base_remote(trunk, info)
+  local base, explicit = M.base_remote(trunk, info)
   if not base then
     return out
   end
   local trunk_branch = trunk and M.branch_name(trunk, info)
   if review.stack then
     for _, l in ipairs(review.stack.layers) do
-      out[l.name] = M.target(l.name, l.remote, l.tip, base, info, trunk_branch)
+      out[l.name] = M.target(l.name, l.remote, l.tip, base, info, trunk_branch, explicit)
     end
   else
-    out[''] = M.target(review.branch, false, review.head, base, info, trunk_branch)
+    out[''] = M.target(review.branch, false, review.head, base, info, trunk_branch, explicit)
   end
   return out
 end
@@ -326,9 +329,9 @@ local function lit(s)
 end
 
 ---One query for many (repo, branch) pairs: an aliased `repository { pullRequests(headRefName) }`
----each, plus the same lookup in the repo's `parent` (a fork's upstream; null otherwise).
----Returns the query and alias -> pair.
----@param pairs {repo:revuey.ForgeRepo, branch:string}[]
+---each, plus the same lookup in the repo's `parent` (a fork's upstream; null otherwise) unless
+---the pair has `parent = false`. Returns the query and alias -> pair.
+---@param pairs {repo:revuey.ForgeRepo, branch:string, parent?:boolean}[]
 ---@return string query, table<string, {repo:revuey.ForgeRepo, branch:string}> aliases
 function M.build_query(pairs)
   local parts, aliases = { 'query {' }, {}
@@ -336,8 +339,9 @@ function M.build_query(pairs)
     local alias = 'l' .. i
     aliases[alias] = p
     local prs = ('pullRequests(headRefName: %s, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ...pr } }'):format(lit(p.branch))
-    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { %s parent { nameWithOwner %s } }')
-      :format(alias, lit(p.repo.owner), lit(p.repo.name), prs, prs)
+    local parent = p.parent ~= false and (' parent { nameWithOwner %s }'):format(prs) or ''
+    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { %s%s }')
+      :format(alias, lit(p.repo.owner), lit(p.repo.name), prs, parent)
   end
   parts[#parts + 1] = '}'
   parts[#parts + 1] = PR_FIELDS
@@ -501,7 +505,7 @@ local function each_lookup(targets, fn)
   for _, t in pairs(targets) do
     for _, c in ipairs(t.candidates) do
       for _, repo in ipairs(c.repos) do
-        fn(repo, c.branch, t, c)
+        fn(repo, c.branch, c)
       end
     end
   end
@@ -519,8 +523,10 @@ function M.is_fresh(targets)
   return ok
 end
 
----Does a closed/merged PR belong to this branch? Its head commit must be in the tip's history
----(a new branch reusing an old name must not show the old PR). Needs `check_heads` first.
+---Does a closed/merged PR belong to this branch? Its head commit and the tip must be on one line:
+---the head in the tip's history, or the tip in the head's (the local branch is behind commits
+---made on GitHub, "Update branch" or a suggestion). A new branch reusing an old name must not
+---show the old PR; an unknown commit counts as unrelated. Needs `check_heads` first.
 local function accept_for(t)
   return function(pr)
     return t.tip ~= nil and pr.head_oid ~= nil and M.ancestry[pr.head_oid .. ' ' .. t.tip] == true
@@ -584,6 +590,7 @@ function M.check_heads(root, targets)
     fns[i] = function()
       -- non-zero for "not an ancestor" and for a commit this clone has never seen
       return git.git({ 'merge-base', '--is-ancestor', p.oid, p.tip }, root) ~= nil
+        or git.git({ 'merge-base', '--is-ancestor', p.tip, p.oid }, root) ~= nil
     end
   end
   for i, res in ipairs(git.all(fns)) do
@@ -658,12 +665,14 @@ function M.fetch(targets, o)
     return false
   end
   local by_host, seen = {}, {}
-  each_lookup(targets, function(repo, branch)
+  each_lookup(targets, function(repo, branch, c)
     local k = M.repo_key(repo) .. '\0' .. branch
     if not seen[k] then
-      seen[k] = true
+      seen[k] = { repo = repo, branch = branch, parent = c.parent ~= false }
       by_host[repo.host] = by_host[repo.host] or {}
-      table.insert(by_host[repo.host], { repo = repo, branch = branch })
+      table.insert(by_host[repo.host], seen[k])
+    elseif c.parent ~= false then
+      seen[k].parent = true
     end
   end)
   for host, list in pairs(by_host) do
