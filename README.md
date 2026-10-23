@@ -108,12 +108,16 @@ The title names the file and the hunk's line range. It is the file's own buffer,
 gives you (if the file is already open, that same buffer, unsaved edits included; never a second
 one), so undo, completion, LSP, formatters and your autocmds work as usual.
 
-- `:w` or `<C-s>` (normal or insert mode) saves. The review refreshes as for any write, and its
-  cursor moves to the line you were editing, or the nearest hunk when that line is no longer in
-  the diff.
-- `q` or `<Esc>` (normal mode) closes the float. With unsaved changes it asks: save, discard (only
-  the changes made in the float are undone) or cancel. `:q` closes it like any window, keeping
-  unsaved changes in the buffer. Closing the review closes the float the same way.
+- `:w` or `<C-s>` (normal mode; insert-mode `<C-s>` stays signature help) saves. The review
+  refreshes as for any write, and its cursor moves to the line you were editing, or the nearest
+  hunk when that line is no longer in the diff.
+- `q` closes the float. With unsaved changes it asks: save, discard (only the changes made in the
+  float are undone) or cancel. `:q` closes it like any window, keeping unsaved changes in the
+  buffer. Closing the review closes the float the same way. `<Esc>` is left alone.
+- The float's `q` and `<C-s>` are buffer mappings that only act in the float; mappings of yours
+  they shadow come back when it closes, and so do the window options the buffer had.
+- If another Neovim is editing the file (it has a swap file), the float does not open and says
+  so.
 - On a deleted (`-`) line the float opens at the nearest new-side line and says deleted lines
   can't be edited. Prose, the diagram, file headers and notes say there is nothing to edit.
 - If the file changes on disk while the float is open, Neovim's usual `:checktime` warning (W12
@@ -121,7 +125,9 @@ one), so undo, completion, LSP, formatters and your autocmds work as usual.
 
 Only the checked-out layer (`@`) in working-tree mode can be edited; everything else refuses with
 how to get there: "`stack/math` isn't checked out; press gS to switch" on another layer (remote
-`ro` layers included), "switch to working-tree mode (gu)" in committed-only mode. In the full
+`ro` layers included), "switch to working-tree mode (gu)" in committed-only mode. A remote `ro`
+layer stays read-only even with HEAD detached at its tip (there is no branch to commit to): `gS`
+checks out a local branch for it first. In the full
 stack, a hunk can be edited when the top layer is checked out and the hunk's [branch
 label](#ai-guide) names only that layer (or uncommitted work); hunks from lower layers name the
 layer to switch to. Edits always land in the working tree: revuey makes no fixup commits for

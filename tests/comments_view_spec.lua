@@ -12,7 +12,6 @@ end
 
 local log = h.tmpdir('cv-fake-claude') .. '/calls.ndjson'
 h.use_fake_claude(log)
-vim.o.columns, vim.o.lines = 160, 50
 
 local state_dir = h.tmpdir('cv-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
@@ -513,12 +512,18 @@ h.test('long comments are cut with … and expand on demand (cz)', function()
 end)
 
 h.test('threads wrap to the window width', function()
+  -- headless specs keep the 80-column startup screen (see docs/TESTING.md): narrow the panel so
+  -- the diff window is wider than the threads' 30-column floor
+  local panel_w = vim.api.nvim_win_get_width(s.panel_win)
+  vim.api.nvim_win_set_width(s.panel_win, 10)
   local row = row_of('m.txt', 'ctx', 23)
   add(row, string.rep('word ', 60))
   local w = vim.api.nvim_win_get_width(s.diff_win) - (2 * s.numw + 4)
+  h.ok(w > 40, tostring(w))
   for _, l in ipairs(vim.split(vlines(row), '\n')) do
     h.ok(vim.api.nvim_strwidth(l) <= w, ('%d > %d: %s'):format(vim.api.nvim_strwidth(l), w, l))
   end
+  vim.api.nvim_win_set_width(s.panel_win, panel_w)
 end)
 
 h.test('the comments list shows every comment; <CR> jumps to one', function()

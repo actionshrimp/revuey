@@ -146,6 +146,15 @@ h.test('mode and layers: committed mode, a layer that is not @, a remote ro laye
   r = review({ mode = 'committed', stack = stack(2, { remote = true }), scope = { kind = 'layer', index = 1 } })
   d = edit.decide(r, text_row(r, 'TWO', 'add'))
   h.eq("revuey: stack/math isn't checked out; press gS to switch", d.msg)
+  -- HEAD detached at a remote layer's tip: `@`, but nowhere to commit, so read-only too
+  local detached = stack(2)
+  detached.layers[2].remote, detached.layers[2].detached = true, true
+  r = review({ stack = detached, scope = { kind = 'layer', index = 2 } })
+  d = edit.decide(r, text_row(r, 'TWO', 'add'))
+  h.eq(false, d.ok)
+  h.eq("revuey: stack/cart is a remote branch (detached HEAD, read-only); press gS to check out a local branch", d.msg)
+  r = review({ stack = detached, scope = { kind = 'full' }, labels = { { { 'stack/cart' } } } })
+  h.eq(edit.msg.remote('stack/cart'), edit.decide(r, text_row(r, 'TWO', 'add')).msg)
   -- the row message wins over the layer message on prose
   h.eq(edit.msg.row(), edit.decide(r, { kind = 'prose' }).msg)
 end)

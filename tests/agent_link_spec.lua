@@ -11,7 +11,6 @@ local msgs = {}
 vim.notify = function(msg, level)
   msgs[#msgs + 1] = { msg = msg, level = level }
 end
-vim.o.columns, vim.o.lines = 160, 50
 
 local state_dir = h.tmpdir('link-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
@@ -347,7 +346,8 @@ h.test('reply marks the message answered; the running review shows it in the thr
   end, 20), 'answered in the running review')
   local row = row_of('add', 20)
   h.ok(vim.wait(5000, function()
-    return vlines(row):find('Because the spec says so.', 1, true) ~= nil
+    -- the thread is wrapped to the window (80 columns headless): join its lines
+    return vlines(row):gsub('\n│%s+', ' '):find('Because the spec says so.', 1, true) ~= nil
   end, 20), vlines(row))
   h.ok(vlines(row):find('answered', 1, true), vlines(row))
   h.eq(nil, vlines(row):find('sent → agent', 1, true), vlines(row))

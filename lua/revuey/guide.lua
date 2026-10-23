@@ -496,14 +496,20 @@ local function reanchor(anchors, free)
   local cands, claims = {}, {}
   for _, x in ipairs(anchors) do
     local sa = header_span(x.a.header)
-    local list = {}
+    -- the old side first: edits in the working tree leave it where it was, while new-side
+    -- ranges shift with every line added above; the new side only when the old finds nothing
+    local by_old, by_new = {}, {}
     for _, h in ipairs(free) do
       local sh = spans[h]
-      if sa and sh and h.path == x.a.path and (sa.ctx == '' or sh.ctx == '' or sa.ctx == sh.ctx)
-        and (overlaps(sa.old, sh.old) or overlaps(sa.new, sh.new)) then
-        list[#list + 1] = h
+      if sa and sh and h.path == x.a.path and (sa.ctx == '' or sh.ctx == '' or sa.ctx == sh.ctx) then
+        if overlaps(sa.old, sh.old) then
+          by_old[#by_old + 1] = h
+        elseif overlaps(sa.new, sh.new) then
+          by_new[#by_new + 1] = h
+        end
       end
     end
+    local list = #by_old > 0 and by_old or by_new
     cands[x] = list
     for _, h in ipairs(list) do
       claims[h] = claims[h] or {}

@@ -34,8 +34,8 @@ sequence; later items build on earlier ones.
   a float near the cursor, folded (window-local, manual) to the hunk plus context, titled with the path
   and line range. It is the file's one buffer (an open one, else revuey's hidden LSP buffer handed over
   as a normal listed buffer), so undo, LSP, completion, formatters, autocmds and `:checktime`/W12 work
-  as usual; `:w`/`<C-s>` save and the auto-refresh keeps the review cursor on the edited hunk; `q`/`<Esc>`
-  ask save/discard/cancel with unsaved changes. Only the checked-out layer (`@`) in working-tree mode
+  as usual; `:w`/`<C-s>` save and the auto-refresh keeps the review cursor on the edited hunk; `q`
+  asks save/discard/cancel with unsaved changes. Only the checked-out layer (`@`) in working-tree mode
   edits (full stack: hunks attributed to the checked-out top layer only); other layers, remote `ro`
   layers and committed mode refuse with "press gS to switch" / "switch to working-tree mode (gu)".
   Deleted lines open at the nearest new-side line. Guide hunks re-anchor by overlap (old or new range,
