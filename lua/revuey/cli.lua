@@ -162,13 +162,29 @@ local function real(p)
   return p and (vim.uv.fs_realpath(p) or p) or nil
 end
 
+---The branch a detached HEAD is reviewed as: the newest live review session of the worktree,
+---else the UI's stack detection (a branch at HEAD names its layer), else nil.
+local function detached_branch(o, root)
+  local live = sessions.list(sessions.bases(root, state_dir(o)), { worktree = root })
+  if #live > 0 then
+    return live[#live].branch
+  end
+  local trunk = git.default_branch(root)
+  if not trunk then
+    return nil
+  end
+  local ok, st = pcall(require('revuey.stack').detect, root, trunk, nil, { state_dir = state_dir(o) })
+  return ok and st and st.layers[st.current] and st.layers[st.current].name or nil
+end
+
 ---The repo and branch of the current directory.
-local function here()
+local function here(o)
   local root = git.root(vim.fn.getcwd())
   if not root then
     die('not inside a git repository')
   end
-  return { root = root, real = real(root), branch = git.current_branch(root) or 'HEAD' }
+  local branch = git.current_branch(root) or detached_branch(o or {}, root) or 'HEAD'
+  return { root = root, real = real(root), branch = branch }
 end
 
 ---Live review sessions of the worktree.
@@ -245,7 +261,7 @@ local function events_path(comments_path)
 end
 
 function M.comments(o)
-  local ctx = here()
+  local ctx = here(o)
   local reviews = {}
   -- read-only: an unreadable file is reported, never moved aside
   for _, e in ipairs(stores(state_dirs(o, ctx), ctx, o.scope, true)) do
@@ -265,7 +281,7 @@ end
 
 ---The comment `id` (any unique part) in the repo's reviews: entry {path, store}, comment.
 local function find_comment(o, id, readonly)
-  local ctx = here()
+  local ctx = here(o)
   local found = {}
   for _, e in ipairs(stores(state_dirs(o, ctx), ctx, o.scope or 'all', readonly)) do
     local exact = comments.get(e.store, id)
@@ -409,7 +425,7 @@ local function id_set(list)
 end
 
 function M.inbox(o)
-  local ctx = here()
+  local ctx = here(o)
   local live = sessions.list(sessions.bases(ctx.root, state_dir(o)), { worktree = ctx.root })
   local attached = pick_session(o, ctx, live)
   local live_ids = id_set(live)
@@ -456,7 +472,7 @@ local function scope_text(e)
 end
 
 function M.sessions(o)
-  local ctx = here()
+  local ctx = here(o)
   local bases = o.all and sessions.all_bases(ctx.root, state_dir(o)) or sessions.bases(ctx.root, state_dir(o))
   local list = sessions.list(bases, {
     worktree = not o.all and ctx.root or nil,
@@ -511,7 +527,7 @@ end
 ---Follow the event feeds of the state dirs (new files included), printing matching events, after
 ---catching up on unacknowledged messages. Registers a watcher (presence) while it runs.
 function M.watch(o)
-  local ctx = here()
+  local ctx = here(o)
   local default_dir = state_dir(o)
   vim.fn.mkdir(default_dir, 'p')
   local bases = sessions.bases(ctx.root, default_dir)
