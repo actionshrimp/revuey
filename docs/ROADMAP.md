@@ -42,22 +42,20 @@ sequence; later items build on earlier ones.
   same file, same function context, conservative), so an edited hunk stays in its section marked
   "✎ edited since guide" with its reviewed mark reset; comments re-anchor by their usual rules.
   Fixup commits for lower layers are left (see Next).
-
-## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.
-- Proxy LSP client so the user's own LSP mappings and pickers work in revuey buffers; clearer guide scope wording.
+- Proxy LSP client (`revuey`) so the user's own LSP mappings and pickers work in revuey buffers; clearer guide scope wording.
 - Guide overview diagram (structured graph rendered as box-drawing text, Mermaid export) and branch labels on hunks
   in full-stack guides.
 - Nested reviewed marks: review units (one per hunk for now), `mr` on hunks, files, sections and selections in both
   views, shared state and partial progress (`◐ 2/5`).
+- Agents can create new comments: `bin/revuey comment --path --line [--end] [--side] | --file`, validated against
+  the review's diff, shown live and labelled as agent comments.
+- Calmer stack notes: summary lines, a details float with actions, a per-repo ignore list; squash-merged bottom
+  commits skipped (also for single-branch reviews).
+
 
 ## Next
-1. **Local comments and export.** Comments on a line or range in the diff or guide view, on either side,
-   rendered inline as threads. Anchored by path, side, line range and content hash so they re-anchor or show as
-   outdated when code moves. Stored locally per review. Export to a paste-friendly text format (file, line range,
-   the commented code, the comment body) via a command, the clipboard and `bin/revuey comments`, for handing to an
-   AI session. This is the foundation for the forge items below.
-2. **AI reviews (local-first).** Schema-driven, like the guide: `:RevueyAIReview [skill]` runs the user's
+1. **AI reviews (local-first).** Schema-driven, like the guide: `:RevueyAIReview [skill]` runs the user's
    `claude` CLI in the background (read-only, restricted, `--json-schema`) and returns one JSON document: a short
    summary, a suggested verdict (approve / comment / request changes) and findings (severity, title, body, optional
    suggested change). Findings anchor to engine-assigned hunk IDs plus an offset within the hunk, not raw line
@@ -66,16 +64,7 @@ sequence; later items build on earlier ones.
    The same schema is accepted from outside via `bin/revuey import-review <file|->`, so an external agent or tool can
    produce a review in the same format. An optional skill's `SKILL.md` is read by revuey and passed as guidance.
    Single conversational comments from a connected agent use `bin/revuey comment --path --line` instead.
-3. **Ask AI via the agent session.** From the comment editor or a selection, a key sends the comment (with file,
-   lines, code and guide section) to a connected coding-agent session, and replies land in the comment's thread.
-   This is the primary Ask AI path; a built-in chat panel is descoped (see Later).
-   **Send to the launching agent session.** When a coding agent launched revuey (via a small revuey skill, in a
-   tmux or herdr pane), comments and questions can be sent straight back to that session without closing revuey.
-   revuey appends events (file, lines, code, text) to a feed that `revuey watch` streams; the agent watches it with
-   Claude Code's Monitor tool (re-armed every 30 minutes) and can answer with `revuey reply <id> "…"`, shown in the
-   comment's thread. Fallback for other agent CLIs: type the message into the launching pane. The local comments
-   chunk should write this event feed from the start.
-4. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
+2. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
    **Stacks without local branches.** Reviewing someone else's stack from a worktree at its top shouldn't need
@@ -85,20 +74,23 @@ sequence; later items build on earlier ones.
    remote prefix, and remote-only layers are dimmer and read-only. **Left: the GitHub half.** When the stack
    has PRs, layers come from the GitHub base chain, with tips at `origin/<head>` (or `refs/pull/<N>/head` for
    forks), fetched as needed (revuey itself doesn't fetch today). Editing a remote-only layer needs `gS`, which
-   creates a local tracking branch with `git switch --track`.
-5. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
+   creates a local tracking branch with `git switch --track`. Also read GitHub's native stacks (public preview):
+   the PR `stack`/`stackEntry` GraphQL fields (joined to the existing PR-status query) and the `gh stack`
+   extension's local `.git/gh-stack` file, as explicit stack sources like Graphite metadata; confirm both formats
+   against a real stacked repo first.
+3. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
    and render them inline alongside local comments, including resolved and outdated state.
-6. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
+4. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
    posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
    Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
    to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
-7. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
+5. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
    sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
    (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
    Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
    units are cut.
-8. **Edit from the review: what is left.** (The `gS` layer switch and the edit float are done; see Done.)
+6. **Edit from the review: what is left.** (The `gS` layer switch and the edit float are done; see Done.)
    Fixup commits for lower layers (an edit made while viewing a lower layer becoming a `fixup!` commit
    on it) are not done. After committing on a lower layer the existing "not restacked" warning flags
    the layers above; revuey never restacks and never asks for a restack automatically: a later "send
