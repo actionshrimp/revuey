@@ -110,6 +110,7 @@ function M.setup()
   set('RevueyCommentSign', { link = 'DiagnosticInfo' })
   set('RevueyCommentBorder', { link = 'FloatBorder' })
   set('RevueyCommentAuthor', { link = 'Title' })
+  set('RevueyCommentAgent', { link = 'Special' }) -- comments and replies by a coding agent or AI
   set('RevueyCommentMeta', { link = 'Comment' })
   set('RevueyCommentText', { link = 'Normal' })
   set('RevueyCommentDraft', { link = 'DiagnosticWarn' })
