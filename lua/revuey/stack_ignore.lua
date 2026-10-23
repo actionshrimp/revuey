@@ -1,7 +1,8 @@
 -- Ignored branches for stack notes: glob patterns from the config (`stack.ignore_branches`) plus a
 -- per-repo list persisted in the state dir (never in git config, so nothing is written to the
 -- user's repo). Ignoring only hides notes about related branches outside the stack; it never
--- changes which branches are layers. Pure data layer: no UI calls.
+-- changes which local branches are layers (matching remote-tracking branches are never made
+-- layers, see stack.remote_layers). Pure data layer: no UI calls.
 local M = {}
 
 ---Lua pattern for a branch glob: `*` matches any characters (including `/`), `?` one character;

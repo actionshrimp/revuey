@@ -39,6 +39,21 @@ local function plural(n, one, many)
   return n == 1 and one or many
 end
 
+---"2 commits behind origin/x", "1 ahead of origin/x", "2 behind and 1 ahead of origin/x"
+---(`long`: with "commit(s)" after each count).
+function M.ahead_behind(n, long)
+  local function count(k)
+    return long and ('%d %s'):format(k, k == 1 and 'commit' or 'commits') or tostring(k)
+  end
+  local behind, ahead = n.behind or 0, n.ahead or 0
+  if behind > 0 and ahead > 0 then
+    return ('%s behind and %s ahead of %s'):format(count(behind), count(ahead), n.parent)
+  elseif behind > 0 then
+    return ('%s behind %s'):format(count(behind), n.parent)
+  end
+  return ('%s ahead of %s'):format(count(ahead), n.parent)
+end
+
 -- Per kind: level, display order, whether ignorable (`related`), title, `one` (text of a single
 -- note), `many` (shared text of a group), `impact` (why it matters), `detail` (per-branch line).
 M.KINDS = {
@@ -286,6 +301,34 @@ M.KINDS = {
       return ('same commit as %s'):format(n.layer)
     end,
   },
+  detached = {
+    level = 'info',
+    title = 'Detached HEAD',
+    one = function(n, ctx)
+      if n.branch == 'HEAD' then
+        return ('HEAD is detached and no branch points at it, so there\'s no stack: this is HEAD compared with %s.'):format(ctx.trunk)
+      end
+      local others = n.branches and #n.branches > 0
+        and (' (%s %s there too)'):format(table.concat(n.branches, ', '), #n.branches == 1 and 'is' or 'are') or ''
+      return ('HEAD is detached at %s%s, so revuey reviews it as %s.'):format(n.branch, others, n.branch)
+    end,
+    impact = function(ns)
+      if ns[1].branch == 'HEAD' then
+        return 'Check out a branch, or detach at a branch tip (for example a fetched origin/<branch>), to review it with its stack.'
+      end
+      return 'Doesn\'t affect this review. Uncommitted changes show on this layer; remote-tracking layers are read-only.'
+    end,
+  },
+  upstream = {
+    level = 'info',
+    title = 'Not in step with its remote copy',
+    one = function(n)
+      return ('%s is %s (as last fetched).'):format(n.branch, M.ahead_behind(n, true))
+    end,
+    impact = function()
+      return 'Doesn\'t affect this review, which shows the local branch. revuey never fetches or pulls: fetch and pull to review the latest version.'
+    end,
+  },
   parent_landed = {
     level = 'info',
     title = 'Parent already merged',
@@ -307,7 +350,7 @@ M.KINDS = {
 -- Display order of kinds (float sections).
 M.ORDER = {
   'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy',
-  'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'same_commit', 'parent_landed',
+  'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'detached', 'upstream', 'same_commit', 'parent_landed',
 }
 for i, k in ipairs(M.ORDER) do
   M.KINDS[k].order = i
@@ -450,6 +493,10 @@ function M.summary(notes, ignored, ctx, max)
         return kind == 'same_commit'
       end)
       add('●', text .. (ign > 0 and (' (%d ignored)'):format(ign) or ''), 'info')
+    elseif k == 'detached' then
+      add('●', n1.branch == 'HEAD' and 'detached HEAD: no branch here, no stack' or ('detached HEAD at %s'):format(n1.branch), 'info')
+    elseif k == 'upstream' then
+      add('●', ('%s %s'):format(n1.branch, M.ahead_behind(n1)), 'info')
     elseif k == 'parent_landed' then
       add('●', c == 1 and ('%s\'s parent is already in %s'):format(n1.branch, ctx.trunk) or ('%d parents already in %s'):format(c, ctx.trunk), 'info')
     end
