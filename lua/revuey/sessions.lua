@@ -310,6 +310,40 @@ function M.connected(bases, session, now)
   return #hits > 0, hits
 end
 
+-- ---------------------------------------------------------------------------
+-- The last review opened in a worktree
+-- ---------------------------------------------------------------------------
+-- Each review writes `<base>/last-review-<hash of worktree>.json` with how the next `revuey` in
+-- that worktree opens (trunk or base, stack or not, mode, state dir, hunk options), and keeps it
+-- after it closes: `bin/revuey comment` runs with `--clean`, so without a live review this is
+-- how it knows the user's config (default_branch, uncommitted, state_dir, context_lines).
+
+local function last_name(worktree)
+  return 'last-review-' .. vim.fn.sha256(real(worktree) or worktree):sub(1, 12) .. '.json'
+end
+
+---Write the worktree's last-review record (`rec.worktree` set) in the first base that takes it.
+function M.write_last(bases, rec)
+  rec.version, rec.updated_at = M.VERSION, M.now_ms()
+  local text = vim.json.encode(rec)
+  for _, base in ipairs(bases) do
+    if write_atomic(vim.fs.joinpath(base, last_name(rec.worktree)), text) then
+      return true
+    end
+  end
+  return false
+end
+
+---The worktree's last-review record from the first base holding one, or nil.
+function M.read_last(bases, worktree)
+  for _, base in ipairs(bases) do
+    local rec = read_json(vim.fs.joinpath(base, last_name(worktree)))
+    if rec and (rec.worktree == worktree or real(rec.worktree) == real(worktree)) then
+      return rec
+    end
+  end
+end
+
 ---Short scope label of a session entry or an event's review info: "stack/cart", "full stack".
 function M.scope_label(r)
   if not r then
