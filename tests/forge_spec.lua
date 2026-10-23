@@ -884,4 +884,58 @@ h.test('closing the review mid-lookup stops gh; its late result never reaches th
   vim.env.REVUEY_FAKE_GH = nil
 end)
 
+h.test('a lookup that finds nothing to show does not redraw the panel (its cursor stays)', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-quiet') .. '/calls.ndjson'
+  h.use_fake_gh(calls, {})
+  -- no remotes at all (the screen fixtures): the lookup ends with nothing, as in CI
+  local d = h.repo('forge-quiet', { ['a.txt'] = 'a\n', ['b.txt'] = 'b\n' }, { ['a.txt'] = 'x\n', ['b.txt'] = 'y\n' })
+  local s = open(d, { base = 'main' })
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.panel_win, { 1, 0 })
+  idle(s)
+  h.eq(1, vim.api.nvim_win_get_cursor(s.panel_win)[1], 'panel cursor moved by the lookup')
+  view.close()
+  -- a GitHub remote but no PR for the branch: the same
+  d = h.repo('forge-quiet-remote', { ['a.txt'] = 'a\n' }, { ['a.txt'] = 'x\n' })
+  h.git(d, 'remote', 'add', 'origin', GH_URL)
+  h.use_fake_gh(calls, {}, 'slow')
+  s = open(d, { base = 'main' })
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.panel_win, { 1, 0 })
+  idle(s)
+  h.eq(1, #h.read_calls(calls))
+  h.eq(1, vim.api.nvim_win_get_cursor(s.panel_win)[1], 'panel cursor moved by the lookup')
+  vim.env.REVUEY_FAKE_GH = nil
+  view.close()
+end)
+
+h.test('a late lookup that adds the PR section keeps the panel cursor on the same row item', function()
+  for _, focus in ipairs({ 'diff', 'panel' }) do
+    reset()
+    local calls = h.tmpdir('forge-gh-late-' .. focus) .. '/calls.ndjson'
+    h.use_fake_gh(calls, stack_prs, 'slow')
+    local d = stack_fixture('forge-late-' .. focus)
+    local s = open(d)
+    h.ok(s.forge and s.forge.busy, 'lookup still running')
+    vim.api.nvim_set_current_win(focus == 'diff' and s.diff_win or s.panel_win)
+    -- the cursor on the second file's row, the window scrolled by one line
+    local row = s.panel_rows[2]
+    vim.api.nvim_win_call(s.panel_win, function()
+      vim.fn.winrestview({ lnum = row, col = 0, topline = 2 })
+    end)
+    idle(s)
+    h.ok(find(panel_lines(s), ' ▾ PR #12'), focus .. ': the PR section arrived')
+    local new = s.panel_rows[2]
+    h.ok(new > row, 'rows were added above')
+    h.eq(new, vim.api.nvim_win_get_cursor(s.panel_win)[1], focus .. ': cursor follows its file row')
+    local top = vim.api.nvim_win_call(s.panel_win, function()
+      return vim.fn.winsaveview().topline
+    end)
+    h.eq(2 + (new - row), top, focus .. ': view scrolled with it')
+    vim.env.REVUEY_FAKE_GH = nil
+    view.close()
+  end
+end)
+
 h.run()

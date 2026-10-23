@@ -43,6 +43,12 @@ local function start(dir, base, lines, columns, extra)
     require('revuey').open({ base = base ~= '' and base or nil, on_ready = function() done = true end })
     vim.wait(10000, function() return done end, 10)
     assert(done, 'review did not open')
+    -- the PR lookup runs in the background: let it settle, so screenshots never race it
+    local fv = require('revuey.forge_view')
+    assert(vim.wait(10000, function()
+      local s = require('revuey.view').session
+      return not fv.enabled() or (s.forge and s.forge.ready and not s.forge.busy and not s.forge.scheduled)
+    end, 10), 'PR lookup did not settle')
   ]],
     { h.root, dir, h.tmpdir('screen-state-' .. vim.fn.fnamemodify(dir, ':t')), base or 'main', extra or vim.NIL }
   )

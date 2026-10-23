@@ -217,10 +217,46 @@ function M.render_notes(s, add, width)
 end
 
 ---@param s revuey.Session
-function M.render(s)
+---What the panel cursor is on: a file, a stack row, a guide section or the PR heading.
+local function row_item(s, row)
+  if s.panel_files and s.panel_files[row] then
+    return 'file', s.panel_files[row]
+  elseif s.panel_layers and s.panel_layers[row] then
+    return 'layer', s.panel_layers[row]
+  elseif s.panel_sections and s.panel_sections[row] then
+    return 'section', s.panel_sections[row]
+  elseif s.panel_forge and s.panel_forge.heading == row then
+    return 'forge', true
+  end
+end
+
+local function find_item(s, kind, id)
+  local maps = { file = s.panel_files, layer = s.panel_layers, section = s.panel_sections }
+  if kind == 'forge' then
+    return s.panel_forge and s.panel_forge.heading
+  end
+  for row, v in pairs(maps[kind] or {}) do
+    if v == id then
+      return row
+    end
+  end
+end
+
+---Draw the panel. `o.keep_view`: a redraw nobody asked for (a background lookup finished): the
+---panel cursor stays on the item it was on (rows added above move it down with the view), and
+---is not moved to the diff's current file.
+---@param o? {keep_view?:boolean}
+function M.render(s, o)
   local buf = s.panel_buf
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return
+  end
+  local win = s.panel_win
+  local keep
+  if o and o.keep_view and win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+    local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    local kind, id = row_item(s, view.lnum)
+    keep = { view = view, kind = kind, id = id }
   end
   local r = s.review
   local lines, marks = {}, {}
@@ -412,6 +448,21 @@ function M.render(s)
     M.set_current_section(s, s.current_section)
   else
     M.set_current(s, s.current_file or 1)
+  end
+  if keep then
+    local view = keep.view
+    local row = keep.kind and find_item(s, keep.kind, keep.id) or view.lnum
+    row = math.max(1, math.min(row, vim.api.nvim_buf_line_count(buf)))
+    view.topline = math.max(1, view.topline + (row - view.lnum))
+    view.lnum = row
+    s.syncing = true
+    pcall(vim.api.nvim_win_call, win, function()
+      vim.fn.winrestview(view)
+    end)
+    s.syncing = false
+  end
+  if s.forge then
+    s.forge.drawn = forge_view.signature(s)
   end
   -- the notes float follows the review (after an action, a refresh, a branch moved elsewhere)
   require('revuey.notes_float').update(s)
