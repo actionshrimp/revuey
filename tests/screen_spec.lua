@@ -223,6 +223,29 @@ h.test('stack: panel stack section at the HEAD layer, then full scope', function
   screenshot('stack-full')
 end)
 
+-- Someone else's stack from a fresh clone: a local branch for the bottom PR, the middle one only
+-- as origin/stack/cart (dimmed, read-only), HEAD detached at origin/stack/ui (dimmed `@`).
+h.test('stack: mixed local and remote-tracking layers, detached HEAD', function()
+  local d = h.tmpdir('screen-stack-remote')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--remote-stack', d }):wait().code == 0)
+  h.git(d .. '/review', 'branch', '-q', '--track', 'stack/math', 'origin/stack/math')
+  start(d .. '/review', '')
+  local function stats_loaded()
+    return child.lua([[
+      return vim.wait(5000, function()
+        local s = require('revuey.view').session
+        return s and not s.refreshing and not s.pending_scope and s.review.stack and s.review.stack.full_stats ~= nil
+      end, 10)
+    ]])
+  end
+  h.ok(stats_loaded(), 'stack stats did not load')
+  screenshot('stack-remote')
+  child.type_keys('[s')
+  h.ok(stats_loaded(), 'stack stats did not load')
+  screenshot('stack-remote-layer')
+end)
+
 -- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
 -- panel, and `!` opens the details float.
 h.test('stack notes: panel summary line and the details float', function()

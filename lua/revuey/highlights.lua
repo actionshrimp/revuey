@@ -105,6 +105,7 @@ function M.setup()
   set('RevueyStackWarn', { link = 'DiagnosticWarn' })
   set('RevueyStackTitle', { link = 'Title' })
   set('RevueyStackBranch', { link = 'Identifier' })
+  set('RevueyStackRemote', { link = 'Comment' }) -- remote-tracking layers (read-only), detached `@`
   -- comments
   set('RevueyCommentSign', { link = 'DiagnosticInfo' })
   set('RevueyCommentBorder', { link = 'FloatBorder' })

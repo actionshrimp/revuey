@@ -36,6 +36,19 @@ h.test('classification: only notes that change the diff shown are warnings', fun
   end
 end)
 
+h.test('detached HEAD and remote-copy notes: summary lines and text', function()
+  local d = new('detached', { branch = 'origin/stack/ui', branches = { 'upstream/stack/ui' } })
+  h.eq('HEAD is detached at origin/stack/ui (upstream/stack/ui is there too), so revuey reviews it as origin/stack/ui.', d.text)
+  local none = sn.new('detached', { branch = 'HEAD' }, { stack = false, trunk = 'origin/main' })
+  h.ok(none.text:find('no branch points at it', 1, true) and none.text:find('origin/main', 1, true), none.text)
+  local u = new('upstream', { branch = 'feat', parent = 'origin/feat', ahead = 1, behind = 2 })
+  h.eq('feat is 2 commits behind and 1 commit ahead of origin/feat (as last fetched).', u.text)
+  h.eq({ 'detached HEAD at origin/stack/ui', 'feat 2 behind and 1 ahead of origin/feat' }, vim.tbl_map(function(l)
+    return l.text
+  end, sn.summary({ d, u }, {}, ctx, 3)))
+  h.eq('detached HEAD: no branch here, no stack', sn.summary({ none }, {}, ctx, 3)[1].text)
+end)
+
 h.test('wording: plain sentences, no jargon', function()
   local n = new('outdated_copy', { branch = 'dave/abc-1058-apply-price-check', layer = 'stack/a' })
   h.eq("dave/abc-1058-apply-price-check contains an older version of a commit that's now in your stack (it was amended or rebased since). It may be built on an outdated copy of your stack.", n.text)
