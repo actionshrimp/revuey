@@ -51,6 +51,35 @@ do
 end
 vim.env.PATH = M.mux_dir .. '/bin:' .. vim.env.PATH
 
+-- Headless specs (no UI attached) must never grow the screen: Neovim 0.12.4 keeps the headless
+-- grid at its startup size (80x24), so a larger 'columns'/'lines' makes the next redraw (the tab
+-- line first) write past it, a heap overrun that crashes intermittently and far from the cause
+-- (see docs/TESTING.md). Growing either is undone at once and fails the spec; shrinking is
+-- harmless. Specs that need a bigger screen use a mini.test child (screen_spec.lua).
+M.size_violations = {}
+if #vim.api.nvim_list_uis() == 0 then
+  local startup = { lines = vim.o.lines, columns = vim.o.columns }
+  vim.api.nvim_create_autocmd('OptionSet', {
+    pattern = { 'lines', 'columns' },
+    callback = function(ev)
+      local name = ev.match
+      local new = tonumber(vim.v.option_new) or 0
+      if new > startup[name] then
+        vim.o[name] = startup[name]
+        local msg = ("headless spec set '%s' to %d (the screen stays %d): use a child Neovim with a UI"):format(
+          name,
+          new,
+          startup[name]
+        )
+        M.size_violations[#M.size_violations + 1] = msg
+        if not M.size_quiet then
+          error(msg)
+        end
+      end
+    end,
+  })
+end
+
 ---Expose the user's installed tree-sitter *parsers* only (never their query overrides), via a temp
 ---runtime dir whose only entry is a `parser` symlink. Highlight queries come from Neovim's bundled
 ---runtime; tests must skip clearly when a language has none there.
@@ -297,6 +326,10 @@ function M.run()
       failures = failures + 1
       io.write('  FAIL ' .. file .. ' :: ' .. t.name .. '\n' .. tostring(err) .. '\n')
     end
+  end
+  for _, msg in ipairs(M.size_violations) do
+    failures = failures + 1
+    io.write('  FAIL ' .. file .. ' :: ' .. msg .. '\n')
   end
   io.flush()
   for i = #teardowns, 1, -1 do

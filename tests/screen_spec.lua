@@ -411,6 +411,19 @@ h.test('guide with an overview diagram', function()
   h.ok(generate_guide(), 'guide did not generate')
   child.lua('vim.cmd("redraw")')
   screenshot('guide-diagram')
+  -- the diagram uses the full window width, not the 100-column prose cap (this child has a UI,
+  -- so it may be resized)
+  local w = child.lua([[
+    vim.o.columns = 180
+    vim.cmd('redraw')
+    vim.cmd('doautocmd WinResized')
+    local s = require('revuey.view').session
+    vim.wait(2000, function() return s.prose_width == 100 end, 10)
+    local out = { s.diagram_width, s.prose_width }
+    vim.o.columns = 130
+    return out
+  ]])
+  h.ok(w[1] > w[2], vim.inspect(w))
   vim.env.REVUEY_FAKE_CLAUDE = nil
 end)
 

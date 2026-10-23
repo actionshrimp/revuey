@@ -516,6 +516,34 @@ h.test('re-anchoring: an edited hunk stays in its section, marked edited', funct
   h.eq(0, merged.sections[1].missing)
 end)
 
+h.test('re-anchoring: the old side decides first; a grown hunk does not capture the next one', function()
+  -- P and Q in one function, in two sections. P grows by 8 lines and Q is edited: P's new range
+  -- now covers Q's old new-side range, but on the old side each overlaps only itself.
+  local rec = reanchor_rec({
+    { path = 'src/a.ts', hunks = {
+      { '@@ -1,3 +1,3 @@ function f', ' a', '-b', '+B', ' c' },
+      { '@@ -10,3 +10,3 @@ function f', ' j', '-k', '+K', ' l' },
+    } },
+  }, { { title = 'P', overview = 'o', hunks = { { id = 'h1' } } }, { title = 'Q', overview = 'o', hunks = { { id = 'h2' } } } })
+  local grown = { '@@ -1,3 +1,11 @@ function f', ' a', '-b', '+B' }
+  for i = 1, 8 do
+    grown[#grown + 1] = '+more ' .. i
+  end
+  grown[#grown + 1] = ' c'
+  local res = guide.resolve(rec, guide.hunks(diff.parse(difftext({
+    { path = 'src/a.ts', hunks = { grown, { '@@ -10,3 +18,3 @@ function f', ' j', '-k', '+K!', ' l' } } },
+  }))))
+  h.eq({ { 'P', { 'h1*' } }, { 'Q', { 'h2*' } } }, titles_of(res))
+  -- with nothing on the old side (a pure insertion moved), the new side still matches
+  local rec2 = reanchor_rec({
+    { path = 'src/b.ts', hunks = { { '@@ -4,0 +5,2 @@', '+x', '+y' } } },
+  }, { { title = 'A', overview = 'o', hunks = { { id = 'h1' } } } })
+  local res2 = guide.resolve(rec2, guide.hunks(diff.parse(difftext({
+    { path = 'src/b.ts', hunks = { { '@@ -6,0 +6,2 @@', '+x', '+y!' } } },
+  }))))
+  h.eq({ { 'A', { 'h1*' } } }, titles_of(res2))
+end)
+
 h.test('re-anchoring: ambiguous matches and no match fall back to "Not in guide"', function()
   -- one guide hunk now overlapped by two current hunks (an edit split it): ambiguous
   local rec = reanchor_rec({

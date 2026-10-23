@@ -10,7 +10,6 @@ vim.notify = function() end
 local log = h.tmpdir('fake-claude') .. '/calls.ndjson'
 h.use_fake_claude(log)
 
-vim.o.columns, vim.o.lines = 160, 50
 local state_dir = h.tmpdir('guide-view-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
 local config = require('revuey.config')
@@ -45,6 +44,12 @@ end
 
 local function text(s)
   return table.concat(lines(s), '\n')
+end
+
+---Prose with its wrapping undone (headless specs keep the 80-column screen, so prose wraps):
+---every line break, with the indent and `▎ ` callout bar of the next line, becomes one space.
+local function flat(s)
+  return (text(s):gsub('%s*\n[%s▎]*', ' '))
 end
 
 local function find(s, needle, kind)
@@ -143,13 +148,14 @@ h.test('gG offers to generate, then shows the guide; claude gets read-only flags
 
   -- the guide buffer: title, meta, summary, numbered sections, prose and hunks
   h.eq('Fake guide title', lines(s)[1])
-  h.ok(lines(s)[2]:find('2 sections · 0/2 reviewed · claude-fake-1 · just now', 1, true), lines(s)[2])
+  -- the meta line wraps in a narrow window (headless specs keep the 80-column screen)
+  h.ok(text(s):gsub('\n', ' '):find('2 sections · 0/2 reviewed · claude-fake-1 · just now', 1, true), text(s))
   local sec1 = find(s, '1. Core change', 'section')
   local sec2 = find(s, '2. Follow-up wiring', 'section')
   h.ok(sec1 and sec2 and sec1 < sec2)
-  h.ok(find(s, 'The heart of the change: totals move into cart.ts.', 'prose'))
-  h.ok(find(s, '▎ Important: Callers now get rounded totals.', 'prose'))
-  h.ok(find(s, '  Introduces the new total helper.', 'prose'), 'hunk note')
+  h.ok(flat(s):find('The heart of the change: totals move into cart.ts.', 1, true), text(s))
+  h.ok(flat(s):find('Important: Callers now get rounded totals.', 1, true), text(s))
+  h.ok(flat(s):find(' Introduces the new total helper.', 1, true), 'hunk note')
   h.eq('clean', s.guide.resolved.stale and 'stale' or 'clean')
   h.eq(s.guide.record.generator.session_id, 'fake-session-1', 'session id kept for follow-ups')
 
@@ -295,7 +301,7 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   for _, sec in ipairs(res.sections) do
     h.ok(sec.kind ~= 'new', 'no "Not in guide" section')
   end
-  h.ok(find(s, '▎ Warning: The diff changed since this guide was generated (1 hunk edited).', 'prose'), text(s))
+  h.ok(flat(s):find('Warning: The diff changed since this guide was generated (1 hunk edited).', 1, true), text(s))
   h.ok(text(s):find('Press\n▎ gR to regenerate.', 1, true) or text(s):find('Press gR to regenerate.', 1, true))
   -- a change nothing in the guide overlaps (a new file): "Not in guide", as before
   local extra = fixture .. '/src/extra_after_guide.ts'
@@ -310,7 +316,7 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   h.eq('Not in guide', res.sections[#res.sections].title)
   h.ok(find(s, 'Not in guide', 'section'))
   h.eq({ 1, 1 }, { res.new, res.edited })
-  h.ok(text(s):gsub('\n▎ ', ' '):find('(1 new hunk, 1 hunk edited)', 1, true), text(s))
+  h.ok(flat(s):find('(1 new hunk, 1 hunk edited)', 1, true), text(s))
   -- the guide never re-runs by itself
   h.eq(1, #calls())
   -- undo the edits: the guide is fresh again and the mark is back
@@ -361,7 +367,7 @@ h.test('prose re-wraps to the window width; the cursor stays on the same content
   rewrap(120)
   now = vim.api.nvim_win_get_cursor(s.diff_win)
   h.eq('rounded', s.layout.lines[now[1]]:sub(now[2] + 1, now[2] + 7))
-  vim.cmd('wincmd =')
+  vim.api.nvim_win_set_width(s.panel_win, config.options.panel_width)
   vim.cmd('doautocmd WinResized')
 end)
 

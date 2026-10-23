@@ -338,10 +338,13 @@ are in `reports/Terminal code review tool landscape.md`.
      the exact anchor set, else the newest one for the key.
    - **Staleness** (`guide.resolve`): hunks are matched by hash first. Guide hunks left over are
      then **re-anchored by overlap**, like comments (position plus context, conservative): a
-     candidate is a current hunk nobody matched by hash, in the same file, whose old-side or
-     new-side range (parsed from the `@@` header stored in the anchor, so older records work;
-     an empty range is the point after its line) overlaps the guide hunk's, and whose function
-     context (text after `@@ … @@`) is empty on either side or equal. A guide hunk matches when it
+     candidate is a current hunk nobody matched by hash, in the same file, whose function
+     context (text after `@@ … @@`) is empty on either side or equal, and whose old-side range
+     (parsed from the `@@` header stored in the anchor, so older records work; an empty range is
+     the point after its line) overlaps the guide hunk's. The old side comes first because
+     working-tree edits leave it in place while new-side ranges shift with every line added
+     above (a hunk that grew would otherwise overlap the next hunk's out-of-date range); the
+     new side is used only when no old-side candidate exists. A guide hunk matches when it
      has exactly one candidate and every guide hunk claiming that candidate also has only it and
      sits in the same section (the first shows it, the others were joined into it and count as
      neither shown nor missing). Several candidates (an edit split the hunk) or claimants from
@@ -748,7 +751,8 @@ are in `reports/Terminal code review tool landscape.md`.
       headers; a `del` row opens at its `anchor_lnum` with a note; prose, diagram, file
       header, note, blank and section rows refuse). Then the layer: a layer scope must be the
       `is_head` layer (`@`; a remote `ro` layer below HEAD never is), the full scope needs the
-      top layer to be HEAD, else "<layer> isn't checked out; press gS to switch". Then
+      top layer to be HEAD, else "<layer> isn't checked out; press gS to switch"; a remote
+      layer with HEAD detached at its tip refuses too (no branch to commit to; gS makes one). Then
       working-tree mode, else "switch to working-tree mode (gu)". In the full scope the hunk's
       attribution labels (decision 9, already computed per refresh) must name only the top
       layer or `uncommitted`; a lower layer is named in the refusal, and missing labels refuse
@@ -759,9 +763,14 @@ are in `reports/Terminal code review tool landscape.md`.
       last refresh, or unsaved ones): unchanged lines exactly by diff (duplicated text is never
       picked), a changed line to the nearest unchanged line above plus the distance, clamped.
       The hunk's new range (`edit.hunk_range`) is mapped the same way for the folds and title.
-    - **Buffer.** `vim.fn.bufnr(abs)` first (an open buffer, also one opened through a symlink:
-      Neovim stores the resolved name), else `lsp.file_buffer` (the hidden LSP buffer if loaded, else a
-      new one), so there is never a second buffer for the file. `lsp.adopt` drops it from the
+    - **Buffer.** `lsp.buffer_for(abs)` first: an exact name or resolved-path match over the
+      buffer list (never `vim.fn.bufnr(path)`, which takes a pattern and partial matches, so
+      `config.js` found `config.json`; the LSP proxy and the diff buffer's renaming use it too),
+      else `bufadd` (revuey's hidden LSP buffer when loaded has that name), so there is never a
+      second buffer for the file. Loading is a `pcall(bufload)`: another Neovim's swap file
+      raises E325 without a UI, so the buffer is unloaded again (wiped when new) and the float
+      says "another Neovim is editing <file>" instead of opening (`lsp.file_buffer` does the
+      same for hidden buffers). `lsp.adopt` drops it from the
       hidden-buffer set (no silent reloads or wipes by `lsp.checktime`/`cleanup` any more) and
       lists it: from then on it is an ordinary `:edit` buffer, so undo, swap files, LSP clients
       already attached, completion, formatters, the user's autocmds and `:checktime`/W12 behave
@@ -771,11 +780,16 @@ are in `reports/Terminal code review tool landscape.md`.
       (`zE`, then a fold above and below the hunk plus `edit.CONTEXT` lines). Neovim copies a
       closing window's local options and folds into the buffer's window info, which the next
       window showing the buffer inherits, so before any close (`q`, `:q` via `WinClosed`,
-      review cleanup) the float's options are reset to their global values and its folds
-      removed. `q`/`<Esc>`/`<C-s>` are buffer-local expr mappings (there are no window-local
+      review cleanup) the float's options are put back to what the window had when it opened
+      (the buffer's own, from its last window) and its folds removed. A new window also copies
+      the current window's options when the buffer brings none, so options equal to the diff
+      window's (statuscolumn, winbar, foldexpr...) are first reset to their global values.
+      `q` and normal-mode `<C-s>` are buffer-local expr mappings (there are no window-local
       ones) that act only when the float is the current window and otherwise return the key
-      itself; existing buffer-local mappings of those keys are saved with `maparg` and put back
-      with `mapset`. Closing with changes asks (`edit_float.ask`, a hook for tests): save,
+      itself; `<Esc>` and insert-mode `<C-s>` (signature help) are left alone. On close only
+      mappings the float made (by their description) are deleted, so one an `LspAttach` handler
+      set meanwhile stays, and those they shadowed (saved with `maparg`) come back with
+      `mapset`. Closing with changes asks (`edit_float.ask`, a hook for tests): save,
       discard (`:undo` back to the `changenr()` taken at open, so edits the buffer already had
       stay; `:edit!` only when it was unmodified then) or cancel.
     - **Cursor after a save.** The float's `BufWritePost` stores `s.edit_focus` (path and the

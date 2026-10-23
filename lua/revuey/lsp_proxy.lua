@@ -84,7 +84,7 @@ local function line_text(uri, line0)
   if not ok then
     return nil
   end
-  local b = vim.fn.bufnr(fname)
+  local b = lsp.buffer_for(fname) or -1
   if b > 0 and api.nvim_buf_is_loaded(b) then
     return api.nvim_buf_get_lines(b, line0, line0 + 1, false)[1]
   end

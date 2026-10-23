@@ -33,7 +33,7 @@ function M.ask(msg)
   return vim.fn.confirm(msg, '&Save\n&Discard\n&Cancel', 1, 'Question')
 end
 
--- window options the float sets (reset to the global values before it closes)
+-- window options the float sets (put back to the window's own values before it closes)
 local WIN_OPTS = {
   foldmethod = 'manual',
   foldenable = true,
@@ -47,12 +47,25 @@ local WIN_OPTS = {
   winfixbuf = false,
 }
 
+-- window options the review sets on its diff window (see view.show)
+local REVIEW_OPTS = {
+  'statuscolumn', 'winbar', 'foldexpr', 'foldtext', 'foldmethod', 'foldlevel', 'foldminlines', 'foldcolumn',
+  'fillchars', 'list', 'spell', 'conceallevel', 'cursorline', 'wrap', 'number', 'relativenumber', 'signcolumn',
+}
+
 local MAPS = {
   { 'n', 'q', 'close' },
-  { 'n', '<Esc>', 'close' },
-  { 'n', '<C-s>', 'save' },
-  { 'i', '<C-s>', 'save' },
+  { 'n', '<C-s>', 'save' }, -- normal mode only: insert-mode <C-s> is signature help
 }
+local DESC = 'revuey: edit float '
+
+---Is the buffer-local mapping of `lhs` in `mode` one the float made?
+local function ours(buf, mode, lhs)
+  local d = api.nvim_buf_call(buf, function()
+    return vim.fn.maparg(lhs, mode, false, true)
+  end)
+  return type(d) == 'table' and d.buffer == 1 and type(d.desc) == 'string' and d.desc:sub(1, #DESC) == DESC
+end
 
 local function valid(st)
   return st and api.nvim_win_is_valid(st.win) and api.nvim_buf_is_valid(st.buf)
@@ -90,18 +103,30 @@ local function teardown(st)
     api.nvim_win_call(st.win, function()
       pcall(vim.cmd, 'normal! zE')
       for name in pairs(WIN_OPTS) do
-        pcall(api.nvim_set_option_value, name, api.nvim_get_option_value(name, { scope = 'global' }), { scope = 'local', win = st.win })
+        local v = (st.saved_opts or {})[name]
+        if v == nil then
+          v = api.nvim_get_option_value(name, { scope = 'global' })
+        end
+        pcall(api.nvim_set_option_value, name, v, { scope = 'local', win = st.win })
       end
     end)
   end
   if api.nvim_buf_is_valid(st.buf) then
+    -- only the float's own mappings (one set since by the user or an LspAttach handler stays)
+    local removed = {}
     for _, m in ipairs(MAPS) do
-      pcall(vim.keymap.del, m[1], m[2], { buffer = st.buf })
+      if ours(st.buf, m[1], m[2]) then
+        pcall(vim.keymap.del, m[1], m[2], { buffer = st.buf })
+        removed[m[1] .. m[2]] = true
+      end
     end
+    -- and the mappings ours shadowed come back (where ours was still the one in place)
     for _, saved in ipairs(st.saved_maps) do
-      api.nvim_buf_call(st.buf, function()
-        pcall(vim.fn.mapset, saved)
-      end)
+      if removed[saved.mode_key] then
+        api.nvim_buf_call(st.buf, function()
+          pcall(vim.fn.mapset, saved.dict)
+        end)
+      end
     end
   end
   pcall(api.nvim_del_augroup_by_id, st.group)
@@ -161,8 +186,8 @@ local function remember_maps(buf)
         local d = api.nvim_buf_call(buf, function()
           return vim.fn.maparg(m[2], m[1], false, true)
         end)
-        if d and d.buffer == 1 then
-          saved[#saved + 1] = d
+        if type(d) == 'table' and d.buffer == 1 then
+          saved[#saved + 1] = { mode_key = m[1] .. m[2], dict = d }
         end
       end
     end
@@ -184,8 +209,8 @@ local function set_maps(st)
           write(st)
         end
       end)
-      return mode == 'i' and '' or '<Ignore>'
-    end, { buffer = st.buf, expr = true, nowait = true, silent = true, desc = 'revuey: edit float ' .. what })
+      return '<Ignore>'
+    end, { buffer = st.buf, expr = true, nowait = true, silent = true, desc = DESC .. what })
   end
 end
 
@@ -229,18 +254,34 @@ function M.open(s, opts)
     vim.notify('revuey: not in the working tree: ' .. opts.path, vim.log.levels.WARN)
     return nil
   end
-  -- the file's one buffer: an open one (any window, any name resolving to it), else revuey's
-  -- hidden LSP buffer, else a new one; never a second buffer for the same file
-  local buf = vim.fn.bufnr(opts.abs)
-  if buf == -1 then
-    buf = lsp.file_buffer(opts.abs)
-  end
-  if not buf or buf == -1 then
-    vim.notify('revuey: cannot open ' .. opts.path, vim.log.levels.WARN)
-    return nil
-  end
+  -- the file's one buffer: an open one (by exact name or resolved path), else revuey's hidden
+  -- LSP buffer, else a new one; never a second buffer for the same file
+  local buf = lsp.buffer_for(opts.abs)
+  local fresh = buf == nil
+  buf = buf or vim.fn.bufadd(opts.abs)
   if not api.nvim_buf_is_loaded(buf) then
-    vim.fn.bufload(buf)
+    -- another Neovim editing the file: E325 (an error without a UI to ask on)
+    local ok, err = pcall(vim.fn.bufload, buf)
+    if not ok then
+      if fresh or not vim.bo[buf].buflisted then
+        pcall(api.nvim_buf_delete, buf, { force = true })
+      else
+        pcall(api.nvim_buf_delete, buf, { force = true, unload = true })
+      end
+      local swap = tostring(err):find('E325', 1, true)
+      vim.notify(
+        swap and ('revuey: another Neovim is editing %s (it has a swap file); not opening it'):format(opts.path)
+          or ('revuey: cannot open %s: %s'):format(opts.path, tostring(err)),
+        vim.log.levels.WARN
+      )
+      return nil
+    end
+  end
+  if vim.bo[buf].filetype == '' then
+    local ft = vim.filetype.match({ buf = buf, filename = opts.abs })
+    if ft then
+      vim.bo[buf].filetype = ft -- FileType: the user's LSP config attaches
+    end
   end
   lsp.adopt(buf)
   local current = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '\n') .. '\n'
@@ -254,7 +295,7 @@ function M.open(s, opts)
   cfg.border = 'rounded'
   cfg.title = { { (' %s:%d-%d '):format(opts.path, lo, hi), 'FloatTitle' } }
   cfg.title_pos = 'left'
-  cfg.footer = { { ' :w save · q close ', 'FloatFooter' } }
+  cfg.footer = { { ' :w save · q close ', 'FloatFooter' } } -- (<C-s> saves too)
   cfg.footer_pos = 'right'
   local st = {
     buf = buf,
@@ -270,7 +311,20 @@ function M.open(s, opts)
   }
   st.win = api.nvim_open_win(buf, true, cfg)
   M.current = st
+  -- A new window copies the current window's options unless the buffer brings its own, so a
+  -- buffer never shown before would get the review's (statuscolumn, winbar, foldexpr...), and
+  -- keep them in the next window after the float: those are put back to the global values.
+  for _, name in ipairs(REVIEW_OPTS) do
+    local mine = api.nvim_get_option_value(name, { scope = 'local', win = st.win })
+    local global = api.nvim_get_option_value(name, { scope = 'global' })
+    if mine ~= global and mine == api.nvim_get_option_value(name, { scope = 'local', win = s.diff_win }) then
+      api.nvim_set_option_value(name, global, { scope = 'local', win = st.win })
+    end
+  end
+  -- what the window got from the buffer (its last window's options), put back on close
+  st.saved_opts = {}
   for name, value in pairs(WIN_OPTS) do
+    st.saved_opts[name] = api.nvim_get_option_value(name, { scope = 'local', win = st.win })
     api.nvim_set_option_value(name, value, { scope = 'local', win = st.win })
   end
   api.nvim_win_call(st.win, function()

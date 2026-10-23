@@ -35,12 +35,15 @@ is available.
   can reach GitHub. PR fetching is tested against a local bare
   repository acting as `origin`, with `refs/pull/N/head` refs created by the test.
 
-LSP specs that show a TypeScript buffer in a window while a review is open (the edit float in
-`edit_float_spec.lua`) turn LSP semantic tokens off: with them on, headless Neovim 0.12.4 on
-macOS crashed intermittently (SIGSEGV deleting or clearing an augroup), with or without the float.
-One cause was found and fixed (`syntax.lua` loads `vim.treesitter` up front, since its first
-`require` inside a decoration provider creates an augroup during a redraw); the remaining crash
-was not traced to revuey.
+**Headless specs never grow the screen.** In headless Neovim 0.12.4 (no UI attached) the screen
+grid stays at its startup size (80x24) when `'columns'` or `'lines'` is set larger, so the next
+redraw (the tab line first) writes past it: a heap overrun that crashes intermittently and far
+from the cause (seen as SIGSEGV in augroup or autocmd code once LSP traffic redraws windows), and
+that happens without revuey too. Setting the size with `--cmd` before startup does not help.
+`tests/helpers.lua` therefore undoes any increase of either option in a headless spec and fails
+the spec; shrinking is allowed. Specs work at 80x24 (narrow the file panel when a test needs a
+wider diff window), and anything that needs a bigger screen runs in a mini.test child with a UI
+attached (`screen_spec.lua`), which may be resized freely.
 
 ## Running
 - `make test` runs everything; each spec runs in a fresh `nvim --headless --clean` so specs cannot leak state.
