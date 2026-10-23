@@ -102,7 +102,8 @@ M.KINDS = {
     level = 'warn',
     title = 'Parent setting names a missing branch',
     one = function(n)
-      return ('%s\'s parent is set to "%s" (in %s), but there\'s no local branch with that name.'):format(n.branch, n.parent, source_name(n.source))
+      return ('%s\'s parent is set to "%s" (in %s), but no branch of that name exists here (clear it with :RevueyStackParent --clear).')
+        :format(n.branch, n.parent, source_name(n.source))
     end,
     many = function()
       return 'These branches have a parent setting that names a branch that doesn\'t exist here.'
