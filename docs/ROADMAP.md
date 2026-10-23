@@ -24,13 +24,15 @@ sequence; later items build on earlier ones.
    outdated when code moves. Stored locally per review. Export to a paste-friendly text format (file, line range,
    the commented code, the comment body) via a command, the clipboard and `bin/revuey comments`, for handing to an
    AI session. This is the foundation for the forge items below.
-2. **AI reviews (local-first).** `:RevueyAIReview [skill]` asks the user's `claude` CLI (read-only, restricted, as
-   for the guide) to review the current scope. Findings come back structured (severity, title, body, optional
-   suggested change), anchored to review units plus a line range, and land as AI-authored local comment threads.
-   The user triages each: accept (becomes their own comment, editable, eligible for a later forge review), dismiss,
-   or ask a follow-up that resumes the agent's session. Nothing is posted anywhere. An optional skill's `SKILL.md`
-   (from `~/.claude/skills`, the repo's `.claude/skills`, or a path) is read by revuey and passed as review
-   guidance; skills that need to run scripts are treated as guidance only.
+2. **AI reviews (local-first).** Schema-driven, like the guide: `:RevueyAIReview [skill]` runs the user's
+   `claude` CLI in the background (read-only, restricted, `--json-schema`) and returns one JSON document: a short
+   summary, a suggested verdict (approve / comment / request changes) and findings (severity, title, body, optional
+   suggested change). Findings anchor to engine-assigned hunk IDs plus an offset within the hunk, not raw line
+   numbers. revuey validates, drops bad anchors and imports each finding as an AI-authored local comment to triage:
+   accept (becomes the user's own comment), dismiss, or follow up via the agent link. Nothing is posted anywhere.
+   The same schema is accepted from outside via `bin/revuey import-review <file|->`, so an external agent or tool can
+   produce a review in the same format. An optional skill's `SKILL.md` is read by revuey and passed as guidance.
+   Single conversational comments from a connected agent use `bin/revuey comment --path --line` instead.
 3. **Ask AI and chat panel.** Built on local comments: from the comment editor (or a visual selection), a key
    sends the draft as a question instead of saving it, carrying its anchor (file, lines, code, guide section). The
    answer streams into a chat side panel that resumes the guide's Claude session, so it has the review context, and
