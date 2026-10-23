@@ -12,7 +12,6 @@ local msgs = {}
 vim.notify = function(msg, level)
   msgs[#msgs + 1] = { msg = msg, level = level }
 end
-vim.o.columns, vim.o.lines = 160, 50
 
 local state_dir = h.tmpdir('agent-comment-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })

@@ -7,7 +7,6 @@ vim.notify = function() end
 local log = h.tmpdir('fake-claude-diagram') .. '/calls.ndjson'
 h.use_fake_claude(log)
 
-vim.o.columns, vim.o.lines = 160, 50
 local state_dir = h.tmpdir('guide-diagram-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
 local view = require('revuey.view')
@@ -193,13 +192,11 @@ h.test('the cursor on a diagram row stays on that row after a refresh and a re-w
   vim.cmd('doautocmd WinResized')
 end)
 
-h.test('the diagram uses the full window width, not the prose cap', function()
-  local s = view.session
-  vim.cmd('only')
-  vim.cmd('doautocmd WinResized')
-  idle(s)
-  h.ok(s.diagram_width > s.prose_width, ('%d > %d'):format(s.diagram_width, s.prose_width))
+-- (that the diagram uses the full window width, beyond the 100-column prose cap, needs a wider
+-- screen than headless specs may have: screen_spec.lua checks it in its 130-column child)
+h.test('reopening after the diagram tests', function()
   view.close()
+  local s
   s = open(h.fixture())
   view.guide_command(false)
   idle(s)

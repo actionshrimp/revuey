@@ -7,12 +7,6 @@
 -- byte-identical to source text, columns map 1:1. Files without a parser/query get no syntax.
 local git = require('revuey.git')
 
--- Load tree-sitter's Lua modules now, never for the first time inside the decoration provider:
--- vim.treesitter.query creates an augroup when it loads, and creating (clearing) an augroup
--- during a redraw crashes Neovim 0.12 (seen when an LSP semantic-tokens reply redraws a window
--- before anything else had required vim.treesitter).
-local _ = vim.treesitter.query, vim.treesitter.language
-
 local M = {}
 
 M.ns = vim.api.nvim_create_namespace('revuey.syntax')

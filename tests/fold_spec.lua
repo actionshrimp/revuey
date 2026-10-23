@@ -7,7 +7,6 @@ vim.notify = function() end
 
 local log = h.tmpdir('fold-fake-claude') .. '/calls.ndjson'
 h.use_fake_claude(log)
-vim.o.columns, vim.o.lines = 160, 50
 
 require('revuey').setup({ state_dir = h.tmpdir('fold-state'), lsp_warmup = false })
 local view = require('revuey.view')

@@ -2206,7 +2206,7 @@ local function set_diff_name(s)
     return
   end
   if pcall(api.nvim_buf_set_name, s.diff_buf, name) and old ~= '' then
-    local alt = vim.fn.bufnr(old)
+    local alt = lsp.buffer_for(old) or -1
     if alt > 0 and alt ~= s.diff_buf and not vim.bo[alt].buflisted and api.nvim_buf_line_count(alt) <= 1 then
       pcall(api.nvim_buf_delete, alt, { force = true })
     end

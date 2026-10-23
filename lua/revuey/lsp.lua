@@ -82,6 +82,20 @@ function M.cleanup()
   created = {}
 end
 
+---The buffer named exactly `name` (for a file: the same file, by resolved path), or nil.
+---Never `vim.fn.bufnr(name)`: that takes a pattern and accepts partial matches (`config.js`
+---finds `config.json`).
+---@return integer?
+function M.buffer_for(name)
+  local real = vim.uv.fs_realpath(name)
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    local n = vim.api.nvim_buf_get_name(b)
+    if n == name or (real and n ~= '' and vim.uv.fs_realpath(n) == real) then
+      return b
+    end
+  end
+end
+
 ---Hand a buffer over to the user (the edit float): it becomes a normal listed file buffer, as
 ---after `:edit`, which revuey never reloads, wipes or otherwise manages again.
 function M.adopt(buf)
@@ -108,7 +122,12 @@ function M.file_buffer(abs)
   end
   local buf = vim.fn.bufadd(abs)
   if not vim.api.nvim_buf_is_loaded(buf) then
-    vim.fn.bufload(buf)
+    -- E325 (another Neovim has a swap file for it) is an error without a UI: no hidden buffer
+    -- then, and none left loaded half way
+    if not pcall(vim.fn.bufload, buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true, unload = vim.bo[buf].buflisted })
+      return nil
+    end
     created[buf] = mtime(buf) or true
   end
   if vim.bo[buf].filetype == '' then

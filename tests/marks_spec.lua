@@ -8,7 +8,6 @@ vim.notify = function() end
 
 local log = h.tmpdir('marks-fake-claude') .. '/calls.ndjson'
 h.use_fake_claude(log)
-vim.o.columns, vim.o.lines = 160, 50
 
 local state_dir = h.tmpdir('marks-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
