@@ -26,9 +26,10 @@ sequence; later items build on earlier ones.
   parent), `gx` opens it in the browser. Failures are silent and logged to `revuey.log`.
 - Edit from the review, part 1: `gS` (and `:RevueySwitch`) checks a stack layer out in the current worktree
   with plain `git switch` (`--track` for a remote-only layer), refusing on a dirty worktree or a branch checked
-  out elsewhere, asking before touching an unrelated local branch of the same name or switching under a
-  connected agent; `@` moves, the layer gets the working tree, hidden LSP buffers reload. Opt-in
-  `stack.switch_on_navigate` for `]s`/`[s`. A branch checked out from a stack with remote layers keeps them.
+  out elsewhere, files it would write over (untracked or ignored) or unsaved buffers, asking before touching
+  an unrelated local branch of the same name or switching under a connected agent; `@` moves, the layer gets
+  the working tree, hidden LSP buffers reload. Opt-in `stack.switch_on_navigate` for `]s`/`[s`. A branch
+  created for a remote layer keeps the remote layer below it through `branch.<b>.revueyParent`.
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.
