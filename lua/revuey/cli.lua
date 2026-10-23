@@ -14,6 +14,9 @@
 --   show <id>          one message in Markdown: location, review, code, comment, thread
 --   reply <id> <text|->
 --       add an agent reply to a comment's thread (`-` reads stdin); answers a sent message
+--   comment --path <path> (--line N [--end M] [--side new|old] | --file) [--session <id>] <text|->
+--       leave a new comment (author agent) on lines of the review's diff or on a whole changed
+--       file, in the review the session (or, with none running, the CLI's scope) shows
 --   ack <id>           mark a sent message handled without replying (no re-delivery)
 --   inbox [--json]     sent messages not acknowledged yet, then exit (no Monitor needed)
 --   comments [--json] [--all] [--scope current|all|<branch>]
@@ -76,6 +79,13 @@ For coding agents (no UI; run inside the reviewed worktree):
       Several reviews in this worktree: pick one with --session <id> (see `revuey sessions`).
   revuey show <id>               the message in Markdown: file, lines, code, comment, thread
   revuey reply <id> <text|->     answer in the comment's thread (- reads stdin); marks it answered
+  revuey comment --path <path> --line N [--end M] [--side new|old] [--session <id>] <text|->
+  revuey comment --path <path> --file [--session <id>] <text|->
+      leave a new comment in the review (local only, never posted anywhere): on lines of the
+      diff (new: the code after the change, the default; old: deleted lines), which must be
+      inside a hunk on that side, or on a whole changed file (--file). Prints the comment id
+      and where it went. Same review as watch: the only live one, else --session <id>; with
+      none running, the review `revuey` would open here.
   revuey ack <id>                mark it handled without replying (it is not delivered again)
   revuey inbox [--session <id>] [--json]
       messages not answered or acknowledged yet, then exit (also when Monitor is missing);
@@ -90,7 +100,16 @@ For coding agents (no UI; run inside the reviewed worktree):
 Ids may be shortened to any unique part. Options: --state-dir <dir> (default $REVUEY_STATE_DIR,
 else Neovim's data dir/revuey; live sessions' state dirs are searched too).]]
 
-local VALUE_FLAGS = { ['--scope'] = 'scope', ['--since'] = 'since', ['--state-dir'] = 'state_dir', ['--session'] = 'session' }
+local VALUE_FLAGS = {
+  ['--scope'] = 'scope',
+  ['--since'] = 'since',
+  ['--state-dir'] = 'state_dir',
+  ['--session'] = 'session',
+  ['--path'] = 'path',
+  ['--line'] = 'line',
+  ['--end'] = 'end_line',
+  ['--side'] = 'side',
+}
 local BOOL_FLAGS = {
   ['--json'] = 'json',
   ['--all'] = 'all',
@@ -98,6 +117,7 @@ local BOOL_FLAGS = {
   ['--force'] = 'force',
   ['--copy'] = 'copy',
   ['--replay'] = 'replay',
+  ['--file'] = 'file',
 }
 
 ---@return table opts, string[] positional
@@ -132,7 +152,8 @@ function M.parse(args)
     elseif a == '-h' or a == '--help' then
       out(M.USAGE .. '\n')
       os.exit(0)
-    elseif a:sub(1, 2) == '--' then
+    elseif a:sub(1, 2) == '--' and not a:find('%s') then
+      -- (an option never holds a space: "-- see above" is a text)
       die('unknown option ' .. a .. '\n' .. M.USAGE, 2)
     else
       pos[#pos + 1] = a
@@ -612,8 +633,10 @@ function M.watch(o)
       if since and not (ev.id > since) then
         return
       end
-      -- the agent's own replies (and acks) are not news to it
-      if not o.all and ((ev.kind == 'replied' and ev.reply and ev.reply.author and ev.reply.author.kind == 'agent') or ev.kind == 'acked') then
+      -- the agent's own replies and comments (and acks) are not news to it
+      local own = (ev.kind == 'replied' and ev.reply and ev.reply.author and ev.reply.author.kind == 'agent')
+        or (ev.kind == 'created' and ev.author and ev.author.kind == 'agent')
+      if not o.all and (own or ev.kind == 'acked') then
         return
       end
     end
@@ -843,6 +866,194 @@ function M.watch(o)
   os.exit(0)
 end
 
+---Arguments of `comment`, checked: {path, side, start_line?, end_line?, text} (text may be `-`),
+---or nil and a message.
+function M.comment_args(o, pos)
+  local usage = 'usage: revuey comment --path <path> (--line N [--end M] [--side new|old] | --file) <text|->'
+  if not o.path or o.path == '' then
+    return nil, 'comment needs --path <repo-relative path>\n' .. usage
+  end
+  if o.file and (o.line or o.end_line or o.side) then
+    return nil, '--file comments on the whole file: leave out --line, --end and --side\n' .. usage
+  end
+  if not o.file and not o.line then
+    return nil, 'comment needs --line N (lines of the diff) or --file (the whole file)\n' .. usage
+  end
+  if #pos == 0 then
+    return nil, 'comment needs a text (or - to read it from stdin)\n' .. usage
+  elseif #pos > 1 then
+    return nil, 'comment takes one text, after the options: quote it (or use - and stdin)\n' .. usage
+  end
+  local a = { path = o.path, text = pos[1] }
+  if o.file then
+    return a
+  end
+  local function int(v, name)
+    local n = tostring(v):match('^%s*(%d+)%s*$')
+    n = n and tonumber(n)
+    if not n or n < 1 then
+      return nil, ('%s needs a line number (1 or more), not %s'):format(name, tostring(v))
+    end
+    return n
+  end
+  local err
+  a.start_line, err = int(o.line, '--line')
+  if not a.start_line then
+    return nil, err
+  end
+  a.end_line = a.start_line
+  if o.end_line then
+    a.end_line, err = int(o.end_line, '--end')
+    if not a.end_line then
+      return nil, err
+    end
+    if a.end_line < a.start_line then
+      return nil, ('--end %d is before --line %d'):format(a.end_line, a.start_line)
+    end
+  end
+  if a.end_line - a.start_line + 1 > comments.MAX_RANGE then
+    return nil, ('%d lines is too large a range (at most %d); comment on fewer lines, or on the whole file with --file'):format(
+      a.end_line - a.start_line + 1,
+      comments.MAX_RANGE
+    )
+  end
+  a.side = o.side or 'new'
+  if a.side ~= 'new' and a.side ~= 'old' then
+    return nil, ('--side is new (the code after the change) or old (deleted lines), not %s'):format(a.side)
+  end
+  return a
+end
+
+---A path as given on the command line, made relative to the repo root (`./x`, absolute paths
+---inside the worktree, a path relative to a subdirectory of it).
+function M.repo_path(root, cwd, p)
+  local abs = p:sub(1, 1) == '/' and p or vim.fs.joinpath(cwd, p)
+  abs = vim.fs.normalize(abs)
+  local roots = { root, real(root) }
+  local rdir = real(vim.fs.dirname(abs))
+  local cands = { abs }
+  if rdir then
+    cands[#cands + 1] = rdir .. '/' .. vim.fs.basename(abs)
+  end
+  for _, x in ipairs(cands) do
+    for _, r in ipairs(roots) do
+      r = r:gsub('/$', '') .. '/'
+      if x:sub(1, #r) == r then
+        return x:sub(#r + 1)
+      end
+    end
+  end
+  return (p:gsub('^%./', ''))
+end
+
+---Load the review a new comment goes into, headlessly: the attached session's own review when
+---it recorded how (`load` in its registry entry), else what `revuey` would open here: the stack
+---layer of HEAD (a detached HEAD too), or the plain branch review against the default branch.
+---@return revuey.Review review, table info, string comments_path, string events_path
+local function comment_review(o, ctx, attached)
+  local config = require('revuey.config')
+  local review_mod = require('revuey.review')
+  local spec = attached and type(attached.load) == 'table' and attached.load or nil
+  local dir = (attached and attached.state_dir) or state_dir(o)
+  if o.state_dir and o.state_dir ~= '' then
+    dir = o.state_dir
+  end
+  local r, lerr
+  if spec then
+    config.options.context_lines = tonumber(spec.context_lines) or config.options.context_lines
+    config.options.max_file_bytes = tonumber(spec.max_file_bytes) or config.options.max_file_bytes
+    r, lerr = review_mod.load({
+      cwd = ctx.root,
+      base = spec.base,
+      from = spec.from,
+      target = type(spec.target) == 'table' and spec.target or nil,
+      mode = spec.mode,
+      state_dir = dir,
+    })
+  else
+    local trunk = git.default_branch(ctx.root)
+    if not trunk then
+      die('could not detect the default branch (origin/HEAD, main, master or develop); open the review in revuey first, then comment')
+    end
+    local stack_mod = require('revuey.stack')
+    local ok, stack, _, from = pcall(stack_mod.detect, ctx.root, trunk, nil, { state_dir = dir })
+    if not ok then
+      stack, from = nil, nil
+    end
+    local scope = stack and { kind = 'layer', index = stack.current } or nil
+    r, lerr = review_mod.load({
+      cwd = ctx.root,
+      base = not stack and trunk or nil,
+      from = from,
+      target = stack and stack_mod.target(stack, scope) or nil,
+      mode = attached and attached.mode or nil,
+      state_dir = dir,
+    })
+    if r then
+      r.stack, r.scope = stack, scope
+    end
+  end
+  if not r then
+    die('cannot load the review: ' .. tostring(lerr))
+  end
+  local info = comments.review_info(r)
+  if spec and type(attached.review) == 'table' then
+    info.scope, info.layers = attached.review.scope or info.scope, attached.review.layers
+  end
+  local cpath = comments.path_for(r.state._path)
+  local epath = comments.events_path_for(r.state._path)
+  if spec and attached.comments then
+    -- the file the running review watches
+    cpath, epath = attached.comments, attached.events or events_path(attached.comments)
+  end
+  return r, info, cpath, epath
+end
+
+function M.comment(o, pos)
+  local a, aerr = M.comment_args(o, pos)
+  if not a then
+    die(aerr, 2)
+  end
+  local text = a.text
+  if text == '-' then
+    text = io.stdin:read('*a') or ''
+  end
+  text = vim.trim(text)
+  if text == '' then
+    die('empty comment')
+  end
+  local ctx = here(o)
+  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  a.path = M.repo_path(ctx.root, vim.fn.getcwd(), a.path)
+  local r, info, cpath, epath = comment_review(o, ctx, attached)
+  local review_mod = require('revuey.review')
+  local U = review_mod.units(r)
+  local cache = {}
+  local pctx = comments.context(r.files, U, function(path, side)
+    local fi = U.by_path[path]
+    return fi and review_mod.side_text(r, r.files[fi], side, cache) or nil
+  end)
+  local anchor, err = comments.anchor_for_lines(r.files, U, a, pctx.get_line)
+  if not anchor then
+    die(err)
+  end
+  local c = comments.new(anchor, text, { author = agent_author() })
+  local store = comments.load(cpath)
+  comments.put(store, c)
+  local ok, serr = pcall(comments.save, store, info)
+  if not ok then
+    die(tostring(serr))
+  end
+  comments.append_event(epath, comments.event('created', comments.get(store, c.id) or c, info))
+  out(('%s\ncommented on %s (%s) in %s%s\n'):format(
+    c.id,
+    comments.location(c),
+    c.file_level and 'file' or anchor.side,
+    sessions.scope_label(info),
+    attached and (', session ' .. attached.id) or ' (no review running: it shows when the review is opened)'
+  ))
+end
+
 ---`install-skill`: link (default) or copy skill/revuey into $HOME/.claude/skills/revuey.
 function M.install_skill(o)
   local src = vim.fs.joinpath(plugin, 'skill', 'revuey')
@@ -939,6 +1150,7 @@ end
 local COMMANDS = {
   comments = M.comments,
   reply = M.reply,
+  comment = M.comment,
   watch = M.watch,
   sessions = M.sessions,
   show = M.show,

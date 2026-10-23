@@ -56,7 +56,7 @@ Requirements:
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
-| `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
+| `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
 
 **Uncommitted work is included by default** (working-tree mode): committed, staged and unstaged
 changes to tracked files, files deleted on disk, and untracked (non-ignored) files as additions.
@@ -495,7 +495,7 @@ resolve src/index.ts:7 (old): Keep a test for oldTotal before removing this.  #1
 
 `--json` prints the full event instead (kind, review, anchor with line range and side, the code,
 the body, author, and the reply for `replied`). `--since <event id>` (or `all`) first replays
-earlier events. The agent's own replies are not echoed back unless `--all` is given. A reply
+earlier events. The agent's own replies and comments are not echoed back unless `--all` is given. A reply
 made with `bin/revuey reply` (author `agent`, or `$REVUEY_AGENT_NAME`) shows up in a running
 revuey's thread within a moment. The comment id may be shortened to any unique part of it.
 
@@ -540,6 +540,9 @@ Then, in a Claude Code session running in your repo:
 3. Send comments and questions from revuey. Claude reads each one with `bin/revuey show <id>`,
    answers with `bin/revuey reply <id> "…"`, or acknowledges it with `bin/revuey ack <id>` when
    it just acts on it. It only edits files when a message asks for a change.
+4. Ask Claude to leave you a comment ("point out in revuey where the retry logic lives") and it
+   adds a new thread with `bin/revuey comment`; it shows up at once, labelled with the agent's
+   name (`agent`, or `$REVUEY_AGENT_NAME`) and highlighted as the agent's.
 
 **From the shell** (any agent; run inside the reviewed worktree):
 
@@ -552,7 +555,32 @@ bin/revuey reply <id> "Because…" # answer in the thread (- reads stdin); marks
 bin/revuey ack <id>              # handled without a reply: not delivered again
 bin/revuey inbox                 # messages not handled yet, then exit (no Monitor needed);
                                  # --json; --session <id> like watch
+bin/revuey comment --path src/cart.ts --line 12 --end 14 "Is this rounding intended?"
+bin/revuey comment --path src/cart.ts --line 7 --side old -   # a deleted line; text on stdin
+bin/revuey comment --path src/cart.ts --file "Needs a test."  # the whole file
 ```
+
+`comment` leaves a new comment (author `agent`, saved, not added to any forge review) and
+prints its id and where it went:
+
+```
+1a1b2c3d4e5f6a7b
+commented on src/cart.ts:12-14 (new) in stack/cart, session 48213
+```
+
+It goes into the same review as `watch` (the worktree's only live review, else `--session
+<id>`). With no review running it goes into the review `bin/revuey` would open there (the stack
+layer of HEAD, a detached HEAD too, else the branch against the default branch) and shows when
+you open it. The CLI loads that review's diff itself (one `git diff` plus the working-tree
+snapshot, the same loader as the UI, so the check is exact): the path must be one of its changed
+files and every line inside a hunk on that side (`new`, the default: added and context lines;
+`old`: deleted and context lines), else it fails with the nearest hunks and suggests `--file`.
+Ranges are at most 200 lines. It records the path, side, lines, code snippet and the context
+hash (from the working tree in working-tree mode, the old blob for `old`); the running review
+finds the comment's hunk on its next render and stores it, as for its own comments. Its
+`created` event and the comment itself are never delivered back to the agent: `watch` (without
+`--all`) skips the agent's own comments, and only comments the user sends are messages. It is
+local only: nothing is posted to GitHub.
 
 A `watch --messages` line looks like this (`--json` prints the full event instead, with the
 anchor, the code, the message and the review: repo, branch, scope, base):
