@@ -305,12 +305,13 @@ and review state on the layer's row, and a section with the details of the layer
   target's name, then its upstream's name when that differs (never the trunk: a branch made with
   `git switch -c feat origin/main` is still looked up as `feat`). The base repo is found like gh
   does: the remote `gh repo set-default` marked (`remote.<name>.gh-resolved`), else `upstream`,
-  else the trunk's remote, else `origin` (`git remote get-url`, SSH or HTTPS). Each lookup also
-  asks the repo's parent, so a fork cloned as `origin` with no `upstream` remote still finds PRs
-  in the parent. PRs from other people's forks with the same branch name are skipped (head
+  else the trunk's remote, else `origin` (`git remote get-url`, SSH or HTTPS). Unless the base came
+  from `gh-resolved` or `upstream`, each lookup also asks the repo's parent, so a fork cloned as
+  `origin` with no `upstream` remote still finds PRs in the parent. PRs from other people's forks with the same branch name are skipped (head
   owner). An open PR wins, then the most recently updated merged or closed one, but only when
-  its head commit is in the branch (`git merge-base --is-ancestor`), so a new branch reusing an
-  old name doesn't show the old PR. Hosts other than github.com need `forge.hosts` (hosts with
+  its head commit and the branch tip are on one line (either is an ancestor of the other, so a
+  branch behind commits made on GitHub still shows its PR), so a new branch reusing an old name
+  doesn't show the old PR. Hosts other than github.com need `forge.hosts` (hosts with
   "github" in their name are recognised).
 - **When.** On open and on scope switches, in the background, with results cached per repo for
   `forge.ttl` seconds (60). `R` always looks again. There is no polling: a panel redraw after the

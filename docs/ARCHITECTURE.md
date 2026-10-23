@@ -630,16 +630,18 @@ are in `reports/Terminal code review tool landscape.md`.
     - **One call.** `build_query` aliases one `repository(owner,name) { pullRequests(headRefName,
       first: 30, orderBy: UPDATED_AT desc) parent { nameWithOwner pullRequests(...) } }` per
       distinct (repo, branch), so a fork's parent is searched in the same request (null for a
-      non-fork), with a shared fragment: number, title, url, state, isDraft, updatedAt,
+      non-fork; left out when the base came from `gh-resolved` or `upstream`, so an internal fork
+      doesn't match its public parent's PRs), with a shared fragment: number, title, url, state, isDraft, updatedAt,
       headRefOid, author, reviewDecision, latestReviews,
       reviewRequests, mergeable, base/head ref names, headRepositoryOwner and the head commit's
       `statusCheckRollup.contexts` `checkRunCountsByState`/`statusContextCountsByState` (counts
       only, no per-check nodes). One `gh api graphql -f query=…` per host per fetch (in practice
       one per refresh), `vim.system` with `forge.timeout` (15s; code 124 -> "timed out"), its
       handle given to the caller to kill. `pick` sorts by `updatedAt` across repos and prefers
-      an OPEN PR, then MERGED/CLOSED ones whose `headRefOid` is in the branch
-      (`check_heads`: `git merge-base --is-ancestor oid tip`, concurrent, memoised in
-      `forge.ancestry`; an unknown commit fails), among PRs whose head owner is the candidate's
+      an OPEN PR, then MERGED/CLOSED ones whose `headRefOid` is on the branch's line
+      (`check_heads`: `git merge-base --is-ancestor` oid -> tip, else tip -> oid for a branch
+      behind commits made on GitHub; concurrent, memoised in `forge.ancestry`; an unknown commit
+      counts as unrelated), among PRs whose head owner is the candidate's
       (null for a deleted fork: never ours). The first candidate with a PR wins.
     - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}` (a
       repo's entry also holds its parent's PRs); a target is fresh when every repo it searches
