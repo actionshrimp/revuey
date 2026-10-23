@@ -138,22 +138,31 @@ are in `reports/Terminal code review tool landscape.md`.
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
    **Remote-tracking layers** (`stack.remote_layers`, pure). The fingerprint's one `for-each-ref` also lists
-   `refs/remotes` (and each local branch's `%(upstream)`). After the first graph load, HEAD's first-parent line
-   above trunk is a set; a remote ref is a candidate only when its tip is in that set and is not HEAD (no
+   `refs/remotes` (and each local branch's `%(upstream)`). **Gate:** remote layers are only considered when
+   HEAD is detached or its branch has no commits beyond its upstream (`rev-list --left-right --count`, reused
+   by the `upstream` note), so the user's own work is never split by copies of it under other names (PR-ref
+   mirrors, older pushes, a fork's upstream). After the first graph load, HEAD's first-parent line
+   above trunk is a set, minus commits any remote's default branch has (one `rev-list --stdin` with each
+   `<remote>/HEAD`, else `main`/`master`/`develop`, excluded; only run when a remote ref is on the line); a remote ref is a candidate only when its tip is in that set and is not HEAD (no
    per-branch merge-base, so 3000 remote branches add no measurable time). Never `<remote>/HEAD`, trunk (full
-   or remote-stripped name), ignore-list matches, or refs whose local copy (a branch tracking it, or of the same
+   or remote-stripped name), PR-head mirrors (`*/pr/*`, `*/pull/*`), aliases of the checked-out branch (its
+   upstream, `@{push}`, refs at their commits, refs named `*/<branch>`), ignore-list matches, or refs whose local copy (a branch tracking it, or of the same
    name) is on the line; a local branch at the same commit wins and the ref goes to the layer's `also`. Several
-   refs at one commit: the current branch's upstream remote, then `origin`, then alphabetical. Chosen refs are
+   refs at one commit: named by an explicit parent, then the previous detection's choice (kept in the
+   detection cache, so a new `origin/aaa-backup` doesn't rename a layer), then the current branch's upstream
+   remote, then `origin`, then alphabetical. Chosen refs are
    added to `branches` (flagged `remote`) and the resolver treats them like local tips; nothing above HEAD is
    added, so they only ever extend the stack downwards. Explicit parents naming a branch present only as a
    remote copy map to it. **Detached HEAD:** a branch at HEAD (local first, else a remote candidate) becomes
    `current`, its layer `detached`; with none there is no stack and a `detached` note. **Keys:** a remote layer's
    `state_branch` drops the remote (`origin/x` -> `x`) and children use the same key as `state_base`, so a
-   local `x` created later inherits marks, comments and guides; local keys are unchanged. When two remotes'
-   refs with the same branch name are both layers, the less preferred keeps its full name. Remote layers are
+   local `x` created later inherits marks, comments and guides; local keys are unchanged. The full name is
+   kept when an unrelated local `x` exists (one not tracking this ref), or when two remotes' refs with the
+   same branch name are both layers (for the less preferred). The CLI (`here()`) resolves a detached HEAD
+   to the newest live session's branch for the worktree, else to the current layer `detect` would pick. Remote layers are
    dimmed with `ro` in the panel, committed-only, and `:RevueyStackParent` refuses them; `rescope` falls back
    to the state key, so the review stays on a layer that just gained a local branch. An `upstream` note reports
-   when the checked-out branch is ahead of or behind its fetched copy (one `rev-list --count`). revuey never
+   when the checked-out branch is ahead of or behind its fetched copy, unless that copy is trunk. revuey never
    fetches.
    **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
    text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,

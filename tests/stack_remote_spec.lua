@@ -127,6 +127,34 @@ h.test('remote_layers: detached HEAD is named after a branch at it (local first)
   h.eq(nil, sel({ detached = true, branches = { main = 'T' }, refs = refs({ ['origin/feat/a'] = 'a2' }) }).current)
 end)
 
+h.test('remote_layers: aliases of the checked-out branch and PR refs are never layers', function()
+  local r = sel({
+    refs = refs({
+      ['origin/pr/12'] = 'a2', ['origin/pull/7/head'] = 'a2', -- PR-head mirrors
+      ['origin/dave/feat/c'] = 'b1', -- its push ref
+      ['fork/x'] = 'b1', -- at the push ref's commit
+      ['fork/feat/c'] = 'a1', -- named */feat/c
+      ['origin/real'] = 'c1',
+    }),
+    aliases = { names = { ['origin/dave/feat/c'] = true }, shas = { b1 = true }, branch = 'feat/c' },
+  })
+  h.eq({ 'origin/real' }, sorted_keys(r.branches))
+end)
+
+h.test('remote_layers: explicit parents, then the previous choice, beat the alphabetical pick', function()
+  local at = refs({ ['origin/aaa-backup'] = 'b1', ['origin/feat/b'] = 'b1' })
+  h.eq({ 'origin/aaa-backup' }, sorted_keys(sel({ refs = at }).branches))
+  h.eq({ 'origin/feat/b' }, sorted_keys(sel({ refs = at, previous = { ['origin/feat/b'] = true } }).branches))
+  h.eq({ 'origin/feat/b' }, sorted_keys(sel({ refs = at, preferred = { ['feat/b'] = true }, previous = { ['origin/aaa-backup'] = true } }).branches))
+end)
+
+h.test('remote_layers: an unrelated local branch of the same name keeps the full key; a tracking one shares it', function()
+  local o = { refs = refs({ ['origin/feat/a'] = 'a2' }), branches = { main = 'T', ['feat/c'] = 'c2', ['feat/a'] = 'X' } }
+  h.eq({ ['origin/feat/a'] = 'origin/feat/a' }, sel(o).keys)
+  o.upstream = { ['feat/a'] = 'origin/feat/a' }
+  h.eq({ ['origin/feat/a'] = 'feat/a' }, sel(o).keys)
+end)
+
 h.test('resolve: remote layers key without the remote; children key their parent the same way', function()
   local graph = { a1 = '', a2 = 'a1', b1 = 'a2', c1 = 'b1', c2 = 'c1' }
   local loaded = {}
@@ -382,6 +410,184 @@ h.test('squash-merged lower layers on the remote: landed, or skipped once the br
   h.eq({ 'origin/stack/cart', 'origin/stack/ui' }, names(st))
   h.eq(1, st.layers[1].skipped)
   h.eq({ 'detached:origin/stack/ui', 'squashed:origin/stack/cart' }, kinds(st.notes))
+end)
+
+h.test('bin/revuey comments in a detached review: the live session\'s scope, else the same resolution', function()
+  local f = remote_fixture('remote-cli')
+  local s = h.open_review({ cwd = f.review, base = '' })
+  h.eq('origin/stack/ui', s.review.branch)
+  local cv, editor = require('revuey.comments_view'), require('revuey.comment_editor')
+  local row
+  for r, e in ipairs(s.layout.map) do
+    if e.kind == 'add' then
+      row = r
+      break
+    end
+  end
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+  cv.add(s, row, row)
+  vim.api.nvim_buf_set_lines(editor.current.buf, 0, -1, false, { 'hello from detached' })
+  editor.save(editor.current)
+  local function run()
+    return vim.system({ h.root .. '/bin/revuey', 'comments' }, {
+      cwd = f.review, env = { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath }, text = true,
+    }):wait(20000)
+  end
+  local res = run()
+  h.ok(res.stdout:find('hello from detached', 1, true), res.stdout .. res.stderr)
+  view.close()
+  res = run() -- no live session: resolved like the UI does
+  h.ok(res.stdout:find('hello from detached', 1, true), res.stdout .. res.stderr)
+end)
+
+-- ---------------------------------------------------------------------------
+-- Your own branch is never split into remote layers (review findings)
+-- ---------------------------------------------------------------------------
+
+local function cm(dir, file, text)
+  local p = vim.fs.joinpath(dir, file)
+  local old = vim.uv.fs_stat(p) and table.concat(vim.fn.readfile(p), '\n') .. '\n' or ''
+  h.write(dir, file, old .. text .. '\n')
+  h.git(dir, 'add', '-A')
+  h.git(dir, 'commit', '-q', '-m', text)
+end
+
+---My own repo: `me` (main + my-feature with m1, m2) and a bare `up.git` as origin.
+local function own_repo(name)
+  local d = h.tmpdir(name)
+  local me = d .. '/me'
+  vim.fn.mkdir(me, 'p')
+  h.git(me, 'init', '-q', '-b', 'main')
+  cm(me, 'f0', 'base')
+  h.git(d, 'clone', '-q', '--bare', me, 'up.git')
+  h.git(me, 'remote', 'add', 'origin', d .. '/up.git')
+  h.git(me, 'fetch', '-q', 'origin')
+  h.git(me, 'remote', 'set-head', 'origin', 'main')
+  h.git(me, 'switch', '-q', '--no-track', '-c', 'my-feature', 'origin/main')
+  cm(me, 'fm', 'm1')
+  cm(me, 'fm', 'm2')
+  return me, d .. '/up.git'
+end
+
+---The plain review of my-feature: no stack, and no note about a remote branch.
+local function plain(me)
+  local st, notes = detect(me)
+  h.eq(nil, st and names(st), 'no stack')
+  for _, n in ipairs(notes or {}) do
+    h.ok(n.kind ~= 'same_commit' and n.kind ~= 'detached', vim.inspect(n))
+  end
+  return notes
+end
+
+h.test('(c) PR refs fetched to origin/pr/*, committed after pushing: no remote layers, with or without -u', function()
+  local me, up = own_repo('own-pr-refs')
+  h.git(me, 'push', '-q', 'origin', 'my-feature')
+  h.git(up, 'update-ref', 'refs/pull/12/head', 'refs/heads/my-feature')
+  h.git(me, 'config', '--add', 'remote.origin.fetch', '+refs/pull/*/head:refs/remotes/origin/pr/*')
+  h.git(me, 'fetch', '-q', 'origin')
+  cm(me, 'fm', 'm3')
+  plain(me)
+  h.git(me, 'branch', '-q', '-u', 'origin/my-feature')
+  local notes = plain(me)
+  h.eq({ 'upstream:my-feature' }, kinds(notes), 'one commit ahead of origin/my-feature')
+  -- pushed again, the PR ref not refetched: HEAD is its upstream, the stale PR ref is no layer
+  h.git(me, 'push', '-q', 'origin', 'my-feature')
+  h.git(me, 'fetch', '-q', 'origin', 'my-feature')
+  plain(me)
+end)
+
+h.test('(d) pushed under another name (my-feature:dave/my-feature), then committed: no remote layers', function()
+  local me = own_repo('own-other-name')
+  h.git(me, 'push', '-q', 'origin', 'my-feature:dave/my-feature')
+  h.git(me, 'fetch', '-q', 'origin')
+  cm(me, 'fm', 'm3')
+  plain(me)
+  -- tracking it, nothing new: still one branch, keyed as before
+  h.git(me, 'reset', '-q', '--hard', 'origin/dave/my-feature')
+  h.git(me, 'branch', '-q', '-u', 'origin/dave/my-feature')
+  plain(me)
+  local r = require('revuey.review').load({ cwd = me, base = 'origin/main', state_dir = state_dir })
+  h.eq({ 'my-feature', 'main' }, { r.state.branch, r.state.base })
+end)
+
+h.test('(e) fork workflow: stale origin/main as trunk, branch from upstream/main: no remote layers', function()
+  local d = h.tmpdir('own-fork')
+  local canon = d .. '/canon'
+  vim.fn.mkdir(canon, 'p')
+  h.git(canon, 'init', '-q', '-b', 'main')
+  cm(canon, 'f0', 'base')
+  h.git(d, 'clone', '-q', '--bare', canon, 'fork.git')
+  cm(canon, 'fu', 'u1')
+  h.git(canon, 'branch', 'release-1.0')
+  h.git(canon, 'checkout', '-q', '-b', 'pr-x')
+  cm(canon, 'fx', 'x1')
+  h.git(canon, 'checkout', '-q', 'main')
+  h.git(canon, 'merge', '-q', '--ff-only', 'pr-x')
+  cm(canon, 'fu', 'u2')
+  h.git(d, 'clone', '-q', '--bare', canon, 'canon.git')
+  h.git(d, 'clone', '-q', 'fork.git', 'me')
+  local me = d .. '/me'
+  h.git(me, 'remote', 'add', 'upstream', d .. '/canon.git')
+  h.git(me, 'fetch', '-q', 'upstream')
+  h.git(me, 'switch', '-q', '-c', 'my-feat', 'upstream/main')
+  cm(me, 'fm', 'm1')
+  plain(me)
+  -- even without tracking (any remote's trunk history is never a layer)
+  h.git(me, 'branch', '-q', '--unset-upstream')
+  plain(me)
+end)
+
+h.test('an unrelated local branch with a layer\'s name keeps its own key; a tracking one shares it', function()
+  local f = remote_fixture('remote-key-collision')
+  h.git(f.review, 'branch', '-q', '--no-track', 'stack/math', 'origin/main')
+  local st = detect(f.review)
+  h.eq({ 'origin/stack/math', 'origin/stack/cart', 'origin/stack/ui' }, names(st))
+  h.eq({ 'origin/stack/math', 'stack/cart', 'stack/ui' }, vim.tbl_map(function(l)
+    return l.state_branch
+  end, st.layers))
+  h.eq('origin/stack/math', st.layers[2].state_base)
+end)
+
+h.test('a branch tracking trunk gets no "ahead of origin/main" note', function()
+  local f = remote_fixture('remote-track-trunk')
+  h.git(f.review, 'switch', '-q', '-c', 'x', 'origin/main')
+  cm(f.review, 'x.txt', 'x1')
+  local _, notes = detect(f.review)
+  h.eq({}, kinds(notes))
+end)
+
+h.test('a new remote branch at a layer\'s commit does not rename the layer across refreshes', function()
+  local f = remote_fixture('remote-stable')
+  local cache = {}
+  local st = stack.detect(f.review, 'origin/main', cache)
+  h.eq('origin/stack/cart', st.layers[2].name)
+  h.git(f.someone, 'push', '-q', f.upstream, 'stack/cart:aaa-backup')
+  h.git(f.review, 'fetch', '-q', 'origin')
+  st = stack.detect(f.review, 'origin/main', cache)
+  h.eq({ 'origin/stack/math', 'origin/stack/cart', 'origin/stack/ui' }, names(st))
+  h.eq({ 'origin/aaa-backup' }, st.layers[2].also)
+end)
+
+h.test('PR refs (*/pr/*, */pull/*) are never layers and make no same-commit notes', function()
+  local f = remote_fixture('remote-pr-refs')
+  for i, b in ipairs({ 'stack/math', 'stack/cart', 'stack/ui' }) do
+    h.git(f.upstream, 'update-ref', 'refs/pull/' .. i .. '/head', 'refs/heads/' .. b)
+  end
+  h.git(f.review, 'config', '--add', 'remote.origin.fetch', '+refs/pull/*/head:refs/remotes/origin/pr/*')
+  h.git(f.review, 'fetch', '-q', 'origin')
+  local st = detect(f.review)
+  h.eq({ 'origin/stack/math', 'origin/stack/cart', 'origin/stack/ui' }, names(st))
+  h.eq({ 'detached:origin/stack/ui' }, kinds(st.notes))
+end)
+
+h.test('detached on trunk: the note says HEAD is on trunk', function()
+  local f = remote_fixture('remote-on-trunk')
+  h.git(f.review, 'switch', '-q', '--detach', 'origin/main')
+  local st, notes = detect(f.review)
+  h.eq(nil, st)
+  h.eq({ 'detached:HEAD' }, kinds(notes))
+  h.ok(notes[1].text:find('on origin/main', 1, true) and not notes[1].text:find('no branch', 1, true), notes[1].text)
 end)
 
 h.test('performance: 3000 unrelated remote branches stay cheap', function()
