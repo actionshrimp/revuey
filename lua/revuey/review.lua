@@ -392,6 +392,52 @@ function M.raw_keys(root, from, to, with_old)
   return keys
 end
 
+---Full text of one side of a file in a review, as comments hash it (context_hash): new is the
+---reviewed snapshot (working-tree mode: the file on disk, or the snapshot taken while loading;
+---committed: the new blob), old is the old blob. nil for binary files and missing sides.
+---`cache`: {heads = {}, blobs = {}} kept by the caller (keyed by blob).
+---@param review revuey.Review
+---@param f revuey.FileDiff
+---@param side 'new'|'old'
+---@param cache? {heads?:table, blobs?:table}
+---@return string?
+function M.side_text(review, f, side, cache)
+  if not f or f.binary then
+    return nil
+  end
+  cache = cache or {}
+  if side == 'new' then
+    if f.new_text then
+      return f.new_text
+    end
+    if not f.new_blob or f.status == 'D' then
+      return nil
+    end
+    local heads = cache.heads or {}
+    cache.heads = heads
+    local t = heads[f.new_blob]
+    if t == nil then
+      if f.worktree then
+        t = git.read_file(vim.fs.joinpath(review.root, f.path)) or false
+      else
+        t = git.blob(f.new_blob, review.root) or false
+      end
+      heads[f.new_blob] = t
+    end
+    return t or nil
+  end
+  local blob = f.old_blob
+  if not blob or f.status == 'A' then
+    return nil
+  end
+  local blobs = cache.blobs or {}
+  cache.blobs = blobs
+  if blobs[blob] == nil then
+    blobs[blob] = git.blob(blob, review.root) or false
+  end
+  return blobs[blob] or nil
+end
+
 ---How hunks are cut into units (units.derive's `split`); nil = one unit per hunk. A hook for
 ---tests until the engine cuts large hunks itself.
 M.split = nil

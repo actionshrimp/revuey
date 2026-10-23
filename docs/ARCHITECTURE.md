@@ -434,14 +434,24 @@ are in `reports/Terminal code review tool landscape.md`.
      created_at, updated_at (ms), file_level, outdated (derived)}`, plus `draft`/`reply_draft` for unsaved
      edits of a saved comment, and the delivery fields of a comment sent to an agent (decision 12):
      `sent_at`, `sent_reply` (the follow-up reply sent, else the body), `acked_at`, `answered_at`. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
-     unique. Only `user` comments are made today; AI review findings (`ai`, `dismissed`/`accepted`), agent
-     replies (`agent`) and the forge's "add to review" (`in_review`) fill the rest.
+     unique. The UI makes `user` comments; `bin/revuey comment` makes `agent` ones (saved, `in_review =
+     false`); agent replies are `agent` too; AI review findings (`ai`, `dismissed`/`accepted`) and the
+     forge's "add to review" (`in_review`) fill the rest. Agent and AI authors are labelled
+     (`claude (agent)` when named) and highlighted `RevueyCommentAgent` in threads, `by …` in the
+     list and the Markdown export.
    - **Anchor.** `{path, side = new|old, start_line, end_line, unit_key, unit_line, hunk_key, hunk_line,
      context_hash, text_hash, context_lines, snippet, sort_line}`. `sort_line` is the anchor's place in new-side order (a deleted line sits just before the next new-side line of its hunk, `n - 0.5`), kept up to date by placement and used to order lists and exports. A range is on the new side when any selected row has a new-side line
      (deleted rows inside it stay in the snippet), else on the old side. `context_hash` is a sha256 of
      the side's lines `start-2 .. end+2` (from the full side text: the reviewed snapshot or new blob, the
      old blob; positions outside the file hash as a marker). `snippet` is the selected rows with
      `+`/`-`/space markers when made.
+     **Anchors from the shell** (`comments.anchor_for_lines`, for `bin/revuey comment`): path, side
+     and lines as given (an old-side range stays old even over context lines), the snippet of the
+     rows from the first line to the last (other-side rows included, as a selection), `sort_line`,
+     and the same `context_hash`/`text_hash`/`context_lines` over the same side text
+     (`review.side_text`, shared with the UI: the working-tree file or loading snapshot for `new` in
+     working-tree mode, the new blob when committed, the old blob for `old`). `unit_key`,
+     `hunk_key` and the offsets are left out: the UI's placement finds them by hash.
    - **Placement** (every render, against the review's files and units, view-independent): the anchor's
      unit still exists (same content, so only shifted) -> the same offset in it; else its parent hunk;
      else the nearest window of rows shown on that side whose hash matches (ties: nearest to the last known
@@ -451,7 +461,11 @@ are in `reports/Terminal code review tool landscape.md`.
      file, where the context changed but the commented code did not); else outdated. Renders after a review change write
      the "last known" lines, unit and outdated flag back (no `updated_at` bump: derived, every instance
      derives the same); renders caused by a live reload never write, so two instances in different modes
-     cannot ping-pong. Rows come from the layout (`comment_index`), so the guide shows the same comments
+     cannot ping-pong, with one exception: a line comment with no unit and hunk yet
+     (`comments.unresolved`, made by the CLI) that placement put in a unit is written at once, with
+     `hunk_line` and `unit_line` (when its last line is in the same unit), exactly as a selection of
+     those rows would have stored them. That happens once per comment, so it cannot ping-pong
+     either; with no UI running the first render of the opened review (which persists) does it. Rows come from the layout (`comment_index`), so the guide shows the same comments
      where it shows the lines; an outdated comment sits at its last known row, else in an "Outdated
      comments" group on the file's last row; a file-level comment under the file header (guide: the
      file's first hunk header). Threads are `virt_lines` in their own namespace and the gutter bar is
@@ -478,7 +492,9 @@ are in `reports/Terminal code review tool landscape.md`.
      flush per line. Neovim turns SIGTERM into a deadly-signal exit, so `bin/revuey` runs `watch` as a
      child and turns TERM/INT/HUP into SIGUSR1, which the script handles with a `Signal` autocmd; it also
      exits when its parent goes away. `reply` merges and saves like the UI, then appends a `replied`
-     event; the running UI picks the file change up.
+     event; `comment` saves a new comment and appends `created`; the running UI picks the file
+     change up (and notifies "the agent commented on …"). Without `--all`, `watch` skips the
+     agent's own events: `replied` by an agent, `created` with an agent author, and `acked`.
    - **Send hook.** The editor's `<C-a>` calls `comments_view.actions.send({session, kind, anchor,
      comment?, text, store})`. The default is `send_to_agent` (decision 12); the later chat panel
      plugs in here.
@@ -492,7 +508,8 @@ are in `reports/Terminal code review tool landscape.md`.
      shows in `git status`) + `/revuey`, then the state dir when that is not writable. Each review
      writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, base, mode,
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
-     server (v:servername), common_dir, started_at, updated_at}`) atomically after its first
+     server (v:servername), common_dir, started_at, updated_at, load {base, from (the merge
+     base), target, mode, context_lines, max_file_bytes}, review (review_info)}`) atomically after its first
      render, rewrites it at the end of any render that changed it (scope, layer, branch) and on
      every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is dead
      when its pid is dead or its `server` (a path) is gone. Staleness alone does not kill it (a
@@ -542,7 +559,21 @@ are in `reports/Terminal code review tool landscape.md`.
      stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
      `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path.
    - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
-     sets `acked_at`/`answered_at` on a sent comment; `ack` sets `acked_at` and appends an `acked`
+     sets `acked_at`/`answered_at` on a sent comment; `comment --path p (--line N [--end M]
+     [--side new|old] | --file) <text|->` leaves a new agent comment. It picks the review like
+     `watch`/`inbox` (`--session`, else the only live one, else exit 2) and loads its diff
+     headlessly with `review.load` from the session's `load` (exact: same base, merge base, stack
+     target, mode and hunk options; one `git diff` plus the working-tree snapshot, well under a
+     second), writing to the session's comments and events files. With no live review it loads
+     what `revuey` opens there: `stack.detect` and the HEAD layer's target (a detached HEAD
+     resolves to the layer of the branch at HEAD), else the plain review against the default
+     branch, in the default state dir; the comment shows when that review is opened. Validation
+     uses that diff: the path must be a changed file (else the first changed paths are listed),
+     every line must be shown on that side (else the nearest hunk ranges and `--file` are
+     suggested), `--end >= --line`, at most `comments.MAX_RANGE` (200) lines. A user config that
+     changes `default_branch` or `context_lines` is only known through a live session's `load`
+     (the CLI runs with `--clean`); a placement mismatch then only means the UI re-anchors by
+     hash. `ack` sets `acked_at` and appends an `acked`
      event (hidden from `watch` unless `--all`; refused for a comment never sent); `inbox`
      prints every unacknowledged message, delivered ones marked "(delivered, not handled)", and
      exits. A short id matching several comments is refused with the candidates. All of

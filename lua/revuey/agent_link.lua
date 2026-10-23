@@ -5,6 +5,7 @@
 -- comments_view.lua (it saves the comment and appends a `sent` event to the feed).
 local api = vim.api
 local sessions = require('revuey.sessions')
+local config = require('revuey.config')
 
 local M = {}
 
@@ -41,6 +42,17 @@ local function entry(s)
     state_dir = c.path and vim.fs.dirname(c.path) or nil,
     server = vim.v.servername ~= '' and vim.v.servername or nil,
     started_at = s.link.started_at,
+    -- what `bin/revuey comment` needs to load this exact review headlessly (review.load): the
+    -- stack target or the plain base, the diff's old side, and the options that shape hunks
+    load = {
+      base = r.base,
+      from = r.merge_base,
+      target = r.target,
+      mode = r.mode,
+      context_lines = config.options.context_lines,
+      max_file_bytes = config.options.max_file_bytes,
+    },
+    review = info,
   }
 end
 
@@ -107,7 +119,6 @@ function M.attach(s)
   if s.link then
     return
   end
-  local config = require('revuey.config')
   local state_dir = s.opts.state_dir or config.options.state_dir or require('revuey.state').default_dir()
   local gd = sessions.git_dir(s.review.root)
   local common = sessions.common_dir(s.review.root)

@@ -277,6 +277,150 @@ function M.anchor_from_rows(files, U, entries, get_line)
   return a
 end
 
+M.MAX_RANGE = 200 -- lines a comment from the shell may span
+
+---Line ranges a side of a file's hunks shows: { {first, last}, ... } in file order.
+function M.hunk_ranges(f, side)
+  local out = {}
+  for _, hk in ipairs(f and f.hunks or {}) do
+    local lo, hi
+    for _, l in ipairs(hk.lines) do
+      local n = side_lnum(l, side)
+      if n then
+        lo, hi = math.min(lo or n, n), math.max(hi or n, n)
+      end
+    end
+    if lo then
+      out[#out + 1] = { lo, hi }
+    end
+  end
+  return out
+end
+
+---The changed files of a review that `path` is not one of, as a message listing a few of them.
+local function not_changed(files, path)
+  local paths = {}
+  for _, f in ipairs(files) do
+    paths[#paths + 1] = f.path
+  end
+  if #paths == 0 then
+    return ('%s is not a changed file in this review (the review has no changes)'):format(path)
+  end
+  local shown = vim.list_slice(paths, 1, 8)
+  local more = #paths > #shown and ('\n  ... and %d more'):format(#paths - #shown) or ''
+  return ('%s is not a changed file in this review; changed files:\n  %s%s'):format(path, table.concat(shown, '\n  '), more)
+end
+
+---"Nearest hunks" message for lines `first..last` of a side that the diff does not show.
+local function not_in_diff(f, side, first, last)
+  local loc = first == last and ('%s:%d'):format(f.path, first) or ('%s:%d-%d'):format(f.path, first, last)
+  local ranges = M.hunk_ranges(f, side)
+  if #ranges == 0 then
+    local why = #f.hunks == 0 and 'the file has no text diff (binary, too large, a rename or a mode change)'
+      or ('the diff has no %s side for it (%s)'):format(side, side == 'old' and 'an added file' or 'a deleted file')
+    return ('%s (%s) is not in the diff: %s. Comment on the whole file with --file'):format(loc, side, why)
+  end
+  local function dist(r)
+    if last < r[1] then
+      return r[1] - last
+    elseif first > r[2] then
+      return first - r[2]
+    end
+    return 0
+  end
+  local near = vim.deepcopy(ranges)
+  table.sort(near, function(x, y)
+    local dx, dy = dist(x), dist(y)
+    if dx ~= dy then
+      return dx < dy
+    end
+    return x[1] < y[1]
+  end)
+  near = vim.list_slice(near, 1, 3)
+  table.sort(near, function(x, y)
+    return x[1] < y[1]
+  end)
+  local txt = vim.tbl_map(function(r)
+    return r[1] == r[2] and tostring(r[1]) or (r[1] .. '-' .. r[2])
+  end, near)
+  return ('%s (%s) is not in the diff: every line must be inside a hunk on that side. Nearest hunk%s: %s %s. Pick lines inside a hunk (--side old for deleted lines), or comment on the whole file with --file'):format(
+    loc,
+    side,
+    #near == 1 and '' or 's',
+    side,
+    table.concat(txt, ', ')
+  )
+end
+
+---Anchor for lines given by number (`bin/revuey comment`), from the review's diff, without a UI:
+---the same hashes, snippet and order as a selection of those rows in the UI. The unit and hunk
+---are left for the UI's placement to fill in (it re-anchors by `context_hash` and stores them,
+---see apply_placement). Every line must be shown on that side (inside a hunk); without
+---`start_line` the anchor is file level. Returns nil and a message for a path that is not in the
+---review or lines outside the hunks.
+---@param files revuey.FileDiff[]
+---@param U revuey.Units
+---@param want {path:string, side?:'new'|'old', start_line?:integer, end_line?:integer}
+---@param get_line fun(path:string, side:string, lnum:integer):string?
+---@return revuey.CommentAnchor?, string? err
+function M.anchor_for_lines(files, U, want, get_line)
+  local path = want.path
+  local fi = U.by_path[path]
+  if not fi then
+    return nil, not_changed(files, path)
+  end
+  if not want.start_line then
+    return M.file_anchor(path)
+  end
+  local f = files[fi]
+  local side = want.side or 'new'
+  local first, last = want.start_line, want.end_line or want.start_line
+  local at = {} -- lnum -> the row showing it on that side
+  for hi, hk in ipairs(f.hunks) do
+    for li, l in ipairs(hk.lines) do
+      local n = side_lnum(l, side)
+      if n and n >= first and n <= last and not at[n] then
+        at[n] = { hi = hi, li = li }
+      end
+    end
+  end
+  for n = first, last do
+    if not at[n] then
+      return nil, not_in_diff(f, side, first, last)
+    end
+  end
+  local a1, a2 = at[first], at[last]
+  local snippet = {}
+  if a1.hi == a2.hi then
+    -- every row from the first line to the last, like a selection (other-side rows included)
+    local hk = f.hunks[a1.hi]
+    for li = a1.li, a2.li do
+      local l = hk.lines[li]
+      snippet[#snippet + 1] = MARK[l.kind] .. l.text
+    end
+  else
+    for n = first, last do
+      local l = f.hunks[at[n].hi].lines[at[n].li]
+      snippet[#snippet + 1] = MARK[l.kind] .. l.text
+    end
+  end
+  local a = { path = path, side = side, start_line = first, end_line = last, snippet = snippet }
+  a.sort_line = sort_line(f.hunks[a1.hi], a1.li)
+  local function get(l)
+    return get_line(path, side, l)
+  end
+  a.context_hash = M.window_hash(get, first, last)
+  local texts = {}
+  for l = first, last do
+    texts[#texts + 1] = get(l)
+  end
+  a.text_hash = M.text_hash(get, first, last)
+  if M.distinctive_words(texts) >= M.MIN_WORDS then
+    a.context_lines = M.context_lines(get, first, last)
+  end
+  return a
+end
+
 ---Anchor for a whole file.
 function M.file_anchor(path)
   return { path = path, side = 'new' }
@@ -495,7 +639,10 @@ function M.place(c, ctx)
     if best then
       local r = rows.by_lnum[best]
       local unit = require('revuey.units').at_line(U, r.fi, r.hi, r.li)
+      local r2 = rows.by_lnum[best + n]
       return {
+        -- the hunk line of the last commented line, when in the same hunk (apply_placement)
+        end_hunk_line = r2 and r2.fi == r.fi and r2.hi == r.hi and r2.li or nil,
         start_line = best,
         end_line = best + n,
         outdated = false,
@@ -508,6 +655,13 @@ function M.place(c, ctx)
     end
   end
   return out
+end
+
+---A line comment whose anchor has no unit or hunk yet (made by `bin/revuey comment`): the UI
+---stores the ones its placement finds, even on a live reload (once: then they are set).
+function M.unresolved(c)
+  local a = c and c.anchor
+  return a ~= nil and not c.file_level and a.start_line ~= nil and a.unit_key == nil and a.hunk_key == nil
 end
 
 ---Update a comment's stored anchor from its placement ("last known" lines, unit and hunk; the
@@ -533,9 +687,17 @@ function M.apply_placement(c, p)
       set(a, 'sort_line', p.sort_line)
     end
     if p.unit then
+      -- an anchor made without the UI (`bin/revuey comment`) has no unit yet: this placement
+      -- gives it one, with the offsets a selection of the same rows would have had
+      local fresh = M.unresolved(c)
       set(a, 'unit_key', p.unit.key)
       set(a, 'hunk_key', p.unit.hunk)
-      if a.hunk_line ~= nil or a.unit_line ~= nil then
+      if fresh and p.hunk_line then
+        set(a, 'hunk_line', p.hunk_line)
+        if p.unit.whole_file or (p.end_hunk_line and p.end_hunk_line <= (p.unit.last or p.end_hunk_line)) then
+          set(a, 'unit_line', p.hunk_line - (p.unit.first or 1))
+        end
+      elseif a.hunk_line ~= nil or a.unit_line ~= nil then
         set(a, 'hunk_line', p.hunk_line)
         set(a, 'unit_line', p.hunk_line - (p.unit.first or 1))
       end
@@ -636,6 +798,33 @@ end
 -- ---------------------------------------------------------------------------
 -- Storage
 -- ---------------------------------------------------------------------------
+
+---What the comments file and events record about a loaded review (review.lua; `stack` and
+---`scope` set when it is a stack scope): export headers, CLI filters.
+function M.review_info(r)
+  local info = {
+    repo = r.state.repo,
+    branch = r.branch,
+    base = r.base,
+    state_branch = r.state.branch,
+    state_base = r.state.base,
+    head = r.head,
+    merge_base = r.merge_base,
+    mode = r.mode,
+    scope = 'branch',
+  }
+  if r.stack and r.scope then
+    if r.scope.kind == 'full' then
+      info.scope = 'full'
+      info.layers = vim.tbl_map(function(l)
+        return l.name
+      end, r.stack.layers)
+    else
+      info.scope = 'layer'
+    end
+  end
+  return info
+end
 
 ---Comments file of a review scope: next to its reviewed-marks file (state.file_for).
 function M.path_for(state_path)
