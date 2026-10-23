@@ -91,6 +91,9 @@ M.defaults = {
     -- panel: open the pull request of the layer under the cursor (else the one being viewed) in
     -- the browser. `go` already opens files in the diff, so this uses `gx` ("open URL").
     forge_open = 'gx',
+    -- edit the real file at this line in a float (working-tree mode, checked-out layer only).
+    -- `ge` (backward to the end of a word) means little in a read-only review buffer.
+    edit = 'ge',
   },
   comments = {
     max_lines = 6, -- longer threads are cut ("… N more lines", comment_expand shows all)

@@ -252,6 +252,9 @@ function M.doc(s, width, diagram_width)
     if res.new > 0 then
       parts[#parts + 1] = plural(res.new, 'new hunk')
     end
+    if (res.edited or 0) > 0 then
+      parts[#parts + 1] = plural(res.edited, 'hunk') .. ' edited'
+    end
     local key = config.options.keymaps.regenerate_guide
     line(doc, '', nil, 'blank')
     add_prose(doc, ('> [!WARNING] The diff changed since this guide was generated (%s). Press `%s` to regenerate.'):format(
@@ -303,6 +306,7 @@ function M.doc(s, width, diagram_width)
         note = note,
         section_idx = si,
         layers = h.layers,
+        edited = item.edited,
       }
     end
   end

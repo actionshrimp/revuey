@@ -35,6 +35,13 @@ is available.
   can reach GitHub. PR fetching is tested against a local bare
   repository acting as `origin`, with `refs/pull/N/head` refs created by the test.
 
+LSP specs that show a TypeScript buffer in a window while a review is open (the edit float in
+`edit_float_spec.lua`) turn LSP semantic tokens off: with them on, headless Neovim 0.12.4 on
+macOS crashed intermittently (SIGSEGV deleting or clearing an augroup), with or without the float.
+One cause was found and fixed (`syntax.lua` loads `vim.treesitter` up front, since its first
+`require` inside a decoration provider creates an augroup during a redraw); the remaining crash
+was not traced to revuey.
+
 ## Running
 - `make test` runs everything; each spec runs in a fresh `nvim --headless --clean` so specs cannot leak state.
 - Specs must not depend on the developer's own Neovim config, parsers excepted: tests that need a tree-sitter parser
