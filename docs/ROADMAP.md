@@ -56,7 +56,7 @@ sequence; later items build on earlier ones.
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
    **Stacks without local branches.** Reviewing someone else's stack from a worktree at its top shouldn't need
-   local branches for the intermediate PRs. **Git half: done** (see Done): remote-tracking branches on HEAD's
+   local branches for the intermediate PRs. **Git half: done** (see Done): with HEAD detached, remote-tracking branches on HEAD's
    own line between trunk and HEAD are layers below HEAD (remote branches above HEAD are not used), a local
    branch wins over its remote copy, a detached HEAD at a branch tip uses that branch, state keys strip the
    remote prefix, and remote-only layers are dimmer and read-only. **Left: the GitHub half.** When the stack
