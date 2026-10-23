@@ -9,6 +9,9 @@ local UPDATE = os.getenv('REVUEY_UPDATE_SCREENSHOTS') == '1'
 local SHOTS = h.root .. '/tests/screenshots'
 
 local child = MiniTest.new_child_neovim()
+h.teardown(function()
+  child.stop() -- tests run inside h.run(): stop the child after them
+end)
 
 local function screenshot(name)
   -- reference_screenshot() records notes on the current case; we run outside MiniTest.run().
@@ -538,5 +541,4 @@ h.test('agent link: connected indicator, sent and answered markers', function()
   screenshot('agent-link')
 end)
 
-child.stop()
 h.run()

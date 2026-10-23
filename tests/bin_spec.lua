@@ -134,5 +134,7 @@ h.test('bin/revuey passes arguments through (--stack on the stack fixture)', fun
   h.ok(cap():find('REVUEY_EXIT=0', 1, true), cap())
 end)
 
-tmux('kill-server')
+h.teardown(function()
+  tmux('kill-server')
+end)
 h.run()

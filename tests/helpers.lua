@@ -226,6 +226,25 @@ function M.test(name, fn)
   tests[#tests + 1] = { name = name, fn = fn }
 end
 
+local teardowns = {}
+
+---Run `fn` after the spec's tests (in M.run, last registered first), whatever they did: stop
+---child Neovims, tmux servers and other processes a spec started. Tests only run inside M.run,
+---so cleanup written after the test definitions would run before them.
+function M.teardown(fn)
+  teardowns[#teardowns + 1] = fn
+end
+
+---A mini.test child Neovim, stopped after the spec's tests (M.teardown).
+function M.child()
+  local MiniTest = dofile(M.root .. '/tests/vendor/mini/test.lua')
+  local child = MiniTest.new_child_neovim()
+  M.teardown(function()
+    child.stop()
+  end)
+  return child
+end
+
 function M.eq(expected, actual, msg)
   if not vim.deep_equal(expected, actual) then
     error(
@@ -277,6 +296,14 @@ function M.run()
     else
       failures = failures + 1
       io.write('  FAIL ' .. file .. ' :: ' .. t.name .. '\n' .. tostring(err) .. '\n')
+    end
+  end
+  io.flush()
+  for i = #teardowns, 1, -1 do
+    local ok, err = pcall(teardowns[i])
+    if not ok then
+      failures = failures + 1
+      io.write('  FAIL teardown: ' .. tostring(err) .. '\n')
     end
   end
   io.flush()

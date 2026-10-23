@@ -484,12 +484,17 @@ end
 
 local function scope_text(e)
   local sc = e.scope or {}
+  local t = 'branch'
   if sc.kind == 'full' then
-    return 'full stack'
+    t = 'full stack'
   elseif sc.kind == 'layer' then
-    return 'stack layer'
+    t = 'stack layer'
   end
-  return 'branch'
+  -- the worktree's branch, when the review shows another layer (`gS` changes it)
+  if e.checked_out and e.checked_out ~= e.branch then
+    t = t .. ', checked out: ' .. e.checked_out
+  end
+  return t
 end
 
 function M.sessions(o)

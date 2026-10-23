@@ -10,10 +10,14 @@
 --     switch to it anyway, or cancel); else `git switch --track origin/x` creates `x`;
 --   * already on it: nothing to do. Detached at the layer's tip is not "on it": the switch
 --     attaches HEAD to the branch;
---   * refused when tracked files have changes (staged, unstaged, deleted, conflicts): revuey
---     never stashes. Untracked files are carried over as git does, unless the target has a file
---     at the same path (git would refuse to overwrite it): those are named;
---   * refused when the branch is checked out in another worktree (git refuses; we name the path).
+--   * refused when tracked files have changes (staged, unstaged, deleted, conflicts; submodule
+--     pointers and contents are ignored: git switch leaves submodule checkouts alone): revuey
+--     never stashes. Untracked files are carried over as git does, unless the switch would write
+--     a file at their path (or under a file in their place): untracked and ignored ones alike
+--     (git would refuse for untracked files and silently overwrite ignored ones). They are named;
+--   * refused when the branch is checked out in another worktree (git refuses; we name the path);
+--   * a layer above a remote-tracking layer gets `branch.<b>.revueyParent` set to it (`set_parent`),
+--     since on a local branch remote refs are only layers when a parent setting names them.
 local git = require('revuey.git')
 local stack_mod = require('revuey.stack')
 
@@ -150,8 +154,21 @@ function M.msg.dirty(target, paths)
 end
 
 function M.msg.untracked(target, paths)
-  return ('revuey: not switching to %s: it has files at the paths of untracked %s. Move or remove them first.')
+  return ('revuey: not switching to %s: it has files at the paths of untracked or ignored %s. Move or remove them first.')
     :format(target, M.list(paths))
+end
+
+function M.msg.unsaved(target, paths)
+  return ('revuey: not switching to %s: unsaved changes in buffers for %s. Write or discard them first.')
+    :format(target, M.list(paths))
+end
+
+function M.msg.busy()
+  return 'revuey: a switch is already running; this one is dropped'
+end
+
+function M.msg.hook(target, err)
+  return ('revuey: switched to %s, but git reported an error (a hook?): %s'):format(target, err)
 end
 
 function M.msg.elsewhere(branch, path)
@@ -187,6 +204,89 @@ function M.msg.done(p, note)
     text = ('revuey: switched to %s'):format(p.branch)
   end
   return text .. (note and ('; ' .. note) or '')
+end
+
+---Which paths would the switch write over? `changes`: {status, path} from `git diff --name-status
+---HEAD <target>`; `kind(path)`: 'file', 'directory' or nil for what is in the worktree there. Clean
+---tracked files are already known; so anything at an added path (or a non-directory in place of
+---one of its parent directories) is untracked or ignored. A directory at an added path only
+---collides when the switch removes nothing under it (it holds no tracked files). Pure.
+---@param changes {[1]:string, [2]:string}[]
+---@param kind fun(path:string):string?
+---@return string[] sorted
+function M.collisions(changes, kind)
+  local removed, hits, seen = {}, {}, {}
+  for _, c in ipairs(changes) do
+    if c[1] == 'D' then
+      removed[c[2]] = true
+    end
+  end
+  local function removes_under(dir)
+    for path in pairs(removed) do
+      if vim.startswith(path, dir .. '/') then
+        return true
+      end
+    end
+    return false
+  end
+  local function hit(path)
+    if not seen[path] then
+      seen[path] = true
+      hits[#hits + 1] = path
+    end
+  end
+  for _, c in ipairs(changes) do
+    if c[1] == 'A' then
+      local path = c[2]
+      local k = kind(path)
+      if k == 'directory' then
+        if not removes_under(path) then
+          hit(path)
+        end
+      elseif k then
+        hit(path)
+      else
+        -- a file (or link) where the target needs a directory
+        local dir = vim.fs.dirname(path)
+        while dir and dir ~= '.' and dir ~= '' and dir ~= '/' do
+          local dk = kind(dir)
+          if dk and dk ~= 'directory' and not removed[dir] then
+            hit(dir)
+            break
+          end
+          dir = vim.fs.dirname(dir)
+        end
+      end
+    end
+  end
+  table.sort(hits)
+  return hits
+end
+
+---The parent setting to record when checking out `layers[index]` as plan `p`: the layer below's
+---name when it is a remote-tracking layer (on a local branch, remote refs are layers only when a
+---parent setting names them) and the layer's parent was inferred (a revuey or Graphite setting
+---already says it). Never for the bottom layer (its parent is trunk), never for a branch other
+---than the layer's own (the "switch anyway" to an unrelated local branch), never itself. Pure.
+---@param layers revuey.Layer[]
+---@param index integer
+---@param p revuey.SwitchPlan
+---@return string?
+function M.parent_setting(layers, index, p)
+  local layer, below = layers[index], layers[index - 1]
+  if not (layer and below and below.remote) then
+    return nil
+  end
+  if layer.source ~= 'inferred' or layer.parent ~= below.name then
+    return nil
+  end
+  if layer.remote and not p.ref then
+    return nil -- an unrelated local branch of the same name
+  end
+  if p.branch == below.name then
+    return nil
+  end
+  return below.name
 end
 
 ---What `]s`/`[s` with switch_on_navigate say when the switch is refused: the view moved anyway.
@@ -240,27 +340,39 @@ function M.check(root, p, target_rev)
       return M.msg.elsewhere(p.branch, at)
     end
   end
-  local st = M.parse_status(git.git({ 'status', '--porcelain=v1', '-z', '--untracked-files=all' }, root))
+  local st = M.parse_status(git.git({ 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all' }, root))
   if #st.tracked > 0 then
     return M.msg.dirty(p.branch, st.tracked)
   end
-  if #st.untracked > 0 and target_rev then
-    -- untracked files are kept, as git does, unless the target has a file there
-    local args = { '--literal-pathspecs', 'ls-tree', '-r', '-z', '--name-only', target_rev, '--' }
-    vim.list_extend(args, vim.list_slice(st.untracked, 1, 500))
-    local hit = {}
-    for _, path in ipairs(vim.split(git.git(args, root) or '', '\0', { trimempty = true })) do
-      hit[#hit + 1] = path
+  if target_rev then
+    -- what the switch writes that is not in HEAD: anything on disk there is untracked or ignored
+    local out = git.git({ 'diff', '--name-status', '-z', '--no-renames', '--ignore-submodules=all', 'HEAD', target_rev, '--' }, root) or ''
+    local parts = vim.split(out, '\0', { trimempty = true })
+    local changes = {}
+    for i = 1, #parts - 1, 2 do
+      changes[#changes + 1] = { parts[i], parts[i + 1] }
     end
-    table.sort(hit)
-    if #hit > 0 then
-      return M.msg.untracked(p.branch, hit)
+    local hits = M.collisions(changes, function(path)
+      local stat = vim.uv.fs_lstat(vim.fs.joinpath(root, path))
+      return stat and stat.type or nil
+    end)
+    if #hits > 0 then
+      return M.msg.untracked(p.branch, hits)
     end
   end
 end
 
+---Record the layer below as the explicit stack parent of `branch` (`branch.<b>.revueyParent`;
+---`git branch -d` removes it with the branch).
+function M.set_parent(root, branch, parent)
+  return git.git({ 'config', 'branch.' .. branch .. '.revueyParent', parent }, root)
+end
+
 ---Run the plan's `git switch`. Returns nil, or an error message (git's own, with the path of
 ---another worktree when git names one).
+---A failing `post-checkout` hook makes git exit non-zero after HEAD moved: then the second value
+---is a warning and the switch counts as done.
+---@return string? err, string? warning
 function M.run(root, p)
   local cmd = { 'git', 'switch', '--quiet' }
   vim.list_extend(cmd, vim.list_slice(p.args, 2))
@@ -269,6 +381,9 @@ function M.run(root, p)
     return nil
   end
   local err = vim.trim(res.stderr or '')
+  if git.current_branch(root) == p.branch then
+    return nil, M.msg.hook(p.branch, (err:gsub('\n', ' ')))
+  end
   local path = err:match("already used by worktree at '([^']+)'") or err:match("already checked out at '([^']+)'")
   if path then
     return M.msg.elsewhere(p.branch, path)
