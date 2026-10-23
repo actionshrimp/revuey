@@ -80,13 +80,30 @@ function M.now_ms()
 end
 
 local seeded = false
----A sortable unique id: 11 hex digits of milliseconds, then 5 random ones.
+local last_ms, last_suffix = -1, 0
+local SUFFIX_MAX = 0xfffff
+---A sortable unique id: 11 hex digits of milliseconds, then 5 more. The first id of a
+---millisecond gets a random suffix (seeded with the pid, so other processes are unlikely to
+---collide); later ones in the same (or an earlier) millisecond count up from the last id, carrying
+---into the milliseconds, so ids from one process are strictly increasing and never repeat.
 function M.new_id(ms)
   if not seeded then
     seeded = true
     math.randomseed((vim.uv.hrtime() + vim.uv.os_getpid() * 7919) % 2147483647)
   end
-  return ('%011x%05x'):format(ms or M.now_ms(), math.random(0, 0xfffff))
+  ms = ms or M.now_ms()
+  local suffix
+  if ms <= last_ms then
+    ms, suffix = last_ms, last_suffix + 1
+    if suffix > SUFFIX_MAX then
+      ms, suffix = ms + 1, 0
+    end
+  else
+    -- leave room to count up within the millisecond
+    suffix = math.random(0, 0x7ffff)
+  end
+  last_ms, last_suffix = ms, suffix
+  return ('%011x%05x'):format(ms, suffix)
 end
 
 -- ---------------------------------------------------------------------------

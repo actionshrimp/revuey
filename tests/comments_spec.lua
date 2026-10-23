@@ -70,10 +70,28 @@ h.test('new: fields, sortable unique ids, location', function()
     h.eq(16, #id)
     h.ok(not seen[id], 'unique')
     seen[id] = true
-    if i > 50 and math.floor(i / 50) > math.floor((i - 1) / 50) then
-      h.ok(id > ids[i - 1], 'later ms sorts later')
+    if i > 1 then
+      h.ok(id > ids[i - 1], 'strictly increasing, also within one millisecond')
     end
   end
+end)
+
+h.test('new_id: 10k ids in one millisecond, no duplicates, still increasing (suffix carries over)', function()
+  local seen, prev = {}, nil
+  for _ = 1, 10000 do
+    local id = comments.new_id(5000)
+    h.eq(16, #id)
+    h.ok(not seen[id], 'duplicate ' .. id)
+    seen[id] = true
+    h.ok(not prev or id > prev, 'not increasing: ' .. tostring(prev) .. ' ' .. id)
+    prev = id
+  end
+  -- past the suffix range: carries into the milliseconds, never wraps
+  local a = comments.new_id(5000)
+  for _ = 1, 0x100000 - 10000 do
+    comments.new_id(5000)
+  end
+  h.ok(comments.new_id(5000) > a, 'carry keeps order')
 end)
 
 h.test('anchor: new side for a range with a deletion inside, snippet with markers, unit and hunk', function()
