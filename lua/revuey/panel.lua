@@ -7,6 +7,7 @@ local M = {}
 local ns = vim.api.nvim_create_namespace('revuey.panel')
 local ns_cur = vim.api.nvim_create_namespace('revuey.panel.current')
 local ns_sec = vim.api.nvim_create_namespace('revuey.panel.section')
+local ns_hint = vim.api.nvim_create_namespace('revuey.panel.hint')
 
 local status_hl = {
   A = 'RevueyStatusAdded',
@@ -181,6 +182,56 @@ local function render_stack(s, add, add_virt, width)
   add_virt(row, stats_virt(stack.full_stats, full_sel and live or nil))
   M.render_notes(s, add, width)
   add('')
+end
+
+---First key of a keymap option (nil when disabled).
+local function first_key(name)
+  local k = require('revuey.config').options.keymaps[name]
+  if type(k) == 'table' then
+    k = k[1]
+  end
+  return k or nil
+end
+
+---What `gS` would do on a layer, as a short hint (nil: it is checked out already).
+---@param l revuey.Layer
+function M.switch_hint(l)
+  local key = first_key('switch_layer')
+  if not key or (l.is_head and not l.detached) then
+    return nil
+  end
+  if not l.remote then
+    return ('%s check out %s here'):format(key, l.name)
+  end
+  local short = l.state_branch ~= l.name and l.state_branch or l.name:match('^[^/]+/(.+)$') or l.name
+  if l.local_copy then
+    return ('%s switch to %s (tracks it)'):format(key, l.local_copy)
+  elseif l.state_branch == l.name then
+    return ('%s: a local %s exists; asks first'):format(key, short)
+  end
+  return ('%s creates local branch %s'):format(key, short)
+end
+
+---The `gS` hint under the layer row the panel cursor is on, while the panel has focus.
+function M.update_hint(s)
+  local buf = s.panel_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, ns_hint, 0, -1)
+  local win = s.panel_win
+  if not (win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_get_current_win() == win) then
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(win)[1]
+  local idx = s.panel_layers and s.panel_layers[row]
+  local layer = type(idx) == 'number' and s.review.stack and s.review.stack.layers[idx]
+  local text = layer and M.switch_hint(layer)
+  if text then
+    vim.api.nvim_buf_set_extmark(buf, ns_hint, row - 1, 0, {
+      virt_lines = { { { '     ' .. text, 'Comment' } } },
+    })
+  end
 end
 
 ---Key that opens the stack notes float (first one when several are mapped).
@@ -418,6 +469,10 @@ function M.render(s, o)
   local has_notes = nk and (#(r.stack and r.stack.notes or r.notes or {}) > 0 or #(r.stack and r.stack.ignored or r.notes_ignored or {}) > 0)
   if r.stack then
     help[#help + 1] = ' ]s [s layer  gs full stack' .. (has_notes and ('  ' .. nk .. ' notes') or '')
+    local sk = first_key('switch_layer')
+    if sk then
+      help[#help + 1] = ' ' .. sk .. ' check out layer'
+    end
   elseif has_notes then
     help[#help + 1] = ' ' .. nk .. ' branch notes'
   end
@@ -461,6 +516,7 @@ function M.render(s, o)
     end)
     s.syncing = false
   end
+  M.update_hint(s)
   if s.forge then
     s.forge.drawn = forge_view.signature(s)
   end

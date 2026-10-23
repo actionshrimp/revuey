@@ -23,7 +23,7 @@
 22| gu committed/working tree  q close     │      1 + import { formatCurrency } from "../format";                          
 23| gG AI guide                            │      2 + import { Cart } from "../cart";                                      
 24| ]s [s layer  gs full stack  ! notes    │      3 +                                                                      
-25|~                                       │      4 + export function Total(props: { cart: Cart }) {                       
+25| gS check out layer                     │      4 + export function Total(props: { cart: Cart }) {                       
 26|~                                       │      5 +   return <strong className="total">{formatCurrency(props.cart.total()
 27|~                                       │      6 + }                                                                    
 28|~                                       │                                                                               
@@ -55,7 +55,7 @@
 22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 23|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

@@ -22,7 +22,7 @@
 21| gu committed/working tree  q close     │                                                                     
 22| gG AI guide                            │                                                                     
 23| ]s [s layer  gs full stack  ! notes    │                                                                     
-24|~                                       │                                                                     
+24| gS check out layer                     │                                                                     
 25|~                                       │                                                                     
 26|~                                       │                                                                     
 27|~                                       │                                                                     
@@ -56,7 +56,7 @@
 21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 22|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 23|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-24|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+24|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 25|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
