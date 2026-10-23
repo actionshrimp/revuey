@@ -83,11 +83,27 @@ M.defaults = {
     -- comment_send sends. `ga` (show the character code) means nothing in a review buffer, and
     -- unlike <leader>a it cannot collide with a user's global leader mappings.
     ask_agent = 'ga',
+    -- panel: open the pull request of the layer under the cursor (else the one being viewed) in
+    -- the browser. `go` already opens files in the diff, so this uses `gx` ("open URL").
+    forge_open = 'gx',
   },
   comments = {
     max_lines = 6, -- longer threads are cut ("… N more lines", comment_expand shows all)
     width = 100, -- max width of a thread box (else the window's text width)
   },
+  -- Pull requests on GitHub: number and review status on stack rows (or a plain review's title)
+  -- and a detail section for the layer being viewed. Runs your own `gh` (assumed logged in) once
+  -- per refresh for all layers; results are cached per repo for `ttl` seconds. Any failure
+  -- (no gh, offline, rate limits) shows nothing and is written to the log file.
+  forge = {
+    enabled = true,
+    ttl = 60,
+    cmd = 'gh',
+    -- GitHub Enterprise hosts (github.com and hosts with "github" in their name are known)
+    hosts = {},
+  },
+  -- Quiet diagnostics (e.g. why the PR lookup failed). nil = stdpath('log')/revuey.log
+  log_file = nil,
   -- AI guided review. Runs your own `claude` CLI (logged in); revuey never reads credentials.
   ai = {
     provider = 'claude',

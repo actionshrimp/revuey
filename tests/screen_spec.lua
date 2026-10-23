@@ -246,6 +246,45 @@ h.test('stack: mixed local and remote-tracking layers, detached HEAD', function(
   screenshot('stack-remote-layer')
 end)
 
+-- Pull requests from a fake `gh`: `#N` and the review state on each layer row, and the detail
+-- section of the viewed layer (stack/cart) under the stack.
+h.test('stack with pull requests: PR rows and the detail section', function()
+  local d = h.tmpdir('screen-forge')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  local function pr(o)
+    return vim.tbl_extend('keep', o, {
+      url = 'https://github.com/acme/shop/pull/' .. o.number, state = 'OPEN', isDraft = false,
+      author = { login = 'alice' }, latestReviews = { nodes = {} }, reviewRequests = { nodes = {} },
+      mergeable = 'MERGEABLE', headRepositoryOwner = { login = 'acme' }, commits = { nodes = {} },
+    })
+  end
+  h.use_fake_gh(h.tmpdir('screen-forge-gh') .. '/calls.ndjson', {
+    ['acme/shop:stack/math'] = { pr({ number = 41, title = 'Math helpers', state = 'MERGED', baseRefName = 'main', headRefName = 'stack/math' }) },
+    ['acme/shop:stack/cart'] = { pr({
+      number = 42, title = 'Cart totals with discounts', baseRefName = 'stack/math', headRefName = 'stack/cart',
+      reviewDecision = 'CHANGES_REQUESTED',
+      latestReviews = { nodes = { { author = { login = 'carol' }, state = 'CHANGES_REQUESTED' }, { author = { login = 'dan' }, state = 'APPROVED' } } },
+      reviewRequests = { nodes = { { requestedReviewer = { login = 'bob' } } } },
+      commits = { nodes = { { commit = { statusCheckRollup = { state = 'FAILURE', contexts = {
+        checkRunCountsByState = { { state = 'SUCCESS', count = 12 }, { state = 'FAILURE', count = 1 }, { state = 'QUEUED', count = 2 } },
+        statusContextCountsByState = {},
+      } } } } } },
+    }) },
+    ['acme/shop:stack/ui'] = { pr({ number = 43, title = 'Cart UI', isDraft = true, baseRefName = 'stack/cart', headRefName = 'stack/ui' }) },
+  })
+  start(d, '', 40, 120)
+  h.ok(child.lua([[
+    return vim.wait(10000, function()
+      local s = require('revuey.view').session
+      return s and not s.refreshing and s.review.stack and s.review.stack.full_stats ~= nil
+        and s.forge and s.forge.ready and not s.forge.busy and s.panel_forge ~= nil
+    end, 10)
+  ]]), 'PRs did not load')
+  screenshot('forge-stack')
+end)
+
 -- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
 -- panel, and `!` opens the details float.
 h.test('stack notes: panel summary line and the details float', function()
