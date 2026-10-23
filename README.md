@@ -171,13 +171,23 @@ git worktree add --detach ../review-their-stack origin/their-top-branch   # or: 
 cd ../review-their-stack && revuey
 ```
 
+- **Only for someone else's stack:** remote-tracking layers are used only when HEAD is detached,
+  or its branch has no commits of its own beyond its upstream. Your own branch with unpushed
+  commits is never split into layers by copies of it on a remote (a PR ref, an older push under
+  another name, a fork's upstream). So reviewing a colleague's stack from a local tracking branch
+  stops showing remote layers once you commit on it; detach (or reset to its upstream) to get
+  them back.
 - **Remote-tracking layers below HEAD:** a branch under `refs/remotes/<remote>/` counts when its
-  tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD. Remote branches
-  above HEAD or on other lines are never used, nor are `<remote>/HEAD`, the trunk and branches on
-  the [ignore list](#stack-notes) (for remote branches it does keep them out of the stack). This is one ref listing plus set lookups, so thousands of
-  remote branches cost next to nothing.
+  tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD, and no remote's
+  default branch (`origin/main`, `upstream/main`, ...) contains it. Remote branches above HEAD or
+  on other lines are never used, nor are `<remote>/HEAD`, the trunk, PR-head mirrors (`*/pr/*`,
+  `*/pull/*`), copies of the checked-out branch (its upstream and push ref, refs at their
+  commits, refs named `*/<branch>`) and branches on the [ignore list](#stack-notes) (for remote
+  branches it does keep them out of the stack). This is one ref listing plus set lookups, so
+  thousands of remote branches cost next to nothing.
 - **Local wins:** a local branch at the same commit, or a local copy of the branch (tracking it,
-  or with the same name) on that line, is the layer instead. Several remotes at one commit: the
+  or with the same name) on that line, is the layer instead. Several remote branches at one commit: the
+  branch a parent setting names, then the one picked before (stable across refreshes), then the
   remote your branch tracks, then `origin`, then alphabetical; the rest are listed as at the same
   commit. Explicit parents (`:RevueyStackParent`, Graphite) may name a branch you only have as
   `origin/<name>`.
@@ -187,10 +197,14 @@ cd ../review-their-stack && revuey
 - **Shown dimmer, with `ro`:** remote-only layers keep their `origin/` prefix and are read-only
   (`committed only (remote, read-only)`; `:RevueyStackParent` refuses them).
 - **Marks carry over:** state keys drop the remote, so reviewed marks, comments and guides made on
-  `origin/feat-x` belong to a local `feat-x` created later. If two remotes' branches with the same
-  name are both layers, the less preferred one keeps its full name as its key.
+  `origin/feat-x` belong to a local `feat-x` created later (or one tracking it). If you already
+  have an unrelated local `feat-x`, or two remotes' branches with the same name are both layers,
+  the remote layer keeps its full name as its key. Reviews made while detached before this
+  feature were keyed as `HEAD` and are not migrated.
 - When your checked-out branch differs from its fetched remote copy, a note says how far it is
-  ahead or behind.
+  ahead or behind (not for a branch that tracks the trunk).
+- `bin/revuey comments`/`watch` in a detached worktree use the live review's scope, or else the
+  branch the review would pick.
 
 ### Stack notes
 

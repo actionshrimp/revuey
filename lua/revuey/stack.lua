@@ -467,23 +467,48 @@ function M.split_remote(name, remotes)
   return name:match('^([^/]+)/(.+)$')
 end
 
+---Is a remote ref a mirror of PR heads (`origin/pr/12`, `origin/pull/12/head`)? Never a layer.
+function M.is_pr_ref(short)
+  return short:match('^pr/') ~= nil or short:match('^pull/') ~= nil or short:find('/pr/', 1, true) ~= nil
+    or short:find('/pull/', 1, true) ~= nil
+end
+
+---Rank of a remote ref among several at one commit (lower first): named by an explicit parent,
+---the previous choice (stable across refreshes), the tracked upstream's remote, `origin`, other.
+local function ref_rank(r, o)
+  local pref = o.preferred or {}
+  if pref[r.name] or pref[r.short] then
+    return 0
+  elseif (o.previous or {})[r.name] then
+    return 1
+  elseif o.prefer and r.remote == o.prefer then
+    return 2
+  end
+  return r.remote == 'origin' and 3 or 4
+end
+
 ---Remote-tracking branches (`origin/x`) usable as stack layers, for reviewing someone else's
 ---stack without local branches. Pure: one pass over the refs plus set lookups, so thousands of
----remote branches stay cheap. A ref is a candidate only when its tip is on HEAD's first-parent
----line above trunk (`line`) and strictly below HEAD (at HEAD too when HEAD is detached, to name
----the current layer); never above HEAD. Left out: `<remote>/HEAD`, trunk, the ignore list, and
----refs whose local copy (a local branch tracking it, or of the same name) is on the line, or
----which share a commit with a local branch (the local branch wins). Several remote refs at one
----commit: the tracked upstream's remote first, then `origin`, then alphabetical; the others go
----to `also` (noted only when their branch name differs from the chosen one's).
+---remote branches stay cheap. The caller only asks when it looks like someone else's stack (HEAD
+---detached, or a branch with no commits of its own beyond its upstream) and passes a `line` (HEAD's
+---first-parent line above trunk) without commits any remote's trunk already has.
+---A ref is a candidate only when its tip is on that line and strictly below HEAD (at HEAD too
+---when HEAD is detached, to name the current layer); never above HEAD. Left out: `<remote>/HEAD`,
+---trunk, PR-head mirrors (`*/pr/*`, `*/pull/*`), the ignore list, aliases of the checked-out
+---branch (`o.aliases`: its upstream and push ref, refs at their commits, and refs named
+---`*/<branch>`), and refs whose local copy (a local branch tracking it, or of the same name) is on
+---the line; a local branch at the same commit wins (the ref goes to `also`). Several refs at one
+---commit are ranked by `ref_rank`, then alphabetically; the others go to `also` (noted only when
+---their branch name differs from the chosen one's).
 ---State keys drop the remote (`origin/x` -> `x`), so marks and comments carry over to a local
----`x` created later. When two remotes' refs with the same branch name are both layers, the
----preferred one keys as `x` and the other keeps its full name.
----@param o {refs:{name:string, remote:string, short:string, sha:string}[], line:table<string, true>, head:string, detached?:boolean, branches:table<string, string>, upstream?:table<string, string>, trunk_names:table<string, true>, prefer?:string, ignore?:string[]}
+---`x` created later, unless a local `x` exists that doesn't track this ref (an unrelated branch:
+---the full name is kept). Of two remotes' refs with one name, the less preferred keeps its full name.
+---@param o {refs:{name:string, remote:string, short:string, sha:string}[], line:table<string, true>, head:string, detached?:boolean, branches:table<string, string>, upstream?:table<string, string>, trunk_names:table<string, true>, prefer?:string, ignore?:string[], aliases?:{names?:table<string, true>, shas?:table<string, true>, branch?:string}, preferred?:table<string, true>, previous?:table<string, true>}
 ---@return {branches:table<string, string>, remote:table<string, true>, keys:table<string, string>, also:table<string, {name:string, note:boolean}[]>, by_short:table<string, string>, current?:string, current_also?:string[]}
 function M.remote_layers(o)
   local res = { branches = {}, remote = {}, keys = {}, also = {}, by_short = {} }
   local trunk_names, branches = o.trunk_names or {}, o.branches or {}
+  local aliases = o.aliases or {}
   local tracked_by = {} -- "origin/x" -> local branch tracking it
   for b, up in pairs(o.upstream or {}) do
     tracked_by[up] = tracked_by[up] or b
@@ -495,19 +520,21 @@ function M.remote_layers(o)
       table.insert(local_at[sha], b)
     end
   end
+  local function alias(r)
+    return (aliases.names or {})[r.name] or (aliases.shas or {})[r.sha]
+      or (aliases.branch and (r.short == aliases.branch or vim.endswith(r.short, '/' .. aliases.branch)))
+  end
   local cands = {}
   for _, r in ipairs(o.refs) do
     if o.line[r.sha] and r.short ~= 'HEAD' and (o.detached or r.sha ~= o.head)
-      and not trunk_names[r.name] and not trunk_names[r.short] then
+      and not trunk_names[r.name] and not trunk_names[r.short] and not M.is_pr_ref(r.short) and not alias(r) then
       cands[#cands + 1] = r
     end
   end
-  local function rank(r)
-    return (r.remote == o.prefer and 0) or (r.remote == 'origin' and 1) or 2
-  end
   table.sort(cands, function(a, b)
-    if rank(a) ~= rank(b) then
-      return rank(a) < rank(b)
+    local ra, rb = ref_rank(a, o), ref_rank(b, o)
+    if ra ~= rb then
+      return ra < rb
     end
     return a.name < b.name
   end)
@@ -530,11 +557,13 @@ function M.remote_layers(o)
     else
       chosen_at[r.sha] = r
       res.branches[r.name], res.remote[r.name] = r.sha, true
-      if res.by_short[r.short] then
-        res.keys[r.name] = r.name -- same branch name on another remote: keep it apart
+      local unrelated = branches[r.short] and (o.upstream or {})[r.short] ~= r.name
+      if res.by_short[r.short] or unrelated then
+        res.keys[r.name] = r.name -- keep it apart from another branch of that name
       else
-        res.by_short[r.short], res.keys[r.name] = r.name, r.short
+        res.keys[r.name] = r.short
       end
+      res.by_short[r.short] = res.by_short[r.short] or r.name
     end
   end
   if o.detached then
@@ -1236,7 +1265,7 @@ function M.detect(root, trunk, cache, opts)
     local function normalize(n)
       return state.normalize_base(n, remotes)
     end
-    local branches, meta, upstream, remote_refs, remote_sha = {}, {}, {}, {}, {}
+    local branches, meta, upstream, remote_refs, remote_sha, remote_head = {}, {}, {}, {}, {}, {}
     for line in refs:gmatch('[^\n]+') do
       local sha, ref, up = line:match('^(%x+) (%S+) ?(%S*)$')
       if ref and ref:sub(1, 11) == 'refs/heads/' then
@@ -1252,6 +1281,8 @@ function M.detect(root, trunk, cache, opts)
         if r and short ~= 'HEAD' then
           remote_refs[#remote_refs + 1] = { name = name, remote = r, short = short, sha = sha }
           remote_sha[name] = sha
+        elseif r then
+          remote_head[r] = sha -- the remote's default branch
         end
       end
     end
@@ -1330,17 +1361,89 @@ function M.detect(root, trunk, cache, opts)
       tips[#tips + 1] = branches[b]
     end
     load_graph(root, input, tips)
-    -- Remote-tracking branches on HEAD's first-parent line (below HEAD) are layers too.
-    local line, c = {}, head
-    while c and c ~= '' and input.graph[c] ~= nil do
-      line[c] = true
-      c = input.graph[c]
+    -- Remote-tracking branches on HEAD's first-parent line (below HEAD) are layers too, but only
+    -- when this looks like someone else's stack: HEAD detached, or a branch with no commits of its
+    -- own beyond its upstream (never the user's own work split into layers by refs of it pushed
+    -- or fetched under other names). `ahead`/`behind` also feed the upstream note.
+    local up_sha = upstream[current] and remote_sha[upstream[current]]
+    local ahead, behind
+    if not detached and up_sha then
+      if up_sha == head then
+        ahead, behind = 0, 0
+      else
+        local counts = git.git({ 'rev-list', '--left-right', '--count', head .. '...' .. up_sha }, root)
+        local a, b = (counts or ''):match('(%d+)%s+(%d+)')
+        ahead, behind = tonumber(a), tonumber(b)
+      end
+    end
+    local line = {}
+    if detached or ahead == 0 then
+      local c = head
+      while c and c ~= '' and input.graph[c] ~= nil do
+        line[c] = true
+        c = input.graph[c]
+      end
+    end
+    -- commits any remote's trunk has are never layers (a fork's stale origin/main as trunk, a
+    -- branch made from upstream/main): one rev-list, only when some remote ref is on the line
+    local on_line = false
+    for _, r in ipairs(remote_refs) do
+      if line[r.sha] then
+        on_line = true
+        break
+      end
+    end
+    if on_line then
+      local excl = {}
+      for _, r in ipairs(remotes) do
+        local t = remote_head[r] or remote_sha[r .. '/main'] or remote_sha[r .. '/master'] or remote_sha[r .. '/develop']
+        if t and t ~= trunk_rev then
+          excl[#excl + 1] = '^' .. t
+        end
+      end
+      if #excl > 0 then
+        local out = git.system({ 'git', 'rev-list', '--stdin' }, {
+          cwd = root, stdin = table.concat(vim.list_extend({ head, '^' .. trunk_rev }, excl), '\n') .. '\n',
+        })
+        local keep = {}
+        for sha in (out.code == 0 and out.stdout or ''):gmatch('%x+') do
+          keep[sha] = true
+        end
+        for sha in pairs(line) do
+          if not keep[sha] then
+            line[sha] = nil
+          end
+        end
+      end
+    end
+    -- aliases of the checked-out branch: its upstream and push ref, refs at their commits, and
+    -- refs named `*/<branch>`
+    local aliases = { names = {}, shas = {}, branch = not detached and current or nil }
+    if not detached and next(line) then
+      local push = git.git({ 'rev-parse', '--symbolic-full-name', current .. '@{push}' }, root)
+      push = push and vim.trim(push):match('^refs/remotes/(.+)$')
+      for _, n in ipairs({ upstream[current], push }) do
+        if n then
+          aliases.names[n] = true
+          if remote_sha[n] then
+            aliases.shas[remote_sha[n]] = true
+          end
+        end
+      end
+    end
+    local preferred = {}
+    for _, ex in pairs(explicit) do
+      preferred[ex.parent] = true
     end
     local prefer = upstream[current] and M.split_remote(upstream[current], remotes)
     local rl = M.remote_layers({
       refs = remote_refs, line = line, head = head, detached = detached, branches = branches,
       upstream = upstream, trunk_names = trunk_names, prefer = prefer, ignore = ignore,
+      aliases = aliases, preferred = preferred, previous = cache and cache.remote_prev,
     })
+    if cache then
+      cache.remote_prev = rl.remote
+    end
     input.remote, input.keys, input.also_at = rl.remote, rl.keys, rl.also
     for name, sha in pairs(rl.branches) do
       branches[name] = sha
@@ -1367,7 +1470,8 @@ function M.detect(root, trunk, cache, opts)
           if not branches[name] then
             local _, short = M.split_remote(name, remotes)
             branches[name], input.remote[name] = remote_sha[name], true
-            input.keys[name] = rl.by_short[short] and name or short
+            local unrelated = branches[short] and upstream[short] ~= name
+            input.keys[name] = (rl.by_short[short] or unrelated) and name or short
           end
           ex.parent = name
         end
@@ -1424,16 +1528,17 @@ function M.detect(root, trunk, cache, opts)
     local extra = {}
     local ctx = { stack = stack ~= nil, trunk = trunk }
     if detached then
-      extra[#extra + 1] = notes_mod.new('detached', { branch = rl.current or 'HEAD', branches = rl.current_also and #rl.current_also > 0 and rl.current_also or nil }, ctx)
-    elseif upstream[current] and remote_sha[upstream[current]] and remote_sha[upstream[current]] ~= head then
-      -- the checked-out branch and its fetched remote copy differ
-      local counts = git.git({ 'rev-list', '--left-right', '--count', head .. '...' .. remote_sha[upstream[current]] }, root)
-      local ahead, behind = (counts or ''):match('(%d+)%s+(%d+)')
-      if ahead then
-        extra[#extra + 1] = notes_mod.new('upstream', {
-          branch = current, parent = upstream[current], ahead = tonumber(ahead), behind = tonumber(behind),
-        }, ctx)
-      end
+      extra[#extra + 1] = notes_mod.new('detached', {
+        branch = rl.current or 'HEAD',
+        branches = rl.current_also and #rl.current_also > 0 and rl.current_also or nil,
+        on_trunk = (not rl.current and input.graph[head] == nil) or nil,
+      }, ctx)
+    elseif ahead and (ahead > 0 or behind > 0) and not trunk_names[upstream[current]]
+      and not trunk_names[normalize(upstream[current])] then
+      -- the checked-out branch and its fetched remote copy differ (not for a branch tracking trunk)
+      extra[#extra + 1] = notes_mod.new('upstream', {
+        branch = current, parent = upstream[current], ahead = ahead, behind = behind,
+      }, ctx)
     end
     if input.current and input.graph[head] ~= nil then
       vim.list_extend(extra, foreign_notes(root, input, stack, above_set, trunk_names))

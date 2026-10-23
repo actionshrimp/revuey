@@ -305,7 +305,9 @@ M.KINDS = {
     level = 'info',
     title = 'Detached HEAD',
     one = function(n, ctx)
-      if n.branch == 'HEAD' then
+      if n.on_trunk then
+        return ('HEAD is detached on %s (the trunk), so there\'s nothing above it to review.'):format(ctx.trunk)
+      elseif n.branch == 'HEAD' then
         return ('HEAD is detached and no branch points at it, so there\'s no stack: this is HEAD compared with %s.'):format(ctx.trunk)
       end
       local others = n.branches and #n.branches > 0
@@ -494,7 +496,8 @@ function M.summary(notes, ignored, ctx, max)
       end)
       add('●', text .. (ign > 0 and (' (%d ignored)'):format(ign) or ''), 'info')
     elseif k == 'detached' then
-      add('●', n1.branch == 'HEAD' and 'detached HEAD: no branch here, no stack' or ('detached HEAD at %s'):format(n1.branch), 'info')
+      add('●', (n1.on_trunk and ('detached HEAD on %s'):format(ctx.trunk)) or (n1.branch == 'HEAD' and 'detached HEAD: no branch here, no stack')
+        or ('detached HEAD at %s'):format(n1.branch), 'info')
     elseif k == 'upstream' then
       add('●', ('%s %s'):format(n1.branch, M.ahead_behind(n1)), 'info')
     elseif k == 'parent_landed' then
