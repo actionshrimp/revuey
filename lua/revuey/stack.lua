@@ -1606,6 +1606,12 @@ function M.detect(root, trunk, cache, opts)
       merge_landed_squashed(stack)
       stack.notes, stack.ignored = notes_mod.filter(stack.notes, ignore)
     else
+      -- a parent setting naming a branch that is gone (a remote layer's ref deleted or pruned)
+      -- leaves no stack: say so here, or the stack would vanish without a word
+      local ex = input.current and explicit[input.current]
+      if ex and not branches[ex.parent] and not trunk_names[ex.parent] and not trunk_names[normalize(ex.parent)] then
+        extra[#extra + 1] = notes_mod.new('unknown_parent', { branch = input.current, parent = ex.parent, source = ex.source }, ctx)
+      end
       local skip = input.current and input.graph[head] ~= nil and M.squash_skip(root, trunk, trunk_rev, current, head)
       if skip then
         extra[#extra + 1] = skip.note
