@@ -1835,6 +1835,16 @@ local function panel_keymaps(s)
   map(buf, k.comment_list, function()
     comments_view.open_list(s)
   end, 'list all comments')
+  map(buf, k.forge_open, function()
+    require('revuey.forge_view').open(s, api.nvim_win_get_cursor(0)[1])
+  end, 'open the pull request in the browser')
+  -- <Tab> on the pull request heading folds its details; elsewhere it stays <C-i>
+  map(buf, k.toggle_fold, function()
+    if vim.v.count == 0 and require('revuey.forge_view').toggle(s, api.nvim_win_get_cursor(0)[1]) then
+      return
+    end
+    api.nvim_feedkeys(vim.v.count1 .. vim.keycode('<C-i>'), 'n', false)
+  end, 'toggle the pull request details (else <C-i>)')
   api.nvim_create_autocmd('CursorMoved', {
     group = s.augroup,
     buffer = buf,
@@ -2227,6 +2237,8 @@ local function render(s, saved)
   -- the session registry follows the scope and branch shown
   agent_link.update(s)
   M.load_stats(s)
+  -- pull requests of the layers (one gh call unless the cache is fresh)
+  require('revuey.forge_view').update(s)
 end
 
 ---Re-render in place, keeping the view (used when a guide finishes or the window is resized).

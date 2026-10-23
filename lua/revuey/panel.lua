@@ -1,5 +1,6 @@
 -- File panel: list of changed files with status, +/- counts and reviewed checkmarks.
 local review_mod = require('revuey.review')
+local forge_view = require('revuey.forge_view')
 
 local M = {}
 
@@ -70,6 +71,7 @@ local function wrap(text, width, indent)
   end
   return out
 end
+M.wrap = wrap
 
 ---Stack section: trunk, then layers bottom to top, the full-stack row, forks/notes.
 ---Rows map to layer indexes (or 'full') in `s.panel_layers`.
@@ -113,14 +115,35 @@ local function render_stack(s, add, add_virt, width)
     local prefix = ' ' .. sel .. head .. ' '
     local name = l.name .. (l.title and ('  ' .. l.title) or '')
     local virt = stats_virt(l.stats, selected and live or nil)
+    -- the layer's pull request: `#123 ✓ ` (nothing without one)
+    local pr = forge_view.chunks(forge_view.pr(s, l.name))
+    if pr then
+      s.panel_forge_any = true
+      for k = #pr, 1, -1 do
+        table.insert(virt, 1, pr[k])
+      end
+    end
     if l.remote then
       table.insert(virt, 1, { 'ro ', 'RevueyStackRemote' }) -- remote-tracking: read-only
     end
-    local vw = 0
-    for _, v in ipairs(virt) do
-      vw = vw + vim.fn.strdisplaywidth(v[1])
+    local function virt_width()
+      local vw = 0
+      for _, v in ipairs(virt) do
+        vw = vw + vim.fn.strdisplaywidth(v[1])
+      end
+      return vw
     end
-    local avail = width - vim.fn.strdisplaywidth(prefix) - vw - 1
+    local avail = width - vim.fn.strdisplaywidth(prefix) - virt_width() - 1
+    if pr and avail < 8 then
+      -- narrow panel: the commit count goes before the branch name gets unreadable
+      for k, v in ipairs(virt) do
+        if v[1]:match('^%d+c $') then
+          table.remove(virt, k)
+          break
+        end
+      end
+      avail = width - vim.fn.strdisplaywidth(prefix) - virt_width() - 1
+    end
     name = M.truncate(name, math.max(avail, 1))
     local text = prefix .. name
     local row = add(text, {
@@ -192,6 +215,7 @@ function M.render(s)
   local function add_virt(row, virt)
     marks[row].virt = virt
   end
+  s.panel_forge_any = false
   if r.stack then
     render_stack(s, add, add_virt, width)
   else
@@ -201,6 +225,8 @@ function M.render(s)
       add('')
     end
   end
+  -- the viewed layer's pull request (title, reviews, checks, base), when it has one
+  forge_view.render_detail(s, add, add_virt, width)
   require('revuey.guide_view').panel(s, add, add_virt, width)
   local total_add, total_del, reviewed = 0, 0, 0
   for _, f in ipairs(r.files) do
@@ -209,8 +235,19 @@ function M.render(s)
       reviewed = reviewed + 1
     end
   end
-  local title = M.truncate(' ' .. r.branch .. ' → ' .. r.base, width)
-  add(title, { { 0, #title, 'RevueyPanelTitle' } })
+  -- a plain review's pull request sits on its title line
+  local pr_virt = not r.stack and forge_view.chunks(forge_view.pr(s, '')) or nil
+  local pr_w = 0
+  for _, v in ipairs(pr_virt or {}) do
+    pr_w = pr_w + vim.fn.strdisplaywidth(v[1])
+  end
+  local title = M.truncate(' ' .. r.branch .. ' → ' .. r.base, width - pr_w)
+  local title_row = add(title, { { 0, #title, 'RevueyPanelTitle' } })
+  if pr_virt then
+    add_virt(title_row, pr_virt)
+    s.panel_forge = s.panel_forge or { rows = {} }
+    s.panel_forge.rows[title_row] = forge_view.pr(s, '')
+  end
   local stats = string.format(' %d files  ', #r.files)
   local adds = '+' .. total_add
   local dels = ' −' .. total_del
@@ -329,6 +366,13 @@ function M.render(s)
   elseif has_notes then
     help[#help + 1] = ' ' .. nk .. ' branch notes'
   end
+  if s.panel_forge or s.panel_forge_any then
+    local ok = require('revuey.config').options.keymaps.forge_open
+    ok = type(ok) == 'table' and ok[1] or ok
+    if ok then
+      help[#help + 1] = ' ' .. ok .. ' PR in browser' .. (s.panel_forge and s.panel_forge.heading and '  <Tab> PR details' or '')
+    end
+  end
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })
   end
@@ -352,6 +396,8 @@ function M.render(s)
   end
   -- the notes float follows the review (after an action, a refresh, a branch moved elsewhere)
   require('revuey.notes_float').update(s)
+  -- PR info older than its TTL: look again (no polling: only when the panel is drawn anyway)
+  forge_view.lazy(s)
 end
 
 ---Highlight the guide section the cursor is in (and move the panel cursor to it).
