@@ -42,6 +42,37 @@ h.test('subprocesses see no multiplexer: no TMUX/HERDR variables, private tmux s
   end
 end)
 
+h.test('headless specs cannot grow the screen (lines/columns), however they try', function()
+  h.eq(0, #vim.api.nvim_list_uis(), 'this spec runs headless')
+  local cols, lines = vim.o.columns, vim.o.lines
+  h.size_quiet = true -- the errors are expected here
+  for _, set in ipairs({
+    function()
+      vim.o.columns = cols + 80
+    end,
+    function()
+      vim.o.lines = lines + 26
+    end,
+    function()
+      vim.cmd('set columns=200')
+    end,
+    function()
+      vim.api.nvim_set_option_value('lines', 60, {})
+    end,
+  }) do
+    pcall(set)
+    h.eq({ cols, lines }, { vim.o.columns, vim.o.lines }, 'undone at once')
+  end
+  h.eq(4, #h.size_violations, vim.inspect(h.size_violations))
+  h.ok(h.size_violations[1]:find("set 'columns'", 1, true), h.size_violations[1])
+  -- shrinking is harmless and allowed
+  vim.o.columns = cols - 20
+  h.eq(cols - 20, vim.o.columns)
+  vim.o.columns = cols
+  h.eq(4, #h.size_violations)
+  h.size_violations, h.size_quiet = {}, nil -- (each one fails the spec in h.run)
+end)
+
 h.test('every spec talks to tmux through its own -L socket', function()
   for _, f in ipairs(vim.fn.glob(h.root .. '/tests/*_spec.lua', false, true)) do
     for n, line in ipairs(vim.fn.readfile(f)) do

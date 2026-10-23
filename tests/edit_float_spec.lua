@@ -8,9 +8,10 @@ vim.cmd('runtime plugin/revuey.lua')
 local log = h.tmpdir('edit-fake-claude') .. '/calls.ndjson'
 h.use_fake_claude(log)
 
-vim.o.columns, vim.o.lines = 160, 50
 local state_dir = h.tmpdir('edit-float-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
+-- no "-- INSERT --" or "recording @a" in the test output
+vim.o.showmode = false
 local view = require('revuey.view')
 local ef = require('revuey.edit_float')
 local edit = require('revuey.edit')
@@ -206,12 +207,12 @@ h.test('edit and :w: the diff refreshes, the review cursor stays on the hunk; on
   local new = row_of(s, 'src/math.ts', '// edited in the float', 'add')
   h.eq(new, vim.api.nvim_win_get_cursor(s.diff_win)[1], 'review cursor on the edited line')
   h.eq(st.win, vim.api.nvim_get_current_win(), 'the float stays open and focused')
-  -- <C-s> saves too, also from insert mode
+  -- <C-s> saves too, in normal mode; insert-mode <C-s> (signature help) is left alone
+  h.ok(vim.fn.maparg('<C-s>', 'i', false, true).buffer ~= 1, 'no buffer-local insert-mode <C-s>')
   local lnum = vim.api.nvim_win_get_cursor(st.win)[1]
   vim.api.nvim_buf_set_lines(st.buf, lnum, lnum, false, { '  // and again' })
   n = s.render_count
-  vim.api.nvim_feedkeys('A' .. vim.keycode('<C-s>'), 'mtx', false)
-  vim.cmd('stopinsert')
+  vim.api.nvim_feedkeys(vim.keycode('<C-s>'), 'mtx', false)
   wait_render(s, n)
   h.eq(false, vim.bo[st.buf].modified)
   h.ok(row_of(s, 'src/math.ts', '// and again', 'add'))
@@ -236,9 +237,13 @@ h.test('closing with unsaved changes: cancel keeps it open, discard reverts, sav
   press(s, row)
   local st = assert(ef.current)
   vim.api.nvim_buf_set_lines(st.buf, 0, 0, false, { '// unsaved' })
-  -- cancel (and <Esc> asks like q)
-  answers = { 3 }
+  -- normal-mode <Esc> is just <Esc>: it never closes the float
   vim.api.nvim_feedkeys(vim.keycode('<Esc>'), 'mtx', false)
+  vim.wait(100)
+  h.eq({ {}, true }, { asked, vim.api.nvim_win_is_valid(st.win) })
+  -- cancel
+  answers = { 3 }
+  vim.api.nvim_feedkeys('q', 'mtx', false)
   vim.wait(200, function()
     return #asked > 0
   end, 10)
@@ -342,10 +347,43 @@ h.test('options and folds of the float never reach the next window showing the f
   vim.cmd('tabnew')
   vim.cmd('buffer ' .. st.buf)
   h.eq(false, vim.wo.number)
+  -- nor the review window's options the float was created from
+  h.eq({ '', '', '0', 'manual' }, { vim.wo.statuscolumn, vim.wo.winbar, vim.wo.foldexpr, vim.wo.foldmethod })
   h.eq(0, vim.fn.foldlevel(1))
   h.eq(0, vim.fn.foldlevel(vim.fn.line('$')))
   h.eq('', vim.fn.maparg('q', 'n'), 'the close key is gone from the buffer')
   vim.cmd('tabclose')
+end)
+
+h.test("the buffer's own window options and mappings survive the float", function()
+  local s = open(fixture)
+  local abs = fixture .. '/src/format.ts'
+  -- the user had the file in a window with their own local options, and a buffer-local `q`
+  vim.cmd('tabnew ' .. vim.fn.fnameescape(abs))
+  vim.cmd('setlocal number foldmethod=indent')
+  local buf = vim.api.nvim_get_current_buf()
+  vim.keymap.set('n', 'q', '<Cmd>let g:user_q = 1<CR>', { buffer = buf, desc = 'user q' })
+  vim.cmd('tabclose')
+  vim.api.nvim_set_current_win(s.diff_win)
+  -- format.ts is not in the diff: open the float on it directly, as `ge` would
+  ef.open(s, { abs = abs, path = 'src/format.ts', lnum = 3, lo = 3, hi = 4 })
+  local st = assert(ef.current)
+  h.eq(buf, st.buf)
+  -- an LspAttach-style handler maps <C-s> while the float is open
+  vim.keymap.set('n', '<C-s>', '<Cmd>let g:sig = 1<CR>', { buffer = buf, desc = 'signature help' })
+  vim.cmd('quit')
+  vim.api.nvim_buf_call(buf, function()
+    h.eq('user q', vim.fn.maparg('q', 'n', false, true).desc, 'the shadowed mapping is back')
+  end)
+  vim.api.nvim_buf_call(buf, function()
+    h.eq('signature help', vim.fn.maparg('<C-s>', 'n', false, true).desc, 'a later mapping stays')
+  end)
+  vim.cmd('tabnew')
+  vim.cmd('buffer ' .. buf)
+  h.eq({ true, 'indent' }, { vim.wo.number, vim.wo.foldmethod }, "the buffer's own options, not the float's or the globals")
+  vim.cmd('tabclose')
+  pcall(vim.keymap.del, 'n', 'q', { buffer = buf })
+  pcall(vim.keymap.del, 'n', '<C-s>', { buffer = buf })
 end)
 
 h.test('refusals: committed mode, a layer that is not checked out, a remote read-only layer', function()
@@ -533,6 +571,62 @@ h.test('comments on edited lines re-anchor after the edit and the refresh', func
   h.eq(true, comments.get(s.cm.store, c.id).outdated)
 end)
 
+h.test('names that are prefixes of each other: the exact file, never a partial match', function()
+  local repo = h.repo('edit-names', {
+    ['config.js'] = 'module.exports = 1;\n',
+    ['config.json'] = '{ "a": 1 }\n',
+    ['foo.ts'] = 'export const foo = 1;\n',
+    ['foo.tsx'] = 'export const Foo = 1;\n',
+  }, {
+    ['config.js'] = 'module.exports = 2;\n',
+    ['config.json'] = '{ "a": 2 }\n',
+    ['foo.ts'] = 'export const foo = 2;\n',
+    ['foo.tsx'] = 'export const Foo = 2;\n',
+  })
+  local s = open(repo)
+  -- the longer names are open (as buffers), the shorter ones are not
+  for _, p in ipairs({ 'config.json', 'foo.tsx' }) do
+    vim.fn.bufload(vim.fn.bufadd(repo .. '/' .. p))
+  end
+  for _, case in ipairs({ { 'config.js', 'module.exports = 2;' }, { 'foo.ts', 'export const foo = 2;' } }) do
+    press(s, row_of(s, case[1], case[2], 'add'))
+    local st = assert(ef.current, case[1])
+    h.eq(vim.uv.fs_realpath(repo .. '/' .. case[1]), vim.uv.fs_realpath(vim.api.nvim_buf_get_name(st.buf)))
+    h.eq(case[2], float_line())
+    ef.close()
+  end
+  -- the lookup the float, the LSP proxy and the review's buffer naming share
+  h.eq(nil, lsp.buffer_for(repo .. '/config'))
+  h.eq(vim.fn.bufadd(repo .. '/config.json'), lsp.buffer_for(repo .. '/config.json'))
+  h.eq(nil, lsp.buffer_for('revuey://feat..ma'))
+end)
+
+h.test('another Neovim editing the file (swap file): a clear message, nothing opened, twice', function()
+  local repo = h.repo('edit-swap', { ['a.txt'] = 'one\ntwo\n' }, { ['a.txt'] = 'one\nTWO\n' })
+  local swapdir = h.tmpdir('edit-swapdir') .. '//'
+  local child = h.child()
+  child.restart({ '-u', 'NONE' })
+  child.lua(([[
+    vim.o.directory = %q
+    vim.o.updatecount = 200 -- mini.test children start with -n (no swap files)
+    vim.cmd('edit ' .. vim.fn.fnameescape(%q))
+    vim.api.nvim_buf_set_lines(0, 0, 0, false, { 'edited elsewhere' })
+  ]]):format(swapdir, vim.uv.fs_realpath(repo .. '/a.txt'))) -- the path the review uses
+  local saved_dir, saved_uc = vim.o.directory, vim.o.updatecount
+  vim.o.directory = swapdir
+  vim.o.updatecount = 200 -- `nvim -l` runs without swap files, as -n
+  local s = open(repo)
+  for _ = 1, 2 do
+    local msgs = press(s, row_of(s, 'a.txt', 'TWO', 'add'))
+    h.eq(nil, ef.current, 'not opened')
+    h.eq('revuey: another Neovim is editing a.txt (it has a swap file); not opening it', msg_text(msgs))
+    local b = lsp.buffer_for(repo .. '/a.txt')
+    h.ok(not b or not vim.api.nvim_buf_is_loaded(b), 'not left loaded')
+  end
+  child.stop()
+  vim.o.directory, vim.o.updatecount = saved_dir, saved_uc
+end)
+
 h.test('closing the review closes the float; the buffer keeps its unsaved changes', function()
   local s = open(fixture)
   press(s, row_of(s, 'src/math.ts', 'export function sum', 'add'))
@@ -556,11 +650,6 @@ h.test('LSP works in the float, before and after a save (typescript-language-ser
     filetypes = { 'typescript', 'typescriptreact' },
     root_markers = { 'tsconfig.json' },
   })
-  -- Semantic tokens off: with them on, headless Neovim 0.12.4 on macOS crashes intermittently
-  -- (SIGSEGV in augroup_del / aucmd_del_for_event_and_group) once a TypeScript buffer is shown
-  -- in any window next to an open review, with or without the float. Not caused by the float;
-  -- see the note in docs/TESTING.md.
-  vim.lsp.semantic_tokens.enable(false)
   vim.lsp.enable('ts_ls')
   local d = make('edit-lsp')
   local s = open(d)

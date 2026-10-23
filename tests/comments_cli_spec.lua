@@ -5,7 +5,6 @@
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
 vim.notify = function() end
-vim.o.columns, vim.o.lines = 160, 50
 
 local state_dir = h.tmpdir('cli-state')
 require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })

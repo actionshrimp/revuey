@@ -32,6 +32,12 @@ M.msg = {
   layer = function(name)
     return ("revuey: %s isn't checked out; press %s to switch"):format(name, key('switch_layer', 'gS'))
   end,
+  remote = function(name)
+    return ('revuey: %s is a remote branch (detached HEAD, read-only); press %s to check out a local branch'):format(
+      name,
+      key('switch_layer', 'gS')
+    )
+  end,
   hunk_layer = function(name)
     return ("revuey: this hunk comes from %s, which isn't checked out; view it (%s/%s) and press %s to switch"):format(
       name,
@@ -86,16 +92,12 @@ function M.decide(review, e)
   -- the layer: only the checked-out one (`@`), in working-tree mode
   local st, scope = review.stack, review.scope
   if st and scope then
-    if scope.kind == 'layer' then
-      local l = st.layers[scope.index]
-      if l and not l.is_head then
-        return no(M.msg.layer(l.name))
-      end
-    else
-      local top = st.layers[#st.layers]
-      if top and not top.is_head then
-        return no(M.msg.layer(top.name))
-      end
+    local l = scope.kind == 'layer' and st.layers[scope.index] or st.layers[#st.layers]
+    if l and not l.is_head then
+      return no(M.msg.layer(l.name))
+    elseif l and l.remote then
+      -- HEAD detached at a remote layer's tip: an edit would have no branch to be committed on
+      return no(M.msg.remote(l.name))
     end
   end
   if review.mode ~= 'worktree' then
