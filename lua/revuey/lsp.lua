@@ -82,6 +82,20 @@ function M.cleanup()
   created = {}
 end
 
+---Hand a buffer over to the user (the edit float): it becomes a normal listed file buffer, as
+---after `:edit`, which revuey never reloads, wipes or otherwise manages again.
+function M.adopt(buf)
+  created[buf] = nil
+  if vim.api.nvim_buf_is_valid(buf) then
+    vim.bo[buf].buflisted = true
+  end
+end
+
+---Is `buf` one of revuey's hidden buffers (tests)?
+function M.is_hidden(buf)
+  return created[buf] ~= nil
+end
+
 local function now()
   return vim.uv.now()
 end

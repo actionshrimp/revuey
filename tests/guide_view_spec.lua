@@ -289,18 +289,32 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   end, 20), 'stale after edit')
   idle(s)
   local res = s.guide.resolved
-  h.eq(true, res.sections[1].outdated)
-  -- the hunks it still shows are unchanged, so still reviewed; the edited one is not
-  h.eq(true, gv.section_reviewed(s, res.sections[1]))
-  h.eq(false, gv.section_reviewed(s, res.sections[#res.sections]))
-  h.eq('Not in guide', res.sections[#res.sections].title)
-  h.ok(find(s, '▎ Warning: The diff changed since this guide was generated (1 section outdated, 1 new hunk).', 'prose'), text(s))
+  -- the edited hunk stays in its section (re-anchored by overlap), marked edited and unreviewed
+  h.eq({ false, 1 }, { res.sections[1].outdated, res.sections[1].edited })
+  h.eq(false, gv.section_reviewed(s, res.sections[1]))
+  for _, sec in ipairs(res.sections) do
+    h.ok(sec.kind ~= 'new', 'no "Not in guide" section')
+  end
+  h.ok(find(s, '▎ Warning: The diff changed since this guide was generated (1 hunk edited).', 'prose'), text(s))
   h.ok(text(s):find('Press\n▎ gR to regenerate.', 1, true) or text(s):find('Press gR to regenerate.', 1, true))
-  h.ok(find(s, '1 hunk of this section changed since the guide was generated and is not shown.', 'prose'))
+  -- a change nothing in the guide overlaps (a new file): "Not in guide", as before
+  local extra = fixture .. '/src/extra_after_guide.ts'
+  vim.fn.writefile({ 'export const extra = 1;' }, extra)
+  view.refresh()
+  assert(vim.wait(10000, function()
+    local r = s.guide.resolved
+    return r and r.new > 0
+  end, 20), 'a new hunk after the second edit')
+  idle(s)
+  res = s.guide.resolved
+  h.eq('Not in guide', res.sections[#res.sections].title)
   h.ok(find(s, 'Not in guide', 'section'))
+  h.eq({ 1, 1 }, { res.new, res.edited })
+  h.ok(text(s):gsub('\n▎ ', ' '):find('(1 new hunk, 1 hunk edited)', 1, true), text(s))
   -- the guide never re-runs by itself
   h.eq(1, #calls())
-  -- undo the edit: the guide is fresh again and the mark is back
+  -- undo the edits: the guide is fresh again and the mark is back
+  vim.fn.delete(extra)
   l[lnum] = orig_line
   vim.fn.writefile(l, p)
   view.refresh()

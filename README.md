@@ -99,6 +99,40 @@ shown there. `lsp_proxy = false` turns the client off.
 Line-ending-only changes (LF/CRLF) and a missing final newline are marked with a `⏎` note at the end
 of the line.
 
+## Editing from the review
+
+`ge` on a hunk line (an added or context line, or the `@@` header) in the diff or the guide opens
+the real working-tree file in a float near the cursor, on that line, folded to the hunk plus 3
+lines of context (`zo`/`zR` show the rest; the folds are manual and belong to the float only).
+The title names the file and the hunk's line range. It is the file's own buffer, the one `:edit`
+gives you (if the file is already open, that same buffer, unsaved edits included; never a second
+one), so undo, completion, LSP, formatters and your autocmds work as usual.
+
+- `:w` or `<C-s>` (normal or insert mode) saves. The review refreshes as for any write, and its
+  cursor moves to the line you were editing, or the nearest hunk when that line is no longer in
+  the diff.
+- `q` or `<Esc>` (normal mode) closes the float. With unsaved changes it asks: save, discard (only
+  the changes made in the float are undone) or cancel. `:q` closes it like any window, keeping
+  unsaved changes in the buffer. Closing the review closes the float the same way.
+- On a deleted (`-`) line the float opens at the nearest new-side line and says deleted lines
+  can't be edited. Prose, the diagram, file headers and notes say there is nothing to edit.
+- If the file changes on disk while the float is open, Neovim's usual `:checktime` warning (W12
+  when you also changed it) applies.
+
+Only the checked-out layer (`@`) in working-tree mode can be edited; everything else refuses with
+how to get there: "`stack/math` isn't checked out; press gS to switch" on another layer (remote
+`ro` layers included), "switch to working-tree mode (gu)" in committed-only mode. In the full
+stack, a hunk can be edited when the top layer is checked out and the hunk's [branch
+label](#ai-guide) names only that layer (or uncommitted work); hunks from lower layers name the
+layer to switch to. Edits always land in the working tree: revuey makes no fixup commits for
+lower layers and never restacks.
+
+In the guide, an edited hunk stays in its section with an "✎ edited since guide" marker instead
+of moving to "Not in guide" (see [When the code changes](#ai-guide)); its reviewed mark resets, as
+for any change. Comments on edited lines move or become outdated by the usual rules.
+
+`keymaps = { edit = false }` turns the key off.
+
 ## Stacks
 
 A stack is a chain of local branches, each based on the one below, for example
@@ -452,9 +486,15 @@ labels appear in the guide and in the full-stack diff view, and Claude gets the 
 prompt, so the prose can say which branch introduced what. Layer scopes have no labels.
 
 **When the code changes** after the guide was generated, sections whose hunks are unchanged
-render as before. A section with changed or missing hunks gets an "outdated" chip and shows only
-the hunks that still exist. New hunks go to a final "Not in guide" section, and a banner offers
-`gR` to regenerate. The guide never re-runs by itself.
+render as before. A hunk edited in place (with [`ge`](#editing-from-the-review) or anywhere
+else) stays in its section with an "✎ edited since guide" marker on its header: it is matched to
+the guide's hunk when it overlaps that hunk's old or new line range in the same file and its
+function context (after `@@ … @@`) agrees. Matching is conservative: when an edit splits a guide
+hunk in two, or joins hunks of different sections, nothing is matched. Two hunks of one section
+joined by an edit show as one edited hunk. A section with missing hunks gets an "outdated" chip
+and shows only the hunks that still exist. New hunks go to a final "Not in guide" section, and a
+banner (counting outdated sections, new and edited hunks) offers `gR` to regenerate. The guide
+never re-runs by itself.
 
 **Per scope:** each review (branch and base, or a stack layer, or the full stack) has its own
 guide. Switching layers keeps a generation running for the layer it was started on. The guide's
@@ -764,6 +804,7 @@ Diff buffer:
 | `za` etc. | Normal fold commands: each file is a fold, each hunk a fold inside it, and long unchanged runs are folded |
 | `gp` | Focus the file panel |
 | `gu` | Toggle working tree (default) / committed only |
+| `ge` | [Edit](#editing-from-the-review) the real file at this line in a float (checked-out layer, working-tree mode) |
 | `R` | Refresh (re-runs git; also automatic in working-tree mode) |
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
@@ -860,6 +901,11 @@ Uncommitted work: in another terminal (or Neovim split) edit `/tmp/revuey-fixtur
 and save, or create a new file under `src/`; the review updates with a `●` on those files. Press
 `gu` to compare with the committed-only view.
 
+Editing: `ge` on `+ export function sum` in `src/math.ts` opens the file in a float, folded to the
+hunk. Change a line, `:w`: the diff updates under it and the review cursor follows the line. `q`
+closes it (it asks when there are unsaved changes). `ge` on a `-` line opens at the nearest new
+line; `gu` then `ge` says to switch back to working-tree mode first.
+
 In a real repo, run `bin/revuey` (or `:Revuey`) on your feature branch.
 
 ### A local stack
@@ -937,8 +983,9 @@ cd /tmp/revuey-guide
 - `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
   `mr` on one hunk instead: the section shows `◐ 1/2`, and `gG` shows that file's progress in the diff.
 - `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
-- Edit `src/cart.ts` and save: the section with that hunk turns "outdated", the edited hunk
-  appears under "Not in guide", and a banner offers `gR`.
+- `ge` on a line of `src/cart.ts` in the guide, change it and `:w`: the hunk stays in its section
+  with "✎ edited since guide" (and loses its reviewed mark), and a banner offers `gR`. Add a
+  change somewhere new instead and it appears under "Not in guide".
 - The full-stack guide starts with an overview diagram: `<CR>` on a box jumps to its section,
   `:RevueyGuideDiagram mermaid` copies it as Mermaid. Hunk headers show the branch that
   introduced each hunk (`[stack/cart, stack/ui]` on `src/cart.ts`).
@@ -990,6 +1037,15 @@ cd /tmp/revuey-guide
   worktree, a failing hook, a submodule bump, the agent confirmation (re-checked after, once per
   review for `]s`), `switch_on_navigate`, one switch at a time, the registry and `sessions`,
   hidden LSP buffers and `:RevueySwitch`.
+- **Editing from the review** (`edit_spec.lua`, `edit_float_spec.lua`): which rows can be edited
+  for each row kind, layer, mode and full-stack attribution, and the row-to-line mapping after
+  earlier edits (unit); guide re-anchoring by overlap (a confident match, ambiguous splits and
+  joins, no match) in `guide_spec.lua`; then the float on real repos: from the diff and the
+  guide, folds, `:w`/`<C-s>` with the refresh and the review cursor, LSP in the float (real
+  `typescript-language-server`, skipped without it), refusals on another layer, committed mode,
+  a remote `ro` layer and a lower layer's hunk in the full stack, deleted lines, the unsaved-close
+  question, an already open and modified buffer, nothing leaking into other windows, the guide's
+  "edited since guide" marker with the reviewed mark reset, and comments re-anchoring.
 - **Comments:** the model, re-anchoring (shifted, moved, outdated, deleted lines on the old side,
   identical code at two places), merging with tombstones, the export formats (golden) and event
   lines (unit); `gc` in normal and visual mode on added, deleted and context lines and file

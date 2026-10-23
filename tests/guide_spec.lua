@@ -435,9 +435,9 @@ h.test('staleness: outdated sections, missing hunks omitted, new hunks at the en
   h.eq('n', fresh.sections[1].items[2].note)
   local id_a = fresh.sections[1].id
   h.eq(guide.section_id({ hs[1].hash, hs[2].hash }), id_a)
-  -- edit hunk h2 and add a new file
+  -- replace hunk h2 by a change elsewhere in the file (nothing overlaps it) and add a new file
   local edited = vim.deepcopy(base_diff)
-  edited[1].hunks[2] = { '@@ -10,2 +10,3 @@', ' ten', '+ten and three quarters', ' eleven' }
+  edited[1].hunks[2] = { '@@ -30,2 +30,3 @@', ' thirty', '+thirty and a half', ' thirty-one' }
   edited[#edited + 1] = { path = 'src/new.ts', hunks = { { '@@ -0,0 +1,1 @@', '+new' } } }
   local hs2 = guide.hunks(diff.parse(difftext(edited)))
   local res = guide.resolve(rec, hs2)
@@ -458,6 +458,107 @@ h.test('staleness: outdated sections, missing hunks omitted, new hunks at the en
     return i.hunk.id
   end, res.sections[4].items))
   h.eq('new', res.sections[4].kind)
+end)
+
+local function reanchor_rec(diff_spec, sections)
+  local hs = guide.hunks(diff.parse(difftext(diff_spec)))
+  local g = assert(guide.validate({ title = 'T', summary = 'S', sections = sections }, hs))
+  return guide.record(g, hs, { key = { repo = '/r', branch = 'b', base = 'main' } }), hs
+end
+
+local function titles_of(res)
+  return vim.tbl_map(function(s)
+    return { s.title, vim.tbl_map(function(i)
+      return i.hunk.id .. (i.edited and '*' or '')
+    end, s.items) }
+  end, res.sections)
+end
+
+h.test('re-anchoring: an edited hunk stays in its section, marked edited', function()
+  local rec, hs = reanchor_rec(base_diff, {
+    { title = 'A', overview = 'o', hunks = { { id = 'h1' }, { id = 'h2', note = 'n' } } },
+    { title = 'B', overview = 'o', hunks = { { id = 'h3' }, { id = 'h4' } } },
+  })
+  -- unchanged hunks: exactly as before (no edited marks, not stale, same identities)
+  local fresh = guide.resolve(rec, hs)
+  h.eq(false, fresh.stale)
+  h.eq(0, fresh.edited)
+  h.eq({ { 'A', { 'h1', 'h2' } }, { 'B', { 'h3', 'h4' } } }, titles_of(fresh))
+  -- h2 edited in the working tree (one more line, lines below shifted): overlaps its old range
+  local edited = vim.deepcopy(base_diff)
+  edited[1].hunks[2] = { '@@ -10,2 +10,4 @@', ' ten', '+ten and a half', '+ten and three quarters', ' eleven' }
+  local res = guide.resolve(rec, guide.hunks(diff.parse(difftext(edited))))
+  h.eq({ { 'A', { 'h1', 'h2*' } }, { 'B', { 'h3', 'h4' } } }, titles_of(res), 'kept in its section, no "Not in guide"')
+  h.eq('n', res.sections[1].items[2].note, 'the note stays with it')
+  h.eq({ 0, false, 1 }, { res.sections[1].missing, res.sections[1].outdated, res.sections[1].edited })
+  h.eq({ true, 0, 0, 1 }, { res.stale, res.outdated, res.new, res.edited })
+  h.ok(res.sections[1].id ~= fresh.sections[1].id, 'its section identity changes with the hunk (marks reset)')
+  h.eq(fresh.sections[2].id, res.sections[2].id)
+  -- an edit that also shifts the new side of the hunks below it
+  local shifted = vim.deepcopy(base_diff)
+  shifted[1].hunks[1] = { '@@ -1,3 +1,5 @@ function a', ' one', '-two', '+TWO', '+two and a bit', '+more', ' three' }
+  shifted[1].hunks[2] = { '@@ -10,2 +12,3 @@', ' ten', '+ten and a half', ' eleven' }
+  local res2 = guide.resolve(rec, guide.hunks(diff.parse(difftext(shifted))))
+  h.eq({ { 'A', { 'h1*', 'h2' } }, { 'B', { 'h3', 'h4' } } }, titles_of(res2))
+  -- two hunks of one section merged by an edit between them: one edited hunk in that section
+  local merged_rec = reanchor_rec({
+    { path = 'src/a.ts', hunks = {
+      { '@@ -1,3 +1,3 @@', ' one', '-two', '+TWO', ' three' },
+      { '@@ -8,3 +8,3 @@', ' eight', '-nine', '+NINE', ' ten' },
+    } },
+  }, { { title = 'A', overview = 'o', hunks = { { id = 'h1' }, { id = 'h2' } } } })
+  local merged = guide.resolve(merged_rec, guide.hunks(diff.parse(difftext({
+    { path = 'src/a.ts', hunks = { {
+      '@@ -1,10 +1,10 @@', ' one', '-two', '+TWO', ' three', '-four', '+FOUR', ' five', ' six', ' seven', ' eight', '-nine', '+NINE', ' ten',
+    } } },
+  }))))
+  h.eq({ { 'A', { 'h1*' } } }, titles_of(merged))
+  h.eq(0, merged.sections[1].missing)
+end)
+
+h.test('re-anchoring: ambiguous matches and no match fall back to "Not in guide"', function()
+  -- one guide hunk now overlapped by two current hunks (an edit split it): ambiguous
+  local rec = reanchor_rec({
+    { path = 'src/a.ts', hunks = { { '@@ -1,6 +1,6 @@', ' one', '-two', '+TWO', ' three', ' four', '-five', '+FIVE', ' six' } } },
+    { path = 'src/b.ts', hunks = { { '@@ -1,1 +1,1 @@', '-x', '+y' } } },
+  }, { { title = 'A', overview = 'o', hunks = { { id = 'h1' } } }, { title = 'B', overview = 'o', hunks = { { id = 'h2' } } } })
+  local split = guide.resolve(rec, guide.hunks(diff.parse(difftext({
+    { path = 'src/a.ts', hunks = {
+      { '@@ -1,3 +1,3 @@', ' one', '-two', '+TWO!', ' three' },
+      { '@@ -4,3 +4,3 @@', ' four', '-five', '+FIVE!', ' six' },
+    } },
+    { path = 'src/b.ts', hunks = { { '@@ -1,1 +1,1 @@', '-x', '+y' } } },
+  }))))
+  h.eq({ { 'A', {} }, { 'B', { 'h3' } }, { 'Not in guide', { 'h1', 'h2' } } }, titles_of(split))
+  h.eq({ 1, true }, { split.sections[1].missing, split.sections[1].outdated })
+
+  -- one current hunk overlapping guide hunks of two sections (an edit joined them): ambiguous
+  local rec2 = reanchor_rec({
+    { path = 'src/a.ts', hunks = {
+      { '@@ -1,3 +1,3 @@', ' one', '-two', '+TWO', ' three' },
+      { '@@ -8,3 +8,3 @@', ' eight', '-nine', '+NINE', ' ten' },
+    } },
+  }, { { title = 'A', overview = 'o', hunks = { { id = 'h1' } } }, { title = 'B', overview = 'o', hunks = { { id = 'h2' } } } })
+  local joined = guide.resolve(rec2, guide.hunks(diff.parse(difftext({
+    { path = 'src/a.ts', hunks = { {
+      '@@ -1,10 +1,10 @@', ' one', '-two', '+TWO', ' three', '-four', '+FOUR', ' five', ' six', ' seven', ' eight', '-nine', '+NINE', ' ten',
+    } } },
+  }))))
+  h.eq({ { 'A', {} }, { 'B', {} }, { 'Not in guide', { 'h1' } } }, titles_of(joined))
+
+  -- no overlap (a change elsewhere in the file), another file, or a different function context
+  local rec3 = reanchor_rec({
+    { path = 'src/a.ts', hunks = { { '@@ -10,2 +10,3 @@ function ten', ' ten', '+ten and a half', ' eleven' } } },
+  }, { { title = 'A', overview = 'o', hunks = { { id = 'h1' } } } })
+  for _, spec in ipairs({
+    { path = 'src/a.ts', hunks = { { '@@ -40,2 +40,3 @@ function ten', ' forty', '+forty and a half', ' forty-one' } } },
+    { path = 'src/other.ts', hunks = { { '@@ -10,2 +10,3 @@ function ten', ' ten', '+ten and a bit', ' eleven' } } },
+    { path = 'src/a.ts', hunks = { { '@@ -10,2 +10,3 @@ function nine', ' ten', '+ten and a bit', ' eleven' } } },
+  }) do
+    local res = guide.resolve(rec3, guide.hunks(diff.parse(difftext({ spec }))))
+    h.eq({ { 'A', {} }, { 'Not in guide', { 'h1' } } }, titles_of(res), spec.path .. ' ' .. spec.hunks[1][1])
+    h.eq(0, res.edited)
+  end
 end)
 
 h.test('storage: exact diff first, else the newest guide for the key; only that one is decoded', function()
