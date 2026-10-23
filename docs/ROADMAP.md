@@ -33,11 +33,9 @@ sequence; later items build on earlier ones.
    The same schema is accepted from outside via `bin/revuey import-review <file|->`, so an external agent or tool can
    produce a review in the same format. An optional skill's `SKILL.md` is read by revuey and passed as guidance.
    Single conversational comments from a connected agent use `bin/revuey comment --path --line` instead.
-3. **Ask AI and chat panel.** Built on local comments: from the comment editor (or a visual selection), a key
-   sends the draft as a question instead of saving it, carrying its anchor (file, lines, code, guide section). The
-   answer streams into a chat side panel that resumes the guide's Claude session, so it has the review context, and
-   can be pinned back as a reply in that comment's thread, then kept as a review comment or discarded. Follow-ups on
-   AI review findings use the same path. Read-only, restricted `claude -p` as for the guide.
+3. **Ask AI via the agent session.** From the comment editor or a selection, a key sends the comment (with file,
+   lines, code and guide section) to a connected coding-agent session, and replies land in the comment's thread.
+   This is the primary Ask AI path; a built-in chat panel is descoped (see Later).
    **Send to the launching agent session.** When a coding agent launched revuey (via a small revuey skill, in a
    tmux or herdr pane), comments and questions can be sent straight back to that session without closing revuey.
    revuey appends events (file, lines, code, text) to a feed that `revuey watch` streams; the agent watches it with
@@ -91,6 +89,9 @@ sequence; later items build on earlier ones.
   tmux first to tell revuey bugs from terminal ones.
 
 ## Later / ideas
+- Built-in chat panel (descoped: the external agent session covers it). A lighter option: when no agent is
+  connected, `<C-a>` offers a one-shot answer from revuey's own read-only `claude -p` (resuming the guide's session),
+  landing as a reply in the comment's thread, with no panel.
 - Optional image rendering of the guide diagram via snacks.nvim when available.
 - Codex as a second AI provider.
 - Side-by-side diff mode.
