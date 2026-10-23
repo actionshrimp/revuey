@@ -6,6 +6,8 @@ local M = {}
 
 M.entries = {}
 local MAX = 200
+-- the file is moved to `<file>.1` (replacing an older one) when it reaches this size
+M.max_bytes = 256 * 1024
 
 ---Path of the log file.
 function M.path()
@@ -24,6 +26,10 @@ function M.write(scope, msg)
   pcall(function()
     local p = M.path()
     vim.fn.mkdir(vim.fs.dirname(p), 'p')
+    local st = vim.uv.fs_stat(p)
+    if st and st.size >= M.max_bytes then
+      os.rename(p, p .. '.1')
+    end
     local fd = io.open(p, 'a')
     if fd then
       fd:write(line, '\n')

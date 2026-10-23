@@ -289,8 +289,9 @@ and review state on the layer's row, and a section with the details of the layer
 ```
 
 - Row chips: `✓` approved (`RevueyForgeApproved`), `✗` changes requested (`RevueyForgeChanges`),
-  `●` review required or no decision (`RevueyForgePending`); drafts, merged and closed PRs are
-  dim with `draft`, `merged` or `closed`. In a narrow panel the branch name is cut first, then the
+  `●` review required (`RevueyForgePending`), `○` no review decision (`RevueyForgeNone`); drafts,
+  merged and closed PRs are dim with `draft`, `merged` or `closed`. A dim `?` (and `(stale)` on
+  the detail heading) means the last lookup failed and this is the previous result. In a narrow panel the branch name is cut first, then the
   commit count. A review without a stack shows the chip on its `branch → base` line.
 - The detail section has the title, author, state, the review decision, each reviewer's latest
   review and the reviewers still requested, check counts, mergeability and the base branch. When
@@ -300,22 +301,29 @@ and review state on the layer's row, and a section with the details of the layer
 - `gx` in the panel opens the PR in your browser (`vim.ui.open`): on a layer row, that layer's PR,
   anywhere else the viewed layer's. (`go` already opens files in the diff.)
 - **Lookup.** One `gh api graphql` call per refresh covers every layer, by head branch name: a
-  remote layer `origin/x` is looked up as `x`, and a local branch that tracks another name uses
-  that name. The repo comes from the remote the branch tracks (`git remote get-url`, SSH or HTTPS),
-  else the trunk's remote, else `origin`. A branch tracking a fork is looked up in the trunk's
-  repo by head owner (and in the fork). An open PR wins over merged or closed ones, then the most
-  recent. Hosts other than github.com need `forge.hosts` (hosts with "github" in their name are
-  recognised).
-- **When.** On open, on `R` and on scope switches, in the background; results are cached per repo
-  for `forge.ttl` seconds (60), so these reuse them until then. There is no polling: a panel
-  redraw after the TTL looks again.
-- **Failures are quiet.** No `gh`, not logged in, offline, rate limited or unexpected output:
-  nothing is shown, and the reason is written to the log file (`log_file`, default
-  `stdpath('log')/revuey.log`). Repos without a GitHub remote make no call at all.
+  remote layer `origin/x` is looked up as `x`; a local branch by its own name, then its push
+  target's name, then its upstream's name when that differs (never the trunk: a branch made with
+  `git switch -c feat origin/main` is still looked up as `feat`). The base repo is found like gh
+  does: the remote `gh repo set-default` marked (`remote.<name>.gh-resolved`), else `upstream`,
+  else the trunk's remote, else `origin` (`git remote get-url`, SSH or HTTPS). Each lookup also
+  asks the repo's parent, so a fork cloned as `origin` with no `upstream` remote still finds PRs
+  in the parent. PRs from other people's forks with the same branch name are skipped (head
+  owner). An open PR wins, then the most recently updated merged or closed one, but only when
+  its head commit is in the branch (`git merge-base --is-ancestor`), so a new branch reusing an
+  old name doesn't show the old PR. Hosts other than github.com need `forge.hosts` (hosts with
+  "github" in their name are recognised).
+- **When.** On open and on scope switches, in the background, with results cached per repo for
+  `forge.ttl` seconds (60). `R` always looks again. There is no polling: a panel redraw after the
+  TTL looks again. One lookup runs at a time per review; `gh` is stopped after `forge.timeout`
+  seconds (15) and when the review closes, and a lookup that ends after that is ignored.
+- **Failures are quiet.** No `gh`, not logged in, offline, timed out, rate limited or unexpected
+  output: nothing new is shown (PRs already shown stay, marked stale), and the reason is written
+  to the log file (`log_file`, default `stdpath('log')/revuey.log`, moved to `revuey.log.1` at
+  256KB). Repos without a GitHub remote make no call at all.
 
 ```lua
 require('revuey').setup({
-  forge = { enabled = true, ttl = 60, cmd = 'gh', hosts = { 'git.example.com' } },
+  forge = { enabled = true, ttl = 60, timeout = 15, cmd = 'gh', hosts = { 'git.example.com' } },
   keymaps = { forge_open = 'gx' },
 })
 ```
@@ -756,7 +764,7 @@ the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `Revuey
 stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, the comments'
 `RevueyCommentSign`, `RevueyCommentBorder`, `RevueyCommentAuthor`, `RevueyCommentDraft`,
 `RevueyCommentResolved` and `RevueyCommentOutdated`, the pull requests' `RevueyForgeApproved`,
-`RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeDraft`, `RevueyForgeMerged`,
+`RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeNone`, `RevueyForgeDraft`, `RevueyForgeMerged`,
 `RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, and others (see
 `lua/revuey/highlights.lua`).
 

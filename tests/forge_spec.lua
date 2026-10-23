@@ -73,7 +73,9 @@ local function node(o)
     mergeable = o.mergeable or 'MERGEABLE',
     baseRefName = o.base or 'main',
     headRefName = o.head or 'x',
-    headRepositoryOwner = { login = o.head_owner or 'acme' },
+    headRepositoryOwner = o.head_owner == false and vim.NIL or { login = o.head_owner or 'acme' },
+    headRefOid = o.oid or vim.NIL,
+    updatedAt = o.updated or '2026-01-01T00:00:00Z',
     commits = { nodes = { { commit = { statusCheckRollup = o.checks and {
       state = 'PENDING',
       contexts = {
@@ -111,16 +113,58 @@ end)
 
 h.test('pick: OPEN first, else the newest MERGED/CLOSED; fork PRs of other owners ignored', function()
   local prs = vim.tbl_map(decoded, {
-    node({ number = 9, state = 'CLOSED' }), -- newest
-    node({ number = 5, state = 'OPEN', head_owner = 'someone' }),
-    node({ number = 4, state = 'OPEN' }),
-    node({ number = 2, state = 'MERGED' }),
+    node({ number = 2, state = 'MERGED', updated = '2026-01-02T00:00:00Z' }),
+    node({ number = 5, state = 'OPEN', head_owner = 'someone', updated = '2026-01-05T00:00:00Z' }),
+    node({ number = 4, state = 'OPEN', updated = '2026-01-04T00:00:00Z' }),
+    node({ number = 9, state = 'CLOSED', updated = '2026-01-09T00:00:00Z' }), -- newest, from another repo
+    node({ number = 6, state = 'OPEN', head_owner = false }), -- deleted fork: nobody's
   })
   h.eq(4, forge.pick(prs, 'acme').number)
   h.eq(5, forge.pick(prs, 'someone').number)
-  h.eq(9, forge.pick({ prs[1], prs[4] }, 'acme').number)
+  h.eq(9, forge.pick({ prs[1], prs[4] }, 'acme').number, 'by updatedAt, not input order')
   h.eq(nil, forge.pick({ prs[2] }, 'acme'))
+  h.eq(nil, forge.pick({ prs[5] }, 'acme'), 'a null head owner is not ours')
   h.eq(nil, forge.pick({}, 'acme'))
+  -- closed/merged PRs only when `accept` vouches for their head commit; open ones by name
+  h.eq(2, forge.pick({ prs[1], prs[4] }, 'acme', function(pr)
+    return pr.number == 2
+  end).number)
+  h.eq(nil, forge.pick({ prs[1], prs[4] }, 'acme', function()
+    return false
+  end))
+  h.eq(4, forge.pick({ prs[3], prs[4] }, 'acme', function()
+    return false
+  end).number)
+end)
+
+h.test('panel.wrap breaks words wider than the panel by display width (long names, CJK)', function()
+  local wrap = require('revuey.panel').wrap
+  local lines = wrap('base: dave/very-long-branch-name-for-the-cart-feature', 26, '   ')
+  for _, l in ipairs(lines) do
+    h.ok(vim.fn.strdisplaywidth(l) <= 26, l)
+  end
+  h.eq('base:dave/very-long-branch-name-for-the-cart-feature', (table.concat(lines, ''):gsub('%s', '')))
+  local cjk = wrap('購物車合計と割引を追加するプルリクエストのタイトルです', 20, '   ')
+  for _, l in ipairs(cjk) do
+    h.ok(vim.fn.strdisplaywidth(l) <= 20, l)
+  end
+  h.ok(#cjk >= 3, vim.inspect(cjk))
+end)
+
+h.test('log: rotates revuey.log at its size limit, keeping one .1', function()
+  local dir = h.tmpdir('forge-log-rotate')
+  setup({ log_file = dir .. '/revuey.log' })
+  local max = log.max_bytes
+  log.max_bytes = 200
+  for i = 1, 20 do
+    log.write('forge', 'line ' .. i)
+  end
+  log.max_bytes = max
+  h.ok(vim.uv.fs_stat(dir .. '/revuey.log.1'), 'rotated')
+  h.ok(vim.uv.fs_stat(dir .. '/revuey.log').size <= 200 + 80, 'current file small')
+  h.eq(nil, vim.uv.fs_stat(dir .. '/revuey.log.2'))
+  h.ok(table.concat(vim.fn.readfile(dir .. '/revuey.log'), '\n'):find('line 20', 1, true))
+  setup()
 end)
 
 h.test('row model: glyph by review decision; draft, merged and closed are dim with a marker', function()
@@ -131,7 +175,7 @@ h.test('row model: glyph by review decision; draft, merged and closed are dim wi
   h.eq({ '#3', 'RevueyForgeNumber', '✓', 'RevueyForgeApproved' }, row({ decision = 'APPROVED' }))
   h.eq({ '#3', 'RevueyForgeNumber', '✗', 'RevueyForgeChanges' }, row({ decision = 'CHANGES_REQUESTED' }))
   h.eq({ '#3', 'RevueyForgeNumber', '●', 'RevueyForgePending' }, row({ decision = 'REVIEW_REQUIRED' }))
-  h.eq({ '#3', 'RevueyForgeNumber', '●', 'RevueyForgePending' }, row({}))
+  h.eq({ '#3', 'RevueyForgeNumber', '○', 'RevueyForgeNone' }, row({}), 'no review decision')
   h.eq({ '#3', 'RevueyForgeDim', nil, nil, 'draft', 'RevueyForgeDraft' }, row({ draft = true, decision = 'APPROVED' }))
   h.eq({ '#3', 'RevueyForgeDim', nil, nil, 'merged', 'RevueyForgeMerged' }, row({ state = 'MERGED', decision = 'APPROVED' }))
   h.eq({ '#3', 'RevueyForgeDim', nil, nil, 'closed', 'RevueyForgeClosed' }, row({ state = 'CLOSED' }))
@@ -156,7 +200,9 @@ h.test('detail model: title, author/state, decision, reviewers, checks, mergeabl
   h.eq('RevueyForgeWarn', d[#d].hl)
   -- merged: no mergeable line, no mismatch warning (GitHub retargets merged PRs' children)
   local merged = decoded(node({ number = 3, state = 'MERGED', mergeable = 'UNKNOWN' }))
-  h.eq({ 'PR 3', 'by alice · merged', '● no review required', 'checks: none', 'base: main' }, texts(forge.detail(merged, 'other')))
+  h.eq({ 'PR 3', 'by alice · merged', '○ no review decision', 'checks: none', 'base: main' }, texts(forge.detail(merged, 'other')))
+  local required = decoded(node({ number = 5, decision = 'REVIEW_REQUIRED' }))
+  h.eq('● review required', texts(forge.detail(required))[3])
   local conflict = decoded(node({ number = 4, mergeable = 'CONFLICTING' }))
   h.eq('conflicts with base', texts(forge.detail(conflict))[5])
 end)
@@ -253,8 +299,12 @@ local function reset()
   end
 end
 
+-- the fixture's dates are fixed, so its commits are the same in every copy
+local MATH_TIP = vim.trim(h.git(stack_fixture('forge-tip'), 'rev-parse', 'stack/math'))
+
 local stack_prs = {
-  ['acme/shop:stack/math'] = { node({ number = 11, state = 'MERGED', head = 'stack/math', title = 'Math helpers' }) },
+  -- merged: shown because its head commit is stack/math's tip
+  ['acme/shop:stack/math'] = { node({ number = 11, state = 'MERGED', head = 'stack/math', title = 'Math helpers', oid = MATH_TIP }) },
   ['acme/shop:stack/cart'] = {
     node({
       number = 12, title = 'Cart totals with discounts and a rather long title that wraps', head = 'stack/cart',
@@ -518,7 +568,13 @@ h.test('narrow panel: the branch name is cut before the PR chip (then the commit
   setup()
 end)
 
-h.test('TTL cache: no second gh call within the TTL; one on R after it expired', function()
+---`R` in the diff window.
+local function press_R(s)
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_feedkeys('R', 'mtx', false)
+end
+
+h.test('TTL cache: open, scope switches and redraws reuse it; R always refetches; lazy after the TTL', function()
   reset()
   local t = 1000000
   forge.now = function()
@@ -531,26 +587,281 @@ h.test('TTL cache: no second gh call within the TTL; one on R after it expired',
   local s = open(d)
   idle(s)
   h.eq(1, #h.read_calls(calls))
-  view.refresh({ force = true })
+  view.refresh({ force = true }) -- an auto refresh that re-renders
+  idle(s)
+  view.set_scope({ kind = 'layer', index = 1 })
   idle(s)
   t = t + 29 * 1000
-  view.refresh({ force = true })
-  idle(s)
   require('revuey.panel').render(s)
   idle(s)
   h.eq(1, #h.read_calls(calls), 'within the TTL: cached')
-  t = t + 2 * 1000
-  view.refresh({ force = true })
+  local _, restore = h.capture_notify()
+  press_R(s)
   idle(s)
-  h.eq(2, #h.read_calls(calls), 'R after the TTL: fetched again')
+  h.eq(2, #h.read_calls(calls), 'R within the TTL: fetched again')
+  -- R pressed repeatedly: the one in-flight lookup absorbs them (at most one follow-up)
+  press_R(s)
+  press_R(s)
+  press_R(s)
+  idle(s)
+  restore()
+  local n = #h.read_calls(calls)
+  h.ok(n >= 3 and n <= 4, 'repeated R: ' .. n .. ' calls')
   h.ok(find(panel_lines(s), '| #12 ✓ '), 'still shown')
   -- lazily, when the panel is redrawn after the TTL (no polling)
   t = t + 31 * 1000
   require('revuey.panel').render(s)
   idle(s)
-  h.eq(3, #h.read_calls(calls), 'panel redraw after the TTL: fetched again')
+  h.eq(n + 1, #h.read_calls(calls), 'panel redraw after the TTL: fetched again')
   view.close()
   setup()
+end)
+
+h.test('R after gh was fixed shows the PR at once (a cached failure is skipped)', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-fixed') .. '/calls.ndjson'
+  h.use_fake_gh(calls, stack_prs, 'fail')
+  local d = stack_fixture('forge-fixed')
+  local s = open(d)
+  idle(s)
+  h.ok(not find(panel_lines(s), '#12'), 'nothing while gh fails')
+  vim.env.REVUEY_FAKE_GH = nil -- e.g. after `gh auth login`
+  view.refresh({ force = true }) -- not R: the failure stays cached
+  idle(s)
+  h.eq(1, #h.read_calls(calls))
+  local _, restore = h.capture_notify()
+  press_R(s)
+  idle(s)
+  restore()
+  h.eq(2, #h.read_calls(calls))
+  h.ok(find(panel_lines(s), '| #12 ✓ '), 'shown after R')
+  view.close()
+end)
+
+h.test('a branch tracking another name (created from origin/main): looked up by its own name', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-track') .. '/calls.ndjson'
+  h.use_fake_gh(calls, {
+    ['acme/shop:feat'] = { node({ number = 42, head = 'feat', decision = 'APPROVED' }) },
+    ['acme/shop:main'] = { node({ number = 1, head = 'main', base = 'release' }) },
+  })
+  local d = h.repo('forge-track', { ['a.txt'] = 'a\n' }, { ['a.txt'] = 'b\n' })
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  h.git(d, 'config', 'branch.feat.remote', 'origin')
+  h.git(d, 'config', 'branch.feat.merge', 'refs/heads/main')
+  local s = open(d, { base = 'main' })
+  idle(s)
+  local q = h.read_calls(calls)[1].argv[5]
+  h.ok(q:find('headRefName: "feat"', 1, true), q)
+  h.ok(not q:find('headRefName: "main"', 1, true), 'never the trunk it tracks: ' .. q)
+  h.ok(find(panel_lines(s), ' feat → main | #42 ✓ '), table.concat(panel_lines(s), '\n'))
+  view.close()
+  local origin = { url = 'git@github.com:acme/shop.git', repo = forge.parse_remote_url('git@github.com:acme/shop.git') }
+  local function branches(b)
+    local ts = forge.targets({ stack = { trunk = 'main', layers = { { name = 'feat', tip = 'x' } } } }, {
+      names = { 'origin' }, remotes = { origin = origin }, branches = { feat = b }, resolved = {},
+    })
+    return vim.tbl_map(function(c)
+      return c.branch
+    end, ts.feat.candidates)
+  end
+  -- upstream is the trunk: never used
+  h.eq({ 'feat' }, branches({ up_remote = 'origin', up_ref = 'refs/heads/main' }))
+  -- own name first, then the push name, a differently named upstream last
+  h.eq({ 'feat', 'dave/feat', 'team/feat' }, branches({
+    up_remote = 'origin', up_ref = 'refs/heads/team/feat', push_remote = 'origin', push_ref = 'refs/heads/dave/feat',
+  }))
+end)
+
+---A repo whose `feat` and `main` track `<track>/`, with remotes { {name, url} }.
+local function remotes_repo(name, remotes, track, extra)
+  local d = h.repo(name, { ['a.txt'] = 'a\n' }, { ['a.txt'] = 'b\n' })
+  for _, r in ipairs(remotes) do
+    h.git(d, 'remote', 'add', r[1], r[2])
+  end
+  h.git(d, 'config', 'branch.feat.remote', track)
+  h.git(d, 'config', 'branch.feat.merge', 'refs/heads/feat')
+  h.git(d, 'config', 'branch.main.remote', track)
+  h.git(d, 'config', 'branch.main.merge', 'refs/heads/main')
+  for k, v in pairs(extra or {}) do
+    h.git(d, 'config', k, v)
+  end
+  return d
+end
+
+local function lookups(calls)
+  local out = {}
+  local q = h.read_calls(calls)[1].argv[5]
+  for o, n, b in q:gmatch('l%d+: repository%(owner: (%b""), name: (%b"")%) { pullRequests%(headRefName: (%b"")') do
+    out[#out + 1] = vim.json.decode(o) .. '/' .. vim.json.decode(n) .. ':' .. vim.json.decode(b)
+  end
+  table.sort(out)
+  return out
+end
+
+h.test('fork as origin, parent as upstream: the PR in the parent repo is found', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-fork-up') .. '/calls.ndjson'
+  h.use_fake_gh(calls, { ['acme/shop:feat'] = { node({ number = 50, head = 'feat', head_owner = 'me' }) } })
+  local d = remotes_repo('forge-fork-up', { { 'origin', 'git@github.com:me/shop.git' }, { 'upstream', 'git@github.com:acme/shop.git' } }, 'origin')
+  local s = open(d, { base = 'main' })
+  idle(s)
+  h.eq({ 'acme/shop:feat', 'me/shop:feat' }, lookups(calls))
+  h.ok(find(panel_lines(s), ' feat → main | #50 '), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('fork as origin, no upstream remote: the fork\'s parent is asked in the same request', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-fork-parent') .. '/calls.ndjson'
+  h.use_fake_gh(calls, {
+    _parents = { ['me/shop'] = 'acme/shop' },
+    ['acme/shop:feat'] = { node({ number = 51, head = 'feat', head_owner = 'me' }) },
+  })
+  local d = remotes_repo('forge-fork-parent', { { 'origin', 'git@github.com:me/shop.git' } }, 'origin')
+  local s = open(d, { base = 'main' })
+  idle(s)
+  h.eq(1, #h.read_calls(calls))
+  h.eq({ 'me/shop:feat' }, lookups(calls))
+  h.ok(h.read_calls(calls)[1].argv[5]:find('parent { nameWithOwner pullRequests(headRefName: "feat"', 1, true), 'parent asked')
+  h.ok(find(panel_lines(s), ' feat → main | #51 '), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('gh-resolved base remote (gh repo set-default) wins over upstream and origin', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-resolved') .. '/calls.ndjson'
+  h.use_fake_gh(calls, { ['corp/shop:feat'] = { node({ number = 52, head = 'feat', head_owner = 'me' }) } })
+  local d = remotes_repo('forge-resolved', {
+    { 'origin', 'git@github.com:me/shop.git' },
+    { 'upstream', 'git@github.com:acme/shop.git' },
+    { 'corp', 'git@github.com:corp/shop.git' },
+  }, 'origin', { ['remote.corp.gh-resolved'] = 'base' })
+  local s = open(d, { base = 'main' })
+  idle(s)
+  h.eq({ 'corp/shop:feat', 'me/shop:feat' }, lookups(calls))
+  h.ok(find(panel_lines(s), ' feat → main | #52 '), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('a reused branch name: an old merged PR whose head is not in the branch is not shown', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-reused') .. '/calls.ndjson'
+  local d = h.repo('forge-reused', { ['a.txt'] = 'a\n' }, { ['a.txt'] = 'b\n' })
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  local base = vim.trim(h.git(d, 'rev-parse', 'main'))
+  h.use_fake_gh(calls, { ['acme/shop:feat'] = {
+    node({ number = 3, head = 'feat', state = 'MERGED', oid = string.rep('1', 40), updated = '2026-01-03T00:00:00Z' }),
+    node({ number = 2, head = 'feat', state = 'CLOSED', oid = base, updated = '2026-01-02T00:00:00Z' }),
+  } })
+  local s = open(d, { base = 'main' })
+  idle(s)
+  -- #3's head is unknown here (another branch of the same name); #2's head is in feat's history
+  h.ok(find(panel_lines(s), ' feat → main | #2 closed '), table.concat(panel_lines(s), '\n'))
+  view.close()
+  reset()
+  h.use_fake_gh(calls, { ['acme/shop:feat'] = { node({ number = 3, head = 'feat', state = 'MERGED', oid = string.rep('1', 40) }) } })
+  s = open(d, { base = 'main' })
+  idle(s)
+  h.ok(not find(panel_lines(s), '#3'), 'not shown')
+  h.ok(not find(panel_lines(s), 'PR #'), 'no detail')
+  view.close()
+end)
+
+h.test('partial data: a repo that does not resolve gives no PR there; the rest is shown, errors logged', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-partial') .. '/calls.ndjson'
+  h.use_fake_gh(calls, {
+    _null = { 'me/shop' },
+    ['acme/shop:feat'] = { node({ number = 53, head = 'feat', head_owner = 'me' }) },
+  })
+  local d = remotes_repo('forge-partial', { { 'origin', 'git@github.com:me/shop.git' }, { 'upstream', 'git@github.com:acme/shop.git' } }, 'origin')
+  local s = open(d, { base = 'main' })
+  idle(s)
+  h.ok(find(panel_lines(s), ' feat → main | #53 '), table.concat(panel_lines(s), '\n'))
+  local text = table.concat(vim.tbl_map(function(e)
+    return e.msg
+  end, log.entries), '\n')
+  h.ok(text:find('Could not resolve to a Repository', 1, true), text)
+  view.close()
+end)
+
+h.test('a transient failure keeps the PRs shown, marked stale', function()
+  reset()
+  local t = 1e6
+  forge.now = function()
+    return t
+  end
+  local calls = h.tmpdir('forge-gh-blip') .. '/calls.ndjson'
+  h.use_fake_gh(calls, stack_prs)
+  local d = stack_fixture('forge-blip')
+  local s = open(d)
+  idle(s)
+  h.ok(find(panel_lines(s), ' ▾ PR #12 | ✓'), 'shown')
+  vim.env.REVUEY_FAKE_GH = 'fail'
+  t = t + 61000
+  require('revuey.panel').render(s)
+  idle(s)
+  h.eq(2, #h.read_calls(calls))
+  local lines = panel_lines(s)
+  local _, cart = find(lines, '@ stack/cart')
+  h.ok(cart:find('| #12 ✓? ', 1, true), cart)
+  h.ok(find(lines, ' ▾ PR #12 | ✓ (stale)'), table.concat(lines, '\n'))
+  h.ok(find(lines, '   base: stack/math'), 'details kept')
+  vim.env.REVUEY_FAKE_GH = nil
+  view.close()
+end)
+
+---Is the process alive?
+local function alive(pid)
+  return vim.uv.kill(tonumber(pid), 0) == 0
+end
+
+h.test('a hanging gh times out (forge.timeout): the lookup ends, logged, nothing shown', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-hang') .. '/calls.ndjson'
+  h.use_fake_gh(calls, stack_prs, 'hang')
+  setup({ forge = { timeout = 1 } })
+  local d = stack_fixture('forge-hang')
+  local s = open(d)
+  h.ok(vim.wait(5000, function()
+    return s.forge and s.forge.ready and not s.forge.busy
+  end, 20), 'lookup did not end')
+  local entry = log.entries[#log.entries]
+  h.ok(entry and entry.msg:find('timed out', 1, true), vim.inspect(log.entries))
+  local pid = vim.fn.readfile(calls .. '.pid')[1]
+  h.ok(vim.wait(2000, function()
+    return not alive(pid)
+  end, 20), 'gh still running')
+  h.ok(not find(panel_lines(s), '#12'), 'nothing shown')
+  view.close()
+  vim.env.REVUEY_FAKE_GH = nil
+  setup()
+end)
+
+h.test('closing the review mid-lookup stops gh; its late result never reaches the cache', function()
+  reset()
+  local calls = h.tmpdir('forge-gh-close') .. '/calls.ndjson'
+  h.use_fake_gh(calls, stack_prs, 'hang')
+  local d = stack_fixture('forge-close')
+  local s = open(d)
+  h.ok(vim.wait(5000, function()
+    return vim.uv.fs_stat(calls .. '.pid') ~= nil and s.forge and s.forge.busy
+  end, 20), 'gh did not start')
+  local pid = vim.fn.readfile(calls .. '.pid')[1]
+  local msgs, restore = h.capture_notify()
+  view.close()
+  h.ok(vim.wait(2000, function()
+    return not alive(pid)
+  end, 20), 'gh still running after close')
+  vim.wait(300)
+  restore()
+  h.eq({}, forge.cache, 'nothing cached')
+  h.eq({}, vim.tbl_filter(function(e)
+    return e.msg:find('failed', 1, true) ~= nil
+  end, log.entries), 'no failure recorded')
+  h.eq({}, msgs)
+  vim.env.REVUEY_FAKE_GH = nil
 end)
 
 h.run()
