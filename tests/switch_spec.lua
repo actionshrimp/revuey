@@ -189,7 +189,7 @@ end
 local function wait_head(s, name)
   h.ok(vim.wait(10000, function()
     return not s.refreshing and not s.pending and not s.pending_scope and head_layer(s) == name
-  end, 10), 'HEAD layer did not become ' .. name .. ' (is ' .. tostring(head_layer(s)) .. ')')
+  end, 10), 'HEAD layer did not become ' .. name .. ' (is ' .. tostring((head_layer(s))) .. ')')
 end
 
 local function idle(s)
@@ -803,6 +803,80 @@ h.test('the parent setting goes with the branch: deleted and recreated under the
   h.git(dir, 'commit', '-qm', 'z')
   s = open(dir)
   h.eq(nil, s.review.stack, 'no stack: nothing names origin/stack/math')
+  view.close()
+end)
+
+h.test('a parent the user set is never overwritten; a different suggestion is only a note', function()
+  local dir = fixture('--remote-stack', 'user-parent')
+  -- a local stack/cart with a commit of its own (off the line), and the user's own parent setting
+  h.git(dir, 'switch', '-q', '--track', 'origin/stack/cart')
+  h.write(dir, 'mine.txt', 'mine\n')
+  h.git(dir, 'add', '.')
+  h.git(dir, 'commit', '-qm', 'mine')
+  h.git(dir, 'switch', '-q', '--detach', 'origin/stack/ui')
+  h.git(dir, 'config', 'branch.stack/cart.revueyParent', 'main')
+  local s = open(dir)
+  -- detached: the remote layer (whose parent counts as inferred) is shown, not the local branch
+  h.eq({ 'origin/stack/math', 'origin/stack/cart', 'origin/stack/ui' }, names(s))
+  local done, msgs = do_switch(2)
+  h.eq(true, done.ok, done.msg)
+  idle(s)
+  h.eq('stack/cart', branch(dir))
+  h.eq('main', config(dir, 'branch.stack/cart.revueyParent'), 'kept')
+  h.eq(nil, s.review.stack, 'the user\'s parent (trunk) applies: no stack')
+  local note
+  for _, m in ipairs(msgs) do
+    if m.msg:find('stack parent', 1, true) then
+      note = m.msg
+    end
+  end
+  h.eq('revuey: kept your stack parent of stack/cart (main); this stack has origin/stack/math below it', note)
+  -- the same setting again: nothing to say
+  h.git(dir, 'config', 'branch.stack/cart.revueyParent', 'origin/stack/math')
+  h.git(dir, 'switch', '-q', '--detach', 'origin/stack/ui')
+  s = open(dir)
+  done, msgs = do_switch(2, nil, 'stack/cart')
+  h.eq(true, done.ok, done.msg)
+  h.eq('origin/stack/math', config(dir, 'branch.stack/cart.revueyParent'))
+  for _, m in ipairs(msgs) do
+    h.ok(not m.msg:find('parent', 1, true), m.msg)
+  end
+  view.close()
+end)
+
+h.test('the parent is only recorded when it is an ancestor of the branch (a local copy behind a restack is left alone)', function()
+  local dir = fixture('--remote-stack', 'not-ancestor')
+  -- a local stack/cart tracking origin/stack/cart, but not built on origin/stack/math
+  h.git(dir, 'branch', '-q', '--no-track', 'stack/cart', 'origin/main')
+  h.git(dir, 'branch', '-q', '--set-upstream-to=origin/stack/cart', 'stack/cart')
+  local s = open(dir)
+  h.eq({ 'origin/stack/math', 'origin/stack/cart', 'origin/stack/ui' }, names(s))
+  h.eq('stack/cart', s.review.stack.layers[2].local_copy)
+  local done = do_switch(2)
+  h.eq(true, done.ok, done.msg)
+  h.eq('stack/cart', branch(dir))
+  h.eq('', config(dir, 'branch.stack/cart.revueyParent'))
+  view.close()
+end)
+
+h.test('a parent setting naming a remote branch that is gone: a note says so, with how to clear it', function()
+  local dir = fixture('--remote-stack', 'parent-gone')
+  local s = open(dir)
+  h.eq(true, do_switch(2, nil, 'stack/cart').ok)
+  h.eq('origin/stack/math', config(dir, 'branch.stack/cart.revueyParent'))
+  h.git(dir, 'update-ref', '-d', 'refs/remotes/origin/stack/math')
+  refresh(s)
+  h.eq(nil, s.review.stack)
+  local found
+  for _, n in ipairs(s.review.notes or {}) do
+    if n.kind == 'unknown_parent' and n.branch == 'stack/cart' and n.parent == 'origin/stack/math' then
+      found = n
+    end
+  end
+  h.ok(found, vim.inspect(s.review.notes))
+  h.ok(found.text:find(':RevueyStackParent --clear', 1, true), found.text)
+  local text = panel_text(s)
+  h.ok(text:find('stack/cart: parent origin/stack/math', 1, true), text)
   view.close()
 end)
 

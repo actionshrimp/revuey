@@ -163,6 +163,10 @@ function M.msg.unsaved(target, paths)
     :format(target, M.list(paths))
 end
 
+function M.msg.kept_parent(branch, existing, suggested)
+  return ('revuey: kept your stack parent of %s (%s); this stack has %s below it'):format(branch, existing, suggested)
+end
+
 function M.msg.busy()
   return 'revuey: a switch is already running; this one is dropped'
 end
@@ -363,9 +367,26 @@ function M.check(root, p, target_rev)
 end
 
 ---Record the layer below as the explicit stack parent of `branch` (`branch.<b>.revueyParent`;
----`git branch -d` removes it with the branch).
-function M.set_parent(root, branch, parent)
-  return git.git({ 'config', 'branch.' .. branch .. '.revueyParent', parent }, root)
+---`git branch -d` removes it with the branch), but never over a setting that exists (the user's,
+---or an earlier switch's), and only when `parent` is an ancestor of the branch (a local copy
+---behind a restack of the remote stack is not built on it).
+---@return 'set'|'kept'|'same'|'skipped' what, string? message (a note for 'kept', an error)
+function M.record_parent(root, branch, parent)
+  local key = 'branch.' .. branch .. '.revueyParent'
+  local existing = vim.trim(git.git({ 'config', '--get', key }, root) or '')
+  if existing == parent then
+    return 'same'
+  elseif existing ~= '' then
+    return 'kept', M.msg.kept_parent(branch, existing, parent)
+  end
+  if not git.is_ancestor(parent, 'refs/heads/' .. branch, root) then
+    return 'skipped'
+  end
+  local _, err = git.git({ 'config', key, parent }, root)
+  if err then
+    return 'skipped', 'revuey: could not record the stack parent: ' .. err
+  end
+  return 'set'
 end
 
 ---Run the plan's `git switch`. Returns nil, or an error message (git's own, with the path of

@@ -2984,9 +2984,9 @@ function M.switch_layer(index, o)
     s.switching = false
     if parent then
       -- keeps the remote layer below in the stack now that a branch is checked out
-      local _, perr = switch.set_parent(root, p.branch, parent)
-      if perr then
-        vim.notify('revuey: could not record the stack parent: ' .. perr, vim.log.levels.WARN)
+      local _, pmsg = switch.record_parent(root, p.branch, parent)
+      if pmsg then
+        vim.notify(pmsg, vim.log.levels.INFO)
       end
     end
     local note

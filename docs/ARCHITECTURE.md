@@ -194,7 +194,12 @@ are in `reports/Terminal code review tool landscape.md`.
    inferred (`parent_setting`: never the bottom layer, whose parent is trunk; never for the
    "switch anyway" to an unrelated branch; never naming the branch itself), the switch writes
    `branch.<b>.revueyParent = <that ref>` (`git branch -d` drops it with the branch, so a reused
-   name starts clean). The layers above a remote layer's new local branch are not kept: the gate
+   name starts clean). `record_parent` never overwrites an existing setting (`git config --get`
+   first; a different one gets a one-line note instead), and records nothing unless the parent is an
+   ancestor of the branch (`merge-base --is-ancestor`), so a local copy behind a restack keeps its
+   layout. With no stack, `detect` still reports an `unknown_parent` note for the checked-out
+   branch's setting naming a branch that is gone (a pruned remote ref), so the stack never vanishes
+   silently. The layers above a remote layer's new local branch are not kept: the gate
    stays closed for everything but explicit parents, so stray refs (backups, pushes under other
    names, a colleague's start) never become layers; a detached worktree shows the whole remote
    stack. After a switch: `lsp.checktime()` (hidden buffers reloaded, or wiped when the file is

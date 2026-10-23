@@ -198,7 +198,11 @@ show the usual "not restacked" note.
 On a local branch, remote-tracking branches are layers only when a parent setting names them.
 So checking out a layer whose layer below is remote-only (`gS` on `origin/stack/cart` above
 `origin/stack/math`) records `branch.stack/cart.revueyParent = origin/stack/math`, which keeps
-that layer below (deleting the branch removes the setting). The remote layers *above* it are not
+that layer below (deleting the branch removes the setting). A parent setting that already exists
+(yours, or an earlier switch's) is never changed: when it differs, a message says what the stack
+has instead. Nothing is recorded when that layer is not an ancestor of the branch (a local copy
+behind a restack of the remote stack). If the remote branch a parent setting names is deleted or
+pruned, a note says so (`:RevueyStackParent --clear` removes the setting). The remote layers *above* it are not
 shown while you are on the branch: review from a detached worktree to see the whole remote stack.
 
 `stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks (an
