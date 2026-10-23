@@ -162,33 +162,35 @@ related-branch notes below).
 ### Someone else's stack (no local branches)
 
 To review a colleague's stacked PRs you don't need a local branch for every PR. Fetch first
-(revuey never fetches; it uses the remote-tracking branches you have), then check out the top PR,
-detached or on a local branch tracking it:
+(revuey never fetches; it uses the remote-tracking branches you have), then review from a
+worktree detached at the top PR:
 
 ```sh
 git fetch origin
-git worktree add --detach ../review-their-stack origin/their-top-branch   # or: git switch --track origin/their-top-branch
+git worktree add --detach ../review-their-stack origin/their-top-branch
 cd ../review-their-stack && revuey
 ```
 
-- **Only for someone else's stack:** remote-tracking layers are used only when HEAD is detached,
-  or its branch has no commits of its own beyond its upstream. Your own branch with unpushed
-  commits is never split into layers by copies of it on a remote (a PR ref, an older push under
-  another name, a fork's upstream). So reviewing a colleague's stack from a local tracking branch
-  stops showing remote layers once you commit on it; detach (or reset to its upstream) to get
-  them back.
+- **Only with a detached HEAD:** on a local branch, remote-tracking branches are never layers, so
+  your own branch is never split by copies of it on a remote (a backup or older push under another
+  name, a PR ref, a colleague's branch started from yours, a fork's upstream). The one exception is
+  a parent you set explicitly (`:RevueyStackParent origin/<name>`, or Graphite metadata naming a
+  branch you only have as `origin/<name>`): that remote branch becomes the layer below. So to
+  review a colleague's stack from a local branch tracking its top, detach instead, or set its
+  parent.
 - **Remote-tracking layers below HEAD:** a branch under `refs/remotes/<remote>/` counts when its
   tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD, and no remote's
   default branch (`origin/main`, `upstream/main`, ...) contains it. Remote branches above HEAD or
   on other lines are never used, nor are `<remote>/HEAD`, the trunk, PR-head mirrors (`*/pr/*`,
   `*/pull/*`), copies of the checked-out branch (its upstream and push ref, refs at their
-  commits, refs named `*/<branch>`) and branches on the [ignore list](#stack-notes) (for remote
+  commits, refs named `*/<branch>`, when detached at a branch) and branches on the [ignore list](#stack-notes) (for remote
   branches it does keep them out of the stack). This is one ref listing plus set lookups, so
   thousands of remote branches cost next to nothing.
 - **Local wins:** a local branch at the same commit, or a local copy of the branch (tracking it,
   or with the same name) on that line, is the layer instead. Several remote branches at one commit: the
-  branch a parent setting names, then the one picked before (stable across refreshes), then the
-  remote your branch tracks, then `origin`, then alphabetical; the rest are listed as at the same
+  branch a parent setting names, then the one shown there before (kept per repo in the state dir,
+  so reopening with a new `origin/aaa-backup` at that commit keeps the name and its marks), then
+  `origin`, then alphabetical; the rest are listed as at the same
   commit. Explicit parents (`:RevueyStackParent`, Graphite) may name a branch you only have as
   `origin/<name>`.
 - **Detached HEAD** at a branch tip (local first, else remote-tracking) uses that branch as the
@@ -199,8 +201,9 @@ cd ../review-their-stack && revuey
 - **Marks carry over:** state keys drop the remote, so reviewed marks, comments and guides made on
   `origin/feat-x` belong to a local `feat-x` created later (or one tracking it). If you already
   have an unrelated local `feat-x`, or two remotes' branches with the same name are both layers,
-  the remote layer keeps its full name as its key. Reviews made while detached before this
-  feature were keyed as `HEAD` and are not migrated.
+  the remote layer keeps its full name as its key. A detached HEAD with no branch at it is still
+  keyed `HEAD`; reviews made detached at a branch tip before this feature were keyed `HEAD` too,
+  and now key by that branch's layer (their old marks and comments are not migrated).
 - When your checked-out branch differs from its fetched remote copy, a note says how far it is
   ahead or behind (not for a branch that tracks the trunk).
 - `bin/revuey comments`/`watch` in a detached worktree use the live review's scope, or else the
@@ -733,7 +736,8 @@ Things to try:
 - `[s`, `mr` a file in `origin/stack/cart`, then quit, run
   `git branch --track stack/cart origin/stack/cart` and reopen: the layer is now the local
   `stack/cart` and keeps its mark.
-- `git switch --track origin/stack/ui` instead of the detached HEAD: same stack, normal `@`.
+- `:RevueyStackParent` names parents explicitly; on a local branch that's the only way a
+  remote-tracking branch becomes a layer.
 
 ### Stack notes
 

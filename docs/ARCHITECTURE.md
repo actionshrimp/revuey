@@ -138,19 +138,19 @@ are in `reports/Terminal code review tool landscape.md`.
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
    **Remote-tracking layers** (`stack.remote_layers`, pure). The fingerprint's one `for-each-ref` also lists
-   `refs/remotes` (and each local branch's `%(upstream)`). **Gate:** remote layers are only considered when
-   HEAD is detached or its branch has no commits beyond its upstream (`rev-list --left-right --count`, reused
-   by the `upstream` note), so the user's own work is never split by copies of it under other names (PR-ref
-   mirrors, older pushes, a fork's upstream). After the first graph load, HEAD's first-parent line
+   `refs/remotes` (and each local branch's `%(upstream)`). **Gate:** remote layers are only considered with HEAD detached:
+   on a local branch, refs of the user's own work under other names (backups, PR-ref mirrors, a
+   colleague's start, a fork's upstream) would split it, and flip with each push; there only explicit
+   parents (revuey settings, Graphite) can name a remote ref. After the first graph load, HEAD's first-parent line
    above trunk is a set, minus commits any remote's default branch has (one `rev-list --stdin` with each
    `<remote>/HEAD`, else `main`/`master`/`develop`, excluded; only run when a remote ref is on the line); a remote ref is a candidate only when its tip is in that set and is not HEAD (no
    per-branch merge-base, so 3000 remote branches add no measurable time). Never `<remote>/HEAD`, trunk (full
    or remote-stripped name), PR-head mirrors (`*/pr/*`, `*/pull/*`), aliases of the checked-out branch (its
    upstream, `@{push}`, refs at their commits, refs named `*/<branch>`), ignore-list matches, or refs whose local copy (a branch tracking it, or of the same
    name) is on the line; a local branch at the same commit wins and the ref goes to the layer's `also`. Several
-   refs at one commit: named by an explicit parent, then the previous detection's choice (kept in the
-   detection cache, so a new `origin/aaa-backup` doesn't rename a layer), then the current branch's upstream
-   remote, then `origin`, then alphabetical. Chosen refs are
+   refs at one commit: named by an explicit parent, then the name stored for that commit (a per-repo
+   `stack-remote-names-*.json` in the state dir, so a new `origin/aaa-backup` doesn't rename a layer, across
+   sessions too), then `origin`, then alphabetical. Chosen refs are
    added to `branches` (flagged `remote`) and the resolver treats them like local tips; nothing above HEAD is
    added, so they only ever extend the stack downwards. Explicit parents naming a branch present only as a
    remote copy map to it. **Detached HEAD:** a branch at HEAD (local first, else a remote candidate) becomes
