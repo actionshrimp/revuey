@@ -36,6 +36,9 @@ M.defaults = {
     -- outside the stack, e.g. { 'dave/old-*' }. Added to the per-repo list kept by
     -- :RevueyStackIgnore. Never changes which branches are layers.
     ignore_branches = {},
+    -- `]s`/`[s` also check the layer out in this worktree (as `gS` does, with the same checks).
+    -- Off: they only move the view. A refused switch leaves the view moved and says why.
+    switch_on_navigate = false,
   },
   keymaps = {
     next_hunk = ']c',
@@ -58,6 +61,8 @@ M.defaults = {
     next_layer = ']s',
     prev_layer = '[s',
     toggle_stack = 'gs', -- full stack <-> layer scope
+    -- check the layer out in this worktree (`git switch`; panel: the layer row under the cursor)
+    switch_layer = 'gS',
     stack_notes = '!', -- details of the stack notes (float with actions)
     -- AI guide
     toggle_guide = 'gG', -- diff view <-> guide view (offers to generate when there is none)

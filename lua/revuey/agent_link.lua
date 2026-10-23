@@ -21,6 +21,15 @@ local function on_exit()
   live = {}
 end
 
+local function checked_out(r)
+  for _, l in ipairs(r.stack and r.stack.layers or {}) do
+    if l.is_head then
+      return not l.detached and l.name or nil
+    end
+  end
+  return r.branch ~= 'HEAD' and not r.target and r.branch or nil
+end
+
 ---Registry entry for the session's current review scope.
 local function entry(s)
   local r = s.review
@@ -33,6 +42,9 @@ local function entry(s)
     git_dir = s.link.git_dir,
     common_dir = s.link.common_dir,
     branch = r.branch,
+    -- the branch checked out in the worktree (nil: detached), which may differ from the layer
+    -- being viewed; `gS` changes it
+    checked_out = checked_out(r),
     base = r.base,
     mode = r.mode,
     scope = { kind = info.scope, branch = r.branch, layers = info.layers },

@@ -46,6 +46,19 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command('RevueySwitch', function(cmd)
+  require('revuey').switch(cmd.args ~= '' and cmd.args or nil)
+end, {
+  nargs = '?',
+  desc = 'Check out a stack layer of the open review in this worktree (default: the viewed layer)',
+  complete = function(arg)
+    local ok, view = pcall(require, 'revuey.view')
+    return vim.tbl_filter(function(n)
+      return vim.startswith(n, arg)
+    end, ok and view.layer_names() or {})
+  end,
+})
+
 vim.api.nvim_create_user_command('RevueyStackIgnore', function(cmd)
   require('revuey').stack_ignore(cmd.bang, cmd.args)
 end, {

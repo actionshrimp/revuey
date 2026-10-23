@@ -23,7 +23,7 @@
 22| gu committed/working tree  q close     │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
 23| gG AI guide                            │     19 +   }                                                                  
 24| ]s [s layer  gs full stack  ! notes    │     20 + }                                                                    
-25|~                                       │                                                                               
+25| gS check out layer                     │                                                                               
 26|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
 27|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
 28|~                                       │  2   2   import { formatCurrency } from "./format";                           
@@ -55,7 +55,7 @@
 22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 23|AAAAAAAAAAAA99999999999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
-25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
+25|AAAAAAAAAAAAAAAAAAA9999999999999999999994BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
 26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4??????????PPPPPPPPPPPP<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCDDDDDDDDDD
 28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
