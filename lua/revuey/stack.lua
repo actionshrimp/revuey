@@ -467,6 +467,42 @@ function M.split_remote(name, remotes)
   return name:match('^([^/]+)/(.+)$')
 end
 
+---State file of a repo's remote layer names: commit -> the remote-tracking branch shown there
+---(`repo` is the git common dir, shared by worktrees, as for the ignore list).
+function M.choices_file(dir, repo)
+  local slug = (vim.fs.basename(vim.fs.dirname(repo)) or 'repo'):gsub('[^%w%-_.]', '_')
+  return vim.fs.joinpath(dir, 'stack-remote-names-' .. slug .. '-' .. vim.fn.sha256(repo):sub(1, 12) .. '.json')
+end
+
+---@return table<string, string> commit -> name ({} when missing or unreadable)
+function M.read_choices(path)
+  local fd = io.open(path, 'r')
+  if not fd then
+    return {}
+  end
+  local ok, data = pcall(vim.json.decode, fd:read('*a'))
+  fd:close()
+  local out = {}
+  if ok and type(data) == 'table' and type(data.names) == 'table' then
+    for sha, name in pairs(data.names) do
+      if type(sha) == 'string' and type(name) == 'string' then
+        out[sha] = name
+      end
+    end
+  end
+  return out
+end
+
+---Write the names (temp file + rename; last writer wins, it only steers a tie-break).
+function M.write_choices(path, names)
+  vim.fn.mkdir(vim.fs.dirname(path), 'p')
+  local tmp = ('%s.tmp.%d'):format(path, vim.uv.os_getpid())
+  local fd = assert(io.open(tmp, 'w'))
+  fd:write(vim.json.encode({ names = next(names) and names or vim.empty_dict() }))
+  fd:close()
+  assert(os.rename(tmp, path))
+end
+
 ---Is a remote ref a mirror of PR heads (`origin/pr/12`, `origin/pull/12/head`)? Never a layer.
 function M.is_pr_ref(short)
   return short:match('^pr/') ~= nil or short:match('^pull/') ~= nil or short:find('/pr/', 1, true) ~= nil
@@ -489,8 +525,8 @@ end
 
 ---Remote-tracking branches (`origin/x`) usable as stack layers, for reviewing someone else's
 ---stack without local branches. Pure: one pass over the refs plus set lookups, so thousands of
----remote branches stay cheap. The caller only asks when it looks like someone else's stack (HEAD
----detached, or a branch with no commits of its own beyond its upstream) and passes a `line` (HEAD's
+---remote branches stay cheap. The caller only asks with HEAD detached (someone else's stack; on a
+---local branch only explicit parents name remote refs) and passes a `line` (HEAD's
 ---first-parent line above trunk) without commits any remote's trunk already has.
 ---A ref is a candidate only when its tip is on that line and strictly below HEAD (at HEAD too
 ---when HEAD is detached, to name the current layer); never above HEAD. Left out: `<remote>/HEAD`,
@@ -1362,9 +1398,10 @@ function M.detect(root, trunk, cache, opts)
     end
     load_graph(root, input, tips)
     -- Remote-tracking branches on HEAD's first-parent line (below HEAD) are layers too, but only
-    -- when this looks like someone else's stack: HEAD detached, or a branch with no commits of its
-    -- own beyond its upstream (never the user's own work split into layers by refs of it pushed
-    -- or fetched under other names). `ahead`/`behind` also feed the upstream note.
+    -- with HEAD detached (reviewing someone else's stack): on a local branch, refs of the user's
+    -- own work pushed or fetched under other names (backups, PR refs, a colleague's start) would
+    -- split it, and flip with every push. Attached, only a parent setting can name a remote ref
+    -- (below). `ahead`/`behind` feed the upstream note.
     local up_sha = upstream[current] and remote_sha[upstream[current]]
     local ahead, behind
     if not detached and up_sha then
@@ -1377,7 +1414,7 @@ function M.detect(root, trunk, cache, opts)
       end
     end
     local line = {}
-    if detached or ahead == 0 then
+    if detached then
       local c = head
       while c and c ~= '' and input.graph[c] ~= nil do
         line[c] = true
@@ -1416,20 +1453,14 @@ function M.detect(root, trunk, cache, opts)
         end
       end
     end
-    -- aliases of the checked-out branch: its upstream and push ref, refs at their commits, and
-    -- refs named `*/<branch>`
-    local aliases = { names = {}, shas = {}, branch = not detached and current or nil }
-    if not detached and next(line) then
-      local push = git.git({ 'rev-parse', '--symbolic-full-name', current .. '@{push}' }, root)
-      push = push and vim.trim(push):match('^refs/remotes/(.+)$')
-      for _, n in ipairs({ upstream[current], push }) do
-        if n then
-          aliases.names[n] = true
-          if remote_sha[n] then
-            aliases.shas[remote_sha[n]] = true
-          end
-        end
-      end
+    -- the name chosen at each commit is kept in the state dir (per repo), so a new ref there (say
+    -- origin/aaa-backup) doesn't rename a layer or move its marks, across sessions too
+    local _, sdir, repo_key = ignore_mod.for_root(root, opts and opts.state_dir)
+    local choice_path = repo_key and M.choices_file(sdir, repo_key)
+    local stored = (choice_path and detached) and M.read_choices(choice_path) or {}
+    local previous = {}
+    for _, name in pairs(stored) do
+      previous[name] = true
     end
     local preferred = {}
     for _, ex in pairs(explicit) do
@@ -1439,10 +1470,21 @@ function M.detect(root, trunk, cache, opts)
     local rl = M.remote_layers({
       refs = remote_refs, line = line, head = head, detached = detached, branches = branches,
       upstream = upstream, trunk_names = trunk_names, prefer = prefer, ignore = ignore,
-      aliases = aliases, preferred = preferred, previous = cache and cache.remote_prev,
+      preferred = preferred, previous = previous,
     })
-    if cache then
-      cache.remote_prev = rl.remote
+    if choice_path and next(rl.remote) then
+      local changed = vim.tbl_count(stored) > 2000
+      if changed then
+        stored = {}
+      end
+      for name in pairs(rl.remote) do
+        if stored[rl.branches[name]] ~= name then
+          stored[rl.branches[name]], changed = name, true
+        end
+      end
+      if changed then
+        pcall(M.write_choices, choice_path, stored)
+      end
     end
     input.remote, input.keys, input.also_at = rl.remote, rl.keys, rl.also
     for name, sha in pairs(rl.branches) do
