@@ -44,6 +44,12 @@ is available.
   `herdr`/`zellij`/`cmux` on PATH; every tmux call in a spec uses its own `-L` socket, and
   `skill/revuey/launch.sh` is only run against fake multiplexers. `guard_spec.lua` (run first)
   enforces this. Manual runs follow the same rule: a private `tmux -L` server, never the live one.
+- No process a spec starts may outlive it. Tests only run inside `h.run()`, so cleanup written
+  after the test definitions would run before them: register it with `h.teardown(fn)` (run after
+  the tests, whatever they did), and get mini.test children from `h.child()`, which stops them
+  there. `make test` gives every spec `REVUEY_TEST_RUN=<run dir>`, which everything it starts
+  inherits, and `scripts/check-leaks.sh` fails the run (and kills them) when any such process is
+  still alive at the end.
 - Skip with `h.skip(reason)` inside a test, or `h.skip_spec(reason)` at the top of a spec to skip all of it. Both print
   `  skip <spec> :: <test> — <reason>` (`<test>` is `(all tests)` for a whole spec).
 

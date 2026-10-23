@@ -176,27 +176,34 @@ lower layer, `gS` (on a layer row in the panel, or in the diff for the layer bei
   `x` anyway, or cancel.
 - **Already on it:** nothing happens (a message says so).
 - **Refused, with the reason:** uncommitted changes to tracked files (staged or not; a few are
-  named, revuey never stashes); untracked files at paths the target branch has a file at (git would
-  refuse to overwrite them; they are named); a branch checked out in another worktree (its path is
-  named). Other untracked files are carried over, as git does, and show up in the new layer's
-  working-tree review.
+  named, revuey never stashes); unsaved buffers of files in the worktree (a later `:w` would write
+  the old branch's text onto the new one); untracked or ignored files where the switch writes a
+  file (git would refuse the first and silently overwrite the second; they are named); a branch
+  checked out in another worktree (its path is named). Other untracked files are carried over, as
+  git does, and show up in the new layer's working-tree review. Submodules are left out of the
+  check: `git switch` leaves submodule checkouts as they are, so run `git submodule update` when a
+  layer bumps one.
 - **An agent connected to the review** (`● agent connected`): revuey asks first, since switching
   branches changes the files under an agent that may be working.
+- **One at a time:** a `gS` (or `]s`) while a switch runs is dropped with a message.
 
 Afterwards the review refreshes: the layer gets `@`, the working tree and the `●` markers, and the
 view stays on it (cursor and folds as you left them). The session registry records the new branch
-(`checked_out`) for agents. revuey's hidden LSP buffers reload (or are dropped when the file is gone),
-then `:checktime` runs, so your own buffers follow your `autoread` setting; modified buffers are never
-reloaded. revuey never restacks: after committing on a lower layer, the layers above show the usual
-"not restacked" note.
+(`checked_out`, shown by `bin/revuey sessions`) for agents. revuey's hidden LSP buffers reload (or
+are dropped when the file is gone), then `:checktime` runs, so your own buffers follow your
+`autoread` setting. A failing `post-checkout` hook gives a warning, but the switch happened and
+the review follows it. revuey never restacks: after committing on a lower layer, the layers above
+show the usual "not restacked" note.
 
-A branch checked out from a stack with remote layers keeps them: revuey records the stack's top
-for that branch (per repo, in the state dir), so `origin/stack/math ← @ stack/cart ← origin/stack/ui`
-stays one stack while attached, also after reopening, as long as the branch shares history with
-that top.
+On a local branch, remote-tracking branches are layers only when a parent setting names them.
+So checking out a layer whose layer below is remote-only (`gS` on `origin/stack/cart` above
+`origin/stack/math`) records `branch.stack/cart.revueyParent = origin/stack/math`, which keeps
+that layer below (deleting the branch removes the setting). The remote layers *above* it are not
+shown while you are on the branch: review from a detached worktree to see the whole remote stack.
 
-`stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks; when a
-switch is refused the view still moves, and a message says the branch did not.
+`stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks (an
+agent confirmation is asked once per review); when a switch is refused the view still moves, and a
+message says the branch did not.
 
 ### Someone else's stack (no local branches)
 
@@ -216,8 +223,8 @@ cd ../review-their-stack && revuey
   a parent you set explicitly (`:RevueyStackParent origin/<name>`, or Graphite metadata naming a
   branch you only have as `origin/<name>`): that remote branch becomes the layer below. So to
   review a colleague's stack from a local branch tracking its top, detach instead, or set its
-  parent. A branch you checked out of such a stack with [`gS`](#checking-out-a-layer) keeps the
-  stack's remote layers, below and above it.
+  parent. [`gS`](#checking-out-a-layer) sets that parent for you when it creates a branch for a
+  remote layer.
 - **Remote-tracking layers below HEAD:** a branch under `refs/remotes/<remote>/` counts when its
   tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD, and no remote's
   default branch (`origin/main`, `upstream/main`, ...) contains it. Remote branches above HEAD or
@@ -887,9 +894,9 @@ Things to try:
 - `:RevueyStackParent` names parents explicitly; on a local branch that's the only way a
   remote-tracking branch becomes a layer.
 - `gp`, cursor on `origin/stack/cart`: the hint says `gS creates local branch stack/cart`. `gS`:
-  `stack/cart` is created tracking it and checked out, `@` moves there, and the layers below and
-  above stay. `]s` then `gS` on `origin/stack/ui` does the same for the top. Edit a file first and
-  `gS` refuses, naming it.
+  `stack/cart` is created tracking it and checked out, `@` moves there, and `origin/stack/math`
+  stays below it (`origin/stack/ui` shows again once you go back to the detached worktree:
+  `git switch --detach origin/stack/ui`). Edit a file first and `gS` refuses, naming it.
 
 ### Stack notes
 
@@ -970,12 +977,15 @@ cd /tmp/revuey-guide
   and replays canned stream-json (good, diagram, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.
 - **Checking out a layer** (`switch_spec.lua`): the `gS` decision (local, remote with a tracking
-  branch, a conflicting local name, a fresh `--track`, detached, already on it), status and
-  worktree parsing and the message texts (unit); then real git: local and remote-only layers
-  (marks and comments carried over, the stack kept while attached and after reopening, a commit
-  on a lower layer), a conflicting name, dirty and untracked refusals, a branch in another
-  worktree, the agent confirmation, `switch_on_navigate`, the registry, hidden LSP buffers and
-  `:RevueySwitch`.
+  branch, a conflicting local name, a fresh `--track`, detached, already on it), collisions, the
+  parent setting, status and worktree parsing and the message texts (unit); then real git, each
+  test on its own fixture: local and remote-only layers (marks and comments carried over, the
+  parent setting keeping the layer below after commits and reopening), stray remote refs never
+  becoming layers, no self-parent, a deleted and reused branch name, a conflicting name, dirty,
+  untracked, ignored and file-for-directory refusals, unsaved buffers, a branch in another
+  worktree, a failing hook, a submodule bump, the agent confirmation (re-checked after, once per
+  review for `]s`), `switch_on_navigate`, one switch at a time, the registry and `sessions`,
+  hidden LSP buffers and `:RevueySwitch`.
 - **Comments:** the model, re-anchoring (shifted, moved, outdated, deleted lines on the old side,
   identical code at two places), merging with tombstones, the export formats (golden) and event
   lines (unit); `gc` in normal and visual mode on added, deleted and context lines and file

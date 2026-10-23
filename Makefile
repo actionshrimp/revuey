@@ -3,12 +3,14 @@ SPECS := tests/guard_spec.lua tests/stack_spec.lua tests/stack_remote_spec.lua t
 
 .PHONY: test fixture
 
-# Each spec runs in a fresh `nvim --headless --clean`; temp files go to a throwaway dir.
+# Each spec runs in a fresh `nvim --headless --clean`; temp files go to a throwaway dir. Every
+# process the specs start inherits REVUEY_TEST_RUN; any still alive at the end fails the run.
 test:
 	@tmp=$$(mktemp -d); status=0; \
 	for spec in $(SPECS); do \
-		REVUEY_TEST_TMP=$$tmp $(NVIM) --headless --clean -l $$spec || status=1; \
+		REVUEY_TEST_RUN=$$tmp REVUEY_TEST_TMP=$$tmp $(NVIM) --headless --clean -l $$spec || status=1; \
 	done; \
+	scripts/check-leaks.sh $$tmp || status=1; \
 	rm -rf $$tmp; \
 	if [ $$status -eq 0 ]; then echo "all tests passed"; else echo "TESTS FAILED"; fi; \
 	exit $$status
