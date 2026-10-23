@@ -24,6 +24,11 @@ sequence; later items build on earlier ones.
   review state on stack rows (or a plain review's title), a foldable detail section for the viewed
   layer (reviewers, checks, mergeable, base, a warning when GitHub's base differs from the stack
   parent), `gx` opens it in the browser. Failures are silent and logged to `revuey.log`.
+- Edit from the review, part 1: `gS` (and `:RevueySwitch`) checks a stack layer out in the current worktree
+  with plain `git switch` (`--track` for a remote-only layer), refusing on a dirty worktree or a branch checked
+  out elsewhere, asking before touching an unrelated local branch of the same name or switching under a
+  connected agent; `@` moves, the layer gets the working tree, hidden LSP buffers reload. Opt-in
+  `stack.switch_on_navigate` for `]s`/`[s`. A branch checked out from a stack with remote layers keeps them.
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.
@@ -80,7 +85,7 @@ sequence; later items build on earlier ones.
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
    Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
    units are cut.
-8. **Edit from the review.** A key on a hunk (diff or guide view) opens an editable float of the real
+8. **Edit from the review.** (The `gS` layer switch is done; see Done.) A key on a hunk (diff or guide view) opens an editable float of the real
    working-tree file, folded to that hunk plus context, so undo, LSP and formatters work as normal; saving lets
    working-tree auto-refresh redraw the diff and guide. Guide hunks re-anchor by overlap (as comments do) so an
    edited hunk stays in its section with an "edited since guide" marker instead of moving to "Not in guide"; its

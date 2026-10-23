@@ -38,7 +38,8 @@ local function mtime(buf)
   return st and (st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or nil
 end
 
----Silently reload revuey's hidden buffers whose files changed on disk. Never uses :checktime
+---Silently reload revuey's hidden buffers whose files changed on disk (wipe those whose file is
+---gone). Never uses :checktime
 ---(with 'noautoread' that raises the blocking W11 prompt for a buffer the user never opened),
 ---and never touches buffers the user has opened (listed), modified or is showing in a window.
 function M.checktime()
@@ -51,7 +52,12 @@ function M.checktime()
       and #vim.fn.win_findbuf(buf) == 0
     then
       local now = mtime(buf)
-      if now and now ~= loaded_mtime then
+      if not now and not vim.uv.fs_stat(vim.api.nvim_buf_get_name(buf)) then
+        -- the file is gone (another branch checked out): drop the hidden buffer, so a later
+        -- :checktime never asks about it
+        created[buf] = nil
+        pcall(vim.api.nvim_buf_delete, buf, { force = true })
+      elseif now and now ~= loaded_mtime then
         vim.api.nvim_buf_call(buf, function()
           vim.cmd('silent! keepalt keepjumps edit')
         end)

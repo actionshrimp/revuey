@@ -27,7 +27,7 @@
 26| gd def  K hover  go open  R refresh    │  6  11   /** Multiply two numbers. */                                                   
 27| gG diff view  gR regenerate  q close   │  7  12   export function multiply(a: number, b: number): number {                       
 28| ]s [s layer  gs full stack             │  8     -   let result = 0;                                                              
-29|~                                       │  9     -   for (let i = 0; i < b; i++) {                                                
+29| gS check out layer                     │  9     -   for (let i = 0; i < b; i++) {                                                
 30|~                                       │ 10     -     result = add(result, a);                                                   
 31|~                                       │ 11     -   }                                                                            
 32|~                                       │ 12     -   return result;                                                               
@@ -69,7 +69,7 @@
 26|????????????????????????????????????77774GGGGGGGGGG7777777777777777777777777777777777777777777777777777777777777777777777777777777
 27|?????????????????????????????????????7774GGGGGGGGGG7777777777777777777777777777777777777777777777777777777777777777777777777777777
 28|???????????????????????????77777777777774PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
-29|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+29|???????????????????7777777777777777777774PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
 30|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
 31|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
 32|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
