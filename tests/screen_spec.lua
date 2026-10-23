@@ -261,7 +261,11 @@ h.test('stack with pull requests: PR rows and the detail section', function()
     })
   end
   h.use_fake_gh(h.tmpdir('screen-forge-gh') .. '/calls.ndjson', {
-    ['acme/shop:stack/math'] = { pr({ number = 41, title = 'Math helpers', state = 'MERGED', baseRefName = 'main', headRefName = 'stack/math' }) },
+    -- merged PRs are shown when their head commit is in the branch
+    ['acme/shop:stack/math'] = { pr({
+      number = 41, title = 'Math helpers', state = 'MERGED', baseRefName = 'main', headRefName = 'stack/math',
+      headRefOid = vim.trim(h.git(d, 'rev-parse', 'stack/math')),
+    }) },
     ['acme/shop:stack/cart'] = { pr({
       number = 42, title = 'Cart totals with discounts', baseRefName = 'stack/math', headRefName = 'stack/cart',
       reviewDecision = 'CHANGES_REQUESTED',

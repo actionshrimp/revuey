@@ -97,7 +97,8 @@ M.defaults = {
   -- (no gh, offline, rate limits) shows nothing and is written to the log file.
   forge = {
     enabled = true,
-    ttl = 60,
+    ttl = 60, -- `R` always looks again
+    timeout = 15, -- seconds before a gh call is stopped
     cmd = 'gh',
     -- GitHub Enterprise hosts (github.com and hosts with "github" in their name are known)
     hosts = {},

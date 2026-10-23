@@ -611,45 +611,63 @@ are in `reports/Terminal code review tool landscape.md`.
 13. **Pull request status** (`forge.lua` pure lookup, cache and display models; `forge_view.lua`
     panel glue; `log.lua` quiet log). Read-only, GitHub only, through the user's own `gh` (assumed
     logged in; no auth checks or setup flow).
-    - **Targets.** `forge.remote_info` reads `git remote`, `git remote get-url <name>` per remote
-      and `git config --get-regexp '^branch\..*\.(remote|merge)$'`. `parse_remote_url` handles
+    - **Targets.** `forge.remote_info` reads `git remote`, `git remote get-url <name>` per remote,
+      one `git for-each-ref` with each branch's `%(upstream:remotename/remoteref)` and
+      `%(push:remotename/remoteref)`, and `git config --get-regexp` for
+      `remote.<name>.gh-resolved`. `parse_remote_url` handles
       scp-like, `ssh://`, `https://` and `git://` URLs; a host is GitHub when it is github.com (or
       an ssh alias such as `github.com-work`, or `ssh.github.com`), contains "github", or is in
       `forge.hosts`; local paths and other forges give nil, so such repos make no call. The base
-      remote is the trunk's (`origin/main` -> origin, a local trunk's upstream), else `origin`,
-      else the only GitHub remote. Each layer (key: layer name; a plain review: `''`) gets a
-      target `{branch, head_owner, repos}`: a remote layer's name without its remote
-      (`split_remote`), a local branch's upstream name when it tracks one, else its own name;
-      `repos` is the base repo, plus the branch's own remote's repo when that differs (a fork:
-      its PR usually lives in the base repo with `headRepositoryOwner` = the fork's owner).
+      remote is resolved like gh: `gh-resolved = base`, else `upstream`, else the trunk's
+      (`origin/main` -> origin, a local trunk's upstream), else `origin`, else the only GitHub
+      remote. Each layer (key: layer name; a plain review: `''`) gets a target `{candidates,
+      tip}`. Candidates, tried in order: a remote layer's name without its remote
+      (`split_remote`); for a local branch its own name, then its push target's name, then its
+      upstream's name when different and not the trunk's (`git switch -c feat origin/main`
+      tracks main). Each candidate has `{branch, remote, head_owner, repos}`: `repos` is the base
+      repo, plus the branch's own remote's repo when that differs (a fork: its PR usually lives
+      in the base repo with `headRepositoryOwner` = the fork's owner).
     - **One call.** `build_query` aliases one `repository(owner,name) { pullRequests(headRefName,
-      first: 10, orderBy: CREATED_AT desc) }` per distinct (repo, branch), with a shared fragment:
-      number, title, url, state, isDraft, author, reviewDecision, latestReviews,
+      first: 30, orderBy: UPDATED_AT desc) parent { nameWithOwner pullRequests(...) } }` per
+      distinct (repo, branch), so a fork's parent is searched in the same request (null for a
+      non-fork), with a shared fragment: number, title, url, state, isDraft, updatedAt,
+      headRefOid, author, reviewDecision, latestReviews,
       reviewRequests, mergeable, base/head ref names, headRepositoryOwner and the head commit's
       `statusCheckRollup.contexts` `checkRunCountsByState`/`statusContextCountsByState` (counts
       only, no per-check nodes). One `gh api graphql -f query=…` per host per fetch (in practice
-      one per refresh), via `git.system` (async in `git.async`). `pick` prefers an OPEN PR, then
-      the newest MERGED/CLOSED, among PRs whose head owner is the target's (other people's fork
-      PRs from a branch of the same name are skipped).
-    - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}`; a
-      target is fresh when every repo it searches was fetched (or failed) within `forge.ttl`.
-      `forge_view.update` runs from view's `render` (open, `R`, scope switches, refreshes that
-      re-render), resolves targets and fetches only when something is stale, then redraws the
-      panel if what it shows changed. No polling: `panel.render` calls `forge_view.lazy`, which
-      schedules an update once the TTL has passed. A failure is cached like a result, so a broken
-      `gh` is retried once per TTL, not on every redraw.
+      one per refresh), `vim.system` with `forge.timeout` (15s; code 124 -> "timed out"), its
+      handle given to the caller to kill. `pick` sorts by `updatedAt` across repos and prefers
+      an OPEN PR, then MERGED/CLOSED ones whose `headRefOid` is in the branch
+      (`check_heads`: `git merge-base --is-ancestor oid tip`, concurrent, memoised in
+      `forge.ancestry`; an unknown commit fails), among PRs whose head owner is the candidate's
+      (null for a deleted fork: never ours). The first candidate with a PR wins.
+    - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}` (a
+      repo's entry also holds its parent's PRs); a target is fresh when every repo it searches
+      was fetched (or failed) within `forge.ttl`. A failure keeps the last good `branches`, so
+      what was shown stays, marked stale (`?`, `(stale)`). `forge_view.update` runs from view's
+      `render` (open, scope switches, refreshes that re-render), resolves targets and fetches
+      only when something is stale, then redraws the panel if what it shows changed. `R`
+      (`refresh{forge = true}` -> `s.forge_force`) fetches whatever the cache holds. One lookup
+      per review at a time: requests while one runs become one follow-up. Each lookup has a
+      generation; `forge_view.detach` (review cleanup) bumps it and kills `gh`, and `fetch`
+      writes nothing when `alive()` is false after the call, so a late result or failure never
+      reaches the cache or a newer panel. No polling: `panel.render` calls `forge_view.lazy`,
+      which schedules an update once the TTL has passed. A failure is cached like a result, so
+      a broken `gh` is retried once per TTL (or on `R`), not on every redraw.
     - **Failures** (spawn error for a missing `gh`, non-zero exit, unparsable JSON, GraphQL
       errors, rate limits, network) show nothing: the reason goes to `log.lua`, which appends to
-      `log_file` (default `stdpath('log')/revuey.log`) and keeps the last 200 entries in memory.
+      `log_file` (default `stdpath('log')/revuey.log`, moved to `.1` at 256KB) and keeps the last
+      200 entries in memory.
       Partial data with errors (one repo not found) is used and the errors logged.
-    - **Display.** `forge.row` (`#N` plus `✓`/`✗`/`●` by review decision; draft, merged and
+    - **Display.** `forge.row` (`#N` plus `✓`/`✗`/`●`/`○` by review decision; draft, merged and
       closed dim with a marker) and `forge.detail` (title, author/state/draft, decision, latest
       review per reviewer, requested reviewers, check counts, mergeable for open PRs, base, and a
       `base_mismatch` warning when an open PR's base differs from the layer's parent as GitHub
       would name it) are pure models. The panel prepends the row chips to a layer's virtual
       text (a plain review: its `branch → base` line); when the name has less than 8 cells left
       the commit count goes. `forge_view.render_detail` draws the viewed layer's section below
-      the stack section (none in full scope), wrapped to the panel; `<Tab>` on its heading toggles
+      the stack section (none in full scope), wrapped to the panel (`panel.wrap` breaks words
+      wider than a line by display width); `<Tab>` on its heading toggles
       `s.forge.collapsed`; `gx` (`keymaps.forge_open`) opens a row's PR (layer rows, detail rows,
       else the viewed layer) with `vim.ui.open`. Highlights `RevueyForge*`.
     - **Later** (roadmap 5, 6): forge review threads and posting reviews reuse `remote_info`,

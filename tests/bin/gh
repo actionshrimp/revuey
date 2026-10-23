@@ -1,10 +1,18 @@
 #!/bin/sh
 # Fake `gh` CLI for tests (never the real one). Put tests/bin first on PATH.
 #   REVUEY_FAKE_GH       scenario: ok (default), fail (exit 1), garbage (not JSON), ratelimit,
-#                        errors (GraphQL errors and no data)
+#                        errors (GraphQL errors and no data), hang (sleeps 60s; its pid goes to
+#                        $REVUEY_FAKE_GH_LOG.pid, as for every call)
 #   REVUEY_FAKE_GH_LOG   file to append {argv, cwd} to (one JSON object per line)
 #   REVUEY_FAKE_GH_PRS   JSON file: { "owner/name:branch": [PullRequest nodes, newest first] }
-#                        answering the `gh api graphql` queries built by lua/revuey/forge.lua
+#                        answering the `gh api graphql` queries built by lua/revuey/forge.lua;
+#                        `_parents` = { "me/shop": "acme/shop" } makes forks, `_null` = repos
+#                        that resolve to null (partial data, exit 1)
 #   REVUEY_FAKE_NVIM     nvim binary that runs the Lua half (default: nvim)
 dir=$(cd "$(dirname "$0")" && pwd)
+if [ "${REVUEY_FAKE_GH:-}" = hang ]; then
+  # a gh that never answers; like the real one it dies on SIGTERM (exec: same pid)
+  [ -n "${REVUEY_FAKE_GH_LOG:-}" ] && echo $$ > "$REVUEY_FAKE_GH_LOG.pid"
+  exec sleep 60
+fi
 exec "${REVUEY_FAKE_NVIM:-nvim}" --clean --headless -l "$dir/fake_gh.lua" "$@"

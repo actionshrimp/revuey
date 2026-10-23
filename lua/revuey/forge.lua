@@ -5,7 +5,7 @@
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
 -- Reusable for later forge work (showing review threads, posting reviews): `remote_info`,
--- `parse_remote_url`, `targets` and `run_graphql` know nothing about the panel.
+-- `parse_remote_url`, `base_remote`, `targets` and `run_graphql` know nothing about the panel.
 local git = require('revuey.git')
 local stack_mod = require('revuey.stack')
 local log = require('revuey.log')
@@ -17,11 +17,22 @@ local M = {}
 ---@field owner string
 ---@field name string
 
----@class revuey.ForgeTarget  what to look up for one layer (or the plain review branch)
+---@class revuey.ForgeCandidate  one head branch name to try
 ---@field branch string       head branch name on the remote (remote prefix stripped)
----@field head_owner? string  owner of the repo the branch lives in (filters fork PRs)
----@field repos revuey.ForgeRepo[] repos to search, most likely first (upstream, then the fork)
----@field remote? string      remote the branch comes from
+---@field head_owner string   owner of the repo the branch lives in (filters fork PRs)
+---@field repos revuey.ForgeRepo[] repos to search: the base repo, then the fork (each also
+---                           asks its `parent`)
+---@field remote string       remote the branch comes from
+
+---@class revuey.ForgeTarget  what to look up for one layer (or the plain review branch)
+---@field candidates revuey.ForgeCandidate[] in order; the first with a PR wins
+---@field tip? string         the branch tip commit (closed/merged PRs must have their head in it)
+
+---@class revuey.ForgeInfo
+---@field names string[]      remote names
+---@field remotes table<string, {url:string, repo?:revuey.ForgeRepo}>
+---@field branches table<string, {up_remote?:string, up_ref?:string, push_remote?:string, push_ref?:string}>
+---@field resolved table<string, string> remote.<name>.gh-resolved values
 
 ---@class revuey.PR
 ---@field number integer
@@ -37,7 +48,9 @@ local M = {}
 ---@field mergeable? 'MERGEABLE'|'CONFLICTING'|'UNKNOWN'
 ---@field base string
 ---@field head string
----@field head_owner? string
+---@field head_owner? string  nil for a deleted fork
+---@field head_oid? string    head commit
+---@field updated_at string   ISO time of the last update (sorts as text)
 ---@field repo string         host/owner/name it was found in
 
 -- ---------------------------------------------------------------------------
@@ -114,88 +127,158 @@ function M.repo_key(repo)
   return (repo.host .. '/' .. repo.owner .. '/' .. repo.name):lower()
 end
 
----Remotes and branch upstream config of a repo, via plain git (`git remote`, `git remote
----get-url`, `git config --get-regexp`). In a coroutine (git.async) the calls do not block.
----@return {names:string[], remotes:table<string, {url:string, repo?:revuey.ForgeRepo}>, branches:table<string, {remote?:string, merge?:string}>}
+---Remotes, branch upstream/push config and gh's resolved base of a repo, via plain git (`git
+---remote`, `git remote get-url`, one `git for-each-ref` for upstreams and push targets, `git
+---config --get-regexp` for `remote.<name>.gh-resolved`). In a coroutine (git.async) the calls
+---do not block.
+---@return revuey.ForgeInfo
 function M.remote_info(root, hosts)
-  local info = { names = git.remotes(root), remotes = {}, branches = {} }
+  local info = { names = git.remotes(root), remotes = {}, branches = {}, resolved = {} }
   local fns = {}
   for i, name in ipairs(info.names) do
     fns[i] = function()
       return vim.trim(git.git({ 'remote', 'get-url', name }, root) or '')
     end
   end
-  for i, res in ipairs(git.all(fns)) do
-    local url = res[1] and res[2] or ''
-    info.remotes[info.names[i]] = { url = url, repo = url ~= '' and M.parse_remote_url(url, hosts) or nil }
+  local fmt = '%(refname:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(push:remotename)%00%(push:remoteref)'
+  fns[#fns + 1] = function()
+    return git.git({ 'for-each-ref', '--format=' .. fmt, 'refs/heads' }, root) or ''
   end
-  local cfg = git.git({ 'config', '--get-regexp', '^branch\\..*\\.(remote|merge)$' }, root) or ''
-  for line in cfg:gmatch('[^\n]+') do
-    local b, key, val = line:match('^branch%.(.+)%.(%a+) (.*)$')
-    if b then
-      info.branches[b] = info.branches[b] or {}
-      info.branches[b][key] = val
+  fns[#fns + 1] = function()
+    return git.git({ 'config', '--get-regexp', '^remote\\..*\\.gh-resolved$' }, root) or ''
+  end
+  local res = git.all(fns)
+  for i, name in ipairs(info.names) do
+    local url = res[i][1] and res[i][2] or ''
+    info.remotes[name] = { url = url, repo = url ~= '' and M.parse_remote_url(url, hosts) or nil }
+  end
+  local refs = res[#info.names + 1]
+  for line in ((refs[1] and refs[2]) or ''):gmatch('[^\n]+') do
+    local f = vim.split(line, '\0', { plain = true })
+    local function v(k)
+      return f[k] ~= nil and f[k] ~= '' and f[k] or nil
+    end
+    if v(1) then
+      info.branches[f[1]] = { up_remote = v(2), up_ref = v(3), push_remote = v(4), push_ref = v(5) }
+    end
+  end
+  local resolved = res[#info.names + 2]
+  for line in ((resolved[1] and resolved[2]) or ''):gmatch('[^\n]+') do
+    local r, val = line:match('^remote%.(.+)%.gh%-resolved (.*)$')
+    if r then
+      info.resolved[r] = val
     end
   end
   return info
 end
 
----Remote a branch name belongs to: `origin/main` -> origin, a local branch -> its upstream's
----remote. nil when neither.
-local function remote_of(name, info)
-  local remote = stack_mod.split_remote(name, info.names)
+local function strip_ref(ref)
+  return (ref:gsub('^refs/heads/', ''))
+end
+
+---A known remote with a GitHub repo?
+local function gh_remote(info, r)
+  return r and r ~= '.' and info.remotes[r] and info.remotes[r].repo and r or nil
+end
+
+---`origin/x` -> origin, x when `origin` is a configured remote.
+local function split_known(name, info)
+  local remote, short = stack_mod.split_remote(name, info.names)
   if remote and info.remotes[remote] then
-    return remote, name:sub(#remote + 2)
-  end
-  local b = info.branches[name]
-  if b and b.remote and b.remote ~= '.' and info.remotes[b.remote] then
-    local merge = b.merge and b.merge:gsub('^refs/heads/', '') or name
-    return b.remote, merge
+    return remote, short
   end
 end
 
----The remote PRs are opened against: the trunk's remote, else `origin`, else the only GitHub
----remote. nil when there is no GitHub remote at all.
+---Branch name of a ref as GitHub sees it: the remote prefix stripped (`origin/main` -> main).
+function M.branch_name(name, info)
+  local _, short = split_known(name, info or { names = {}, remotes = {} })
+  return short or name
+end
+
+---The repo PRs are opened against, resolved like gh does: a remote marked
+---`remote.<name>.gh-resolved = base` (gh repo set-default), else `upstream`, else the trunk's
+---remote, else `origin`, else the only GitHub remote. A fork without any of these is still
+---covered: the query asks each repo's `parent` too. nil when there is no GitHub remote.
 function M.base_remote(trunk, info)
-  local r = trunk and remote_of(trunk, info)
-  if r and info.remotes[r].repo then
-    return r
+  local names = vim.deepcopy(info.names)
+  table.sort(names)
+  for _, n in ipairs(names) do
+    if info.resolved and info.resolved[n] == 'base' and gh_remote(info, n) then
+      return n
+    end
   end
-  if info.remotes.origin and info.remotes.origin.repo then
+  if gh_remote(info, 'upstream') then
+    return 'upstream'
+  end
+  if trunk then
+    local r = split_known(trunk, info)
+    if not r and info.branches[trunk] then
+      r = info.branches[trunk].up_remote
+    end
+    if gh_remote(info, r) then
+      return r
+    end
+  end
+  if gh_remote(info, 'origin') then
     return 'origin'
   end
   local gh = {}
-  for _, n in ipairs(info.names) do
-    if info.remotes[n].repo then
+  for _, n in ipairs(names) do
+    if gh_remote(info, n) then
       gh[#gh + 1] = n
     end
   end
   return #gh == 1 and gh[1] or nil
 end
 
----Lookup target for one branch (a layer name, `origin/x` for a remote layer).
----@param name string
----@param remote_layer? boolean the name is a remote-tracking branch
+---Lookup target for one branch (a layer name, `origin/x` for a remote layer). Candidates in
+---order: a remote layer's branch on its remote; for a local branch its own name, then its push
+---target's name (`@{push}`), then its upstream's name when that differs, never the trunk (a
+---branch made with `git switch -c feat origin/main` tracks main).
+---@param tip? string commit of the branch tip (closed/merged PRs must have their head in it)
 ---@return revuey.ForgeTarget?
-function M.target(name, remote_layer, base, info)
-  if not base or name == '' or name == 'HEAD' then
+function M.target(name, remote_layer, tip, base, info, trunk_branch)
+  if not base or not name or name == '' or name == 'HEAD' then
     return nil
   end
   local base_repo = info.remotes[base].repo
-  local remote, branch = remote_of(name, info)
-  if remote_layer and not remote then
-    remote, branch = stack_mod.split_remote(name, info.names)
+  local t = { candidates = {}, tip = tip }
+  local seen = {}
+  local function add(branch, remote)
+    if not branch or branch == '' then
+      return
+    end
+    remote = gh_remote(info, remote) or base
+    if seen[remote .. '\0' .. branch] then
+      return
+    end
+    seen[remote .. '\0' .. branch] = true
+    local own = info.remotes[remote].repo
+    local repos = { base_repo }
+    if M.repo_key(own) ~= M.repo_key(base_repo) then
+      -- a fork: its PR is usually in the base repo (head owner = the fork's owner), else in the fork
+      repos[2] = own
+    end
+    t.candidates[#t.candidates + 1] = { branch = branch, remote = remote, head_owner = own.owner, repos = repos }
   end
-  if not remote then
-    remote, branch = base, name
+  local b = info.branches[name]
+  local remote, short = split_known(name, info)
+  if not b and (remote_layer or remote) then
+    if not remote then
+      remote, short = stack_mod.split_remote(name, info.names)
+    end
+    add(short, remote)
+  else
+    b = b or {}
+    add(name, gh_remote(info, b.push_remote) or gh_remote(info, b.up_remote))
+    if b.push_ref and strip_ref(b.push_ref) ~= trunk_branch then
+      add(strip_ref(b.push_ref), b.push_remote)
+    end
+    if b.up_ref and gh_remote(info, b.up_remote) and strip_ref(b.up_ref) ~= trunk_branch then
+      add(strip_ref(b.up_ref), b.up_remote)
+    end
   end
-  local own = info.remotes[remote] and info.remotes[remote].repo
-  local repos = { base_repo }
-  if own and M.repo_key(own) ~= M.repo_key(base_repo) then
-    -- a fork: its PR is usually in the base repo (head owner = the fork's owner), else in the fork
-    repos[2] = own
-  end
-  return { branch = branch, head_owner = (own or base_repo).owner, repos = repos, remote = remote }
+  return #t.candidates > 0 and t or nil
 end
 
 ---Targets for a review: one per stack layer (by layer name), or `['']` for a plain review.
@@ -207,21 +290,15 @@ function M.targets(review, info)
   if not base then
     return out
   end
+  local trunk_branch = trunk and M.branch_name(trunk, info)
   if review.stack then
     for _, l in ipairs(review.stack.layers) do
-      out[l.name] = M.target(l.name, l.remote, base, info)
+      out[l.name] = M.target(l.name, l.remote, l.tip, base, info, trunk_branch)
     end
   else
-    out[''] = M.target(review.branch, false, base, info)
+    out[''] = M.target(review.branch, false, review.head, base, info, trunk_branch)
   end
   return out
-end
-
----Branch name of a stack parent as GitHub sees it (remote prefix stripped; a local branch
----tracking another name uses that name).
-function M.branch_name(name, info)
-  local _, branch = remote_of(name, info or { names = {}, remotes = {}, branches = {} })
-  return branch or name
 end
 
 -- ---------------------------------------------------------------------------
@@ -230,7 +307,7 @@ end
 
 local PR_FIELDS = [[
 fragment pr on PullRequest {
-  number title url state isDraft
+  number title url state isDraft updatedAt headRefOid
   author { login }
   reviewDecision
   latestReviews(first: 50) { nodes { author { login } state } }
@@ -249,7 +326,8 @@ local function lit(s)
 end
 
 ---One query for many (repo, branch) pairs: an aliased `repository { pullRequests(headRefName) }`
----each. Returns the query and alias -> pair.
+---each, plus the same lookup in the repo's `parent` (a fork's upstream; null otherwise).
+---Returns the query and alias -> pair.
 ---@param pairs {repo:revuey.ForgeRepo, branch:string}[]
 ---@return string query, table<string, {repo:revuey.ForgeRepo, branch:string}> aliases
 function M.build_query(pairs)
@@ -257,8 +335,9 @@ function M.build_query(pairs)
   for i, p in ipairs(pairs) do
     local alias = 'l' .. i
     aliases[alias] = p
-    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequests(headRefName: %s, first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...pr } } }')
-      :format(alias, lit(p.repo.owner), lit(p.repo.name), lit(p.branch))
+    local prs = ('pullRequests(headRefName: %s, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ...pr } }'):format(lit(p.branch))
+    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { %s parent { nameWithOwner %s } }')
+      :format(alias, lit(p.repo.owner), lit(p.repo.name), prs, prs)
   end
   parts[#parts + 1] = '}'
   parts[#parts + 1] = PR_FIELDS
@@ -302,6 +381,8 @@ function M.normalize(n, repo_key)
     base = str(n.baseRefName) or '',
     head = str(n.headRefName) or '',
     head_owner = type(n.headRepositoryOwner) == 'table' and str(n.headRepositoryOwner.login) or nil,
+    head_oid = str(n.headRefOid),
+    updated_at = str(n.updatedAt) or '',
     repo = repo_key,
   }
   for _, r in ipairs(nodes(n.latestReviews)) do
@@ -333,23 +414,35 @@ function M.normalize(n, repo_key)
   return pr
 end
 
----The PR for a branch among candidates (newest first): OPEN first, then the most recent
----MERGED/CLOSED. With `head_owner`, only PRs whose head repo has that owner (fork PRs of
----other people from a branch of the same name are not ours).
+---The PR for a branch among candidates: OPEN first, then MERGED/CLOSED, each the most recently
+---updated first (across repos). With `head_owner`, only PRs whose head repo has that owner (a
+---deleted fork's PR has none: not ours). With `accept`, closed/merged PRs must pass it (their
+---head commit is in the branch); open ones are taken by name.
 ---@param prs revuey.PR[]
+---@param accept? fun(pr:revuey.PR):boolean
 ---@return revuey.PR?
-function M.pick(prs, head_owner)
-  local function ours(pr)
-    return not head_owner or not pr.head_owner or pr.head_owner:lower() == head_owner:lower()
+function M.pick(prs, head_owner, accept)
+  local list = {}
+  for i, pr in ipairs(prs) do
+    list[i] = { pr = pr, i = i }
   end
-  for _, pr in ipairs(prs) do
-    if ours(pr) and pr.state == 'OPEN' then
-      return pr
+  table.sort(list, function(a, b)
+    if a.pr.updated_at ~= b.pr.updated_at then
+      return (a.pr.updated_at or '') > (b.pr.updated_at or '')
+    end
+    return a.i < b.i
+  end)
+  local function ours(pr)
+    return not head_owner or (pr.head_owner ~= nil and pr.head_owner:lower() == head_owner:lower())
+  end
+  for _, e in ipairs(list) do
+    if ours(e.pr) and e.pr.state == 'OPEN' then
+      return e.pr
     end
   end
-  for _, pr in ipairs(prs) do
-    if ours(pr) then
-      return pr
+  for _, e in ipairs(list) do
+    if ours(e.pr) and (not accept or accept(e.pr)) then
+      return e.pr
     end
   end
 end
@@ -375,8 +468,13 @@ end
 -- Fetching and cache
 -- ---------------------------------------------------------------------------
 
----Cache per repo key: { at = ms, failed? = reason, branches = { [branch] = revuey.PR[] } }.
+---Cache per queried repo: { at = ms, failed? = reason, branches = { [branch] = revuey.PR[] } }.
+---A failure keeps the last good `branches` (shown as stale) until a fetch works.
 M.cache = {}
+
+---Is a commit an ancestor of (or equal to) a tip? `oid .. ' ' .. tip` -> boolean (immutable
+---facts, kept for the session).
+M.ancestry = {}
 
 ---Clock in ms (tests replace it).
 function M.now()
@@ -385,7 +483,13 @@ end
 
 local function opts()
   local o = require('revuey.config').options.forge or {}
-  return { enabled = o.enabled ~= false, ttl = (o.ttl or 60) * 1000, cmd = o.cmd or 'gh', hosts = o.hosts or {} }
+  return {
+    enabled = o.enabled ~= false,
+    ttl = (o.ttl or 60) * 1000,
+    timeout = (o.timeout or 15) * 1000,
+    cmd = o.cmd or 'gh',
+    hosts = o.hosts or {},
+  }
 end
 M.options = opts
 
@@ -393,48 +497,135 @@ local function fresh(entry, branch, ttl)
   return entry and (M.now() - entry.at) < ttl and (entry.failed or entry.branches[branch] ~= nil)
 end
 
----Is every target answered by the cache (results or a recent failure) within the TTL?
----@param targets table<any, revuey.ForgeTarget>
-function M.is_fresh(targets)
-  local ttl = opts().ttl
+local function each_lookup(targets, fn)
   for _, t in pairs(targets) do
-    for _, repo in ipairs(t.repos) do
-      if not fresh(M.cache[M.repo_key(repo)], t.branch, ttl) then
-        return false
+    for _, c in ipairs(t.candidates) do
+      for _, repo in ipairs(c.repos) do
+        fn(repo, c.branch, t, c)
       end
     end
   end
-  return true
 end
 
----The PR for a target from the cache, or nil (none, failed, not fetched yet).
----@return revuey.PR?
+---Is every target answered by the cache (results or a recent failure) within the TTL?
+---@param targets table<any, revuey.ForgeTarget>
+function M.is_fresh(targets)
+  local ttl, ok = opts().ttl, true
+  each_lookup(targets, function(repo, branch)
+    if not fresh(M.cache[M.repo_key(repo)], branch, ttl) then
+      ok = false
+    end
+  end)
+  return ok
+end
+
+---Does a closed/merged PR belong to this branch? Its head commit must be in the tip's history
+---(a new branch reusing an old name must not show the old PR). Needs `check_heads` first.
+local function accept_for(t)
+  return function(pr)
+    return t.tip ~= nil and pr.head_oid ~= nil and M.ancestry[pr.head_oid .. ' ' .. t.tip] == true
+  end
+end
+
+local function prs_for(c)
+  local all, seen = {}, {}
+  for _, repo in ipairs(c.repos) do
+    local e = M.cache[M.repo_key(repo)]
+    for _, pr in ipairs(e and e.branches[c.branch] or {}) do
+      if not seen[pr.url] then
+        seen[pr.url] = true
+        all[#all + 1] = pr
+      end
+    end
+  end
+  return all
+end
+
+---The PR for a target from the cache (first candidate branch with one), or nil (none, failed,
+---not fetched yet). The second value is true when it comes from data a later fetch failed to
+---renew (stale).
+---@return revuey.PR?, boolean?
 function M.get(t)
   if not t then
     return nil
   end
-  local all = {}
-  for _, repo in ipairs(t.repos) do
-    local e = M.cache[M.repo_key(repo)]
-    for _, pr in ipairs(e and e.branches[t.branch] or {}) do
-      all[#all + 1] = pr
+  for _, c in ipairs(t.candidates) do
+    local pr = M.pick(prs_for(c), c.head_owner, accept_for(t))
+    if pr then
+      local stale = false
+      for _, repo in ipairs(c.repos) do
+        local e = M.cache[M.repo_key(repo)]
+        stale = stale or (e ~= nil and e.failed ~= nil)
+      end
+      return pr, stale
     end
   end
-  return M.pick(all, t.head_owner)
 end
 
----Run one `gh api graphql` call (async inside git.async). Returns data, or nil and a reason.
+---Check the head commits of cached closed/merged PRs against the targets' tips (`git
+---merge-base --is-ancestor`, run concurrently, remembered). Call inside git.async.
+function M.check_heads(root, targets)
+  local todo, seen = {}, {}
+  for _, t in pairs(targets) do
+    if t.tip then
+      for _, c in ipairs(t.candidates) do
+        for _, pr in ipairs(prs_for(c)) do
+          local key = pr.head_oid and (pr.head_oid .. ' ' .. t.tip)
+          if pr.state ~= 'OPEN' and key and M.ancestry[key] == nil and not seen[key] and #todo < 50 then
+            seen[key] = true
+            todo[#todo + 1] = { key = key, oid = pr.head_oid, tip = t.tip }
+          end
+        end
+      end
+    end
+  end
+  local fns = {}
+  for i, p in ipairs(todo) do
+    fns[i] = function()
+      -- non-zero for "not an ancestor" and for a commit this clone has never seen
+      return git.git({ 'merge-base', '--is-ancestor', p.oid, p.tip }, root) ~= nil
+    end
+  end
+  for i, res in ipairs(git.all(fns)) do
+    M.ancestry[todo[i].key] = res[1] and res[2] == true
+  end
+end
+
+---Run one `gh api graphql` call (async inside git.async), with `forge.timeout`. `on_job` gets
+---the vim.SystemObj (to kill it when the review closes). Returns data, or nil and a reason.
 ---@return table? data, string? err
-function M.run_graphql(query, host)
+function M.run_graphql(query, host, on_job)
   local o = opts()
   local cmd = { o.cmd, 'api', 'graphql' }
   if host and host ~= 'github.com' then
     vim.list_extend(cmd, { '--hostname', host })
   end
   vim.list_extend(cmd, { '-f', 'query=' .. query })
-  local ok, res = pcall(git.system, cmd, { text = true, env = { GH_PROMPT_DISABLED = '1', GH_NO_UPDATE_NOTIFIER = '1' } })
-  if not ok then
-    return nil, ('%s could not run: %s'):format(o.cmd, tostring(res))
+  local sysopts = { text = true, timeout = o.timeout, env = { GH_PROMPT_DISABLED = '1', GH_NO_UPDATE_NOTIFIER = '1' } }
+  local co = coroutine.running()
+  local res
+  if co then
+    local ok, obj = pcall(vim.system, cmd, sysopts, function(r)
+      vim.schedule(function()
+        git.resume(co, r)
+      end)
+    end)
+    if not ok then
+      return nil, ('%s could not run: %s'):format(o.cmd, tostring(obj))
+    end
+    if on_job then
+      on_job(obj)
+    end
+    res = coroutine.yield()
+  else
+    local ok, obj = pcall(vim.system, cmd, sysopts)
+    if not ok then
+      return nil, ('%s could not run: %s'):format(o.cmd, tostring(obj))
+    end
+    res = obj:wait()
+  end
+  if res.code == 124 then
+    return nil, ('%s timed out after %gs'):format(o.cmd, o.timeout / 1000)
   end
   local data, errs = M.decode(res.stdout)
   if res.code ~= 0 then
@@ -455,57 +646,67 @@ function M.run_graphql(query, host)
   return data
 end
 
----Fetch PRs for targets unless the cache answers all of them: one `gh api graphql` call per
----host (in practice one per refresh) for every (repo, branch) pair. Call inside git.async.
----Returns true when it ran gh (whether or not it worked).
+---Fetch PRs for targets unless the cache answers all of them (or `o.force`): one `gh api
+---graphql` call per host (in practice one per refresh) for every (repo, branch) pair. Call
+---inside git.async. `o.alive()` false after the call (the review closed, a newer lookup)
+---drops the result: nothing is written. Returns true when it ran gh.
 ---@param targets table<any, revuey.ForgeTarget>
-function M.fetch(targets, force)
-  if not force and M.is_fresh(targets) then
+---@param o? {force?:boolean, alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+function M.fetch(targets, o)
+  o = o or {}
+  if not o.force and M.is_fresh(targets) then
     return false
   end
   local by_host, seen = {}, {}
-  for _, t in pairs(targets) do
-    for _, repo in ipairs(t.repos) do
-      local k = M.repo_key(repo) .. '\0' .. t.branch
-      if not seen[k] then
-        seen[k] = true
-        by_host[repo.host] = by_host[repo.host] or {}
-        table.insert(by_host[repo.host], { repo = repo, branch = t.branch })
-      end
+  each_lookup(targets, function(repo, branch)
+    local k = M.repo_key(repo) .. '\0' .. branch
+    if not seen[k] then
+      seen[k] = true
+      by_host[repo.host] = by_host[repo.host] or {}
+      table.insert(by_host[repo.host], { repo = repo, branch = branch })
     end
-  end
+  end)
   for host, list in pairs(by_host) do
     table.sort(list, function(a, b)
       return M.repo_key(a.repo) .. a.branch < M.repo_key(b.repo) .. b.branch
     end)
     local query, aliases = M.build_query(list)
-    local data, err = M.run_graphql(query, host)
+    local data, err = M.run_graphql(query, host, o.on_job)
+    if o.alive and not o.alive() then
+      return true
+    end
     local now = M.now()
+    if not data then
+      log.write('forge', 'PR lookup failed: ' .. tostring(err))
+    end
     local touched = {}
     for _, p in ipairs(list) do
       local key = M.repo_key(p.repo)
       if not touched[key] then
         touched[key] = true
-        -- results of other branches of this repo stay until their own TTL runs out
         local old = M.cache[key]
-        M.cache[key] = { at = now, branches = (old and not old.failed) and old.branches or {} }
+        -- results of other branches of this repo stay until their own TTL runs out; on failure
+        -- the last good results stay too (shown as stale)
+        M.cache[key] = { at = now, failed = not data and (err or 'failed') or nil, branches = old and old.branches or {} }
       end
     end
-    if not data then
-      log.write('forge', 'PR lookup failed: ' .. tostring(err))
-      for key in pairs(touched) do
-        M.cache[key] = { at = now, failed = err or 'failed', branches = {} }
-      end
-    else
-      for alias, p in pairs(aliases) do
-        local key = M.repo_key(p.repo)
-        local repo = data[alias]
-        local prs = {}
-        for _, n in ipairs(type(repo) == 'table' and nodes(repo.pullRequests) or {}) do
+    for alias, p in pairs(data and aliases or {}) do
+      local key = M.repo_key(p.repo)
+      local repo = data[alias]
+      local prs = {}
+      if type(repo) == 'table' then
+        for _, n in ipairs(nodes(repo.pullRequests)) do
           prs[#prs + 1] = M.normalize(n, key)
         end
-        M.cache[key].branches[p.branch] = prs
+        local parent = repo.parent
+        if type(parent) == 'table' and type(parent.nameWithOwner) == 'string' then
+          local pkey = (p.repo.host .. '/' .. parent.nameWithOwner):lower()
+          for _, n in ipairs(nodes(parent.pullRequests)) do
+            prs[#prs + 1] = M.normalize(n, pkey)
+          end
+        end
       end
+      M.cache[key].branches[p.branch] = prs
     end
   end
   return true
@@ -515,7 +716,7 @@ end
 -- Display models (pure; panel.lua / forge_view.lua draw them)
 -- ---------------------------------------------------------------------------
 
-M.GLYPH_APPROVED, M.GLYPH_CHANGES, M.GLYPH_PENDING = '✓', '✗', '●'
+M.GLYPH_APPROVED, M.GLYPH_CHANGES, M.GLYPH_PENDING, M.GLYPH_NONE = '✓', '✗', '●', '○'
 
 ---Compact row model: `#123` plus a review glyph, or a dim state marker.
 ---@param pr revuey.PR
@@ -532,8 +733,10 @@ function M.row(pr)
     m.glyph, m.glyph_hl = M.GLYPH_APPROVED, 'RevueyForgeApproved'
   elseif pr.review_decision == 'CHANGES_REQUESTED' then
     m.glyph, m.glyph_hl = M.GLYPH_CHANGES, 'RevueyForgeChanges'
-  else
+  elseif pr.review_decision == 'REVIEW_REQUIRED' then
     m.glyph, m.glyph_hl = M.GLYPH_PENDING, 'RevueyForgePending'
+  else
+    m.glyph, m.glyph_hl = M.GLYPH_NONE, 'RevueyForgeNone'
   end
   return m
 end
@@ -588,7 +791,7 @@ function M.detail(pr, parent)
   if d then
     add('decision', d[1], d[3], d[2])
   else
-    add('decision', 'no review required', 'RevueyForgeDim', M.GLYPH_PENDING)
+    add('decision', 'no review decision', 'RevueyForgeNone', M.GLYPH_NONE)
   end
   for _, r in ipairs(pr.reviews) do
     local v = REVIEW[r.state] or { r.state:lower(), '○', 'RevueyForgeDim' }

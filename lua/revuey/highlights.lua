@@ -127,7 +127,8 @@ function M.setup()
   set('RevueyForgeNumber', { link = 'Special' })
   set('RevueyForgeApproved', { link = 'DiagnosticOk' })
   set('RevueyForgeChanges', { link = 'DiagnosticError' })
-  set('RevueyForgePending', { link = 'Comment' }) -- review required / no decision yet
+  set('RevueyForgePending', { link = 'Comment' }) -- review required
+  set('RevueyForgeNone', { link = 'Comment' }) -- no review decision
   set('RevueyForgeDraft', { link = 'Comment' })
   set('RevueyForgeMerged', { link = 'Comment' })
   set('RevueyForgeClosed', { link = 'Comment' })

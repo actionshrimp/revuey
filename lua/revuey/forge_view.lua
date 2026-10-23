@@ -24,8 +24,8 @@ end
 local function shown_sig(f)
   local parts = {}
   for key, t in pairs(f.targets or {}) do
-    local pr = forge.get(t)
-    parts[#parts + 1] = key .. '=' .. (pr and vim.json.encode(pr) or '-')
+    local pr, stale = forge.get(t)
+    parts[#parts + 1] = key .. '=' .. (pr and vim.json.encode(pr) or '-') .. (stale and '?' or '')
   end
   table.sort(parts)
   return table.concat(parts, '\n')
@@ -34,36 +34,67 @@ end
 ---Resolve targets for the review shown and fetch their PRs unless the cache answers them all.
 ---Async; redraws the panel when what it shows changed. Called from view's render (open, `R`,
 ---scope switches) and lazily from the panel once the cache has expired.
-function M.update(s)
+function M.update(s, force)
   if not M.enabled() or not s or s.cleaned then
     return
   end
   local f = state(s)
+  force = force or s.forge_force
+  s.forge_force = nil
   if f.busy then
+    -- one lookup in flight per review: later requests (repeated `R`) become one follow-up
     f.again = true
+    f.again_force = f.again_force or force
     return
   end
   f.busy = true
+  f.gen = (f.gen or 0) + 1
+  local gen = f.gen
   local review = s.review
+  -- false once the review closed or a newer lookup started: results are dropped
+  local function alive()
+    return not s.cleaned and f.gen == gen
+  end
   local function done()
-    f.busy = false
+    if f.gen ~= gen then
+      return
+    end
+    f.busy, f.job = false, nil
     if f.again and not s.cleaned then
-      f.again = nil
+      local again_force = f.again_force
+      f.again, f.again_force = nil, nil
       vim.schedule(function()
-        M.update(s)
+        M.update(s, again_force)
       end)
     end
   end
   git.async(function()
     local hosts = forge.options().hosts
     local info = forge.remote_info(review.root, hosts)
-    if s.cleaned then
+    if not alive() then
       return done()
     end
     f.info = info
     f.targets = forge.targets(review, info)
-    if next(f.targets) and forge.fetch(f.targets) then
-      f.fetches = f.fetches + 1
+    if next(f.targets) then
+      local ran = forge.fetch(f.targets, {
+        force = force,
+        alive = alive,
+        on_job = function(obj)
+          f.job = obj
+        end,
+      })
+      f.job = nil
+      if not alive() then
+        return done()
+      end
+      if ran then
+        f.fetches = f.fetches + 1
+      end
+      forge.check_heads(review.root, f.targets)
+      if not alive() then
+        return done()
+      end
     end
     local sig = shown_sig(f)
     f.ready = true
@@ -78,6 +109,22 @@ function M.update(s)
     log.write('forge', 'lookup error: ' .. tostring(err))
     done()
   end)
+end
+
+---The review closed: stop a running `gh` and make sure nothing it returns is used.
+function M.detach(s)
+  local f = s and s.forge
+  if not f then
+    return
+  end
+  f.gen = (f.gen or 0) + 1
+  if f.job then
+    pcall(function()
+      f.job:kill(15)
+    end)
+    f.job = nil
+  end
+  f.busy = false
 end
 
 ---From the panel's render: after the TTL, look again (no polling loop: only when the panel is
@@ -98,8 +145,9 @@ function M.lazy(s)
   end
 end
 
----The PR of a layer (by name) or of the plain review (key '').
----@return revuey.PR?
+---The PR of a layer (by name) or of the plain review (key ''), and whether it is stale (a
+---later lookup failed).
+---@return revuey.PR?, boolean?
 function M.pr(s, key)
   local f = s and s.forge
   if not f or not f.targets or not M.enabled() then
@@ -120,8 +168,9 @@ function M.current_key(s)
   end
 end
 
----Virtual-text chunks for a row: `#123 ✓ `, `#123 draft `, `#123 merged `.
-function M.chunks(pr)
+---Virtual-text chunks for a row: `#123 ✓ `, `#123 draft `, `#123 merged ` (a dim `?` after it
+---when stale: the last lookup failed, this is the previous result).
+function M.chunks(pr, stale)
   if not pr then
     return nil
   end
@@ -132,6 +181,9 @@ function M.chunks(pr)
   end
   if m.marker then
     out[#out + 1] = { ' ' .. m.marker, m.marker_hl }
+  end
+  if stale then
+    out[#out + 1] = { '?', 'RevueyForgeDim' }
   end
   out[#out + 1] = { ' ', 'Normal' }
   return out
@@ -147,12 +199,16 @@ local function parent_branch(s)
   if not l then
     return nil
   end
-  -- a parent that is a layer: the branch its lookup used; trunk or anything else: remote stripped
+  -- a parent that is a layer: its PR's head branch, else the first name its lookup tries;
+  -- trunk or anything else: the remote stripped
   for _, other in ipairs(r.stack.layers) do
     if other.name == l.parent then
       local t = s.forge.targets and s.forge.targets[other.name]
-      if t then
-        return t.branch
+      local pr = t and forge.get(t)
+      if pr and pr.head ~= '' then
+        return pr.head
+      elseif t then
+        return t.candidates[1].branch
       end
     end
   end
@@ -165,7 +221,10 @@ end
 function M.render_detail(s, add, add_virt, width)
   s.panel_forge = nil
   local key = M.current_key(s)
-  local pr = key and M.pr(s, key)
+  local pr, stale
+  if key then
+    pr, stale = M.pr(s, key)
+  end
   if not pr then
     return
   end
@@ -183,6 +242,9 @@ function M.render_detail(s, add, add_virt, width)
   end
   if m.marker then
     virt[#virt + 1] = { m.marker, m.marker_hl }
+  end
+  if stale then
+    virt[#virt + 1] = { (#virt > 0 and ' ' or '') .. '(stale)', 'RevueyForgeDim' }
   end
   if #virt > 0 then
     add_virt(row, virt)
