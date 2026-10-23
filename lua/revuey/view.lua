@@ -750,21 +750,8 @@ end
 
 ---HEAD content of a file in the review (cached per session).
 function M.head_text(s, f)
-  if not f.new_blob then
-    return nil
-  end
   s.head_cache = s.head_cache or {}
-  local t = s.head_cache[f.new_blob]
-  if t == nil then
-    if f.worktree then
-      -- working-tree mode: the reviewed new side is the file on disk
-      t = f.new_text or git.read_file(vim.fs.joinpath(s.review.root, f.path)) or false
-    else
-      t = git.blob(f.new_blob, s.review.root) or false
-    end
-    s.head_cache[f.new_blob] = t
-  end
-  return t or nil
+  return review_mod.side_text(s.review, f, 'new', { heads = s.head_cache })
 end
 
 ---Map a working-tree location (fname, lnum), e.g. an LSP definition, to the composed add/ctx

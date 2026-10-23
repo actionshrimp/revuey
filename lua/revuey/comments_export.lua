@@ -43,6 +43,9 @@ end
 
 local function status_note(c)
   local notes = {}
+  if c.author and c.author.kind and c.author.kind ~= 'user' then
+    notes[#notes + 1] = 'by ' .. author_name(c.author) .. (c.author.kind == 'agent' and c.author.name and c.author.name:lower() ~= 'agent' and ' (agent)' or '')
+  end
   if c.outdated then
     notes[#notes + 1] = 'outdated: the code changed since this comment was made'
   end

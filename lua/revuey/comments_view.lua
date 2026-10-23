@@ -8,7 +8,6 @@ local comments = require('revuey.comments')
 local export = require('revuey.comments_export')
 local config = require('revuey.config')
 local review_mod = require('revuey.review')
-local git = require('revuey.git')
 local prose = require('revuey.prose')
 local editor = require('revuey.comment_editor')
 
@@ -45,29 +44,7 @@ end
 
 ---What the comments file and events record about the review (export headers, CLI filters).
 function M.review_info(s)
-  local r = s.review
-  local info = {
-    repo = r.state.repo,
-    branch = r.branch,
-    base = r.base,
-    state_branch = r.state.branch,
-    state_base = r.state.base,
-    head = r.head,
-    merge_base = r.merge_base,
-    mode = r.mode,
-    scope = 'branch',
-  }
-  if r.stack and r.scope then
-    if r.scope.kind == 'full' then
-      info.scope = 'full'
-      info.layers = vim.tbl_map(function(l)
-        return l.name
-      end, r.stack.layers)
-    else
-      info.scope = 'layer'
-    end
-  end
-  return info
+  return comments.review_info(s.review)
 end
 
 local function stop_watch(c)
@@ -136,9 +113,10 @@ function M.reload(s)
   if not c.store then
     return false
   end
-  local before = {}
+  local before, known = {}, {}
   for id, x in pairs(c.store.comments) do
     before[id] = comments.delivery(x)
+    known[id] = true
   end
   local ok, changed = pcall(comments.reload, c.store)
   if ok and changed then
@@ -146,6 +124,8 @@ function M.reload(s)
     for id, x in pairs(c.store.comments) do
       if before[id] ~= 'answered' and comments.delivery(x) == 'answered' then
         vim.notify('revuey: the agent answered on ' .. comments.location(x), vim.log.levels.INFO)
+      elseif known[id] == nil and not x.deleted and x.author and x.author.kind == 'agent' then
+        vim.notify('revuey: the agent commented on ' .. comments.location(x), vim.log.levels.INFO)
       end
     end
     return true
@@ -172,28 +152,11 @@ local function side_text(s, path, side)
   local U = review_mod.units(s.review)
   local fi = U.by_path[path]
   local f = fi and s.review.files[fi]
-  if not f or f.binary then
-    return nil
-  end
   local c = cm(s)
   c.blobs = c.blobs or {}
-  if side == 'new' then
-    if f.new_text then
-      return f.new_text
-    end
-    if not f.new_blob or f.status == 'D' then
-      return nil
-    end
-    return require('revuey.view').head_text(s, f)
-  end
-  local blob = f.old_blob
-  if not blob or f.status == 'A' then
-    return nil
-  end
-  if c.blobs[blob] == nil then
-    c.blobs[blob] = git.blob(blob, s.review.root) or false
-  end
-  return c.blobs[blob] or nil
+  s.head_cache = s.head_cache or {}
+  -- the same text `bin/revuey comment` hashes (review.side_text)
+  return review_mod.side_text(s.review, f, side, { heads = s.head_cache, blobs = c.blobs })
 end
 
 ---Placement context for the session's current review (cached per review).
@@ -303,7 +266,16 @@ local function author_label(a)
   if a.kind == 'user' or not a.kind then
     return a.name or 'You'
   end
-  return a.name or ({ ai = 'AI', agent = 'Agent' })[a.kind] or a.kind
+  local kind = ({ ai = 'AI', agent = 'Agent' })[a.kind] or a.kind
+  if a.name and a.name ~= '' and a.name:lower() ~= a.kind then
+    return a.name .. ' (' .. kind:lower() .. ')' -- "claude (agent)": never mistaken for the user
+  end
+  return a.name or kind
+end
+
+---Highlight of an author: agents and AI stand out from the user.
+local function author_hl(a)
+  return a and (a.kind == 'agent' or a.kind == 'ai') and 'RevueyCommentAgent' or 'RevueyCommentAuthor'
 end
 
 ---Virtual lines of one thread.
@@ -313,7 +285,7 @@ local function thread_lines(s, c, p, width)
   local max = opt('max_lines', 6)
   local B = 'RevueyCommentBorder'
   local lines = {}
-  local head = { { '╭─ ', B }, { author_label(c.author), 'RevueyCommentAuthor' }, { ' · ' .. ago(c.updated_at or c.created_at), 'RevueyCommentMeta' } }
+  local head = { { '╭─ ', B }, { author_label(c.author), author_hl(c.author) }, { ' · ' .. ago(c.updated_at or c.created_at), 'RevueyCommentMeta' } }
   local used = 3 + api.nvim_strwidth(author_label(c.author)) + api.nvim_strwidth(head[3][1])
   local function chip(text, hl)
     head[#head + 1] = { ' · ', 'RevueyCommentMeta' }
@@ -358,7 +330,7 @@ local function thread_lines(s, c, p, width)
     if not r.deleted then
       body[#body + 1] = {
         { '│ ↳ ', B },
-        { author_label(r.author), 'RevueyCommentAuthor' },
+        { author_label(r.author), author_hl(r.author) },
         { ' · ' .. ago(r.created_at), 'RevueyCommentMeta' },
       }
       add_text(r.body, '│   ', '│   ')
@@ -421,7 +393,10 @@ function M.render(s, o)
   for _, cmt in ipairs(all) do
     local p = comments.place(cmt, ctx)
     c.place[cmt.id] = p
-    if o.persist and comments.apply_placement(cmt, p) then
+    -- a comment from `bin/revuey comment` has no unit yet: store the one found here even on a
+    -- live reload (once, so instances in different modes cannot ping-pong)
+    local resolve = not o.persist and comments.unresolved(cmt) and p.unit ~= nil and not p.outdated
+    if (o.persist or resolve) and comments.apply_placement(cmt, p) then
       store._dirty[cmt.id] = true
       changed = true
     end
@@ -1104,6 +1079,9 @@ function M.list_lines(s)
       tags[#tags + 1] = '✓ resolved'
     elseif cmt.status == 'draft' then
       tags[#tags + 1] = 'draft'
+    end
+    if cmt.author and cmt.author.kind and cmt.author.kind ~= 'user' then
+      tags[#tags + 1] = 'by ' .. author_label(cmt.author)
     end
     if p.how == 'missing' then
       tags[#tags + 1] = 'not in this review'
