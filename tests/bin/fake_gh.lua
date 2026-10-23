@@ -11,6 +11,9 @@ if log and log ~= '' then
 end
 
 local scenario = os.getenv('REVUEY_FAKE_GH') or 'ok'
+if scenario == 'slow' then
+  scenario = 'ok'
+end
 if log and log ~= '' then
   -- this process's pid (the shell script execs nvim), so tests can check it was stopped
   local fd = assert(io.open(log .. '.pid', 'w'))
