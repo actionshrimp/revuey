@@ -301,6 +301,9 @@ end
 local function not_changed(files, path)
   local paths = {}
   for _, f in ipairs(files) do
+    if f.old_path == path and f.path ~= path then
+      return ('%s was renamed to %s in this review: use --path %s (with --side old for its old lines)'):format(path, f.path, f.path)
+    end
     paths[#paths + 1] = f.path
   end
   if #paths == 0 then
