@@ -159,6 +159,39 @@ scope, then a **full stack** row, then a few short [stack notes](#stack-notes).
 With a single branch and no stack, everything behaves exactly as before (apart from the
 related-branch notes below).
 
+### Someone else's stack (no local branches)
+
+To review a colleague's stacked PRs you don't need a local branch for every PR. Fetch first
+(revuey never fetches; it uses the remote-tracking branches you have), then check out the top PR,
+detached or on a local branch tracking it:
+
+```sh
+git fetch origin
+git worktree add --detach ../review-their-stack origin/their-top-branch   # or: git switch --track origin/their-top-branch
+cd ../review-their-stack && revuey
+```
+
+- **Remote-tracking layers below HEAD:** a branch under `refs/remotes/<remote>/` counts when its
+  tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD. Remote branches
+  above HEAD or on other lines are never used, nor are `<remote>/HEAD`, the trunk and branches on
+  the [ignore list](#stack-notes) (for remote branches it does keep them out of the stack). This is one ref listing plus set lookups, so thousands of
+  remote branches cost next to nothing.
+- **Local wins:** a local branch at the same commit, or a local copy of the branch (tracking it,
+  or with the same name) on that line, is the layer instead. Several remotes at one commit: the
+  remote your branch tracks, then `origin`, then alphabetical; the rest are listed as at the same
+  commit. Explicit parents (`:RevueyStackParent`, Graphite) may name a branch you only have as
+  `origin/<name>`.
+- **Detached HEAD** at a branch tip (local first, else remote-tracking) uses that branch as the
+  current layer, marked with a dim `@` and a `detached HEAD at …` note listing any other branches
+  there. Detached at no branch: no stack, and a note says why.
+- **Shown dimmer, with `ro`:** remote-only layers keep their `origin/` prefix and are read-only
+  (`committed only (remote, read-only)`; `:RevueyStackParent` refuses them).
+- **Marks carry over:** state keys drop the remote, so reviewed marks, comments and guides made on
+  `origin/feat-x` belong to a local `feat-x` created later. If two remotes' branches with the same
+  name are both layers, the less preferred one keeps its full name as its key.
+- When your checked-out branch differs from its fetched remote copy, a note says how far it is
+  ahead or behind.
+
 ### Stack notes
 
 Detection reports what it noticed as notes. The panel shows at most three short lines, one per
@@ -183,7 +216,7 @@ dim (`RevueyStackNote`) and don't affect the review.
 | Built on an old version of another branch (that branch has newer copies of commits at the bottom of your stack, like a parent amended without restacking) | maybe: old commits of that branch can show up |
 | Shares commits with your stack (no reflog links it; perhaps a parent that moved on) | maybe: its commits can be part of the layer's diff |
 | Related branches outside the stack (`○`): an outdated copy of your stack, another version of a stack commit (backports, backups, clock skew), side branch | no |
-| Looks landed, the stack stops at a fork, same commit as a layer, parent already merged | no |
+| Looks landed, the stack stops at a fork, detached HEAD, ahead of or behind its fetched remote copy, same commit as a layer, parent already merged | no |
 
 `!` in the panel or the diff opens a float with every note in full: what it means, why it
 matters (or that it doesn't affect this review), and the branches involved, grouped by kind.
@@ -207,8 +240,8 @@ reviewed marks; an unreadable file is kept as `.corrupt-*`), so nothing is writt
 `setup({ stack = { ignore_branches = { 'dave/old-*' } } })` apply everywhere and can only be
 removed in your config. Ignoring hides informational notes about branches outside the stack
 (related branches and other branches at a layer's commit); warnings that can change the diff are
-never hidden. It never changes which branches are layers: an ignored
-branch that is a layer stays one, and notes about layers (not restacked, parent settings, forks,
+never hidden. It never changes which local branches are layers (it does keep matching
+remote-tracking branches out of the stack): an ignored local branch that is a layer stays one, and notes about layers (not restacked, parent settings, forks,
 landed) are always shown. The summary line counts what is hidden, e.g. `(2 ignored)`.
 
 ## AI guide
@@ -672,6 +705,22 @@ Things to try:
 - `:RevueyStackParent main` while on `stack/cart` drops `stack/math` from the stack; `:RevueyStackParent`
   and "clear override" restores it.
 
+### Someone else's stack
+
+```sh
+scripts/make-fixture.sh --remote-stack /tmp/revuey-remote  # pushed to /tmp/revuey-remote/upstream.git
+cd /tmp/revuey-remote/review                               # fresh clone, detached at origin/stack/ui
+~/dev/revuey/main/bin/revuey
+```
+
+Things to try:
+- The panel shows `origin/stack/math`, `origin/stack/cart` and `@ origin/stack/ui`, dimmed with
+  `ro`, and a `detached HEAD at origin/stack/ui` note.
+- `[s`, `mr` a file in `origin/stack/cart`, then quit, run
+  `git branch --track stack/cart origin/stack/cart` and reopen: the layer is now the local
+  `stack/cart` and keeps its mark.
+- `git switch --track origin/stack/ui` instead of the detached HEAD: same stack, normal `@`.
+
 ### Stack notes
 
 Old branches left on an earlier version of a layer:
@@ -724,7 +773,11 @@ cd /tmp/revuey-guide
   hunks, derived file and section state, nested hunk/piece marks via a synthetic split, old state
   files), async syntax projection (bundled Lua parser), stack
   resolution (ordering, forks, duplicate tips, Graphite metadata, overrides, trunk ahead, merged
-  layers) plus `detect()` on real repos. Stack notes: classification, grouping, summary lines,
+  layers) plus `detect()` on real repos. Remote-tracking layers: candidate selection, dedupe
+  precedence and state keys (with the same-name-on-two-remotes case), and someone else's stack
+  in a bare upstream reviewed from a fresh clone (detached and tracking, marks and comments kept
+  when a local branch appears, unrelated remote branches, squash merges, 3000 remote branches).
+  Stack notes: classification, grouping, summary lines,
   the details listing and actions, and the ignore list (glob matching, suggestions, persistence
   and merging).
 - **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
