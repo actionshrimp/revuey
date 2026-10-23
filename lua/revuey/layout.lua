@@ -178,6 +178,7 @@ end
 ---@field guide_id? string        hunk: engine hunk id (h1...)
 ---@field note? revuey.GuideDocItem[] hunk: prose rows shown under the header
 ---@field layers? string[]        hunk: stack layers that introduced it (full-stack guides)
+---@field edited? boolean         hunk: changed since the guide was generated (re-anchored by overlap)
 ---@field heading? boolean        diagram: the heading row
 ---@field nodes? table            diagram: {start byte, end byte, node} spans on the row
 
@@ -224,6 +225,9 @@ function M.compose_guide(files, doc)
       local fi, hi = item.file_idx, item.hunk_idx
       local f = files[fi]
       local extra = { section_idx = item.section_idx, guide_id = item.guide_id, path_len = item.path_len, layers = item.layers }
+      if item.edited then
+        extra.edited = true -- re-anchored by overlap: changed since the guide was generated
+      end
       local h = hi and f.hunks[hi]
       local header_row
       if h then
