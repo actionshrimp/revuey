@@ -123,6 +123,17 @@ function M.setup()
   set('RevueyCommentSent', { link = 'DiagnosticInfo' })
   set('RevueyCommentQueued', { link = 'DiagnosticWarn' })
   set('RevueyCommentAnswered', { link = 'DiagnosticOk' })
+  -- pull requests (panel rows and the detail section)
+  set('RevueyForgeNumber', { link = 'Special' })
+  set('RevueyForgeApproved', { link = 'DiagnosticOk' })
+  set('RevueyForgeChanges', { link = 'DiagnosticError' })
+  set('RevueyForgePending', { link = 'Comment' }) -- review required / no decision yet
+  set('RevueyForgeDraft', { link = 'Comment' })
+  set('RevueyForgeMerged', { link = 'Comment' })
+  set('RevueyForgeClosed', { link = 'Comment' })
+  set('RevueyForgeDim', { link = 'Comment' })
+  set('RevueyForgeTitle', { link = 'Normal' })
+  set('RevueyForgeWarn', { link = 'DiagnosticWarn' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

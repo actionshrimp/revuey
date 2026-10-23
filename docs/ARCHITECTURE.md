@@ -608,10 +608,59 @@ are in `reports/Terminal code review tool landscape.md`.
      fake multiplexers only.
    - **Later: the chat panel** sends through the same hook and can reuse the delivery fields and
      the thread as its transcript.
+13. **Pull request status** (`forge.lua` pure lookup, cache and display models; `forge_view.lua`
+    panel glue; `log.lua` quiet log). Read-only, GitHub only, through the user's own `gh` (assumed
+    logged in; no auth checks or setup flow).
+    - **Targets.** `forge.remote_info` reads `git remote`, `git remote get-url <name>` per remote
+      and `git config --get-regexp '^branch\..*\.(remote|merge)$'`. `parse_remote_url` handles
+      scp-like, `ssh://`, `https://` and `git://` URLs; a host is GitHub when it is github.com (or
+      an ssh alias such as `github.com-work`, or `ssh.github.com`), contains "github", or is in
+      `forge.hosts`; local paths and other forges give nil, so such repos make no call. The base
+      remote is the trunk's (`origin/main` -> origin, a local trunk's upstream), else `origin`,
+      else the only GitHub remote. Each layer (key: layer name; a plain review: `''`) gets a
+      target `{branch, head_owner, repos}`: a remote layer's name without its remote
+      (`split_remote`), a local branch's upstream name when it tracks one, else its own name;
+      `repos` is the base repo, plus the branch's own remote's repo when that differs (a fork:
+      its PR usually lives in the base repo with `headRepositoryOwner` = the fork's owner).
+    - **One call.** `build_query` aliases one `repository(owner,name) { pullRequests(headRefName,
+      first: 10, orderBy: CREATED_AT desc) }` per distinct (repo, branch), with a shared fragment:
+      number, title, url, state, isDraft, author, reviewDecision, latestReviews,
+      reviewRequests, mergeable, base/head ref names, headRepositoryOwner and the head commit's
+      `statusCheckRollup.contexts` `checkRunCountsByState`/`statusContextCountsByState` (counts
+      only, no per-check nodes). One `gh api graphql -f query=…` per host per fetch (in practice
+      one per refresh), via `git.system` (async in `git.async`). `pick` prefers an OPEN PR, then
+      the newest MERGED/CLOSED, among PRs whose head owner is the target's (other people's fork
+      PRs from a branch of the same name are skipped).
+    - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}`; a
+      target is fresh when every repo it searches was fetched (or failed) within `forge.ttl`.
+      `forge_view.update` runs from view's `render` (open, `R`, scope switches, refreshes that
+      re-render), resolves targets and fetches only when something is stale, then redraws the
+      panel if what it shows changed. No polling: `panel.render` calls `forge_view.lazy`, which
+      schedules an update once the TTL has passed. A failure is cached like a result, so a broken
+      `gh` is retried once per TTL, not on every redraw.
+    - **Failures** (spawn error for a missing `gh`, non-zero exit, unparsable JSON, GraphQL
+      errors, rate limits, network) show nothing: the reason goes to `log.lua`, which appends to
+      `log_file` (default `stdpath('log')/revuey.log`) and keeps the last 200 entries in memory.
+      Partial data with errors (one repo not found) is used and the errors logged.
+    - **Display.** `forge.row` (`#N` plus `✓`/`✗`/`●` by review decision; draft, merged and
+      closed dim with a marker) and `forge.detail` (title, author/state/draft, decision, latest
+      review per reviewer, requested reviewers, check counts, mergeable for open PRs, base, and a
+      `base_mismatch` warning when an open PR's base differs from the layer's parent as GitHub
+      would name it) are pure models. The panel prepends the row chips to a layer's virtual
+      text (a plain review: its `branch → base` line); when the name has less than 8 cells left
+      the commit count goes. `forge_view.render_detail` draws the viewed layer's section below
+      the stack section (none in full scope), wrapped to the panel; `<Tab>` on its heading toggles
+      `s.forge.collapsed`; `gx` (`keymaps.forge_open`) opens a row's PR (layer rows, detail rows,
+      else the viewed layer) with `vim.ui.open`. Highlights `RevueyForge*`.
+    - **Later** (roadmap 5, 6): forge review threads and posting reviews reuse `remote_info`,
+      `targets`, `parse_remote_url` and `run_graphql`; the PR found here gives the number and
+      repo.
+    - **Tests** use `tests/bin/gh` (fake, records argv, answers queries from canned PR nodes per
+      `owner/name:branch`); `tests/helpers.lua` blocks the real `gh` on PATH for every spec.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
