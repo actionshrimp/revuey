@@ -58,7 +58,6 @@ local M = {}
 ---@field notes revuey.StackNote[]  shown notes (see stack_notes.lua)
 ---@field ignored? {branch:string, kind:string, pattern:string}[] notes hidden by the ignore list
 ---@field state_repo? string    reviewed-state repo key (nil = repo root)
----@field anchor? string        the recorded top that keeps remote layers while attached (`gS`)
 
 ---Pick one of several names at the same commit, deterministically: `prefer` if present, else one
 ---with an explicit parent, else the alphabetically first. Returns the pick and the others.
@@ -501,53 +500,6 @@ function M.write_choices(path, names)
   local tmp = ('%s.tmp.%d'):format(path, vim.uv.os_getpid())
   local fd = assert(io.open(tmp, 'w'))
   fd:write(vim.json.encode({ names = next(names) and names or vim.empty_dict() }))
-  fd:close()
-  assert(os.rename(tmp, path))
-end
-
----State file of the stacks branches were checked out from (`gS` on a layer of a stack with
----remote-tracking layers): local branch -> the top of that stack (`origin/stack/ui`, or a local
----branch). With the checked-out branch listed there, remote-tracking layers stay in its stack
----while attached (see `detect`). Per repo, like the names file.
-function M.tops_file(dir, repo)
-  local slug = (vim.fs.basename(vim.fs.dirname(repo)) or 'repo'):gsub('[^%w%-_.]', '_')
-  return vim.fs.joinpath(dir, 'stack-tops-' .. slug .. '-' .. vim.fn.sha256(repo):sub(1, 12) .. '.json')
-end
-
----@return table<string, string> branch -> top ({} when missing or unreadable)
-function M.read_tops(path)
-  local fd = path and io.open(path, 'r')
-  if not fd then
-    return {}
-  end
-  local ok, data = pcall(vim.json.decode, fd:read('*a'))
-  fd:close()
-  local out = {}
-  if ok and type(data) == 'table' and type(data.tops) == 'table' then
-    for b, top in pairs(data.tops) do
-      if type(b) == 'string' and type(top) == 'string' then
-        out[b] = top
-      end
-    end
-  end
-  return out
-end
-
----Record (or with `top = nil` forget) the stack top of `branch` (read, change, temp file +
----rename; capped at 500 branches).
-function M.write_top(path, branch, top)
-  local tops = M.read_tops(path)
-  if tops[branch] == top then
-    return
-  end
-  tops[branch] = top
-  if vim.tbl_count(tops) > 500 then
-    tops = { [branch] = top }
-  end
-  vim.fn.mkdir(vim.fs.dirname(path), 'p')
-  local tmp = ('%s.tmp.%d'):format(path, vim.uv.os_getpid())
-  local fd = assert(io.open(tmp, 'w'))
-  fd:write(vim.json.encode({ tops = next(tops) and tops or vim.empty_dict() }))
   fd:close()
   assert(os.rename(tmp, path))
 end
@@ -1445,14 +1397,6 @@ function M.detect(root, trunk, cache, opts)
     for _, b in ipairs(new) do
       tips[#tips + 1] = branches[b]
     end
-    -- a branch checked out from a stack with remote layers (`gS`) keeps that stack: its recorded
-    -- top (a remote-tracking or local branch) anchors the remote layers while attached
-    local _, sdir, repo_key = ignore_mod.for_root(root, opts and opts.state_dir)
-    local anchor_name = (not detached and repo_key) and M.read_tops(M.tops_file(sdir, repo_key))[current] or nil
-    local anchor_sha = anchor_name and (remote_sha[anchor_name] or branches[anchor_name]) or nil
-    if anchor_sha then
-      tips[#tips + 1] = anchor_sha
-    end
     load_graph(root, input, tips)
     -- Remote-tracking branches on HEAD's first-parent line (below HEAD) are layers too, but only
     -- with HEAD detached (reviewing someone else's stack): on a local branch, refs of the user's
@@ -1470,32 +1414,12 @@ function M.detect(root, trunk, cache, opts)
         ahead, behind = tonumber(a), tonumber(b)
       end
     end
-    local function first_parent_line(from)
-      local set, c = {}, from
-      while c and c ~= '' and input.graph[c] ~= nil do
-        set[c] = true
-        c = input.graph[c]
-      end
-      return set
-    end
-    local head_line = first_parent_line(head)
     local line = {}
     if detached then
-      line = head_line
-    end
-    -- anchored: the gate opens when the top's line shares commits with HEAD's (above trunk);
-    -- the line is both, so remote layers above HEAD (on the top's line) count too
-    local anchored = false
-    if anchor_sha then
-      local aline = first_parent_line(anchor_sha)
-      for c in pairs(aline) do
-        if head_line[c] then
-          anchored = true
-          break
-        end
-      end
-      if anchored then
-        line = vim.tbl_extend('force', {}, head_line, aline)
+      local c = head
+      while c and c ~= '' and input.graph[c] ~= nil do
+        line[c] = true
+        c = input.graph[c]
       end
     end
     -- commits any remote's trunk has are never layers (a fork's stale origin/main as trunk, a
@@ -1516,9 +1440,8 @@ function M.detect(root, trunk, cache, opts)
         end
       end
       if #excl > 0 then
-        local starts = anchored and { head, anchor_sha, '^' .. trunk_rev } or { head, '^' .. trunk_rev }
         local out = git.system({ 'git', 'rev-list', '--stdin' }, {
-          cwd = root, stdin = table.concat(vim.list_extend(starts, excl), '\n') .. '\n',
+          cwd = root, stdin = table.concat(vim.list_extend({ head, '^' .. trunk_rev }, excl), '\n') .. '\n',
         })
         local keep = {}
         for sha in (out.code == 0 and out.stdout or ''):gmatch('%x+') do
@@ -1533,8 +1456,9 @@ function M.detect(root, trunk, cache, opts)
     end
     -- the name chosen at each commit is kept in the state dir (per repo), so a new ref there (say
     -- origin/aaa-backup) doesn't rename a layer or move its marks, across sessions too
+    local _, sdir, repo_key = ignore_mod.for_root(root, opts and opts.state_dir)
     local choice_path = repo_key and M.choices_file(sdir, repo_key)
-    local stored = (choice_path and (detached or anchored)) and M.read_choices(choice_path) or {}
+    local stored = (choice_path and detached) and M.read_choices(choice_path) or {}
     local previous = {}
     for _, name in pairs(stored) do
       previous[name] = true
@@ -1566,31 +1490,6 @@ function M.detect(root, trunk, cache, opts)
     input.remote, input.keys, input.also_at = rl.remote, rl.keys, rl.also
     for name, sha in pairs(rl.branches) do
       branches[name] = sha
-    end
-    if anchored then
-      -- remote layers on the top's line above HEAD may sit above it
-      local above_remote = {}
-      for name, sha in pairs(rl.branches) do
-        if not head_line[sha] then
-          above_remote[#above_remote + 1] = name
-        end
-      end
-      table.sort(above_remote)
-      add_above(above_remote)
-      -- a local copy committed on since (an edit of a lower layer): its remote ref's commit is
-      -- an old tip of it, so the layers above show as not restacked instead of dropping out
-      for b, up in pairs(upstream) do
-        local sha = remote_sha[up]
-        if sha and line[sha] and sha ~= branches[b] and not rl.remote[up] then
-          owned[sha] = owned[sha] or {}
-          if not vim.tbl_contains(owned[sha], b) then
-            table.insert(owned[sha], b)
-            -- and branches still on that commit are found above it (not restacked)
-            owned_by[b] = owned_by[b] or {}
-            table.insert(owned_by[b], 1, sha)
-          end
-        end
-      end
     end
     -- explicit parents (Graphite, revuey settings) naming a branch only present as a remote copy:
     -- the remote-tracking branch of that name (exact `origin/x`, or `x` on the preferred remote)
@@ -1688,7 +1587,6 @@ function M.detect(root, trunk, cache, opts)
       vim.list_extend(extra, foreign_notes(root, input, stack, above_set, trunk_names))
     end
     if stack then
-      stack.anchor = anchored and anchor_name or nil
       -- a remote layer's local branch tracking it, when there is one off the line (`gS` uses it)
       for _, l in ipairs(stack.layers) do
         if l.remote then

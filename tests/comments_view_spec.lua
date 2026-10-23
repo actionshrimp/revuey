@@ -668,8 +668,7 @@ end)
 -- Two Neovim instances on the same review: each adds a comment; both end up with both, and a
 -- delete in one wins over the other's older copy.
 h.test('two instances: comments made in each are merged, live', function()
-  local MiniTest = dofile(h.root .. '/tests/vendor/mini/test.lua')
-  local child = MiniTest.new_child_neovim()
+  local child = h.child()
   child.restart({ '-u', 'NONE' })
   child.lua(
     [[
