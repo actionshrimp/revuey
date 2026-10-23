@@ -1661,7 +1661,7 @@ local function diff_keymaps(s)
     end
   end
   map(buf, k.refresh, function()
-    M.refresh({ force = true, notify = true })
+    M.refresh({ force = true, notify = true, forge = true })
   end, 'refresh review')
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
   map(buf, k.close, M.close, 'close review')
@@ -1825,7 +1825,7 @@ local function panel_keymaps(s)
     end
   end, 'toggle file / guide section reviewed')
   map(buf, k.refresh, function()
-    M.refresh({ force = true, notify = true })
+    M.refresh({ force = true, notify = true, forge = true })
   end, 'refresh review')
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
   map(buf, k.close, M.close, 'close review')
@@ -2294,6 +2294,7 @@ cleanup = function(s)
   require('revuey.notes_float').update(s) -- closes it
   comments_view.detach(s)
   agent_link.detach(s)
+  require('revuey.forge_view').detach(s) -- stops a running gh
   if s.augroup then
     pcall(api.nvim_del_augroup_by_id, s.augroup)
   end
@@ -3048,6 +3049,9 @@ function M.refresh(o)
     return
   end
   s.refreshing = true
+  if o.forge then
+    s.forge_force = true -- `R`: look the pull requests up again, whatever the cache holds
+  end
   s.target_mode = o.mode or s.target_mode or s.review.mode
   if o.scope then
     s.pending_scope = nil

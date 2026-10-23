@@ -55,20 +55,39 @@ function M.truncate(str, width, from_left)
   return from_left and ('…' .. body) or (body .. '…')
 end
 
----Wrap `text` to `width` display cells (word boundaries), each line prefixed with `indent`.
+---Wrap `text` to `width` display cells (word boundaries), each line prefixed with `indent`. A
+---word wider than a line (a long branch name, CJK text without spaces) is broken by display width.
 local function wrap(text, width, indent)
   local out, line = {}, indent
-  for word in text:gmatch('%S+') do
-    if line ~= indent and vim.fn.strdisplaywidth(line .. ' ' .. word) > width then
+  local room = math.max(width - vim.fn.strdisplaywidth(indent), 1)
+  local function push()
+    if line ~= indent then
       out[#out + 1] = line
+    end
+    line = indent
+  end
+  for word in text:gmatch('%S+') do
+    if vim.fn.strdisplaywidth(word) > room then
+      push()
+      local cur, cw = '', 0
+      for k = 0, vim.fn.strchars(word) - 1 do
+        local ch = vim.fn.strcharpart(word, k, 1)
+        local w = vim.fn.strdisplaywidth(ch)
+        if cw + w > room and cur ~= '' then
+          out[#out + 1] = indent .. cur
+          cur, cw = '', 0
+        end
+        cur, cw = cur .. ch, cw + w
+      end
+      line = indent .. cur
+    elseif line ~= indent and vim.fn.strdisplaywidth(line .. ' ' .. word) > width then
+      push()
       line = indent .. word
     else
       line = line == indent and (indent .. word) or (line .. ' ' .. word)
     end
   end
-  if line ~= indent then
-    out[#out + 1] = line
-  end
+  push()
   return out
 end
 M.wrap = wrap
