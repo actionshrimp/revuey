@@ -648,7 +648,11 @@ are in `reports/Terminal code review tool landscape.md`.
       was fetched (or failed) within `forge.ttl`. A failure keeps the last good `branches`, so
       what was shown stays, marked stale (`?`, `(stale)`). `forge_view.update` runs from view's
       `render` (open, scope switches, refreshes that re-render), resolves targets and fetches
-      only when something is stale, then redraws the panel if what it shows changed. `R`
+      only when something is stale, then redraws the panel only if the PRs it shows changed
+      (`forge_view.signature` against what `panel.render` last drew), with
+      `panel.render(s, {keep_view = true})`: background redraws (this one and the stack stats)
+      keep the panel cursor on the item it was on (file, layer, section, PR heading; the view
+      scrolls by the rows added above) instead of jumping to the diff's current file. `R`
       (`refresh{forge = true}` -> `s.forge_force`) fetches whatever the cache holds. One lookup
       per review at a time: requests while one runs become one follow-up. Each lookup has a
       generation; `forge_view.detach` (review cleanup) bumps it and kills `gh`, and `fetch`
