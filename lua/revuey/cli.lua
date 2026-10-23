@@ -971,22 +971,35 @@ local function comment_review(o, ctx, attached)
       state_dir = dir,
     })
   else
-    local trunk = git.default_branch(ctx.root)
+    -- no live review (or one too old to say how it loaded): open what `revuey` opens here, with
+    -- the settings the last review of this worktree recorded (the CLI runs with --clean, so it
+    -- cannot read the user's default_branch, uncommitted, state_dir or context_lines)
+    local last = sessions.read_last(sessions.bases(ctx.root, state_dir(o)), ctx.root) or {}
+    if not (o.state_dir and o.state_dir ~= '') and not attached and type(last.state_dir) == 'string' and last.state_dir ~= '' then
+      dir = last.state_dir
+    end
+    config.options.context_lines = tonumber(last.context_lines) or config.options.context_lines
+    config.options.max_file_bytes = tonumber(last.max_file_bytes) or config.options.max_file_bytes
+    local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
+      or git.default_branch(ctx.root)
     if not trunk then
       die('could not detect the default branch (origin/HEAD, main, master or develop); open the review in revuey first, then comment')
     end
     local stack_mod = require('revuey.stack')
-    local ok, stack, _, from = pcall(stack_mod.detect, ctx.root, trunk, nil, { state_dir = dir })
-    if not ok then
-      stack, from = nil, nil
+    local stack, from, scope
+    if last.stack ~= false then
+      local ok, st, _, f = pcall(stack_mod.detect, ctx.root, trunk, nil, { state_dir = dir })
+      if ok then
+        stack, from = st, f
+      end
+      scope = stack and (last.scope == 'full' and { kind = 'full' } or { kind = 'layer', index = stack.current }) or nil
     end
-    local scope = stack and { kind = 'layer', index = stack.current } or nil
     r, lerr = review_mod.load({
       cwd = ctx.root,
       base = not stack and trunk or nil,
       from = from,
       target = stack and stack_mod.target(stack, scope) or nil,
-      mode = attached and attached.mode or nil,
+      mode = (attached and attached.mode) or last.mode or nil,
       state_dir = dir,
     })
     if r then
@@ -1045,11 +1058,13 @@ function M.comment(o, pos)
     die(tostring(serr))
   end
   comments.append_event(epath, comments.event('created', comments.get(store, c.id) or c, info))
-  out(('%s\ncommented on %s (%s) in %s%s\n'):format(
+  out(('%s\ncommented on %s (%s) in %s vs %s, %s%s\n'):format(
     c.id,
     comments.location(c),
     c.file_level and 'file' or anchor.side,
     sessions.scope_label(info),
+    info.base or '?',
+    info.mode == 'committed' and 'committed' or 'working tree',
     attached and (', session ' .. attached.id) or ' (no review running: it shows when the review is opened)'
   ))
 end
