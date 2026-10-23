@@ -56,12 +56,36 @@ local function entry(s)
   }
 end
 
+---How the next `revuey` in this worktree opens (sessions.write_last): what this review was
+---opened with, resolved against the config.
+local function last_review(s)
+  local r, o = s.review, s.opts or {}
+  local explicit = o.base and o.base ~= '' and o.base or nil
+  return {
+    worktree = r.root,
+    trunk = (r.stack and r.stack.trunk) or (not r.target and r.base) or explicit or config.options.default_branch,
+    base = explicit,
+    stack = o.scope == 'full' or not explicit,
+    scope = o.scope == 'full' and 'full' or 'layer',
+    mode = s.link.open_mode,
+    state_dir = o.state_dir or config.options.state_dir or require('revuey.state').default_dir(),
+    context_lines = config.options.context_lines,
+    max_file_bytes = config.options.max_file_bytes,
+  }
+end
+
 ---Write the registry entry when it changed (a scope switch, another branch checked out), or
 ---with `refresh` anyway: its `updated_at` tells listers this review is still alive.
 function M.update(s, refresh)
   local l = s and s.link
   if not l or s.cleaned then
     return
+  end
+  local last = last_review(s)
+  local lsig = vim.json.encode(last)
+  if lsig ~= l.last_sig then
+    l.last_sig = lsig
+    pcall(sessions.write_last, l.bases, last)
   end
   local e = entry(s)
   local sig = vim.json.encode(e)
@@ -134,6 +158,8 @@ function M.attach(s)
     bases = bases,
     started_at = sessions.now_ms(),
     connected = false,
+    -- the mode the review was opened in (later `gu` toggles do not change how revuey opens)
+    open_mode = s.opts.mode or (config.options.uncommitted and 'worktree' or 'committed'),
   }
   M.update(s)
   if not group then

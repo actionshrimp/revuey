@@ -565,13 +565,16 @@ prints its id and where it went:
 
 ```
 1a1b2c3d4e5f6a7b
-commented on src/cart.ts:12-14 (new) in stack/cart, session 48213
+commented on src/cart.ts:12-14 (new) in stack/cart vs stack/base, working tree, session 48213
 ```
 
 It goes into the same review as `watch` (the worktree's only live review, else `--session
 <id>`). With no review running it goes into the review `bin/revuey` would open there (the stack
 layer of HEAD, a detached HEAD too, else the branch against the default branch) and shows when
-you open it. The CLI loads that review's diff itself (one `git diff` plus the working-tree
+you open it. Since the CLI does not read your Neovim config, it takes your `default_branch`,
+`uncommitted`, `state_dir` and `context_lines` from the last review opened in that worktree
+(recorded in `$(git rev-parse --git-dir)/revuey/`); before revuey has ever opened there it uses
+the defaults. The CLI loads that review's diff itself (one `git diff` plus the working-tree
 snapshot, the same loader as the UI, so the check is exact): the path must be one of its changed
 files and every line inside a hunk on that side (`new`, the default: added and context lines;
 `old`: deleted and context lines), else it fails with the nearest hunks and suggests `--file`.

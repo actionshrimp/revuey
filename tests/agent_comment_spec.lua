@@ -3,7 +3,9 @@
 -- context and file-level comments with no review running (placed, and their unit filled in,
 -- when the review is opened), paths and lines outside the diff rejected, the comment appearing
 -- live in a running review with re-anchoring storing its unit, never echoed back to the agent
--- by `watch`/`inbox`, two reviews and --session, and a detached HEAD's review scope.
+-- by `watch`/`inbox`, two reviews and --session, a detached HEAD's review scope, the user's
+-- config (default_branch, uncommitted, state_dir) taken from the worktree's last review, and
+-- renamed, deleted, binary, large, CRLF and no-newline files.
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
 local msgs = {}
@@ -415,6 +417,181 @@ h.test('detached HEAD with no review running: the comment lands in the scope rev
   h.ok(comments.get(s.cm.store, id), 'in the opened review: ' .. s.cm.path)
   h.eq(false, s.cm.place[id].outdated)
   h.eq(10, s.cm.place[id].start_line)
+end)
+
+-- ---------------------------------------------------------------------------
+-- The user's config with no review running (the CLI runs with --clean): the last review of the
+-- worktree recorded it
+-- ---------------------------------------------------------------------------
+
+---Open a review of `cwd` with config `cfg` (state_dir defaults to the spec's) and close it again:
+---as if the user ran revuey there earlier.
+local function opened_once(cwd, cfg)
+  require('revuey').close()
+  require('revuey').setup(vim.tbl_extend('force', { state_dir = state_dir, lsp_warmup = false }, cfg or {}))
+  s = h.open_review({ cwd = cwd, base = '' })
+  require('revuey').close()
+  h.eq('[]', vim.trim(run({ 'sessions', '--json' }, { cwd = cwd }).stdout), 'no review running')
+end
+
+---The review the user opens next (same config), with comment `id` in it.
+local function reopen(cwd, cfg)
+  require('revuey').setup(vim.tbl_extend('force', { state_dir = state_dir, lsp_warmup = false }, cfg or {}))
+  s = h.open_review({ cwd = cwd, base = '' })
+  return s
+end
+
+local function placed(id)
+  h.ok(comments.get(s.cm.store, id), 'comment ' .. id .. ' is in ' .. s.cm.path)
+  local p = s.cm.place[id]
+  h.eq(false, p.outdated, vim.inspect(p))
+  return p
+end
+
+h.test('no review running, default_branch = develop: the comment goes to the develop review and is checked against it', function()
+  local d = h.repo('agent-comment-develop', { ['a.txt'] = long }, {})
+  h.git(d, 'checkout', '-q', '-b', 'develop', 'main')
+  h.write(d, 'b.txt', long)
+  h.git(d, 'add', '-A')
+  h.git(d, 'commit', '-q', '-m', 'develop')
+  h.git(d, 'checkout', '-q', '-b', 'feat3')
+  h.write(d, 'a.txt', (long:gsub('line 5\n', 'five\n')))
+  h.git(d, 'commit', '-q', '-am', 'feat3')
+  local cfg = { default_branch = 'develop' }
+  opened_once(d, cfg)
+  local r = run({ 'comment', '--path', 'a.txt', '--line', '5', 'develop note' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('a.txt:5 (new) in feat3 vs develop, working tree', 1, true), r.stdout)
+  -- b.txt differs from main only: not in the develop review
+  local bad = run({ 'comment', '--path', 'b.txt', '--file', 'x' }, { cwd = d })
+  h.eq(1, bad.code)
+  h.ok(bad.stderr:find('b.txt is not a changed file', 1, true), bad.stderr)
+  reopen(d, cfg)
+  h.eq('develop', s.review.base)
+  h.eq(5, placed(id_of(r)).start_line)
+  require('revuey').close()
+end)
+
+h.test('no review running, uncommitted = false with a dirty tree: checked against the committed diff', function()
+  local d = h.repo('agent-comment-committed', { ['a.txt'] = long }, { ['a.txt'] = (long:gsub('line 5\n', 'five\n')) })
+  h.write(d, 'a.txt', (long:gsub('line 5\n', 'five\n'):gsub('line 30\n', 'thirty, not committed\n')))
+  local cfg = { uncommitted = false }
+  opened_once(d, cfg)
+  local bad = run({ 'comment', '--path', 'a.txt', '--line', '30', 'x' }, { cwd = d })
+  h.eq(1, bad.code)
+  h.ok(bad.stderr:find('a.txt:30 (new) is not in the diff', 1, true), bad.stderr)
+  local r = run({ 'comment', '--path', 'a.txt', '--line', '5', 'committed note' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('vs main, committed', 1, true), r.stdout)
+  reopen(d, cfg)
+  h.eq('committed', s.review.mode)
+  h.eq(5, placed(id_of(r)).start_line)
+  require('revuey').close()
+end)
+
+h.test('no review running, a custom state_dir: the comment goes to that state dir', function()
+  local d = h.repo('agent-comment-statedir', { ['a.txt'] = long }, { ['a.txt'] = (long:gsub('line 5\n', 'five\n')) })
+  local custom = h.tmpdir('agent-comment-custom-state')
+  local cfg = { state_dir = custom }
+  opened_once(d, cfg)
+  local r = run({ 'comment', '--path', 'a.txt', '--line', '5', 'custom dir note' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  h.ok(on_disk(custom)[id_of(r)], 'in the custom state dir')
+  h.eq(nil, on_disk()[id_of(r)], 'not in $REVUEY_STATE_DIR')
+  reopen(d, cfg)
+  placed(id_of(r))
+  require('revuey').close()
+end)
+
+h.test('files: renames (both sides, old path named), deleted, binary and large ones, CRLF, no newline at EOF', function()
+  local words = {}
+  for i = 1, 60 do
+    words[#words + 1] = 'content row number ' .. i .. ' with words alpha beta'
+  end
+  words = table.concat(words, '\n') .. '\n'
+  local crlf = (long:gsub('\n', '\r\n'))
+  local big = string.rep('a fairly long line of text to make a large file\n', 26000) -- > 1 MB
+  local d = h.repo('agent-comment-files', {
+    ['old.txt'] = words,
+    ['gone.txt'] = long,
+    ['bin.dat'] = 'a\0b',
+    ['crlf.txt'] = crlf,
+    ['nonl.txt'] = 'a\nb\nc',
+    ['big.txt'] = big,
+  }, {
+    ['old.txt'] = false,
+    ['new_name.txt'] = (words:gsub('row number 30 ', 'ROW 30 ')),
+    ['gone.txt'] = false,
+    ['bin.dat'] = 'a\0c',
+    ['crlf.txt'] = (crlf:gsub('line 10\r\n', 'ten\r\n')),
+    ['nonl.txt'] = 'a\nb\nC',
+    ['big.txt'] = big .. 'one more\n',
+  })
+  require('revuey').close()
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
+  local function c(args, text)
+    local a = { 'comment' }
+    vim.list_extend(a, args)
+    a[#a + 1] = text
+    return run(a, { cwd = d })
+  end
+  local ok = {}
+  local function good(args, text)
+    local r = c(args, text)
+    h.eq(0, r.code, text .. ': ' .. r.stderr)
+    ok[#ok + 1] = { id = id_of(r), text = text }
+    return r
+  end
+  local function refused(args, pat)
+    local r = c(args, 'x')
+    h.eq(1, r.code, vim.inspect(args) .. r.stdout)
+    h.ok(r.stderr:find(pat, 1, true), r.stderr)
+  end
+  good({ '--path', 'new_name.txt', '--line', '30' }, 'renamed, new side')
+  good({ '--path', 'new_name.txt', '--line', '30', '--side', 'old' }, 'renamed, old side')
+  refused({ '--path', 'old.txt', '--line', '30', '--side', 'old' }, 'old.txt was renamed to new_name.txt in this review: use --path new_name.txt')
+  refused({ '--path', 'gone.txt', '--line', '3' }, 'no new side')
+  good({ '--path', 'gone.txt', '--line', '3', '--side', 'old' }, 'deleted file, old side')
+  refused({ '--path', 'bin.dat', '--line', '1' }, 'no text diff')
+  good({ '--path', 'bin.dat', '--file' }, 'binary, whole file')
+  refused({ '--path', 'big.txt', '--line', '26001' }, 'no text diff')
+  good({ '--path', 'big.txt', '--file' }, 'large, whole file')
+  good({ '--path', 'crlf.txt', '--line', '10' }, 'crlf')
+  refused({ '--path', 'crlf.txt', '--line', '14' }, 'Nearest hunk: new 7-13')
+  good({ '--path', 'nonl.txt', '--line', '3' }, 'no newline at EOF')
+  refused({ '--path', 'nonl.txt', '--line', '4' }, 'nonl.txt:4 (new) is not in the diff')
+  reopen(d)
+  for _, x in ipairs(ok) do
+    local p = s.cm.place[x.id]
+    h.ok(p and not p.outdated, x.text .. ': ' .. vim.inspect(p))
+  end
+  require('revuey').close()
+end)
+
+h.test('live review with uncommitted changes and context_lines = 8: its own diff decides', function()
+  local many = {}
+  for i = 1, 60 do
+    many[#many + 1] = 'line ' .. i
+  end
+  many = table.concat(many, '\n') .. '\n'
+  local d = h.repo('agent-comment-wide', { ['a.txt'] = many }, { ['a.txt'] = (many:gsub('line 20\n', 'twenty\n')) })
+  h.write(d, 'a.txt', (many:gsub('line 20\n', 'twenty\n'):gsub('line 45\n', 'forty-five, not committed\n')))
+  require('revuey').close()
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false, context_lines = 8 })
+  s = h.open_review({ cwd = d, base = '' })
+  local r1 = run({ 'comment', '--path', 'a.txt', '--line', '45', 'uncommitted line' }, { cwd = d })
+  h.eq(0, r1.code, r1.stderr)
+  h.ok(r1.stdout:find('working tree, session ' .. ME, 1, true), r1.stdout)
+  -- line 12 is only in the diff with 8 lines of context
+  local r2 = run({ 'comment', '--path', 'a.txt', '--line', '12', 'wide context' }, { cwd = d })
+  h.eq(0, r2.code, r2.stderr)
+  for _, id in ipairs({ id_of(r1), id_of(r2) }) do
+    h.ok(vim.wait(5000, function()
+      return s.cm.place[id] ~= nil and not s.cm.place[id].outdated
+    end, 20), id .. ' placed live')
+  end
+  require('revuey').close()
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
 end)
 
 h.test('no watcher is left running', function()

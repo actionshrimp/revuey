@@ -566,14 +566,22 @@ are in `reports/Terminal code review tool landscape.md`.
      target, mode and hunk options; one `git diff` plus the working-tree snapshot, well under a
      second), writing to the session's comments and events files. With no live review it loads
      what `revuey` opens there: `stack.detect` and the HEAD layer's target (a detached HEAD
-     resolves to the layer of the branch at HEAD), else the plain review against the default
-     branch, in the default state dir; the comment shows when that review is opened. Validation
-     uses that diff: the path must be a changed file (else the first changed paths are listed),
-     every line must be shown on that side (else the nearest hunk ranges and `--file` are
-     suggested), `--end >= --line`, at most `comments.MAX_RANGE` (200) lines. A user config that
-     changes `default_branch` or `context_lines` is only known through a live session's `load`
-     (the CLI runs with `--clean`); a placement mismatch then only means the UI re-anchors by
-     hash. `ack` sets `acked_at` and appends an `acked`
+     resolves to the layer of the branch at HEAD), else the plain review against the trunk; the
+     comment shows when that review is opened. The CLI runs with `--clean`, so it cannot read the
+     user's config, and a wrong trunk, mode or state dir would put the comment into a scope file
+     the next review never opens (or validate it against the wrong diff, so it opens outdated).
+     So every review also writes `<base>/last-review-<hash of worktree>.json` (`sessions.write_last`,
+     same bases as the registry: the worktree's git dir first, so it is found whatever
+     `state_dir` says; kept after the review closes): the trunk (the stack's, else the plain
+     review's base), an explicit base, whether stacks are detected, `full` scope, the mode it was
+     opened in, the state dir, `context_lines` and `max_file_bytes`. The CLI uses it, re-detecting
+     the stack with that trunk; without one (revuey never opened in this worktree) it falls back
+     to the default branch, working-tree mode and the default state dir. It prints the scope, the
+     base and the mode (`in feat vs develop, working tree`). Validation
+     uses that diff: the path must be a changed file (else the first changed paths are listed;
+     the old path of a renamed file names the new one), every line must be shown on that side
+     (else the nearest hunk ranges and `--file` are suggested), `--end >= --line`, at most
+     `comments.MAX_RANGE` (200) lines. `ack` sets `acked_at` and appends an `acked`
      event (hidden from `watch` unless `--all`; refused for a comment never sent); `inbox`
      prints every unacknowledged message, delivered ones marked "(delivered, not handled)", and
      exits. A short id matching several comments is refused with the candidates. All of
