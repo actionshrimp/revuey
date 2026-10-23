@@ -25,10 +25,17 @@ local function shown_sig(f)
   local parts = {}
   for key, t in pairs(f.targets or {}) do
     local pr, stale = forge.get(t)
-    parts[#parts + 1] = key .. '=' .. (pr and vim.json.encode(pr) or '-') .. (stale and '?' or '')
+    if pr then
+      parts[#parts + 1] = key .. '=' .. vim.json.encode(pr) .. (stale and '?' or '')
+    end
   end
   table.sort(parts)
   return table.concat(parts, '\n')
+end
+
+---Signature of the PRs the panel would show now (panel.render records what it drew).
+function M.signature(s)
+  return s.forge and M.enabled() and shown_sig(s.forge) or ''
 end
 
 ---Resolve targets for the review shown and fetch their PRs unless the cache answers them all.
@@ -98,9 +105,9 @@ function M.update(s, force)
     end
     local sig = shown_sig(f)
     f.ready = true
-    if sig ~= f.sig and s.review == review then
-      f.sig = sig
-      require('revuey.panel').render(s)
+    if s.review == review and sig ~= (f.drawn or '') then
+      -- only when what the panel shows changed, and without moving its cursor
+      require('revuey.panel').render(s, { keep_view = true })
     elseif s.review ~= review then
       f.again = true
     end

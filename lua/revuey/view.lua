@@ -2779,7 +2779,8 @@ function M.load_stats(s)
         stack.full_stats = stats
       end
     end
-    panel.render(s)
+    -- a background redraw: the panel cursor stays where it is
+    panel.render(s, { keep_view = true })
     if s.on_stats then
       s.on_stats(s)
     end
