@@ -19,6 +19,11 @@ sequence; later items build on earlier ones.
   in a tmux or herdr pane, or connected to a review the user started); a per-worktree session registry,
   `bin/revuey sessions|watch --messages|show|reply|ack|inbox|install-skill`, catch-up of unacknowledged
   messages, presence in the panel header, sent/queued/seen/answered markers on threads.
+- Pull request status: one batched `gh api graphql` lookup per refresh (cached per repo, TTL) finds each
+  layer's PR by head branch (remote layers without the remote, fork PRs by head owner); `#N` with
+  review state on stack rows (or a plain review's title), a foldable detail section for the viewed
+  layer (reviewers, checks, mergeable, base, a warning when GitHub's base differs from the stack
+  parent), `gx` opens it in the browser. Failures are silent and logged to `revuey.log`.
 
 ## In flight
 - `<Tab>` to collapse files, hunks and guide sections; fix for `mr` on the last file.

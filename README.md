@@ -28,7 +28,8 @@ in the comment's thread. Design notes:
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
 (`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
-`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `comments`, `ai`).
+`lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `comments`, `ai`, `forge`,
+`log_file`).
 
 Requirements:
 - `git`.
@@ -36,6 +37,7 @@ Requirements:
   typescript/tsx via nvim-treesitter). Without them the diff still works but has no syntax colours.
 - An LSP configured for the filetype (for example `ts_ls`) for `gd`, `K` and your own LSP mappings.
 - For the AI guide only: [Claude Code](https://claude.com/claude-code) (`claude`) on `PATH`, logged in.
+- For [pull request status](#pull-requests) only: [`gh`](https://cli.github.com) on `PATH`, logged in.
 
 ## Commands
 
@@ -260,6 +262,63 @@ removed in your config. Ignoring hides informational notes about branches outsid
 never hidden. It never changes which local branches are layers (it does keep matching
 remote-tracking branches out of the stack): an ignored local branch that is a layer stays one, and notes about layers (not restacked, parent settings, forks,
 landed) are always shown. The summary line counts what is hidden, e.g. `(2 ignored)`.
+
+## Pull requests
+
+When a layer (or a plain review's branch) has a pull request on GitHub, the panel shows its number
+and review state on the layer's row, and a section with the details of the layer you are viewing:
+
+```
+ Stack: 3 layers on main
+    stack/math     #41 merged 1c 1f ✓0/1
+ ▶@ stack/cart          #42 ✗ 2c 2f ✓0/2
+    stack/ui        #43 draft 1c 2f ✓0/2
+    full stack                4c 4f ✓0/4
+
+ ▾ PR #42                              ✗
+   Cart totals with discounts
+   by alice · open
+   ✗ changes requested
+     ✗ carol changes requested
+     ✓ dan approved
+     ○ bob requested
+   checks: 12 passed, 1 failed, 2
+   pending
+   mergeable
+   base: stack/math
+```
+
+- Row chips: `✓` approved (`RevueyForgeApproved`), `✗` changes requested (`RevueyForgeChanges`),
+  `●` review required or no decision (`RevueyForgePending`); drafts, merged and closed PRs are
+  dim with `draft`, `merged` or `closed`. In a narrow panel the branch name is cut first, then the
+  commit count. A review without a stack shows the chip on its `branch → base` line.
+- The detail section has the title, author, state, the review decision, each reviewer's latest
+  review and the reviewers still requested, check counts, mergeability and the base branch. When
+  an open PR's base is not the layer's parent in revuey's stack (GitHub and the local stack
+  disagree), it says so: `⚠ GitHub base main, stack parent stack/cart`. `<Tab>` on its heading
+  folds it. There is none in full-stack scope.
+- `gx` in the panel opens the PR in your browser (`vim.ui.open`): on a layer row, that layer's PR,
+  anywhere else the viewed layer's. (`go` already opens files in the diff.)
+- **Lookup.** One `gh api graphql` call per refresh covers every layer, by head branch name: a
+  remote layer `origin/x` is looked up as `x`, and a local branch that tracks another name uses
+  that name. The repo comes from the remote the branch tracks (`git remote get-url`, SSH or HTTPS),
+  else the trunk's remote, else `origin`. A branch tracking a fork is looked up in the trunk's
+  repo by head owner (and in the fork). An open PR wins over merged or closed ones, then the most
+  recent. Hosts other than github.com need `forge.hosts` (hosts with "github" in their name are
+  recognised).
+- **When.** On open, on `R` and on scope switches, in the background; results are cached per repo
+  for `forge.ttl` seconds (60), so these reuse them until then. There is no polling: a panel
+  redraw after the TTL looks again.
+- **Failures are quiet.** No `gh`, not logged in, offline, rate limited or unexpected output:
+  nothing is shown, and the reason is written to the log file (`log_file`, default
+  `stdpath('log')/revuey.log`). Repos without a GitHub remote make no call at all.
+
+```lua
+require('revuey').setup({
+  forge = { enabled = true, ttl = 60, cmd = 'gh', hosts = { 'git.example.com' } },
+  keymaps = { forge_open = 'gx' },
+})
+```
 
 ## AI guide
 
@@ -668,6 +727,9 @@ File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
 - `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `gx`: open the [pull request](#pull-requests) of the layer row under the cursor (elsewhere: of
+  the viewed layer) in the browser. `<Tab>` on the PR heading folds its details; elsewhere it is
+  `<C-i>`.
 - In the guide view the panel also lists the guide's sections: `<CR>` jumps to one, `mr` marks it reviewed.
 - `mr` on a file row marks the whole file, in either view.
 
@@ -693,7 +755,9 @@ the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `Revuey
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
 stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, the comments'
 `RevueyCommentSign`, `RevueyCommentBorder`, `RevueyCommentAuthor`, `RevueyCommentDraft`,
-`RevueyCommentResolved` and `RevueyCommentOutdated`, and others (see
+`RevueyCommentResolved` and `RevueyCommentOutdated`, the pull requests' `RevueyForgeApproved`,
+`RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeDraft`, `RevueyForgeMerged`,
+`RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it

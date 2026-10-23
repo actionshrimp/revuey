@@ -37,6 +37,18 @@ for _, tool in ipairs({ 'herdr', 'zellij', 'cmux' }) do
   }, p)
   vim.uv.fs_chmod(p, tonumber('755', 8))
 end
+-- the real `gh` is never reached either (it would call GitHub with the developer's login): specs
+-- that need it use the fake (M.use_fake_gh)
+do
+  local p = M.mux_dir .. '/bin/gh'
+  vim.fn.writefile({
+    '#!/bin/sh',
+    ('echo "gh $*" >> %s'):format(vim.fn.shellescape(M.mux_blocked)),
+    'echo "gh is blocked in revuey tests (use h.use_fake_gh)" >&2',
+    'exit 97',
+  }, p)
+  vim.uv.fs_chmod(p, tonumber('755', 8))
+end
 vim.env.PATH = M.mux_dir .. '/bin:' .. vim.env.PATH
 
 ---Expose the user's installed tree-sitter *parsers* only (never their query overrides), via a temp
@@ -60,6 +72,30 @@ function M.use_fake_claude(log)
   vim.env.REVUEY_FAKE_NVIM = vim.v.progpath
   vim.env.REVUEY_FAKE_CLAUDE_LOG = log
   vim.env.REVUEY_FAKE_CLAUDE = nil
+end
+
+---Put the fake `gh` (tests/bin/gh) first on PATH: it appends each call to `log` and answers
+---GraphQL PR lookups from `prs` ({ ["owner/name:branch"] = { PullRequest nodes } }), written to
+---a JSON file. `scenario` (REVUEY_FAKE_GH) picks a failure mode.
+function M.use_fake_gh(log, prs, scenario)
+  vim.env.PATH = M.root .. '/tests/bin:' .. vim.env.PATH
+  vim.env.REVUEY_FAKE_NVIM = vim.v.progpath
+  vim.env.REVUEY_FAKE_GH_LOG = log
+  vim.env.REVUEY_FAKE_GH = scenario
+  local file = log .. '.prs.json'
+  vim.fn.writefile({ vim.json.encode(prs or vim.empty_dict()) }, file)
+  vim.env.REVUEY_FAKE_GH_PRS = file
+end
+
+---Calls recorded by a fake CLI's log (one JSON object per line).
+function M.read_calls(log)
+  local calls = {}
+  for _, line in ipairs(vim.uv.fs_stat(log) and vim.fn.readfile(log) or {}) do
+    if line ~= '' then
+      calls[#calls + 1] = vim.json.decode(line)
+    end
+  end
+  return calls
 end
 
 function M.tmpdir(name)
