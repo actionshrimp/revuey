@@ -138,7 +138,7 @@ are in `reports/Terminal code review tool landscape.md`.
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
    **Remote-tracking layers** (`stack.remote_layers`, pure). The fingerprint's one `for-each-ref` also lists
-   `refs/remotes` (and each local branch's `%(upstream)`). **Gate:** remote layers are only considered with HEAD detached:
+   `refs/remotes` (and each local branch's `%(upstream)`). **Gate:** remote layers are only considered with HEAD detached (or on a branch `gS` checked out of such a stack: see **Switching layers**):
    on a local branch, refs of the user's own work under other names (backups, PR-ref mirrors, a
    colleague's start, a fork's upstream) would split it, and flip with each push; there only explicit
    parents (revuey settings, Graphite) can name a remote ref. After the first graph load, HEAD's first-parent line
@@ -164,6 +164,37 @@ are in `reports/Terminal code review tool landscape.md`.
    to the state key, so the review stays on a layer that just gained a local branch. An `upstream` note reports
    when the checked-out branch is ahead of or behind its fetched copy, unless that copy is trunk. revuey never
    fetches.
+   **Switching layers** (`switch.lua`: pure `plan`, status/worktree parsing and message texts, plus
+   `prepare`/`check`/`run` over git; `view.switch_layer` asks and refreshes). `gS`, `:RevueySwitch`
+   and, with `stack.switch_on_navigate`, `]s`/`[s` check a layer out in the current worktree with
+   plain `git switch` (no stack tools, no stash, no restack). `plan`: a local layer -> `switch`
+   (`noop` when it is the current branch; detached at it attaches); a remote layer -> a local
+   branch whose upstream is the ref (same name first) is switched to (`noop` when current), else
+   a local branch of the short name (tracking something else or nothing) is a `conflict` the
+   user resolves (switch to it untouched, or cancel), else `git switch --track <ref>`. `check`
+   refuses: a branch in another worktree (`worktree list --porcelain`, path named; git's own
+   "already used by worktree" is mapped too), tracked changes (`status --porcelain=v1 -z
+   --untracked-files=all`: any staged/unstaged/deleted/renamed/conflicted path), and untracked
+   paths the target commit has (`--literal-pathspecs ls-tree -r <target> -- <untracked>`, up to
+   500 paths); other untracked files are carried over as git does. A connected agent
+   (`agent_link.poll`) gets a `vim.ui.select` confirmation; questions run inside the `git.async`
+   coroutine (resumed from the select callback). After a switch: `lsp.checktime()` (hidden
+   buffers reloaded, or wiped when the file is gone), then `:checktime` for the user's buffers
+   (their autoread decides; modified buffers are never forced), then `refresh{scope = {head =
+   true}}`: `rescope` maps it to the new HEAD layer, which keeps the scope on the switched layer
+   (same scope key: per-scope cursor and folds) and gives it the working tree. The registry entry
+   gains `checked_out` (the HEAD layer's branch, nil when detached) next to the viewed `branch`.
+   **Stack tops** (`stack.tops_file`, `stack-tops-*.json` per repo in the state dir): when the
+   stack has remote layers, the switch records branch -> the stack's top layer name. `detect`, on
+   a branch listed there whose top resolves (remote or local ref) and whose first-parent line
+   shares a commit above trunk with HEAD's, opens the remote-layer gate while attached
+   (`stack.anchor`): the line is HEAD's plus the top's, remote refs on the top's line above HEAD
+   join `above`, and a local branch whose upstream's commit is on the line but which moved on
+   (committed on after the switch) owns that commit as an old tip (`owned`, `owned_by`), so the
+   layers above show as not restacked instead of dropping out. Remote layers record a
+   `local_copy` (a local branch tracking them off the line) for the panel hint. The panel draws a
+   `virt_lines` hint (`panel.switch_hint`) under the layer row the cursor is on while the panel has
+   focus, and a `gS check out layer` help line.
    **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
    text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,
    `squashed`: commits at the bottom left out because trunk has them as squash merges (`squash_skip`; folded
@@ -506,7 +537,7 @@ are in `reports/Terminal code review tool landscape.md`.
    - **Registry.** A base is a directory with `sessions/` and `watchers/`: first the worktree's own
      git dir (`git rev-parse --absolute-git-dir`, so linked worktrees are separate and nothing
      shows in `git status`) + `/revuey`, then the state dir when that is not writable. Each review
-     writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, base, mode,
+     writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, checked_out, base, mode,
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
      server (v:servername), common_dir, started_at, updated_at, load {base, from (the merge
      base), target, mode, context_lines, max_file_bytes}, review (review_info)}`) atomically after its first
@@ -684,7 +715,7 @@ are in `reports/Terminal code review tool landscape.md`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

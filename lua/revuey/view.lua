@@ -1615,6 +1615,9 @@ local function stack_keymaps(buf)
     M.next_layer(-1)
   end, 'previous stack layer')
   map(buf, k.toggle_stack, M.toggle_full, 'toggle full stack / layer scope')
+  map(buf, k.switch_layer, function()
+    M.switch_layer()
+  end, 'check out the viewed stack layer in this worktree')
   map(buf, k.stack_notes, function()
     require('revuey.notes_float').toggle(M.session)
   end, 'stack notes: details and actions')
@@ -1762,6 +1765,16 @@ end
 local function panel_keymaps(s)
   local k = config.options.keymaps
   local buf = s.panel_buf
+  -- the gS hint under the layer row shows only while the panel has focus
+  api.nvim_create_autocmd({ 'BufEnter', 'BufLeave' }, {
+    group = s.augroup,
+    buffer = buf,
+    callback = function()
+      vim.schedule(function()
+        panel.update_hint(s)
+      end)
+    end,
+  })
   local function file_under_cursor()
     return s.panel_files[api.nvim_win_get_cursor(0)[1]]
   end
@@ -1814,6 +1827,11 @@ local function panel_keymaps(s)
   end, 'open file in diff / select stack layer / guide section')
   stack_keymaps(buf)
   guide_keymaps(buf)
+  -- gS on a layer row checks that layer out (elsewhere: the viewed layer)
+  map(buf, k.switch_layer, function()
+    local layer = s.panel_layers and s.panel_layers[api.nvim_win_get_cursor(0)[1]]
+    M.switch_layer(type(layer) == 'number' and layer or nil)
+  end, 'check out the stack layer under the cursor in this worktree')
   map(buf, k.toggle_reviewed, function()
     local si = section_under_cursor()
     if si then
@@ -1849,6 +1867,7 @@ local function panel_keymaps(s)
     group = s.augroup,
     buffer = buf,
     callback = function()
+      panel.update_hint(s)
       if s.syncing or not api.nvim_win_is_valid(s.diff_win) then
         return
       end
@@ -2668,7 +2687,7 @@ local function rescope(old_stack, new_stack, scope)
   if not new_stack then
     return nil
   end
-  if not scope then
+  if not scope or scope.head then
     return { kind = 'layer', index = new_stack.current }
   end
   if scope.kind == 'full' then
@@ -2822,6 +2841,159 @@ function M.next_layer(dir)
     return vim.notify('revuey: no layer ' .. (dir > 0 and 'above' or 'below'), vim.log.levels.INFO)
   end
   M.set_scope({ kind = 'layer', index = idx })
+  if (config.options.stack or {}).switch_on_navigate then
+    M.switch_layer(idx, { navigate = true })
+  end
+end
+
+---Ask with vim.ui.select inside a git.async coroutine; returns the chosen index (nil: cancelled).
+local function ask(prompt, items)
+  local co = coroutine.running()
+  vim.schedule(function()
+    vim.ui.select(items, { prompt = prompt }, function(_, idx)
+      git.resume(co, idx)
+    end)
+  end)
+  return coroutine.yield()
+end
+
+---Check a stack layer out in this worktree (`gS`, `:RevueySwitch`, `]s`/`[s` with
+---`stack.switch_on_navigate`): plain `git switch` (`--track` for a remote-tracking layer with no
+---local branch). Refuses on a dirty worktree and for a branch checked out in another worktree;
+---asks before touching a conflicting local name, and when an agent is connected. Afterwards the
+---review refreshes onto the new HEAD layer (`@`, working tree), revuey's hidden LSP buffers
+---reload, and `:checktime` lets the user's own buffers follow their autoread settings.
+---@param index? integer layer of the open review (default: the viewed one)
+---@param o? {navigate?:boolean, on_done?:fun(ok:boolean, msg:string)}
+function M.switch_layer(index, o)
+  o = o or {}
+  local s = M.session
+  local stack = s and s.review.stack
+  local function say(msg, level)
+    if o.navigate and level ~= vim.log.levels.INFO then
+      msg = require('revuey.switch').msg.navigate(stack.layers[index].name, msg)
+    end
+    if not (o.navigate and level == 'quiet') then
+      vim.notify(msg, level == 'quiet' and vim.log.levels.INFO or level)
+    end
+    if o.on_done then
+      o.on_done(false, msg)
+    end
+  end
+  if not stack then
+    return vim.notify('revuey: no stack detected for this branch', vim.log.levels.INFO)
+  end
+  if not index then
+    local cur = s.pending_scope or s.scope
+    if not cur or cur.kind ~= 'layer' then
+      return vim.notify('revuey: the full stack is not a branch; pick a layer to check out', vim.log.levels.INFO)
+    end
+    index = cur.index
+  end
+  local layer = stack.layers[index]
+  if not layer then
+    return
+  end
+  local switch = require('revuey.switch')
+  local root = s.review.root
+  git.async(function()
+    local prep = switch.prepare(root, layer)
+    local p = prep.plan
+    if p.kind == 'noop' then
+      return say(switch.msg.noop(p), o.navigate and 'quiet' or vim.log.levels.INFO)
+    end
+    if p.kind == 'conflict' then
+      local prompt, items = switch.msg.conflict(p)
+      if ask(prompt, items) ~= 1 then
+        return say('revuey: not switched', o.navigate and vim.log.levels.WARN or vim.log.levels.INFO)
+      end
+      p = switch.anyway(p, prep.current)
+      if p.kind == 'noop' then
+        return say(switch.msg.noop(p), vim.log.levels.INFO)
+      end
+      prep.refusal = switch.check(root, p, prep.tips[p.branch])
+    end
+    if prep.refusal then
+      return say(prep.refusal, vim.log.levels.ERROR)
+    end
+    if M.session ~= s or s.cleaned then
+      return
+    end
+    if agent_link.poll(s) then
+      local prompt, items = switch.msg.agent(p.branch)
+      if ask(prompt, items) ~= 1 then
+        return say('revuey: not switched', o.navigate and vim.log.levels.WARN or vim.log.levels.INFO)
+      end
+    end
+    -- a stack with remote-tracking layers stays one after checking out a branch of it
+    local top = stack.layers[#stack.layers]
+    local has_remote = stack.anchor ~= nil
+    for _, l in ipairs(stack.layers) do
+      has_remote = has_remote or l.remote == true
+    end
+    local tops_path
+    if has_remote and (p.kind == 'track' or p.ref or not layer.remote) then
+      local _, sdir, repo_key = require('revuey.stack_ignore').for_root(root, s.opts.state_dir)
+      tops_path = repo_key and stack_mod.tops_file(sdir, repo_key)
+    end
+    local err = switch.run(root, p)
+    if err then
+      return say(err, vim.log.levels.ERROR)
+    end
+    if tops_path then
+      pcall(stack_mod.write_top, tops_path, p.branch, top.name)
+    end
+    local note
+    local tip = prep.tips[p.branch]
+    if p.kind == 'switch' and tip and tip ~= layer.tip then
+      note = ('%s is not at %s\'s commit'):format(p.branch, layer.name)
+    end
+    local msg = switch.msg.done(p, note)
+    vim.notify(msg, vim.log.levels.INFO)
+    -- the files on disk changed: revuey's hidden buffers first (silently), then the user's
+    -- buffers follow their own autoread settings
+    lsp.checktime()
+    pcall(vim.cmd, 'checktime')
+    if M.session == s and not s.cleaned then
+      M.refresh({ scope = { kind = 'layer', head = true }, force = true })
+    end
+    if o.on_done then
+      o.on_done(true, msg)
+    end
+  end)
+end
+
+---`:RevueySwitch [layer]`: check out a layer of the open review by name (its branch name, or
+---its name without the remote), or the viewed layer.
+function M.switch_command(name)
+  local s = M.session
+  local stack = s and s.review.stack
+  if not stack then
+    return vim.notify('revuey: no stack in the open review (open one with :Revuey)', vim.log.levels.ERROR)
+  end
+  name = name and vim.trim(name) or ''
+  if name == '' then
+    return M.switch_layer()
+  end
+  for i, l in ipairs(stack.layers) do
+    if l.name == name then
+      return M.switch_layer(i)
+    end
+  end
+  for i, l in ipairs(stack.layers) do
+    if l.remote and l.state_branch == name then
+      return M.switch_layer(i)
+    end
+  end
+  vim.notify('revuey: no layer ' .. name .. ' in this stack', vim.log.levels.ERROR)
+end
+
+---Layer names of the open review (completion of :RevueySwitch).
+function M.layer_names()
+  local stack = M.session and M.session.review.stack
+  return stack and vim.tbl_map(function(l)
+    return l.name
+  end, stack.layers) or {}
 end
 
 ---Toggle between full-stack scope and the last layer scope.
@@ -3117,6 +3289,9 @@ function M.refresh(o)
       end
       s.review = review
       s.scope = scope
+      if o.scope and o.scope.head and scope and scope.kind == 'layer' then
+        s.last_layer = scope.index
+      end
       s.opts.mode = mode
       s.head_cache = nil
       render(s, saved)

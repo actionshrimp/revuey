@@ -66,6 +66,13 @@ function M.stack_ignore(bang, pattern)
   require('revuey.view').stack_ignore_command(bang, pattern)
 end
 
+---`:RevueySwitch [layer]`: check out a stack layer of the open review in this worktree
+---(`git switch`; the viewed layer when `layer` is nil).
+---@param layer? string
+function M.switch(layer)
+  require('revuey.view').switch_command(layer)
+end
+
 ---Open the stack notes float of the open review (details and actions).
 function M.stack_notes()
   local view = require('revuey.view')

@@ -48,6 +48,7 @@ Requirements:
 | `:Revuey <base>` | Single-branch review against `base`, exactly as before (no stack detection). `:Revuey <base> --stack` uses `base` as the stack's trunk. |
 | `:Revuey ... --committed` | Committed changes only (`merge-base..HEAD`). |
 | `:RevueyStackParent [branch]` | Set the stack parent of the layer being reviewed (or of the current branch). `--clear` removes the override. No argument: pick from a list, which also offers "clear override". |
+| `:RevueySwitch [layer]` | Check out a stack layer in this worktree (`git switch`), like `gS`: the named layer (its branch name, or a remote layer's name without the remote), or the one being viewed. See [Checking out a layer](#checking-out-a-layer). |
 | `:RevueyStackIgnore [pattern]` | Hide [stack notes](#stack-notes) about branches matching a glob (`*` matches anything, `/` included), in this repo. No argument: list the ignore list. `:RevueyStackIgnore! pattern` removes a pattern. |
 | `:RevueyGuide` | Switch between the diff and the [AI guide](#ai-guide) view. With no guide yet, offers to generate one. |
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
@@ -161,6 +162,42 @@ scope, then a **full stack** row, then a few short [stack notes](#stack-notes).
 With a single branch and no stack, everything behaves exactly as before (apart from the
 related-branch notes below).
 
+### Checking out a layer
+
+Layers are views: `]s`/`[s`, `gs` and `<CR>` on a layer row never touch your worktree. To work on a
+lower layer, `gS` (on a layer row in the panel, or in the diff for the layer being viewed) or
+`:RevueySwitch [layer]` checks it out in the current worktree with plain git:
+
+- **A local branch:** `git switch <branch>`. Detached at a layer's tip, this attaches HEAD to it.
+- **A remote-only layer** (`origin/x`, `ro`): a local branch tracking `origin/x` is switched to;
+  otherwise `git switch --track origin/x` creates `x`. Marks, comments and guides made on
+  `origin/x` belong to `x` (state keys drop the remote). If a local `x` exists that tracks
+  something else or nothing, revuey never changes it: it says so and offers to switch to that
+  `x` anyway, or cancel.
+- **Already on it:** nothing happens (a message says so).
+- **Refused, with the reason:** uncommitted changes to tracked files (staged or not; a few are
+  named, revuey never stashes); untracked files at paths the target branch has a file at (git would
+  refuse to overwrite them; they are named); a branch checked out in another worktree (its path is
+  named). Other untracked files are carried over, as git does, and show up in the new layer's
+  working-tree review.
+- **An agent connected to the review** (`● agent connected`): revuey asks first, since switching
+  branches changes the files under an agent that may be working.
+
+Afterwards the review refreshes: the layer gets `@`, the working tree and the `●` markers, and the
+view stays on it (cursor and folds as you left them). The session registry records the new branch
+(`checked_out`) for agents. revuey's hidden LSP buffers reload (or are dropped when the file is gone),
+then `:checktime` runs, so your own buffers follow your `autoread` setting; modified buffers are never
+reloaded. revuey never restacks: after committing on a lower layer, the layers above show the usual
+"not restacked" note.
+
+A branch checked out from a stack with remote layers keeps them: revuey records the stack's top
+for that branch (per repo, in the state dir), so `origin/stack/math ← @ stack/cart ← origin/stack/ui`
+stays one stack while attached, also after reopening, as long as the branch shares history with
+that top.
+
+`stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks; when a
+switch is refused the view still moves, and a message says the branch did not.
+
 ### Someone else's stack (no local branches)
 
 To review a colleague's stacked PRs you don't need a local branch for every PR. Fetch first
@@ -179,7 +216,8 @@ cd ../review-their-stack && revuey
   a parent you set explicitly (`:RevueyStackParent origin/<name>`, or Graphite metadata naming a
   branch you only have as `origin/<name>`): that remote branch becomes the layer below. So to
   review a colleague's stack from a local branch tracking its top, detach instead, or set its
-  parent.
+  parent. A branch you checked out of such a stack with [`gS`](#checking-out-a-layer) keeps the
+  stack's remote layers, below and above it.
 - **Remote-tracking layers below HEAD:** a branch under `refs/remotes/<remote>/` counts when its
   tip is on HEAD's first-parent line between `merge-base(trunk, HEAD)` and HEAD, and no remote's
   default branch (`origin/main`, `upstream/main`, ...) contains it. Remote branches above HEAD or
@@ -718,6 +756,7 @@ Diff buffer:
 | `R` | Refresh (re-runs git; also automatic in working-tree mode) |
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
+| `gS` | [Check out](#checking-out-a-layer) the layer being viewed in this worktree (`git switch`) |
 | `!` | [Stack notes](#stack-notes) in full, with actions (also in the file panel) |
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
@@ -736,6 +775,9 @@ File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
 - `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `gS` on a layer row checks that layer out (elsewhere: the viewed layer). While the panel has focus, a dim
+  line under the layer row the cursor is on says what `gS` would do there (`gS creates local branch
+  stack/cart` on a remote-only layer).
 - `gx`: open the [pull request](#pull-requests) of the layer row under the cursor (elsewhere: of
   the viewed layer) in the browser. `<Tab>` on the PR heading folds its details; elsewhere it is
   `<C-i>`.
@@ -825,6 +867,8 @@ Things to try:
 - Edit `src/math.ts` and save: the change shows up in `stack/cart` (HEAD) only.
 - `:RevueyStackParent main` while on `stack/cart` drops `stack/math` from the stack; `:RevueyStackParent`
   and "clear override" restores it.
+- `[s` to `stack/math`, then `gS`: the worktree is on `stack/math` now (`@` moved), and edits show
+  up in that layer. `:RevueySwitch stack/cart` goes back.
 
 ### Someone else's stack
 
@@ -842,6 +886,10 @@ Things to try:
   `stack/cart` and keeps its mark.
 - `:RevueyStackParent` names parents explicitly; on a local branch that's the only way a
   remote-tracking branch becomes a layer.
+- `gp`, cursor on `origin/stack/cart`: the hint says `gS creates local branch stack/cart`. `gS`:
+  `stack/cart` is created tracking it and checked out, `@` moves there, and the layers below and
+  above stay. `]s` then `gS` on `origin/stack/ui` does the same for the top. Edit a file first and
+  `gS` refuses, naming it.
 
 ### Stack notes
 
@@ -921,6 +969,13 @@ cd /tmp/revuey-guide
   The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
   and replays canned stream-json (good, diagram, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.
+- **Checking out a layer** (`switch_spec.lua`): the `gS` decision (local, remote with a tracking
+  branch, a conflicting local name, a fresh `--track`, detached, already on it), status and
+  worktree parsing and the message texts (unit); then real git: local and remote-only layers
+  (marks and comments carried over, the stack kept while attached and after reopening, a commit
+  on a lower layer), a conflicting name, dirty and untracked refusals, a branch in another
+  worktree, the agent confirmation, `switch_on_navigate`, the registry, hidden LSP buffers and
+  `:RevueySwitch`.
 - **Comments:** the model, re-anchoring (shifted, moved, outdated, deleted lines on the old side,
   identical code at two places), merging with tombstones, the export formats (golden) and event
   lines (unit); `gc` in normal and visual mode on added, deleted and context lines and file

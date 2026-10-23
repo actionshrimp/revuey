@@ -252,6 +252,48 @@ h.test('stack: mixed local and remote-tracking layers, detached HEAD', function(
   screenshot('stack-remote-layer')
 end)
 
+-- gS on a lower layer row of the panel: the hint under the row, then the worktree on that
+-- branch, with `@` moved to it (the scope stays on it, now in working-tree mode).
+h.test('stack: gS checks out a lower layer, and @ moves', function()
+  local d = h.tmpdir('screen-stack-switch')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  start(d, '')
+  local function settled(head)
+    return child.lua([[
+      local head = ...
+      return vim.wait(5000, function()
+        local s = require('revuey.view').session
+        if not (s and not s.refreshing and not s.pending and not s.pending_scope and s.review.stack and s.review.stack.full_stats) then
+          return false
+        end
+        for _, l in ipairs(s.review.stack.layers) do
+          if l.is_head then
+            return l.name == head
+          end
+        end
+      end, 10)
+    ]], { head })
+  end
+  h.ok(settled('stack/cart'), 'stack did not load')
+  child.lua([[
+    local s = require('revuey.view').session
+    vim.api.nvim_set_current_win(s.panel_win)
+    for row, i in pairs(s.panel_layers) do
+      if i == 1 then
+        vim.api.nvim_win_set_cursor(s.panel_win, { row, 0 })
+      end
+    end
+    require('revuey.panel').update_hint(s)
+  ]])
+  screenshot('stack-switch-before')
+  child.type_keys('gS')
+  h.ok(settled('stack/math'), 'switch did not finish')
+  h.eq('stack/math', vim.trim(h.git(d, 'branch', '--show-current')))
+  child.lua('vim.cmd("echo") vim.api.nvim_set_current_win(require("revuey.view").session.diff_win)')
+  screenshot('stack-switch-after')
+end)
+
 -- Pull requests from a fake `gh`: `#N` and the review state on each layer row, and the detail
 -- section of the viewed layer (stack/cart) under the stack.
 h.test('stack with pull requests: PR rows and the detail section', function()
