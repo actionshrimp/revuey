@@ -94,7 +94,7 @@ are in `reports/Terminal code review tool landscape.md`.
    has to build a `revuey.Stack`.
    Detection is split into a pure resolver (`resolve`: branch tips + a first-parent graph of commits not
    reachable from trunk + explicit parents -> layers, forks, notes, or a request for more history) and a gatherer
-   (`detect`): `for-each-ref` (heads and `refs/branch-metadata`), `config --get-regexp` for
+   (`detect`): `for-each-ref` (heads, `refs/branch-metadata` and `refs/remotes`), `config --get-regexp` for
    `branch.*.revueyParent`, one `cat-file --batch` for Graphite blobs, `for-each-ref --contains HEAD` for
    candidates above, and `rev-list --parents --stdin ^trunk` for the graph; all async, and skipped when a
    fingerprint of refs/overrides/HEAD/trunk is unchanged. Heuristic parent = nearest other branch tip on the
@@ -137,13 +137,32 @@ are in `reports/Terminal code review tool landscape.md`.
    parent), so the bottom layer and full scope share files with the plain single-branch review of the same
    diff. Per-layer stats come from `git diff --raw` content keys (no patch parsing), loaded in the background.
    `:Revuey <base>` without `--stack` skips detection entirely and behaves exactly like the single-branch review.
+   **Remote-tracking layers** (`stack.remote_layers`, pure). The fingerprint's one `for-each-ref` also lists
+   `refs/remotes` (and each local branch's `%(upstream)`). After the first graph load, HEAD's first-parent line
+   above trunk is a set; a remote ref is a candidate only when its tip is in that set and is not HEAD (no
+   per-branch merge-base, so 3000 remote branches add no measurable time). Never `<remote>/HEAD`, trunk (full
+   or remote-stripped name), ignore-list matches, or refs whose local copy (a branch tracking it, or of the same
+   name) is on the line; a local branch at the same commit wins and the ref goes to the layer's `also`. Several
+   refs at one commit: the current branch's upstream remote, then `origin`, then alphabetical. Chosen refs are
+   added to `branches` (flagged `remote`) and the resolver treats them like local tips; nothing above HEAD is
+   added, so they only ever extend the stack downwards. Explicit parents naming a branch present only as a
+   remote copy map to it. **Detached HEAD:** a branch at HEAD (local first, else a remote candidate) becomes
+   `current`, its layer `detached`; with none there is no stack and a `detached` note. **Keys:** a remote layer's
+   `state_branch` drops the remote (`origin/x` -> `x`) and children use the same key as `state_base`, so a
+   local `x` created later inherits marks, comments and guides; local keys are unchanged. When two remotes'
+   refs with the same branch name are both layers, the less preferred keeps its full name. Remote layers are
+   dimmed with `ro` in the panel, committed-only, and `:RevueyStackParent` refuses them; `rescope` falls back
+   to the state key, so the review stays on a layer that just gained a local branch. An `upstream` note reports
+   when the checked-out branch is ahead of or behind its fetched copy (one `rev-list --count`). revuey never
+   fetches.
    **Notes** (`stack_notes.lua`, pure) are tables `{kind, branch, layer?, parent?, source?, at?, branches?,
    text}`, one per branch they are about. Kinds that change the diff shown are `warn` (`not_restacked`,
    `squashed`: commits at the bottom left out because trunk has them as squash merges (`squash_skip`; folded
    into the layer's `landed` note when the layer landed entirely), `stale_parent`, `unknown_parent`, `cycle`, `newer_copy`: the stack may be built on an old version of
    another branch, and `outside`: a branch sharing commits, perhaps a parent that moved on, whose commits
    are then in the layer's diff); all others are `info`. `resolve` makes the
-   structural ones (also `fork`, `same_commit`, `parent_landed`), `mark_landed` adds `landed`, and
+   structural ones (also `fork`, `same_commit`, `parent_landed`), `mark_landed` adds `landed`, `detect` adds
+   `detached` and `upstream`, and
    `foreign_notes` the related-branch ones from one `git log --branches --not trunk` (same author, author
    date and changed paths, different commit = another copy; commits marked `(cherry picked from commit`
    are skipped). Committer dates give a direction: older elsewhere = `outdated_copy` (that branch is built

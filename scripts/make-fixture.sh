@@ -2,10 +2,14 @@
 # Create a throwaway TypeScript repo for trying/testing revuey.
 #   scripts/make-fixture.sh /tmp/revuey-fixture
 #   scripts/make-fixture.sh --stack /tmp/revuey-stack
+#   scripts/make-fixture.sh --remote-stack /tmp/revuey-remote
 # Default: branch `main` and a checked-out branch `feature/cart` with added, deleted, modified,
 # renamed and binary files, plus cross-file calls (so `gd` has somewhere to go).
 # --stack: a 3-layer local stack on `main`: stack/math -> stack/cart -> stack/ui, with the middle
 # layer (stack/cart) checked out.
+# --remote-stack: someone else's stack, as you'd review it: <dir>/someone builds the --stack
+# fixture (plus an unrelated branch) and pushes it to <dir>/upstream.git; <dir>/review is a fresh
+# clone detached at origin/stack/ui, with no local branch but main. Run revuey in <dir>/review.
 # No npm install needed: plain .ts files with relative imports work with typescript-language-server.
 set -euo pipefail
 
@@ -13,13 +17,34 @@ mode=default
 if [ "${1:-}" = "--stack" ]; then
   mode=stack
   shift
+elif [ "${1:-}" = "--remote-stack" ]; then
+  mode=remote-stack
+  shift
 fi
-dest=${1:?usage: make-fixture.sh [--stack] <dir>}
+dest=${1:?usage: make-fixture.sh [--stack|--remote-stack] <dir>}
 if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
   echo "refusing to overwrite non-empty $dest" >&2
   exit 1
 fi
 mkdir -p "$dest"
+dest=$(cd "$dest" && pwd)
+
+if [ "$mode" = remote-stack ]; then
+  "$0" --stack "$dest/someone" >/dev/null
+  export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'
+  g() { git -c user.name=someone -c user.email=someone@example.com -c commit.gpgsign=false "$@"; }
+  # an unrelated branch on another line: never a layer
+  g -C "$dest/someone" checkout -q -b other/docs main
+  echo "# Docs" > "$dest/someone/DOCS.md"
+  g -C "$dest/someone" add DOCS.md
+  g -C "$dest/someone" commit -q -m "docs"
+  g -C "$dest/someone" checkout -q main  # the upstream's default branch (origin/HEAD)
+  git clone -q --bare "$dest/someone" "$dest/upstream.git"
+  git clone -q "$dest/upstream.git" "$dest/review"
+  git -C "$dest/review" switch -q --detach origin/stack/ui
+  echo "remote stack fixture ready: $dest/review (detached at origin/stack/ui: origin/stack/math <- origin/stack/cart <- origin/stack/ui)"
+  exit 0
+fi
 cd "$dest"
 
 # Fixed identity and dates so commit hashes are reproducible (screenshot tests show them).

@@ -2674,9 +2674,16 @@ local function rescope(old_stack, new_stack, scope)
   if scope.kind == 'full' then
     return scope
   end
-  local name = old_stack and old_stack.layers[scope.index] and old_stack.layers[scope.index].name
+  local old = old_stack and old_stack.layers[scope.index]
+  local name = old and old.name
   for i, l in ipairs(new_stack.layers) do
     if l.name == name then
+      return { kind = 'layer', index = i }
+    end
+  end
+  -- same layer under another name (a local branch created for a remote-tracking layer)
+  for i, l in ipairs(new_stack.layers) do
+    if old and l.state_branch == old.state_branch then
       return { kind = 'layer', index = i }
     end
   end
@@ -2840,6 +2847,9 @@ function M.stack_parent(parent)
   local stack = s and s.review.stack
   if stack and stack.kind == 'local' and s.scope and s.scope.kind == 'layer' then
     root, branch, trunk = s.review.root, stack.layers[s.scope.index].name, stack.trunk
+    if stack.layers[s.scope.index].remote then
+      return vim.notify(('revuey: %s is a remote-tracking branch (read-only); stack parents are set on local branches'):format(branch), vim.log.levels.ERROR)
+    end
   else
     root = git.root(vim.fn.getcwd())
     branch = root and git.current_branch(root)

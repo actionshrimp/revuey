@@ -113,6 +113,9 @@ local function render_stack(s, add, add_virt, width)
     local prefix = ' ' .. sel .. head .. ' '
     local name = l.name .. (l.title and ('  ' .. l.title) or '')
     local virt = stats_virt(l.stats, selected and live or nil)
+    if l.remote then
+      table.insert(virt, 1, { 'ro ', 'RevueyStackRemote' }) -- remote-tracking: read-only
+    end
     local vw = 0
     for _, v in ipairs(virt) do
       vw = vw + vim.fn.strdisplaywidth(v[1])
@@ -122,8 +125,9 @@ local function render_stack(s, add, add_virt, width)
     local text = prefix .. name
     local row = add(text, {
       { 1, 1 + #sel, 'RevueyMode' },
-      { 1 + #sel, 1 + #sel + #head, 'RevueyUncommitted' },
-      { #prefix, #text, l.dimmed and 'Comment' or (selected and 'RevueyPanelTitle' or 'Normal') },
+      -- `@` dimmed: HEAD is detached at this layer's tip (no branch checked out)
+      { 1 + #sel, 1 + #sel + #head, l.detached and 'RevueyStackRemote' or 'RevueyUncommitted' },
+      { #prefix, #text, (l.dimmed and 'Comment') or (l.remote and 'RevueyStackRemote') or (selected and 'RevueyPanelTitle' or 'Normal') },
     })
     s.panel_layers[row] = i
     add_virt(row, virt)
@@ -221,10 +225,13 @@ function M.render(s)
   if r.stack and r.scope then
     local sc = r.scope.kind == 'full' and (' full stack (%d layers)'):format(#r.stack.layers)
       or (' layer %d/%d'):format(r.scope.index, #r.stack.layers)
-    add(sc, { { 0, #sc, 'RevueyMode' } })
+    local layer = r.scope.kind == 'layer' and r.stack.layers[r.scope.index]
+    local extra = layer and layer.detached and '  @ detached HEAD' or ''
+    add(sc .. extra, { { 0, #sc, 'RevueyMode' }, { #sc, #sc + #extra, 'Comment' } })
   end
+  local layer = r.stack and r.scope and r.scope.kind == 'layer' and r.stack.layers[r.scope.index]
   if r.mode_locked then
-    local m, why = ' committed only', '  (not HEAD)'
+    local m, why = ' committed only', (layer and layer.remote) and '  (remote, read-only)' or '  (not HEAD)'
     add(m .. why, { { 0, #m, 'RevueyMode' }, { #m, #m + #why, 'Comment' } })
   elseif r.mode == 'worktree' then
     local m, legend = ' working tree', '  ● uncommitted'
