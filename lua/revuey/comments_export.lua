@@ -45,6 +45,7 @@ local function status_note(c)
   local notes = {}
   if c.author and c.author.kind and c.author.kind ~= 'user' then
     notes[#notes + 1] = 'by ' .. author_name(c.author) .. (c.author.kind == 'agent' and c.author.name and c.author.name:lower() ~= 'agent' and ' (agent)' or '')
+      .. (c.author.kind == 'ai' and c.author.name and ' (AI review)' or '')
   end
   if c.outdated then
     notes[#notes + 1] = 'outdated: the code changed since this comment was made'
@@ -55,6 +56,11 @@ local function status_note(c)
     notes[#notes + 1] = 'draft'
   elseif c.status == 'dismissed' then
     notes[#notes + 1] = 'dismissed'
+  elseif c.status == 'accepted' then
+    notes[#notes + 1] = 'accepted from an AI review'
+  end
+  if c.ai and c.status ~= 'accepted' then
+    notes[#notes + 1] = (c.ai.severity or 'minor') .. (c.status == 'saved' and ', not triaged yet' or '')
   end
   return #notes > 0 and (' (' .. table.concat(notes, '; ') .. ')') or ''
 end
@@ -193,7 +199,7 @@ function M.message(c, r, bin)
     add(fence)
   end
   add('')
-  add('## Comment (' .. author_name(c.author) .. ')')
+  add('## Comment (' .. author_name(c.author) .. (c.author and c.author.kind == 'ai' and ', an AI review finding the user sent you to follow up' or '') .. ')')
   add('')
   add(vim.trim(c.body or ''))
   local replies = {}

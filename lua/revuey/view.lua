@@ -1806,6 +1806,8 @@ function M.comment_keymaps(s)
   map(buf, k.comment_expand, with(comments_view.toggle_expand), 'expand / collapse a long comment')
   map(buf, k.comment_toggle, with(comments_view.toggle_visible), 'show / hide comment threads')
   map(buf, k.comment_list, with(comments_view.open_list), 'list all comments')
+  map(buf, k.comment_accept, with(comments_view.accept), 'accept the AI review finding on this line')
+  map(buf, k.comment_dismiss, with(comments_view.dismiss), 'dismiss / restore the AI review finding on this line')
   map(buf, k.comment_next, function()
     comments_view.next(M.session, 1)
   end, 'next comment')
@@ -2701,6 +2703,50 @@ function M.guide_command(bang, arg)
   }, function(choice)
     if choice == 'Generate a guide' then
       M.generate_guide()
+    end
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- AI reviews
+-- ---------------------------------------------------------------------------
+
+---Redraw the comments and the panel of whichever review is open when an AI review job changes
+---(like guide jobs, review jobs are keyed by scope and outlive the session).
+local function on_ai_review_change()
+  local cur = M.session
+  if cur and not cur.cleaned and cur.layout then
+    comments_view.refresh(cur)
+  end
+end
+
+---`:RevueyAIReview[!] [skill|cancel]`: run an AI review of the current scope; its findings become
+---AI comments to triage. When untouched findings of the last review would be replaced, asks first
+---(`!` does not). `cancel` stops a run.
+function M.ai_review_command(bang, arg)
+  local s = M.session
+  if not s then
+    return vim.notify('revuey: no review open (:Revuey first)', vim.log.levels.WARN)
+  end
+  local ai_review_view = require('revuey.ai_review_view')
+  if arg == 'cancel' then
+    if not ai_review_view.cancel(s) then
+      vim.notify('revuey: no AI review is running for this review', vim.log.levels.INFO)
+    end
+    return
+  end
+  local function run()
+    ai_review_view.generate(s, arg, on_ai_review_change)
+  end
+  local n = (not bang and not ai_review_view.job(s)) and ai_review_view.replaceable(s) or 0
+  if n == 0 then
+    return run()
+  end
+  vim.ui.select({ 'Run a new AI review', 'Cancel' }, {
+    prompt = ('Run a new AI review (claude)? %d untriaged finding%s of the last one will be replaced'):format(n, n == 1 and '' or 's'),
+  }, function(choice)
+    if choice == 'Run a new AI review' and M.session == s then
+      run()
     end
   end)
 end

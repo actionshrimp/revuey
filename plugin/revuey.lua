@@ -94,6 +94,23 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command('RevueyAIReview', function(cmd)
+  require('revuey').ai_review(cmd.bang, cmd.args ~= '' and cmd.args or nil)
+end, {
+  nargs = '?',
+  bang = true,
+  desc = 'AI review of the open review (claude, read-only): findings to triage; [skill]; ! replaces without asking; cancel',
+  complete = function(arg)
+    local s = package.loaded['revuey.view'] and package.loaded['revuey.view'].session
+    local root = s and s.review and s.review.root or vim.fn.getcwd()
+    local list = require('revuey.ai_review').skill_names(root)
+    table.insert(list, 1, 'cancel')
+    return vim.tbl_filter(function(x)
+      return vim.startswith(x, arg)
+    end, list)
+  end,
+})
+
 vim.api.nvim_create_user_command('RevueyComments', function()
   require('revuey').comments()
 end, { desc = 'List the comments of the open review (<CR> jumps)' })

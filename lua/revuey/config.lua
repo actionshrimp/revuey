@@ -82,6 +82,10 @@ M.defaults = {
     comment_next = ']m', -- ]m/[m shadow the method motions, which mean nothing in a diff
     comment_prev = '[m',
     comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
+    -- AI review findings (:RevueyAIReview): accept one as your own comment, or dismiss it
+    -- (again: restore). `cs` sends one to the agent session to follow up, as any comment.
+    comment_accept = 'ca',
+    comment_dismiss = 'cn',
     comment_send = '<C-a>', -- in the comment editor: save and send to the coding-agent session
     send_comment = 'cs', -- send the comment on this line to the agent session
     -- ask the agent about this line or the visual selection: the comment editor, where
@@ -113,7 +117,8 @@ M.defaults = {
   },
   -- Quiet diagnostics (e.g. why the PR lookup failed). nil = stdpath('log')/revuey.log
   log_file = nil,
-  -- AI guided review. Runs your own `claude` CLI (logged in); revuey never reads credentials.
+  -- AI guided review and AI reviews (:RevueyGuide, :RevueyAIReview). Runs your own `claude` CLI
+  -- (logged in); revuey never reads credentials.
   ai = {
     provider = 'claude',
     cmd = nil, -- executable (default: the provider name, `claude`)

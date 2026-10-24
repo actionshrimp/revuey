@@ -377,6 +377,25 @@ local function stack_context(r)
   return { kind = full and 'full' or 'layer', index = not full and r.scope.index or nil, trunk = st.trunk, layers = layers }
 end
 
+---Context of the user message (revuey.GuideContext) for a review: repo, scope wording, commit
+---subjects, whether some changes are uncommitted. Runs git (call inside git.async). Shared with
+---AI reviews (ai_review_view.lua).
+---@return revuey.GuideContext
+function M.prompt_context(r)
+  local log = git.git({ 'log', '--format=%s', '--no-merges', '-n', '50', r.merge_base .. '..' .. r.head }, r.root) or ''
+  return {
+    repo = vim.fs.basename(r.root),
+    branch = r.branch,
+    base = r.base,
+    stack = stack_context(r),
+    uncommitted = vim.iter(r.files):any(function(f)
+      return f.uncommitted == true
+    end),
+    commits = vim.split(vim.trim(log), '\n', { trimempty = true }),
+    diff_cmd = 'git diff ' .. r.merge_base .. (r.mode == 'worktree' and '' or (' ' .. r.head)),
+  }
+end
+
 local ticker
 
 local function tick()
@@ -446,19 +465,7 @@ function M.generate(s, on_change)
   ensure_ticker()
   on_change()
   git.async(function()
-    local log = git.git({ 'log', '--format=%s', '--no-merges', '-n', '50', r.merge_base .. '..' .. r.head }, r.root) or ''
-    local commits = vim.split(vim.trim(log), '\n', { trimempty = true })
-    local text, info = prompt.build({
-      repo = vim.fs.basename(r.root),
-      branch = r.branch,
-      base = r.base,
-      stack = stack_context(r),
-      uncommitted = vim.iter(r.files):any(function(f)
-        return f.uncommitted == true
-      end),
-      commits = commits,
-      diff_cmd = 'git diff ' .. r.merge_base .. (r.mode == 'worktree' and '' or (' ' .. r.head)),
-    }, hunks, { budget = cfg.max_prompt_chars })
+    local text, info = prompt.build(M.prompt_context(r), hunks, { budget = cfg.max_prompt_chars })
     if M.jobs[ks] ~= entry then
       return -- cancelled while gathering
     end
