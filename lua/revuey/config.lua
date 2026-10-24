@@ -115,6 +115,11 @@ M.defaults = {
     -- GitHub Enterprise hosts (github.com and hosts with "github" in their name are known)
     hosts = {},
   },
+  -- `:Revuey pr <N|url>` sets the PR's worktree up with worktrunk (`wt switch pr:<N>`), so your
+  -- worktrunk hooks install and build it before the review (and its LSP) starts.
+  worktrunk = {
+    cmd = 'wt',
+  },
   -- Quiet diagnostics (e.g. why the PR lookup failed). nil = stdpath('log')/revuey.log
   log_file = nil,
   -- AI guided review and AI reviews (:RevueyGuide, :RevueyAIReview). Runs your own `claude` CLI

@@ -36,15 +36,31 @@ function M.parse_args(args)
   return opts
 end
 
----Open from command-line style arguments (used by :Revuey and bin/revuey).
+---Open from command-line style arguments (used by :Revuey and bin/revuey). `pr <N|url|cancel>`
+---reviews a pull request in its own worktrunk worktree (M.pr).
 ---@param args string[]
 ---@param extra? table merged into the parsed options
 function M.open_args(args, extra)
+  if args[1] == 'pr' then
+    if #args > 2 then
+      return vim.notify('revuey: usage: :Revuey pr <number|url> (or :Revuey pr cancel)', vim.log.levels.ERROR)
+    end
+    return M.pr(args[2])
+  end
   local opts, err = M.parse_args(args)
   if not opts then
     return vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
   end
   M.open(vim.tbl_extend('force', opts, extra or {}))
+end
+
+---`:Revuey pr <N|url>`: run `wt switch pr:<N> --no-cd` (worktrunk; your hooks set the worktree
+---up) in the background, then open the review in that worktree in a new tab (`:tcd` to it).
+---`cancel` stops a running setup.
+---@param arg? string
+---@param opts? {cwd?:string, on_open?:fun(session)}
+function M.pr(arg, opts)
+  require('revuey.pr_view').command(arg, opts)
 end
 
 function M.close()

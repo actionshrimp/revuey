@@ -37,14 +37,15 @@ for _, tool in ipairs({ 'herdr', 'zellij', 'cmux' }) do
   }, p)
   vim.uv.fs_chmod(p, tonumber('755', 8))
 end
--- the real `gh` is never reached either (it would call GitHub with the developer's login): specs
--- that need it use the fake (M.use_fake_gh)
-do
-  local p = M.mux_dir .. '/bin/gh'
+-- the real `gh` and `wt` are never reached either (gh would call GitHub with the developer's
+-- login; wt would too, and run the developer's worktrunk hooks and approvals): specs that need
+-- them use the fakes (M.use_fake_gh, M.use_fake_wt)
+for tool, fake in pairs({ gh = 'h.use_fake_gh', wt = 'h.use_fake_wt' }) do
+  local p = M.mux_dir .. '/bin/' .. tool
   vim.fn.writefile({
     '#!/bin/sh',
-    ('echo "gh $*" >> %s'):format(vim.fn.shellescape(M.mux_blocked)),
-    'echo "gh is blocked in revuey tests (use h.use_fake_gh)" >&2',
+    ('echo "%s $*" >> %s'):format(tool, vim.fn.shellescape(M.mux_blocked)),
+    ('echo "%s is blocked in revuey tests (use %s)" >&2'):format(tool, fake),
     'exit 97',
   }, p)
   vim.uv.fs_chmod(p, tonumber('755', 8))
@@ -114,6 +115,17 @@ function M.use_fake_gh(log, prs, scenario)
   local file = log .. '.prs.json'
   vim.fn.writefile({ vim.json.encode(prs or vim.empty_dict()) }, file)
   vim.env.REVUEY_FAKE_GH_PRS = file
+end
+
+---Put the fake `wt` (tests/bin/wt) first on PATH: it appends each call to `log` and handles
+---`wt switch pr:<N>` with `scenario` (REVUEY_FAKE_WT), creating `<repo>.<branch>` worktrees for
+---`branch` (REVUEY_FAKE_WT_BRANCH).
+function M.use_fake_wt(log, scenario, branch)
+  vim.env.PATH = M.root .. '/tests/bin:' .. vim.env.PATH
+  vim.env.REVUEY_FAKE_WT_LOG = log
+  vim.env.REVUEY_FAKE_WT = scenario
+  vim.env.REVUEY_FAKE_WT_BRANCH = branch
+  vim.env.REVUEY_FAKE_WT_HOOK = nil
 end
 
 ---Calls recorded by a fake CLI's log (one JSON object per line).

@@ -17,14 +17,22 @@ vim.api.nvim_create_user_command('Revuey', function(cmd)
   require('revuey').open_args(cmd.fargs)
 end, {
   nargs = '*',
-  desc = 'Review the current branch or its local stack (incl. uncommitted work); [base] [--stack] [--committed]',
-  complete = function(arg)
+  desc = 'Review the current branch or its local stack (incl. uncommitted work); [base] [--stack] [--committed]; pr <N|url>',
+  complete = function(arg, line)
+    local words = vim.split(line, '%s+', { trimempty = true })
+    if words[2] == 'pr' and (#words > 2 or arg == '') then
+      return vim.startswith('cancel', arg) and { 'cancel' } or {}
+    end
     if arg:sub(1, 1) == '-' then
       return vim.tbl_filter(function(f)
         return vim.startswith(f, arg)
       end, { '--stack', '--committed', '--worktree' })
     end
-    return branches(arg)
+    local list = branches(arg)
+    if #words <= 2 and vim.startswith('pr', arg) then
+      table.insert(list, 1, 'pr')
+    end
+    return list
   end,
 })
 

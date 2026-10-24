@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Launch Neovim with a revuey review of the current branch (in the current directory).
 #   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
+#   revuey pr <number|url>                             (like :Revuey pr: worktrunk sets the
+#                                                      PR's worktree up, then the review opens there)
 #   revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|install-skill ...
 #                                                      (for coding agents; see `revuey --help`)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
@@ -69,6 +71,26 @@ case "${1:-}" in
     # `wait` returns early when a trapped signal arrives; the trap exits
     exit "$status"
     ;;
+  pr)
+    # A pull request in its own worktrunk worktree. `wt switch` runs here, in this terminal: its
+    # hooks' output shows as it happens, wt can ask its approval prompt for the repo's project
+    # hooks (never --yes), and ^C stops it. The review (and its LSP) starts once wt is done.
+    shift
+    target=$("${cli[@]}" pr-target "$@")
+    if ! command -v wt >/dev/null 2>&1; then
+      echo "revuey: wt (worktrunk) not found on PATH: install it from https://worktrunk.dev" >&2
+      exit 1
+    fi
+    status=0
+    json=$(wt switch "$target" --no-cd --format json) || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "revuey: wt switch $target failed (exit $status); see its output above" >&2
+      exit "$status"
+    fi
+    dir=$(printf '%s\n' "$json" | "${cli[@]}" pr-path)
+    cd "$dir"
+    set --
+    ;;
   -*|'')
     ;; # flags or nothing: the review UI
   *)
@@ -77,6 +99,7 @@ case "${1:-}" in
       {
         echo "revuey: unknown command $1 (and not a branch or commit)"
         echo "usage: revuey [base] [--stack] [--committed|--worktree]"
+        echo "       revuey pr <number|url>"
         echo "       revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|install-skill ...  (revuey --help)"
       } >&2
       exit 2

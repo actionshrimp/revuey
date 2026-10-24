@@ -38,6 +38,7 @@ Requirements:
 - An LSP configured for the filetype (for example `ts_ls`) for `gd`, `K` and your own LSP mappings.
 - For the AI guide only: [Claude Code](https://claude.com/claude-code) (`claude`) on `PATH`, logged in.
 - For [pull request status](#pull-requests) only: [`gh`](https://cli.github.com) on `PATH`, logged in.
+- For [`:Revuey pr`](#reviewing-a-pull-request-worktrunk) only: [worktrunk](https://worktrunk.dev) (`wt`) and `gh`.
 
 ## Commands
 
@@ -47,6 +48,7 @@ Requirements:
 | `:Revuey --stack` | The whole stack: trunk merge-base to the top of the stack. |
 | `:Revuey <base>` | Single-branch review against `base`, exactly as before (no stack detection). `:Revuey <base> --stack` uses `base` as the stack's trunk. |
 | `:Revuey ... --committed` | Committed changes only (`merge-base..HEAD`). |
+| `:Revuey pr <N\|url>` | [Review a pull request](#reviewing-a-pull-request-worktrunk) in its own worktree: worktrunk's `wt switch pr:<N>` sets it up (your hooks install and build it), then the review opens there in a new tab. `:Revuey pr cancel` stops the setup. |
 | `:RevueyStackParent [branch]` | Set the stack parent of the layer being reviewed (or of the current branch). `--clear` removes the override. No argument: pick from a list, which also offers "clear override". |
 | `:RevueySwitch [layer]` | Check out a stack layer in this worktree (`git switch`), like `gS`: the named layer (its branch name, or a remote layer's name without the remote), or the one being viewed. See [Checking out a layer](#checking-out-a-layer). |
 | `:RevueyStackIgnore [pattern]` | Hide [stack notes](#stack-notes) about branches matching a glob (`*` matches anything, `/` included), in this repo. No argument: list the ignore list. `:RevueyStackIgnore! pattern` removes a pattern. |
@@ -60,6 +62,7 @@ Requirements:
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
+| `bin/revuey pr <N\|url>` | The same from the shell: `wt switch` runs in your terminal (its output, its approval prompt), then Neovim opens with the review in the worktree. |
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
 | `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
 | `bin/revuey hunks\|import-review` | [AI reviews from outside](#ai-reviews-from-another-agent-or-tool): the hunks with their ids, and importing a review in revuey's format. |
@@ -420,6 +423,96 @@ require('revuey').setup({
   keymaps = { forge_open = 'gx' },
 })
 ```
+
+## Reviewing a pull request (worktrunk)
+
+`:Revuey pr 123` (or a PR URL) from inside a clone of the repo reviews that pull request in its
+own worktree, set up by [worktrunk](https://worktrunk.dev) exactly as `wt switch pr:123` would in
+your shell, so your worktrunk hooks install dependencies and build it first:
+
+1. revuey runs `wt switch pr:123 --no-cd --format json` in the background, in the clone's root.
+   worktrunk asks GitHub (through `gh`) for the PR's branch, fetches it (fork PRs too), creates
+   the worktree (at your `worktree-path`, by default `../<repo>.<branch>`) or finds the one it
+   made before, and runs the `pre-start` hooks. Progress shows as a progress message (wt's latest
+   line and the time so far); `:Revuey pr cancel` (or cancelling the message in a UI that offers
+   it) stops wt and the hooks it started.
+2. When `wt switch` returns, the review opens in a new tab whose working directory is the
+   worktree (`:tcd`, so pickers, `:edit` and terminals there work in the PR's tree; other tabs
+   keep theirs, and `:RevueyClose` closes the tab). Only then do revuey's LSP buffers load, so
+   tsserver starts on a tree the hooks already built. The review is the usual one for the PR's
+   branch: the stack is detected as for any branch (local branches below it are layers), and the
+   [PR status](#pull-requests) section warns when GitHub's base differs from the stack parent.
+   Building the layers from the PR's base chain on GitHub is not done yet.
+3. A URL must name this clone's GitHub repo (worktrunk looks the number up in the clone's repo
+   whatever the URL says, so revuey refuses a URL from another repo instead of opening a
+   different PR). worktrunk's own errors are shown as it words them: `gh` missing, no GitHub
+   remote, an unknown PR, a failed hook.
+
+**Approvals.** worktrunk asks before running a repo's *project* hooks (`.config/wt.toml`) the first
+time, and again when they change; in the background it cannot ask and refuses. revuey never
+passes `--yes`: it shows the commands and offers to run the same `wt switch` in a terminal split,
+where you answer worktrunk's own prompt (or decline: worktrunk then skips the project hooks); the
+review opens when it succeeds. You can also approve beforehand with `wt config approvals add` in
+the clone. Hooks in your user config (`~/.config/worktrunk/config.toml`) need no approval.
+
+**A failed hook** leaves the worktree behind (worktrunk does not remove it); the message names it.
+`:Revuey pr` again opens it as it is, since `pre-start` only runs when the worktree is created:
+re-run the hooks with `wt -C <path> hook pre-start`, or remove the worktree.
+
+**Cleanup** is yours; revuey never removes worktrees. Close the review first (its language
+servers run in the worktree), then `wt remove <branch>` (or the worktree's path) removes the
+worktree, and the branch too when it is merged (`--no-delete-branch` keeps it, `-D` deletes an
+unmerged one). `wt list` shows them all.
+
+From the shell, `bin/revuey pr 123` does the same, with `wt switch` running in your terminal
+(its output as it happens, its approval prompt, `^C` to stop), then starts Neovim with the review
+in the worktree.
+
+### Up-to-date builds for the LSP (TypeScript)
+
+In TypeScript monorepos, workspace packages often point `types`/`exports` at `dist/`, so tsserver
+is wrong or empty until the tree is built. Build in a worktrunk **`pre-start`** pipeline:
+`pre-start` hooks block, so `wt switch` (and so `:Revuey pr`) returns with the tree installed and
+built, and the review's LSP starts on it. `post-start` hooks run in the background after `wt
+switch` has returned, so tsserver would start (and cache its view of `dist/`) while the build is
+still running.
+
+```toml
+# .config/wt.toml (project hooks: shared with the repo, approved once per change)
+# or ~/.config/worktrunk/config.toml (user hooks: no approval)
+[[pre-start]]
+install = "pnpm install --frozen-lockfile"
+
+[[pre-start]]
+build = "pnpm -r build"   # or: npx tsc -b, npx turbo run build
+
+[post-start]
+copy = "wt step copy-ignored"   # anything that may finish later (caches, dev servers)
+```
+
+Each `[[pre-start]]` block is one step and a failing step stops the rest; keys within a block
+run concurrently. Incremental builds (`tsc -b`, turbo) keep later runs cheap.
+
+**Build-free alternative,** for repos that can change: let tsserver read the packages' sources
+instead of `dist/`.
+
+- A `source` export condition in each workspace package, plus `customConditions` in the
+  tsconfig the editor uses (TypeScript 5.0+, `moduleResolution` `bundler`, `node16` or
+  `nodenext`); builds and consumers outside the repo keep resolving `dist/`:
+
+  ```jsonc
+  // packages/ui/package.json
+  "exports": {
+    ".": { "source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  }
+  // tsconfig.json (or a tsconfig.base.json the packages extend)
+  "compilerOptions": { "customConditions": ["source"] }
+  ```
+
+- Or TypeScript project references (`composite: true`, `references` between packages) with
+  `declarationMap: true`: tsserver then maps a reference's `.d.ts` back to its source for
+  go-to-definition, and loads referenced projects from source while editing (unless
+  `disableSourceOfProjectReferenceRedirect` is set).
 
 ## AI guide
 

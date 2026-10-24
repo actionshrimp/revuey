@@ -21,7 +21,7 @@ local function blocked()
   return t
 end
 
-h.test('subprocesses see no multiplexer: no TMUX/HERDR variables, private tmux sockets, blocked herdr', function()
+h.test('subprocesses see no multiplexer: no TMUX/HERDR variables, private tmux sockets, blocked herdr, gh, wt', function()
   local r = sh('env')
   h.eq(0, r.code)
   for line in r.stdout:gmatch('[^\n]+') do
@@ -34,6 +34,11 @@ h.test('subprocesses see no multiplexer: no TMUX/HERDR variables, private tmux s
   for _, tool in ipairs({ 'herdr', 'zellij', 'cmux' }) do
     h.eq(h.mux_dir .. '/bin/' .. tool, vim.trim(sh('command -v ' .. tool).stdout))
     h.eq(97, sh(tool .. ' pane list').code)
+  end
+  -- the real gh and wt are blocked too (the fakes are opt-in per spec)
+  for _, tool in ipairs({ 'gh', 'wt' }) do
+    h.eq(h.mux_dir .. '/bin/' .. tool, vim.trim(sh('command -v ' .. tool).stdout))
+    h.eq(97, sh(tool .. ' --version').code)
   end
   if vim.fn.executable('tmux') == 1 then
     -- even a plain `tmux` talks to a server of our own (there is none)

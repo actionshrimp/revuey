@@ -34,7 +34,10 @@ is available.
 - **GitHub:** a fake `gh` (`tests/bin/gh`, `h.use_fake_gh`) records its argv and returns canned JSON for
   GraphQL PR lookups (PR nodes per `owner/name:branch`, forks' parents, repos that resolve to null), or a
   failure scenario (exit 1, garbage, rate limit, GraphQL errors, a hang that dies on SIGTERM). `tests/helpers.lua` puts a blocker for the real `gh` first on PATH, so no spec
-  can reach GitHub. PR fetching is tested against a local bare
+  can reach GitHub. A fake `wt` (`tests/bin/wt`, `h.use_fake_wt`) stands in for worktrunk's
+  `wt switch pr:<N>`: it records argv, cwd and whether stdin is a terminal, creates real
+  worktrees, and plays wt's progress, hook, approval and error output; the real `wt` is
+  blocked on PATH too (it would run the developer's hooks and approvals). PR fetching is tested against a local bare
   repository acting as `origin`, with `refs/pull/N/head` refs created by the test.
 
 **Headless specs never grow the screen.** In headless Neovim 0.12.4 (no UI attached) the screen

@@ -2404,6 +2404,10 @@ function M.show(review, opts)
     -- launched by bin/revuey: the review is the whole session, drop the startup tab (dashboard etc.)
     pcall(vim.cmd, 'tabonly')
   end
+  if opts.tcd then
+    -- a review in another worktree (`:Revuey pr`): the tab works there (pickers, :edit, terminals)
+    vim.cmd.tcd(vim.fn.fnameescape(review.root))
+  end
   local s = { review = review, opts = opts, tab = api.nvim_get_current_tabpage(), header_marks = {} } ---@type revuey.Session
   -- the user's mode preference; a committed-only layer must not overwrite it
   s.target_mode = opts.mode or (config.options.uncommitted and 'worktree' or 'committed')
@@ -3330,7 +3334,8 @@ function M.stack_ignore_command(bang, arg)
   vim.notify(table.concat(lines, '\n'), vim.log.levels.INFO)
 end
 
----Open a review. opts: {cwd?, base?, scope?:'full', mode?, standalone?, on_ready?}
+---Open a review. opts: {cwd?, tcd?, base?, scope?:'full', mode?, standalone?, on_ready?}
+---`tcd`: the review's tab gets the repo root as its working directory.
 ---Without a base (or with scope='full') the local stack around HEAD is detected first; with no
 ---stack the review is the plain single-branch one.
 function M.open(opts)

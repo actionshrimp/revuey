@@ -63,6 +63,15 @@ sequence; later items build on earlier ones.
 1. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
    `wt switch pr:<N> --no-cd` so the user's worktrunk hooks bootstrap the worktree, walks the PR stack via `gh`
    (base branch chain), and opens the review there with LSP working. No fresh-clone mode. Cleanup via `wt remove`.
+   **Part 1: done.** `:Revuey pr <N|url>` (and `bin/revuey pr`) runs `wt switch pr:<N> --no-cd --format json`
+   in the background (progress message, `:Revuey pr cancel` stops wt and its hooks), never with `--yes`:
+   when worktrunk needs approval for project hooks, revuey offers to run it in a terminal split where the
+   user answers wt's prompt. The review opens in a new tab `:tcd`'d to the worktree only after `wt switch`
+   returns, so LSP starts on the tree the pre-start hooks built; the stack is today's detection from the
+   PR branch. A URL must name the clone's repo; wt's errors (no gh, no GitHub remote, unknown PR, failed
+   hook, with the worktree left behind) are shown as wt words them. README documents a TypeScript
+   `pre-start` pipeline (install, then build), the build-free alternatives and `wt remove`.
+   **Left:** the PR stack from the GitHub base chain (below), and `stack.after_switch` for `gS` (below).
    **Stacks without local branches.** Reviewing someone else's stack from a worktree at its top shouldn't need
    local branches for the intermediate PRs. **Git half: done** (see Done): with HEAD detached, remote-tracking branches on HEAD's
    own line between trunk and HEAD are layers below HEAD (remote branches above HEAD are not used), a local
@@ -75,15 +84,15 @@ sequence; later items build on earlier ones.
    extension's local `.git/gh-stack` file, as explicit stack sources like Graphite metadata; confirm both formats
    against a real stacked repo first.
    **Up-to-date builds for the LSP.** In TypeScript monorepos, workspace packages often point `types`/`exports` at
-   `dist/`, so tsserver is wrong or empty until the tree is built. New PR worktrees: document a worktrunk
-   `pre-start` pipeline (install, then build; `pre-start` because it blocks, so `wt switch` returns with the tree
-   built, which a background `post-start` would not), and have revuey wait for `wt switch` before starting LSP.
-   `gS` uses plain `git switch`, so no `wt` hook fires: add an opt-in `stack.after_switch` command (e.g.
+   `dist/`, so tsserver is wrong or empty until the tree is built. New PR worktrees (done, part 1): a documented
+   worktrunk `pre-start` pipeline (install, then build; `pre-start` because it blocks, so `wt switch` returns with
+   the tree built, which a background `post-start` would not), and revuey waits for `wt switch` before starting LSP.
+   **Left:** `gS` uses plain `git switch`, so no `wt` hook fires: add an opt-in `stack.after_switch` command (e.g.
    `{ "wt", "hook", "post-switch", "build", "--foreground" }`, keeping the build in the user's worktrunk config),
    run in the background after a successful switch with "building…" in the panel header and failures in
    `revuey.log`, then restart the worktree's LSP clients so tsserver picks up the new `.d.ts` files. Incremental
-   builds (`tsc -b`, turbo) keep this cheap. Document the build-free alternative for repos that can change:
-   a `source` export condition plus `customConditions`, or project references with `declarationMap`.
+   builds (`tsc -b`, turbo) keep this cheap. The build-free alternative for repos that can change (a `source`
+   export condition plus `customConditions`, or project references with `declarationMap`) is documented (done).
 2. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
    and render them inline alongside local comments, including resolved and outdated state.
 3. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting

@@ -7,8 +7,8 @@ are in `reports/Terminal code review tool landscape.md`.
 ## Product goals
 - Review local branches and full local PR stacks before pushing (base = merge-base with a configurable default
   branch such as `main` or `develop`; stack = chain of branches each based on the previous).
-- Review GitHub PRs (and their stacks) by fetching `refs/pull/N/head` into a detached temporary `git worktree`
-  (or a `gh repo clone` temp clone when not in the repo), so the whole codebase is navigable.
+- Review GitHub PRs (and their stacks) in a worktree the user's worktrunk (`wt switch pr:N`) sets up and
+  builds, so the whole codebase is navigable with LSP (decision 16; no fresh-clone mode).
 - AI guided review: Claude produces a JSON guide (title, summary, ordered sections of prose referencing
   engine-assigned hunk IDs). Rendered with the same diff renderer as the main view (decision 9).
 - Ask AI inline (visual selection in diff or guide view) and a chat side panel with diff + guide context.
@@ -890,10 +890,75 @@ are in `reports/Terminal code review tool landscape.md`.
     - Not done: posting to the forge (roadmap: "add to review" and the verdict become a
       pending GitHub review).
 
+16. **Remote PR review via worktrunk** (`pr.lua` argument, command line, result and error
+    parsing plus the background run; `pr_view.lua` progress, cancel, approval terminal and
+    opening; `cli.lua` `pr-target`/`pr-path` for `bin/revuey pr`). `:Revuey pr <N|url>` runs
+    `wt switch pr:<N> --no-cd --format json` (worktrunk 0.81) in the clone's root, so the user's
+    worktrunk config decides where the worktree goes and its hooks (pre-switch, then the
+    blocking pre-start: install, build) set it up; there is no fresh-clone mode and no `wt`
+    config of revuey's own.
+    - **Argument.** `N`, `#N`, `pr:N` or a pull request URL. wt ignores a URL's owner and name
+      (it asks the clone's own repo for that number), so a URL is turned into `pr:N` only when
+      it names the clone's base repo (`forge.remote_info` + `forge.base_remote`, resolved like
+      gh); another repo's URL is refused before wt runs. A bare number is left to wt.
+    - **Run.** `vim.system` with stdin closed (wt sees no terminal), detached (its own process
+      group: `:Revuey pr cancel`, or a progress UI cancelling the message, sends SIGTERM then
+      SIGKILL to the group via `ai.terminate`, so hook processes such as `npm install` stop
+      too; `ai.live` kills it on `VimLeavePre`). One setup at a time (`pr_view.current`,
+      claimed before the first yield); a second request is refused with a message. stdout is
+      one JSON line `{action: created|existing, branch, path}`; stderr carries progress and
+      hook output, shown line by line as a Neovim 0.12 progress message (`nvim_echo`
+      `kind = 'progress'`, id `revuey.pr`, with elapsed seconds from a 1s timer), ending
+      `success` or `failed`.
+    - **Where the review opens.** In a new tab (as every review) with `:tcd <worktree>`
+      (`opts.tcd` in `view.show`): reviews already carry their root (`review.root`, every git
+      call uses it), so only the user's own tools (pickers, `:edit`, terminals, completion of
+      `:Revuey` branches) need the directory, and a tab-local one moves them without changing
+      other tabs or the global cwd; closing the review closes its tab and the directory with
+      it. `bin/revuey pr` `cd`s in the shell instead (Neovim is the review there).
+    - **LSP waits for wt.** The review is opened only from wt's exit callback, so revuey's
+      hidden LSP buffers (warm-up) load after pre-start finished: tsserver starts on a built
+      tree. post-start/post-switch hooks run in the background after wt returns; the docs
+      recommend pre-start for builds for that reason.
+    - **The stack** is the usual detection (decision 7) from the worktree's HEAD, which is the
+      PR's local branch (wt creates one tracking `origin/<head>`, or the fork's ref): local
+      branches below are layers; remote-tracking ones are not (HEAD is not detached) unless a
+      parent setting names them. The PR status section's base-mismatch warning flags a stacked
+      PR whose GitHub base is not the detected parent. Layers from the GitHub base chain are
+      the roadmap's next part.
+    - **Errors.** No `wt` on PATH (or `worktrunk.cmd`): checked before anything runs. wt's own
+      failures are shown in wt's words (the `✗` line and what follows, glyphs and ANSI codes
+      stripped): no `gh`, no GitHub remote, unknown PR, a failed hook. A pre-start failure
+      leaves the worktree (wt does not remove it): its path comes from the last `Running
+      pre-start ... @ <path>` line, and the message says `:Revuey pr` opens it as is (pre-start
+      only runs on creation), how to re-run the hooks (`wt -C <path> hook pre-start`) and
+      `wt remove`.
+    - **Approval.** wt asks before running a repo's project hooks (first time, and after a
+      change), reading the project config of the worktree it runs in (the clone, not the PR's
+      branch); without a terminal it prints the commands and `Cannot prompt for approval in
+      non-interactive environment` and exits 1 before creating anything. revuey never passes
+      `--yes`. It lists the commands and offers to run the same `wt switch` in a terminal split
+      (`jobstart` with `term = true` running `sh -c 'exec "$@" > "$0"' <file> wt switch ...`:
+      wt's prompt and the hooks' output go to the terminal, its JSON to the file), where the
+      user answers wt's own prompt; on exit 0 the terminal closes and the review opens, on a
+      failure the terminal stays with wt's output. Declining in revuey says how to approve
+      (`wt config approvals add`, or one `wt switch` in a shell). Declining in wt's prompt
+      makes wt skip the project hooks and go on, which is the user's choice.
+    - **bin/revuey pr** runs `wt switch` in the user's terminal itself (stdin, stderr and the
+      approval prompt are the terminal's; stdout captured), so the terminal is the progress UI
+      and `^C` cancels; `cli.lua pr-target` validates the argument and `pr-path` reads the JSON,
+      then the script `cd`s to the worktree and starts the review UI with no arguments.
+    - **Cleanup** is the user's (`wt remove`), never automated.
+    - **Tests** use `tests/bin/wt` (fake, records argv, cwd and whether stdin is a terminal;
+      scenarios: created/existing worktrees from local or `origin/` branches, a slow or hanging
+      pre-start with a child process, a failing hook, approval asked on a terminal or refused
+      without one, and wt's error texts); unit tests parse stderr captured from the real wt
+      0.81. `tests/helpers.lua` blocks the real `wt` on PATH.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
-- Shell out to `git`/`gh` with `vim.system`; never block the UI for long-running work.
+- Shell out to `git`/`gh`/`wt` with `vim.system`; never block the UI for long-running work.
