@@ -1097,14 +1097,19 @@ end
 
 ---The stack of a review loaded from a session's `load` record (which has the diff, not the stack
 ---object): detected again, for the prompt's scope wording and branch tags.
-local function restore_stack(o, ctx, r, info)
+local function restore_stack(o, ctx, r, info, attached)
   if r.stack or info.scope == 'branch' then
     return
   end
-  local last = sessions.read_last(sessions.bases(ctx.root, state_dir(o)), ctx.root) or {}
+  -- the state dir comment_review loaded the review with (its stack ignore list is the UI's)
+  local dir = (attached and attached.state_dir) or state_dir(o)
+  if o.state_dir and o.state_dir ~= '' then
+    dir = o.state_dir
+  end
+  local last = sessions.read_last(sessions.bases(ctx.root, dir), ctx.root) or {}
   local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
     or git.default_branch(ctx.root)
-  local ok, st = pcall(require('revuey.stack').detect, ctx.root, trunk, nil, { state_dir = state_dir(o) })
+  local ok, st = pcall(require('revuey.stack').detect, ctx.root, trunk, nil, { state_dir = dir })
   if not (ok and st) then
     return
   end
@@ -1115,6 +1120,7 @@ local function restore_stack(o, ctx, r, info)
   for i, l in ipairs(st.layers) do
     if l.name == r.branch then
       r.stack, r.scope = st, { kind = 'layer', index = i }
+      break
     end
   end
 end
@@ -1125,7 +1131,7 @@ local function review_hunks(o)
   local ctx = here(o)
   local attached = pick_session(o, ctx, live_sessions(o, ctx))
   local r, info, cpath, epath = comment_review(o, ctx, attached)
-  restore_stack(o, ctx, r, info)
+  restore_stack(o, ctx, r, info, attached)
   local hunks = require('revuey.review').units(r).hunks
   local labels = require('revuey.attribution').load(r)
   if labels then
