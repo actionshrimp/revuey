@@ -428,8 +428,15 @@ function M.import(raw, o)
     gone[#gone + 1] = prev
   end
   comments.save(store, o.info)
+  -- only what the merge really deleted: a tombstone that lost to a change made elsewhere
+  -- meanwhile (an accept, a reply) was not a replacement
+  local n_replaced = 0
   for _, c in ipairs(gone) do
-    comments.append_event(o.events, comments.event('deleted', c, o.info, nil, now))
+    local cur = store.comments[c.id]
+    if cur and cur.deleted then
+      n_replaced = n_replaced + 1
+      comments.append_event(o.events, comments.event('deleted', c, o.info, nil, now))
+    end
   end
   for _, c in ipairs(created) do
     comments.append_event(o.events, comments.event('created', comments.get(store, c.id) or c, o.info, nil, now))
@@ -445,7 +452,7 @@ function M.import(raw, o)
     imported = #created,
     dropped = w.dropped,
     skipped = skipped,
-    replaced = #replaced,
+    replaced = n_replaced,
     warnings = w,
     anchors = anchors,
     review = o.info,
@@ -468,6 +475,8 @@ function M.accept(store, id, now)
   end
   if cur.status == 'accepted' then
     return nil, 'already accepted'
+  elseif cur.status == 'resolved' then
+    return nil, 'resolved: reopen it first (cx)'
   end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
@@ -487,7 +496,7 @@ function M.toggle_dismiss(store, id, now)
   if cur.status == 'accepted' then
     return nil, 'already accepted: it is your comment now (resolve or delete it instead)'
   elseif cur.status == 'resolved' then
-    return nil, 'resolved: reopen it first (cx), then dismiss it'
+    return nil, 'resolved: reopen it first (cx)'
   elseif cur.status ~= 'saved' and cur.status ~= 'dismissed' then
     return nil, 'not a finding to dismiss (' .. tostring(cur.status) .. ')'
   end
