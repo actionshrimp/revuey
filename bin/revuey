@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch Neovim with a revuey review of the current branch (in the current directory).
 #   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
-#   revuey sessions|watch|show|reply|comment|ack|inbox|comments|install-skill ...
+#   revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|install-skill ...
 #                                                      (for coding agents; see `revuey --help`)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
 # directory containing this script's parent (so it works straight from a checkout).
@@ -42,7 +42,7 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 case "${1:-}" in
-  comments|comment|reply|sessions|show|ack|inbox)
+  comments|comment|reply|sessions|show|ack|inbox|hunks|import-review)
     exec "${cli[@]}" "$@"
     ;;
   watch)
@@ -77,7 +77,7 @@ case "${1:-}" in
       {
         echo "revuey: unknown command $1 (and not a branch or commit)"
         echo "usage: revuey [base] [--stack] [--committed|--worktree]"
-        echo "       revuey sessions|watch|show|reply|comment|ack|inbox|comments|install-skill ...  (revuey --help)"
+        echo "       revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|install-skill ...  (revuey --help)"
       } >&2
       exit 2
     fi

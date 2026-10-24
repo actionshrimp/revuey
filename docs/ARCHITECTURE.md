@@ -493,8 +493,8 @@ are in `reports/Terminal code review tool landscape.md`.
 11. **Comments** (`comments.lua` pure model, storage and events; `comments_export.lua` Markdown/JSON;
    `comments_view.lua` UI glue; `comment_editor.lua` the float; `cli.lua` the shell side).
    - **Model.** `{id, anchor, body (md), author {kind = user|ai|agent, name?}, status (draft|saved|resolved,
-     room for dismissed|accepted), in_review, thread [{id, author, body, created_at, updated_at}],
-     created_at, updated_at (ms), file_level, outdated (derived)}`, plus `draft`/`reply_draft` for unsaved
+     dismissed|accepted for AI review findings, decision 15), in_review, thread [{id, author, body, created_at, updated_at}],
+     created_at, updated_at (ms), file_level, outdated (derived), ai? (an AI finding: decision 15)}`, plus `draft`/`reply_draft` for unsaved
      edits of a saved comment, and the delivery fields of a comment sent to an agent (decision 12):
      `sent_at`, `sent_reply` (the follow-up reply sent, else the body), `acked_at`, `answered_at`. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
      unique. The UI makes `user` comments; `bin/revuey comment` makes `agent` ones (saved, `in_review =
@@ -800,9 +800,85 @@ are in `reports/Terminal code review tool landscape.md`.
       (decision 9, staleness) and comments by their placement rules (decision 11).
     - Not done: fixup commits for lower layers, typing into the composed buffer, restacking.
 
+15. **AI reviews** (`ai_review.lua` pure model, import and triage; `ai_review_prompt.lua` prompt +
+    schema; `ai_review_view.lua` job and panel glue; `comments_view.lua` triage keys; `cli.lua`
+    `hunks`/`import-review`). Schema-driven like the guide and built on its machinery: findings
+    are a sibling of agent comments (decision 11), not a parallel system.
+    - **Hunk ids and offsets.** The ids are the guide's (`guide.hunks`, via `guide_view.prepare`,
+      so a full-stack review gets the branch tags too). The prompt reuses
+      `guide_prompt.user_message` (context, scope wording, file list, budget steps) with review
+      texts and `numbered = true`: every hunk line is prefixed with its 1-based index in the
+      hunk (`3|+text`, abridged previews too). A finding anchors to `{hunk, line?, end_line?}`;
+      no line means the whole file. The model never sees or returns file line numbers.
+    - **Schema** (`--json-schema`, `additionalProperties: false`): `{summary (md), verdict:
+      approve|comment|request_changes, findings (max 30): [{hunk, line?, end_line?, severity:
+      critical|major|minor|nit, title, body (md), suggestion?}]}`. `import-review` also accepts
+      an optional top-level `diff` (the anchors hash `bin/revuey hunks` prints).
+    - **Invocation**: `ai.run` exactly as for the guide (read-only, `--restricted --safe-mode`,
+      same tools and allow/deny rules, process-group kill), `--name "revuey review: <branch>"`.
+      One job per scope, keyed by the scope's comments file (`ai_review_view.jobs`), outliving
+      scope switches and the review; a 100ms ticker draws the panel spinner via an extmark.
+    - **Skills.** `:RevueyAIReview <skill>`: `ai_review.find_skill` looks for
+      `~/.claude/skills/<name>/SKILL.md`, then the repo's `.claude/skills/<name>/SKILL.md` (the
+      user's own first), or takes a path to a skill directory or a Markdown file;
+      `read_skill` drops YAML front matter and refuses empty files and files over 40,000
+      characters. The text goes into the prompt after the methodology ("Review guidance from
+      the skill `x`"), inside the prompt budget. revuey reads it because the restricted run
+      loads no skills.
+    - **Validation** (`ai_review.validate`, against the launch-time hunks): JSON repair as for
+      the guide; ids normalised (`H7`, `7`); a finding is dropped and counted by reason when
+      its hunk is unknown, its lines are not integers inside the hunk (or end before they
+      start, or an end comes without a start), it has neither title nor body, it duplicates an
+      earlier one (hunk, lines, title), or it is past 50. A line on a file without a text diff
+      becomes a whole-file finding. Severities and verdicts are normalised (aliases such as
+      `high`, `changes_requested`; unknown: `minor`, `comment`), titles one line (else the
+      body's first line), bodies and the summary cleaned like guide prose, suggestions keep
+      indentation and newlines. Zero findings is a valid review.
+    - **Import** (`ai_review.import`, the same code for the UI and the CLI). Each finding's
+      rows (`line..end_line` of its hunk) go through `comments.anchor_from_rows`, so the anchor
+      (side, unit and hunk keys and offsets, `context_hash`, `text_hash`, snippet, `sort_line`)
+      is exactly what a selection of those rows stores, made from the launch-time review's side
+      texts; placement then re-anchors it like any comment when the code changed meanwhile.
+      The comment: author `{kind = 'ai', name}` (`claude` for revuey's own runs, `--name` or
+      `$REVUEY_AGENT_NAME` for imports), status `saved`, body `**title**`, the explanation and
+      a fenced "Suggested change", and `ai = {review, severity, title, suggestion, hunk, line,
+      end_line}`. **Re-runs:** the author's untouched findings (untriaged, no live reply, never
+      sent, no draft) are deleted (tombstones, `deleted` events); every other finding still in
+      the store blocks a new one with the same path, side, lines and title (counted as
+      skipped), so a dismissed finding does not come back. Then one save (merge, lock) and a
+      `created` event per finding. A `diff` hash that differs from the hunks' is refused before
+      anything is written. The UI imports into the open review's store when it shows that scope
+      (then refreshes), else into the file, which a running review reloads.
+    - **Triage.** `ca` (`ai_review.accept`): author becomes `{kind = 'user'}`, status
+      `accepted`, the AI author kept in `ai.author`: the user's own comment from then on (open
+      like `saved`; edit, resolve, later "add to review"). `cn` (`toggle_dismiss`): `dismissed`
+      (hidden from lists and counts like resolved, drawn collapsed) or back to `saved`; refused
+      for an accepted finding. Both act only on AI findings covering the cursor row (a user
+      comment on the same line is skipped) and append `accepted`/`dismissed` events (a
+      `dismissed` event with status `saved` reads "restore"). Follow-up is the agent link:
+      `cs`/`cr` work unchanged, and `show` labels the comment as an AI review finding the user
+      sent. Delivery stays separate from status (decision 12).
+    - **Record.** `<state file>.ai-review.json` next to the comments file (the scope's latest
+      review): `{kind, version, id, author, summary, verdict, findings, imported, dropped,
+      skipped, replaced, warnings, anchors, review, generator {provider, model, session_id,
+      generated_at, head, merge_base, mode, duration_ms, cost_usd, skill, prompt_level}}`,
+      written atomically (temp + rename; last writer wins, it is a summary). The panel reads it
+      on render (cached by mtime and size) and draws an "AI review" block after the guide's:
+      the verdict right-aligned, a status row while a job runs, the last error, "N to triage"
+      (untriaged AI findings in the store) with dropped and skipped counts, and the summary
+      wrapped. The comments list starts with the verdict and summary. Errors are kept per scope
+      until the next run and never touch the record or the findings.
+    - **From outside.** `bin/revuey hunks [--json|--prompt]` loads the review headlessly like
+      `comment` and prints the user message (or the whole prompt, plus how to import), with the
+      anchors hash; `import-review [--name] [--session] <file|->` (`--schema` prints the schema)
+      imports into the session's comments file, printing imported, dropped, skipped and
+      replaced counts.
+    - Not done: posting to the forge (roadmap: "add to review" and the verdict become a
+      pending GitHub review).
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

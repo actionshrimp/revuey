@@ -54,12 +54,15 @@ Requirements:
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
 | `:RevueyGuide cancel` | Stop a running generation. |
 | `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
+| `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
+| `:RevueyAIReview cancel` | Stop a running AI review. |
 | `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
 | `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
+| `bin/revuey hunks\|import-review` | [AI reviews from outside](#ai-reviews-from-another-agent-or-tool): the hunks with their ids, and importing a review in revuey's format. |
 
 **Uncommitted work is included by default** (working-tree mode): committed, staged and unstaged
 changes to tracked files, files deleted on disk, and untracked (non-ignored) files as additions.
@@ -553,6 +556,98 @@ still never load). **Warning:** your settings' permission allow rules and hooks 
 run that reads the repo's content, so a rule such as `Bash(make:*)` plus a prompt injection in
 the code could run commands. Only turn it off if your settings have no such allow rules or hooks.
 
+## AI review
+
+`:RevueyAIReview` asks Claude to review the changes, the way a colleague would before a merge:
+bugs, broken edge cases, security and contract problems, missing tests for risky logic. It runs
+in the background, like the [guide](#ai-guide), with the same read-only `claude` invocation
+(the schema differs; the session is named "revuey review: <branch>"). The answer is one JSON
+document: a short summary, a suggested verdict (approve, comment or request changes) and a
+list of findings, each with a severity (critical, major, minor, nit), a title, an explanation
+and optionally a suggested change.
+
+**Nothing is posted anywhere.** Each finding becomes a local [comment](#comments) by `claude
+(ai)`, on the lines it is about, for you to triage:
+
+```
+╭─ claude (ai) · just now · major · ca accept · cn dismiss ─────────
+│ Import both helpers from one place
+│
+│ Two imports of the same module drift apart.
+╰─
+```
+
+- `ca` **accepts** it: it becomes your own comment ("accepted from AI review"), to edit, resolve
+  or later post like any other.
+- `cn` **dismisses** it: it stays, collapsed to one line and marked "dismissed", and no longer
+  counts; `cn` again restores it.
+- `cs` sends it to the [connected agent](#connect-an-agent) to **follow up** ("is this real?
+  fix it"), and `cr` replies in its thread, as with any comment.
+
+The panel shows the latest review of the scope under the stack and guide blocks: the verdict
+(`✓ approve`, `● comment`, `✗ request changes`), how many findings are left to triage, how many
+were dropped, and the summary. `cl` lists the verdict and summary above the comments; findings
+there are tagged with their severity and `to triage`. A spinner with the elapsed time and what
+Claude is doing ("reading src/cart.ts") shows while it runs, and you keep reviewing.
+
+**Anchors.** Claude never gives file line numbers. The prompt shows every hunk under its id with
+its lines numbered within the hunk (`3|+const total = sum(items)`), and a finding names a hunk id
+and those numbers (or no line: the whole file). revuey checks them against the diff the review
+was started on: findings on unknown hunks or lines a hunk does not have are dropped, and the
+"AI review ready" message and the panel say how many. A finding is anchored exactly as a
+selection of the same rows would be, so it follows the code like any comment when you edit
+(and becomes outdated when its lines change).
+
+**Running it again** replaces the previous review's findings you have not touched (no triage,
+reply, send or unsaved edit), after asking (`!` skips the question). Accepted, dismissed,
+answered and sent findings stay, and a finding you already accepted or dismissed is not added
+again. Each scope (branch, stack layer, full stack) has its own review, like the guide: a layer's
+review covers only that branch's changes on top of its parent, the full stack all of them, with
+the same branch tags in the prompt.
+
+**Skills.** `:RevueyAIReview <skill>` reads that skill's `SKILL.md` (from
+`~/.claude/skills/<skill>/`, else the repo's `.claude/skills/<skill>/`; or give a path to a skill
+directory or any Markdown file) and passes it to Claude as review guidance: what to look for,
+how strict to be. revuey reads the file itself (front matter dropped, at most 40,000
+characters), because the restricted run loads no skills, settings or plugins. Tab completes skill
+names. The output format stays the same.
+
+Reviews are stored per scope next to its comments (`*.ai-review.json`: summary, verdict, counts,
+model, cost, the skill used). Failures (no `claude`, not logged in, invalid output) are reported
+and shown in the panel, and leave the last review and its findings alone.
+
+### AI reviews from another agent or tool
+
+An outside agent or tool can produce a review in the same format and import it, so its findings
+show up the same way:
+
+```sh
+bin/revuey hunks                 # the diff with hunk ids and numbered lines, and the diff hash
+bin/revuey hunks --prompt        # the whole prompt revuey's own review sends (instructions too)
+bin/revuey hunks --json          # {diff, review, hunks: [{id, path, header, lines}]}
+bin/revuey import-review --schema            # the JSON schema
+bin/revuey import-review review.json         # import (- reads stdin); --name names the reviewer
+```
+
+```json
+{
+  "summary": "Moves cart totals into cart.ts; rounding is the main risk.",
+  "verdict": "request_changes",
+  "diff": "4c1f…",
+  "findings": [
+    { "hunk": "h3", "line": 5, "end_line": 6, "severity": "major",
+      "title": "Discount applied twice", "body": "…", "suggestion": "…" }
+  ]
+}
+```
+
+`import-review` picks the review like `bin/revuey comment` (the running one, `--session <id>`
+when several, else the review `revuey` would open there) and prints what it imported and
+dropped. The optional `diff` is the hash `hunks` printed: when the code has changed since, the
+ids may mean other hunks, so the import is refused. The reviewer is `--name` (else
+`$REVUEY_AGENT_NAME`); importing again under the same name replaces that reviewer's untouched
+findings, as above. A running review shows the findings at once.
+
 ## Comments
 
 Comment while you review, in the diff or the guide view:
@@ -587,7 +682,7 @@ Comment while you review, in the diff or the guide view:
   replies are merged), and each instance picks up the others' changes live.
 
 `gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
-where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl` shadow `c{motion}` and
+where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn` shadow `c{motion}` and
 `]m`/`[m` the method motions, which do nothing in a read-only diff. Remap them under `keymaps`
 (`comment_add`, `comment_edit`, ...; `false` disables one).
 
@@ -826,6 +921,7 @@ Diff buffer:
 | `]m` / `[m` | Next / previous comment (takes a count) |
 | `gC` | Hide / show comment threads |
 | `cl` | List all comments (`<CR>` jumps) |
+| `ca` / `cn` | [AI review](#ai-review) finding on this line: accept it as your comment / dismiss it (again: restore) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 
@@ -864,7 +960,9 @@ the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `Revuey
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
 stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, the comments'
 `RevueyCommentSign`, `RevueyCommentBorder`, `RevueyCommentAuthor`, `RevueyCommentDraft`,
-`RevueyCommentResolved` and `RevueyCommentOutdated`, the pull requests' `RevueyForgeApproved`,
+`RevueyCommentResolved` and `RevueyCommentOutdated`, AI reviews' `RevueyAiCritical`, `RevueyAiMajor`,
+`RevueyAiMinor`, `RevueyAiNit` (severities), `RevueyAiApprove`, `RevueyAiComment`, `RevueyAiChanges`
+(verdicts) and `RevueyAiTriage`, the pull requests' `RevueyForgeApproved`,
 `RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeNone`, `RevueyForgeDraft`, `RevueyForgeMerged`,
 `RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, and others (see
 `lua/revuey/highlights.lua`).
@@ -997,6 +1095,20 @@ cd /tmp/revuey-guide
   introduced each hunk (`[stack/cart, stack/ui]` on `src/cart.ts`).
 - `gs` for a layer: it has no guide of its own yet, and no branch labels. `gs` again: the
   full-stack guide is back.
+
+### An AI review
+
+In the same review (needs `claude` too):
+
+- `:RevueyAIReview`. The panel shows "AI review" with a spinner; after a few seconds the verdict,
+  the findings to triage and the summary appear, and each finding is a `claude (ai)` thread on
+  its lines. `]m` moves between them.
+- `ca` on one: it becomes your comment. `cn` on another: it collapses as "dismissed" (`cn` again
+  restores it). `cl` lists them all under the verdict.
+- `:RevueyAIReview` again asks before replacing the findings you have not touched; the ones you
+  accepted or dismissed stay.
+- `bin/revuey hunks` in the repo prints what Claude saw; `bin/revuey import-review --schema` the
+  format an outside tool would write.
 
 ## Tests
 

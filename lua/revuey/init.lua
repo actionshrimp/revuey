@@ -95,6 +95,16 @@ function M.guide_diagram(what, reg)
   return require('revuey.view').guide_diagram(what, reg)
 end
 
+---`:RevueyAIReview[!] [skill|cancel]`: run an AI review of the open review's scope with your
+---`claude` CLI (read-only); its findings become AI comments to accept (`ca`) or dismiss (`cn`).
+---`skill`: a skill name or path whose SKILL.md guides the review. `bang` replaces the last
+---review's untriaged findings without asking; `cancel` stops a run.
+---@param bang? boolean
+---@param arg? string
+function M.ai_review(bang, arg)
+  require('revuey.view').ai_review_command(bang, arg)
+end
+
 ---`:RevueyComments`: all comments of the open review in a float (<CR> jumps to one).
 function M.comments()
   return require('revuey.view').comments_list()

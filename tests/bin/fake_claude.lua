@@ -30,6 +30,27 @@ for id, path in stdin:gmatch('\n@@ (h%d+) (.-) @@') do
   paths[id] = path
 end
 
+-- an AI review run (its schema has findings) answers with a review instead of a guide
+local review_mode = false
+for i, a in ipairs(argv) do
+  if a == '--json-schema' and (argv[i + 1] or ''):find('"findings"', 1, true) then
+    review_mode = true
+  end
+end
+
+---Default review: a major finding on line 1 of the first hunk, a nit on the second hunk's file,
+---and one finding on an unknown hunk (revuey drops it).
+local function review()
+  local findings = {
+    { hunk = ids[1], line = 1, severity = 'major', title = 'First line looks wrong', body = 'The first changed line of `' .. tostring(paths[ids[1]]) .. '` needs a look.' },
+    { hunk = 'h999', line = 1, severity = 'minor', title = 'Ghost', body = 'An id the diff does not have.' },
+  }
+  if ids[2] then
+    table.insert(findings, 2, { hunk = ids[2], severity = 'nit', title = 'File-level nit', body = 'About the whole file.' })
+  end
+  return { summary = 'A fake review summary.', verdict = 'request_changes', findings = findings }
+end
+
 local function guide()
   local file = os.getenv('REVUEY_FAKE_CLAUDE_OUTPUT')
   if file and file ~= '' then
@@ -163,7 +184,8 @@ elseif scenario == 'diagram' then
   tool('StructuredOutput', g)
   result(g)
 else
-  local g = guide()
+  local out = os.getenv('REVUEY_FAKE_CLAUDE_OUTPUT')
+  local g = (review_mode and (out or '') == '') and review() or guide()
   tool('StructuredOutput', g)
   result(g)
 end
