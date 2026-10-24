@@ -170,4 +170,25 @@ h.test('a review running: imported findings appear in it live', function()
   require('revuey').close()
 end)
 
+h.test('hunks --prompt in the full-stack scope tags each hunk with its branch (no review running, and a live one)', function()
+  local d = h.tmpdir('import-review-stack')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  local function hunks_prompt()
+    local r = vim.system({ BIN, 'hunks', '--prompt' }, { cwd = d, env = ENV, text = true }):wait(20000)
+    h.eq(0, r.code, r.stderr)
+    return r.stdout
+  end
+  -- the last review of the worktree was the full stack
+  local s = h.open_review({ cwd = d, base = '', scope = 'full' })
+  h.eq({ kind = 'full' }, s.scope)
+  local live = hunks_prompt()
+  require('revuey').close()
+  local closed = hunks_prompt()
+  for _, out in ipairs({ live, closed }) do
+    h.ok(out:find('This review covers a whole stack of 3 branches', 1, true), out)
+    h.ok(out:find('\n@@ h1 [^\n]* @@ %[stack/'), out)
+  end
+end)
+
 h.run()

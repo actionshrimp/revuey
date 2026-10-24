@@ -148,7 +148,7 @@ function M.generate(s, skill_arg, on_change)
   local cfg = config.options.ai or {}
   local author = M.author()
   M.errors[key] = nil
-  local entry = { label = r.branch, started = vim.uv.hrtime(), skill = skill and skill.name }
+  local entry = { label = r.branch, started = vim.uv.hrtime(), skill = skill and skill.name, on_change = on_change }
   M.jobs[key] = entry
   ensure_ticker()
   on_change()
@@ -167,6 +167,8 @@ function M.generate(s, skill_arg, on_change)
       return fail(info --[[@as string]])
     end
     entry.prompt_level = info.level
+    -- validation only accepts lines the prompt showed
+    entry.shown = { level = info.level, abridged = info.abridged_ids }
     entry.job = ai.run({
       prompt = text,
       schema = prompt.schema_json(),
@@ -199,6 +201,7 @@ function M.generate(s, skill_arg, on_change)
           info = comments.review_info(r),
           author = author,
           record_path = ai_review.record_path(key),
+          shown = entry.shown,
           generator = {
             provider = cfg.provider or 'claude',
             model = result.model or cfg.model,
@@ -255,6 +258,9 @@ function M.cancel(s)
     -- still gathering commits: forget it; the coroutine checks before spawning
     M.jobs[key] = nil
     vim.notify('revuey: AI review cancelled', vim.log.levels.INFO)
+    if j.on_change then
+      j.on_change() -- the panel drops the spinner
+    end
   end
   return true
 end
