@@ -470,14 +470,22 @@ h.test('import: a concurrent accept in another instance is never deleted by a re
       end
     end
   end
-  -- 1. A's store is stale: B accepted and saved before A's re-run
+  -- 1. A's store is stale: B accepted and saved before A's re-run, which finds X again. A sees
+  -- the accept (it reloads first), so X is triaged: not replaced, and not added a second time
   local A, B = comments.load(cpath), comments.load(cpath)
   local id = x_of(B)
   assert(ai_review.accept(B, id))
   comments.save(B)
-  assert(imp(none, A))
-  local c = comments.load(cpath, { readonly = true }).comments[id]
-  h.eq({ nil, 'accepted' }, { c.deleted, c.status }, 'reloaded first: the accepted finding is not replaced')
+  local rec1 = assert(imp(one, A))
+  h.eq({ 0, 1, 0 }, { rec1.imported, rec1.skipped, rec1.replaced })
+  local disk = comments.load(cpath, { readonly = true })
+  local c = disk.comments[id]
+  h.eq({ nil, 'accepted' }, { c.deleted, c.status }, 'the accepted finding is not replaced')
+  local xs = 0
+  for _, x in pairs(disk.comments) do
+    xs = xs + ((not x.deleted and x.ai and x.ai.title == 'X') and 1 or 0)
+  end
+  h.eq(1, xs, 'exactly one X')
   -- 2. B accepts in memory before A's re-run, and saves only after it: the accept still wins
   local two = { summary = '', verdict = 'comment', findings = { { hunk = 'h1', line = 1, severity = 'nit', title = 'Y', body = 'b' } } }
   assert(imp(two, comments.load(cpath)))
@@ -486,10 +494,23 @@ h.test('import: a concurrent accept in another instance is never deleted by a re
   h.ok(id2, 'Y imported')
   local t0 = comments.now_ms()
   assert(ai_review.accept(B, id2, t0))
-  assert(imp(none, comments.load(cpath), t0 + 60000))
-  comments.save(B)
+  -- B saves while A's re-run is between its reload and its save
+  local orig_save = comments.save
+  comments.save = function(...)
+    comments.save = orig_save
+    orig_save(B)
+    return orig_save(...)
+  end
+  local ev_before = #comments.decode_events(table.concat(vim.fn.readfile(comments.events_path_for(rr.state._path)), '\n'))
+  local rec2 = assert(imp(none, comments.load(cpath), t0 + 60000))
+  comments.save = orig_save
   c = comments.load(cpath, { readonly = true }).comments[id2]
   h.eq({ nil, 'accepted' }, { c.deleted, c.status }, 'the replacement tombstone loses to the concurrent accept')
+  h.eq(0, rec2.replaced, 'and is not counted as replaced')
+  local evs = comments.decode_events(table.concat(vim.fn.readfile(comments.events_path_for(rr.state._path)), '\n'))
+  for i = ev_before + 1, #evs do
+    h.ok(not (evs[i].kind == 'deleted' and evs[i].comment_id == id2), 'no deleted event for it')
+  end
 end)
 
 h.test('validate: lines past an abridged hunk\'s preview are dropped; with no hunk bodies findings are whole-file', function()
@@ -591,6 +612,23 @@ h.test('import: findings on a deleted file (old side) and a renamed file (new pa
   end
   h.eq({ 'old', 1, 2, false }, got['gone.txt'])
   h.eq({ 'new', 7, 13, false }, got['renamed.txt'])
+end)
+
+h.test('skills: the size is checked before reading; resolved findings are reopened before triage', function()
+  -- huge front matter over a tiny body: refused from the file size, never read and stripped
+  local home = h.tmpdir('ai-review-home3')
+  h.write(home, '.claude/skills/fat/SKILL.md', '---\nname: fat\ndescription: ' .. string.rep('x', prompt.SKILL_MAX_CHARS + 5000) .. '\n---\nTiny body.\n')
+  local none, err = ai_review.read_skill(home .. '/.claude/skills/fat/SKILL.md')
+  h.eq(nil, none)
+  h.ok(err and err:find('bytes', 1, true), tostring(err))
+  -- `cx` on an untriaged finding: accept and dismiss both ask to reopen it first
+  local store = { comments = {}, _dirty = {} }
+  local c = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 1 }, 'b', { author = { kind = 'ai', name = 'claude' } })
+  c.ai = { title = 't', severity = 'nit' }
+  c.status = 'resolved'
+  comments.put(store, c)
+  h.eq({ nil, 'resolved: reopen it first (cx)' }, { ai_review.accept(store, c.id) })
+  h.eq({ nil, 'resolved: reopen it first (cx)' }, { ai_review.toggle_dismiss(store, c.id) })
 end)
 
 h.test('skills: paths are taken literally (no %, # or wildcard expansion); ~ is your home', function()
