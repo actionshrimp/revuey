@@ -110,12 +110,6 @@ sequence; later items build on earlier ones.
    branches). Direct typing into the composed review buffer is not planned (no per-line read-only).
    Alternative considered: one worktree per layer via worktrunk.
 
-## Known bugs
-- **Comment thread borders in herdr.** The bottom and right borders of inline comment threads (virtual lines)
-  render incorrectly in herdr. Not yet investigated; likely candidates are the width calculation (sign, number
-  and fold columns) or how herdr renders box-drawing characters in virtual lines. Check in plain Ghostty and
-  tmux first to tell revuey bugs from terminal ones.
-
 ## Later / ideas
 - Built-in chat panel (descoped: the external agent session covers it). A lighter option: when no agent is
   connected, `<C-a>` offers a one-shot answer from revuey's own read-only `claude -p` (resuming the guide's session),
