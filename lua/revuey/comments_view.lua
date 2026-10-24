@@ -295,10 +295,29 @@ local function thread_lines(s, c, p, width)
   if c.file_level then
     chip('file', 'RevueyCommentMeta')
   end
+  if c.ai and c.status ~= 'accepted' then
+    chip(c.ai.severity or 'minor', M.SEVERITY_HL[c.ai.severity] or 'RevueyAiMinor')
+  end
   if c.status == 'draft' then
     chip('draft', 'RevueyCommentDraft')
   elseif c.status == 'resolved' then
     chip('resolved', 'RevueyCommentResolved')
+  elseif c.status == 'dismissed' then
+    chip('dismissed', 'RevueyCommentResolved')
+  elseif c.status == 'accepted' then
+    chip('accepted from AI review', 'RevueyCommentMeta')
+  elseif require('revuey.ai_review').untriaged(c) then
+    local k = config.options.keymaps
+    local hint = {}
+    for _, x in ipairs({ { k.comment_accept, 'accept' }, { k.comment_dismiss, 'dismiss' } }) do
+      local key = type(x[1]) == 'table' and x[1][1] or x[1]
+      if key then
+        hint[#hint + 1] = key .. ' ' .. x[2]
+      end
+    end
+    if #hint > 0 then
+      chip(table.concat(hint, ' · '), 'RevueyAiTriage')
+    end
   end
   if c.draft or c.reply_draft then
     chip('unsaved edit', 'RevueyCommentDraft')
@@ -324,7 +343,7 @@ local function thread_lines(s, c, p, width)
       body[#body + 1] = ch
     end
   end
-  local resolved = c.status == 'resolved' and not expanded
+  local resolved = (c.status == 'resolved' or c.status == 'dismissed') and not expanded
   add_text(c.body, '│ ', '│ ')
   for _, r in ipairs(c.thread or {}) do
     if not r.deleted then
@@ -372,7 +391,10 @@ function M.delivery_label(s, c)
   end
 end
 
-local SIGN_HL = { draft = 'RevueyCommentDraft', resolved = 'RevueyCommentResolved' }
+local SIGN_HL = { draft = 'RevueyCommentDraft', resolved = 'RevueyCommentResolved', dismissed = 'RevueyCommentResolved' }
+
+---Highlight of an AI finding's severity.
+M.SEVERITY_HL = { critical = 'RevueyAiCritical', major = 'RevueyAiMajor', minor = 'RevueyAiMinor', nit = 'RevueyAiNit' }
 
 ---Place every comment in the current review and draw threads and signs. `persist`: save
 ---changed "last known" anchors (renders after the review changed; never on live reloads).
@@ -842,6 +864,70 @@ function M.resolve(s)
   end)
 end
 
+---Comments covering the cursor row that are AI findings (with_comment, but only those: a user
+---comment on the same line never gets in the way).
+local function with_finding(s, fn)
+  local c = cm(s)
+  local row = api.nvim_win_get_cursor(s.diff_win)[1]
+  local any = false
+  for _, id in ipairs(c.cover and c.cover[row] or {}) do
+    local x = comments.get(c.store, id)
+    if x and x.ai then
+      any = true
+    end
+  end
+  if not any then
+    return vim.notify('revuey: no AI review finding on this line', vim.log.levels.INFO)
+  end
+  local saved = c.cover[row]
+  c.cover[row] = vim.tbl_filter(function(id)
+    local x = comments.get(c.store, id)
+    return x ~= nil and x.ai ~= nil
+  end, saved)
+  local ok, err = pcall(M.with_comment, s, fn, row)
+  c.cover[row] = saved
+  if not ok then
+    error(err, 0)
+  end
+end
+
+---`ca`: accept the AI finding on this line: it becomes your own comment (kept for the forge's
+---"add to review" later).
+function M.accept(s)
+  if not s then
+    return
+  end
+  with_finding(s, function(cmt)
+    local store = cm(s).store
+    if not still_there(store, cmt.id) then
+      return M.refresh(s)
+    end
+    local c, err = require('revuey.ai_review').accept(store, cmt.id)
+    if not c then
+      return vim.notify('revuey: ' .. err, vim.log.levels.INFO)
+    end
+    save_and_emit(s, 'accepted', c)
+  end)
+end
+
+---`cn`: dismiss the AI finding on this line (kept, collapsed), or restore a dismissed one.
+function M.dismiss(s)
+  if not s then
+    return
+  end
+  with_finding(s, function(cmt)
+    local store = cm(s).store
+    if not still_there(store, cmt.id) then
+      return M.refresh(s)
+    end
+    local c, err = require('revuey.ai_review').toggle_dismiss(store, cmt.id)
+    if not c then
+      return vim.notify('revuey: ' .. err, vim.log.levels.INFO)
+    end
+    save_and_emit(s, 'dismissed', c)
+  end)
+end
+
 -- ---------------------------------------------------------------------------
 -- Sending to the coding-agent session
 -- ---------------------------------------------------------------------------
@@ -1075,10 +1161,19 @@ function M.list_lines(s)
     local where = cmt.file_level and 'file' or (cmt.anchor.start_line == cmt.anchor.end_line and tostring(cmt.anchor.start_line) or (cmt.anchor.start_line .. '-' .. cmt.anchor.end_line))
     where = '  ' .. where .. ' (' .. (cmt.file_level and 'file' or cmt.anchor.side) .. ')'
     local tags = {}
+    if cmt.ai and cmt.status ~= 'accepted' then
+      tags[#tags + 1] = cmt.ai.severity or 'minor'
+    end
     if cmt.status == 'resolved' then
       tags[#tags + 1] = '✓ resolved'
     elseif cmt.status == 'draft' then
       tags[#tags + 1] = 'draft'
+    elseif cmt.status == 'dismissed' then
+      tags[#tags + 1] = 'dismissed'
+    elseif cmt.status == 'accepted' then
+      tags[#tags + 1] = 'accepted from AI review'
+    elseif require('revuey.ai_review').untriaged(cmt) then
+      tags[#tags + 1] = 'to triage'
     end
     if cmt.author and cmt.author.kind and cmt.author.kind ~= 'user' then
       tags[#tags + 1] = 'by ' .. author_label(cmt.author)
@@ -1100,7 +1195,8 @@ function M.list_lines(s)
       tags[#tags + 1] = d.text
     end
     local tag = #tags > 0 and ('  [' .. table.concat(tags, ', ') .. ']') or ''
-    local text = where .. '  ' .. comments.first_line(cmt.body) .. tag
+    local first = comments.first_line(cmt.body):gsub('^%*%*(.-)%*%*$', '%1')
+    local text = where .. '  ' .. first .. tag
     out[#out + 1] = {
       text = text,
       id = cmt.id,
@@ -1110,6 +1206,18 @@ function M.list_lines(s)
   if #out == 0 then
     local k = config.options.keymaps.comment_add or 'gc'
     out[1] = { text = 'No comments yet: ' .. k .. ' on a line (or a selection) adds one.' }
+  end
+  -- the latest AI review's verdict and summary first
+  local rec = require('revuey.ai_review_view').record(s)
+  if rec then
+    local head = require('revuey.ai_review_view').verdict_line(rec)
+    local top = { { text = head, hls = { { 0, #head, 'RevueyCommentTitle' } } } }
+    for _, l in ipairs(require('revuey.panel').wrap(rec.summary ~= '' and rec.summary or '(no summary)', 76, '  ')) do
+      top[#top + 1] = { text = l, hls = { { 0, #l, 'RevueyCommentMeta' } } }
+    end
+    top[#top + 1] = { text = '' }
+    vim.list_extend(top, out)
+    out = top
   end
   return out
 end

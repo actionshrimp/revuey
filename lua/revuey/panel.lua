@@ -334,6 +334,8 @@ function M.render(s, o)
   -- the viewed layer's pull request (title, reviews, checks, base), when it has one
   forge_view.render_detail(s, add, add_virt, width)
   require('revuey.guide_view').panel(s, add, add_virt, width)
+  -- the latest AI review of this scope: verdict, findings to triage, summary
+  require('revuey.ai_review_view').panel(s, add, add_virt, width)
   local total_add, total_del, reviewed = 0, 0, 0
   for _, f in ipairs(r.files) do
     total_add, total_del = total_add + f.added, total_del + f.removed

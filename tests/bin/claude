@@ -6,6 +6,8 @@
 #                            whose pid goes to $REVUEY_FAKE_CLAUDE_LOG.kids)
 #   REVUEY_FAKE_CLAUDE_LOG   file to append {argv, stdin, cwd} to (one JSON object per line)
 #   REVUEY_FAKE_CLAUDE_OUTPUT  JSON file used as the structured output (scenario good)
+#                            An AI review run (--json-schema with "findings") answers with a canned
+#                            review (findings on h1 and h2, one on an unknown hunk) unless it is set.
 #   REVUEY_FAKE_NVIM         nvim binary that runs the Lua half (default: nvim)
 dir=$(cd "$(dirname "$0")" && pwd)
 stdin_file=$(mktemp "${TMPDIR:-/tmp}/revuey-fake-claude.XXXXXX")
