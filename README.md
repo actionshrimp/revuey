@@ -600,8 +600,9 @@ selection of the same rows would be, so it follows the code like any comment whe
 
 **Running it again** replaces the previous review's findings you have not touched (no triage,
 reply, send or unsaved edit), after asking (`!` skips the question). Accepted, dismissed,
-answered and sent findings stay, and a finding you already accepted or dismissed is not added
-again. Each scope (branch, stack layer, full stack) has its own review, like the guide: a layer's
+answered and sent findings stay, and a finding you already accepted, dismissed or deleted is
+not added again. Output that is not a review (no summary, verdict or findings list) is an
+error and changes nothing. Each scope (branch, stack layer, full stack) has its own review, like the guide: a layer's
 review covers only that branch's changes on top of its parent, the full stack all of them, with
 the same branch tags in the prompt.
 

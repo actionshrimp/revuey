@@ -177,10 +177,11 @@ h.test(':RevueyAIReview runs claude read-only with the review schema; findings l
   h.eq(1, #calls)
   local argv = calls[1].argv
   h.eq(vim.uv.fs_realpath(repo), vim.uv.fs_realpath(calls[1].cwd))
+  -- exactly the guide's read-only invocation, with the review schema and name
+  local want = ai.providers.claude.build({ cmd = 'claude', prompt = '', schema = arg_value(argv, '--json-schema'), name = 'revuey review: feat', restricted = true })
+  h.eq(want, argv)
   h.eq('dontAsk', arg_value(argv, '--permission-mode'))
-  h.eq('Read,Grep,Glob,Bash', arg_value(argv, '--tools'))
-  h.ok(vim.tbl_contains(argv, '--restricted') and vim.tbl_contains(argv, '--safe-mode') and vim.tbl_contains(argv, '--strict-mcp-config'))
-  h.eq('revuey review: feat', arg_value(argv, '--name'))
+  h.ok(vim.tbl_contains(argv, '--restricted') and vim.tbl_contains(argv, '--safe-mode'))
   local schema = vim.json.decode(arg_value(argv, '--json-schema'))
   h.ok(schema.properties.findings and schema.properties.verdict, 'the review schema')
   local stdin = calls[1].stdin
@@ -237,6 +238,15 @@ h.test('ca accepts a finding (it becomes your comment); cn dismisses and restore
   msgs = {}
   keys('ca')
   h.ok(told('already accepted'), vim.inspect(msgs))
+  -- resolving and reopening an accepted finding keeps it accepted
+  keys('cx')
+  h.eq('resolved', comments.get(s.cm.store, twenty.id).status)
+  msgs = {}
+  keys('cn')
+  h.ok(told('resolved: reopen it first'), vim.inspect(msgs))
+  keys('cx')
+  h.eq('accepted', comments.get(s.cm.store, twenty.id).status)
+  h.ok(vlines(row_of('add', 20)):find('accepted from AI review', 1, true), vlines(row_of('add', 20)))
   -- dismiss: kept, collapsed, not counted
   vim.api.nvim_win_set_cursor(s.diff_win, { row_of('del', 20), 0 })
   keys('cn')
@@ -363,9 +373,92 @@ h.test('cancel stops claude and its children; nothing is imported', function()
   end, 50), 'no live process group')
   h.eq(n, vim.tbl_count(findings()))
   h.ok(not panel():find('! failed', 1, true), 'a cancel is not a failure')
+  -- cancelled while still gathering the prompt (before claude starts): the spinner goes too,
+  -- for AI reviews and for the guide
+  local gv = require('revuey.guide_view')
+  local orig = gv.prompt_context
+  gv.prompt_context = function(r)
+    require('revuey.git').system({ 'sleep', '0.5' })
+    return orig(r)
+  end
+  vim.cmd('RevueyAIReview!')
+  h.ok(s.panel_ai_status_row, 'a status row while it runs')
+  vim.cmd('RevueyAIReview cancel')
+  h.eq(nil, s.panel_ai_status_row, 'the panel was redrawn without it')
+  view.guide_command(true)
+  h.ok(s.panel_status_row, 'the guide status row')
+  view.guide_command(false, 'cancel')
+  h.eq(nil, s.panel_status_row, 'the guide panel was redrawn too')
+  assert(vim.wait(3000, function()
+    return next(arv.jobs) == nil and next(gv.jobs) == nil
+  end, 20))
+  vim.wait(700) -- the gathering coroutines finish and spawn nothing
+  gv.prompt_context = orig
+  h.eq({}, vim.tbl_keys(ai.live))
+  view.set_view('diff')
   msgs = {}
   vim.cmd('RevueyAIReview cancel')
   h.ok(told('no AI review is running'), vim.inspect(msgs))
+  vim.env.REVUEY_FAKE_CLAUDE = nil
+end)
+
+h.test('a run outlives its review: closing it, then reopening shows the findings and the verdict', function()
+  vim.env.REVUEY_FAKE_CLAUDE = 'slow'
+  vim.env.REVUEY_FAKE_CLAUDE_OUTPUT = nil
+  local key = arv.key(s)
+  vim.cmd('RevueyAIReview!')
+  view.close()
+  assert(vim.wait(20000, function()
+    return next(arv.jobs) == nil
+  end, 20), 'did not finish')
+  local rec = require('revuey.ai_review').read_record(require('revuey.ai_review').record_path(key))
+  h.ok(rec and rec.summary == 'A fake review summary.', vim.inspect(rec))
+  local found = false
+  for _, c in pairs(comments.load(key, { readonly = true }).comments) do
+    found = found or (not c.deleted and c.ai and c.ai.title == 'First line looks wrong')
+  end
+  h.ok(found, 'written to the scope\'s comments file')
+  s = h.open_review({ cwd = repo, base = '' })
+  h.ok(panel():find('A fake review summary.', 1, true), panel())
+  h.ok(findings()['First line looks wrong'], 'shown')
+  vim.env.REVUEY_FAKE_CLAUDE = nil
+  view.close()
+end)
+
+h.test('stack: a full-stack review tags hunks with their branch; a run finishes for its own layer after ]s', function()
+  local d = h.tmpdir('ai-review-stack')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  s = h.open_review({ cwd = d, base = '' })
+  h.eq({ kind = 'layer', index = 2 }, s.scope)
+  keys('gs')
+  h.eq({ kind = 'full' }, s.scope)
+  vim.fn.delete(log)
+  vim.cmd('RevueyAIReview!')
+  wait_job()
+  local stdin = h.read_calls(log)[1].stdin
+  h.ok(stdin:find('This review covers a whole stack of 3 branches', 1, true), stdin)
+  h.ok(stdin:find('@@ h1 [^\n]* @@ %[stack/'), 'branch tags on hunk markers')
+  local full_key = arv.key(s)
+  h.ok(next(findings()), 'full-stack findings')
+  -- back to layer 2: its own (empty) review
+  keys('gs')
+  h.ok(arv.key(s) ~= full_key)
+  h.eq(nil, next(findings()), 'the layer has no findings yet')
+  h.ok(not panel():find(' AI review', 1, true), panel())
+  -- start on layer 2, move to layer 3 while it runs
+  vim.env.REVUEY_FAKE_CLAUDE = 'slow'
+  local layer2 = arv.key(s)
+  vim.cmd('RevueyAIReview!')
+  keys(']s')
+  h.eq(3, s.scope.index)
+  wait_job()
+  h.eq(nil, next(findings()), 'layer 3 got nothing')
+  h.ok(not panel():find(' AI review', 1, true), panel())
+  keys('[s')
+  h.eq(layer2, arv.key(s))
+  h.ok(findings()['First line looks wrong'], 'layer 2 got its findings')
+  h.ok(panel():find(' AI review', 1, true), panel())
   vim.env.REVUEY_FAKE_CLAUDE = nil
   view.close()
 end)

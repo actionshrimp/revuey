@@ -1095,12 +1095,45 @@ function M.comment(o, pos)
   out(('%s\ncommented on %s (%s) in %s\n'):format(c.id, comments.location(c), c.file_level and 'file' or anchor.side, where_text(info, attached)))
 end
 
----The hunks of the review `comment` would use, with the AI review's ids (guide.hunks).
+---The stack of a review loaded from a session's `load` record (which has the diff, not the stack
+---object): detected again, for the prompt's scope wording and branch tags.
+local function restore_stack(o, ctx, r, info)
+  if r.stack or info.scope == 'branch' then
+    return
+  end
+  local last = sessions.read_last(sessions.bases(ctx.root, state_dir(o)), ctx.root) or {}
+  local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
+    or git.default_branch(ctx.root)
+  local ok, st = pcall(require('revuey.stack').detect, ctx.root, trunk, nil, { state_dir = state_dir(o) })
+  if not (ok and st) then
+    return
+  end
+  if info.scope == 'full' then
+    r.stack, r.scope = st, { kind = 'full' }
+    return
+  end
+  for i, l in ipairs(st.layers) do
+    if l.name == r.branch then
+      r.stack, r.scope = st, { kind = 'layer', index = i }
+    end
+  end
+end
+
+---The hunks of the review `comment` would use, with the AI review's ids (guide.hunks) and, in
+---the full-stack scope, the branch that introduced each one (as the UI tags them).
 local function review_hunks(o)
   local ctx = here(o)
   local attached = pick_session(o, ctx, live_sessions(o, ctx))
   local r, info, cpath, epath = comment_review(o, ctx, attached)
-  return r, require('revuey.review').units(r).hunks, info, cpath, epath, attached
+  restore_stack(o, ctx, r, info)
+  local hunks = require('revuey.review').units(r).hunks
+  local labels = require('revuey.attribution').load(r)
+  if labels then
+    for _, h in ipairs(hunks) do
+      h.layers = labels[h.file_idx] and labels[h.file_idx][h.hunk_idx or 0] or nil
+    end
+  end
+  return r, hunks, info, cpath, epath, attached
 end
 
 function M.hunks(o)

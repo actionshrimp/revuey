@@ -858,7 +858,9 @@ function M.resolve(s)
       return M.refresh(s)
     end
     local copy = vim.deepcopy(cur)
-    copy.status = cur.status == 'resolved' and 'saved' or 'resolved'
+    -- reopening an accepted AI finding makes it accepted again (still your comment)
+    local reopened = (cur.ai and cur.ai.accepted_at) and 'accepted' or 'saved'
+    copy.status = cur.status == 'resolved' and reopened or 'resolved'
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
   end)

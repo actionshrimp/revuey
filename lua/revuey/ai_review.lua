@@ -93,34 +93,48 @@ end
 ---@field body string
 ---@field suggestion? string
 
----Hold a review document to the schema, against the hunks it was made for. Findings whose
----anchor is bad (unknown hunk id, a line the hunk does not have, an end before the start) are
----dropped and counted; a finding without a line (or on a file without a text diff) is about the
----whole file. Exact duplicates are dropped, and findings past MAX_FINDINGS.
+---Hold a review document to the schema, against the hunks it was made for. Anything that is not
+---a review (no summary or verdict, findings that are not a list, a top-level array, prose around
+---some other JSON object) is an error, so it can never replace the last review. Findings whose
+---anchor is bad (unknown hunk id, a line the hunk does not have or the prompt did not show, an
+---end before the start) are dropped and counted; a finding without a line (or on a file without a
+---text diff, or when the prompt showed no hunk bodies) is about the whole file. Exact duplicates
+---are dropped, and findings past MAX_FINDINGS.
+---`shown`: what the prompt showed (prompt.build's info): `level` ('full'|'abridged'|'files') and
+---`abridged` (set of hunk ids shown as a preview of PREVIEW_LINES lines). nil: every line.
 ---@param raw table|string decoded output, or text to repair
 ---@param hunks revuey.GuideHunk[]
+---@param shown? {level?: string, abridged?: table<string, boolean>}
 ---@return {summary:string, verdict:string, findings:revuey.AiFinding[], diff?:string}? doc
 ---@return string|table err_or_warnings error message, or on success {dropped, unknown_hunk, bad_line, empty, duplicates, extra, verdict_unknown?}
-function M.validate(raw, hunks)
+function M.validate(raw, hunks, shown)
   if type(raw) == 'string' then
     raw = guide.repair_json(raw)
     if not raw then
       return nil, 'the review is not valid JSON'
     end
   end
-  if type(raw) ~= 'table' or vim.islist(raw) and #raw > 0 then
+  if type(raw) ~= 'table' or (vim.islist(raw) and #raw > 0) then
     return nil, 'the review is not a JSON object'
   end
-  if raw.findings ~= nil and type(raw.findings) ~= 'table' then
-    return nil, 'findings must be an array'
+  if type(raw.findings) ~= 'table' or not (vim.islist(raw.findings) or next(raw.findings) == nil) then
+    return nil, raw.findings == nil and 'the review has no findings array (use [] for none)' or 'findings must be an array'
   end
+  if type(raw.summary) ~= 'string' then
+    return nil, 'the review has no summary'
+  end
+  if type(raw.verdict) ~= 'string' then
+    return nil, 'the review has no verdict'
+  end
+  local level = shown and shown.level or 'full'
+  local abridged = shown and shown.abridged or {}
   local by_id = {}
   for _, h in ipairs(hunks) do
     by_id[h.id] = h
   end
   local w = { dropped = 0, unknown_hunk = 0, bad_line = 0, empty = 0, duplicates = 0, extra = 0 }
   local findings, seen = {}, {}
-  for _, f in ipairs(raw.findings or {}) do
+  for _, f in ipairs(raw.findings) do
     local reason
     local out
     if type(f) ~= 'table' then
@@ -138,15 +152,17 @@ function M.validate(raw, hunks)
         local line, last = int(f.line), int(f.end_line)
         if f.line ~= nil and not line or f.end_line ~= nil and not last then
           reason = 'bad_line'
-        elseif h.hunk_idx and line then
+        elseif h.hunk_idx and line and level ~= 'files' then
           last = last or line
-          if line < 1 or line > #h.text or last < line or last > #h.text then
+          -- an abridged hunk only showed (and numbered) its first lines
+          local max = abridged[id] and math.min(#h.text, prompt.PREVIEW_LINES) or #h.text
+          if line < 1 or line > max or last < line or last > max then
             reason = 'bad_line'
           else
             -- a comment spans at most MAX_RANGE lines (as one from the shell)
             last = math.min(last, line + comments.MAX_RANGE - 1)
           end
-        elseif h.hunk_idx and last then
+        elseif h.hunk_idx and last and level ~= 'files' then
           reason = 'bad_line' -- an end without a start
         else
           line, last = nil, nil -- the whole file
@@ -329,6 +345,7 @@ end
 ---@field author {kind:'ai', name?:string}
 ---@field generator? table        provider, model, session_id, skill, duration_ms...
 ---@field record_path string
+---@field shown? {level?: string, abridged?: table<string, boolean>} what the prompt showed (validate)
 ---@field now? integer
 
 ---Import a review document: validate it, replace the author's untouched findings of the last
@@ -340,7 +357,7 @@ end
 ---@return table? record {id, summary, verdict, imported, dropped, skipped, replaced, warnings, ...}
 ---@return string? err
 function M.import(raw, o)
-  local doc, w = M.validate(raw, o.hunks)
+  local doc, w = M.validate(raw, o.hunks, o.shown)
   if not doc then
     return nil, w --[[@as string]]
   end
@@ -362,13 +379,19 @@ function M.import(raw, o)
   end
   local now = o.now or comments.now_ms()
   local store = o.store
+  -- what is untouched is decided on the file as it is now: another instance (or the CLI) may
+  -- have accepted, dismissed or answered a finding since this store was loaded
+  pcall(comments.reload, store)
   local id = comments.new_id(now)
   local replaced, triaged = {}, {}
   for cid, c in pairs(store.comments) do
     if M.untouched(c, o.author) then
       replaced[#replaced + 1] = cid
-    elseif not c.deleted and c.ai then
+    elseif c.ai and not c.deleted then
       triaged[finding_key(c.anchor, c.ai.title)] = true
+    elseif c.deleted and type(c.ai) == 'table' and type(c.ai.anchor) == 'table' then
+      -- deleted by the user (comments.delete keeps where it was): not imported again
+      triaged[finding_key(c.ai.anchor, c.ai.title)] = true
     end
   end
   table.sort(replaced)
@@ -397,7 +420,12 @@ function M.import(raw, o)
   end
   local gone = {}
   for _, cid in ipairs(replaced) do
-    gone[#gone + 1] = comments.delete(store, cid, now)
+    -- a tombstone just newer than the version seen: any change made meanwhile elsewhere (an
+    -- accept, a dismiss, a reply) is newer still and wins the merge, and the finding stays
+    local prev = store.comments[cid]
+    store.comments[cid] = { id = cid, deleted = true, deleted_at = now, updated_at = (prev.updated_at or 0) + 1 }
+    store._dirty[cid] = true
+    gone[#gone + 1] = prev
   end
   comments.save(store, o.info)
   for _, c in ipairs(gone) do
@@ -456,8 +484,12 @@ function M.toggle_dismiss(store, id, now)
   if not cur or not cur.ai then
     return nil, 'not an AI finding'
   end
-  if cur.status ~= 'saved' and cur.status ~= 'dismissed' then
+  if cur.status == 'accepted' then
     return nil, 'already accepted: it is your comment now (resolve or delete it instead)'
+  elseif cur.status == 'resolved' then
+    return nil, 'resolved: reopen it first (cx), then dismiss it'
+  elseif cur.status ~= 'saved' and cur.status ~= 'dismissed' then
+    return nil, 'not a finding to dismiss (' .. tostring(cur.status) .. ')'
   end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
@@ -549,7 +581,11 @@ function M.find_skill(arg, root, home)
     return nil, 'no skill given'
   end
   if arg:find('/', 1, true) or arg:match('%.md$') or arg:sub(1, 1) == '~' then
-    local p = vim.fn.expand(arg)
+    -- taken literally: only a leading ~ means the home directory (no %, # or wildcards)
+    local p = arg
+    if arg == '~' or arg:sub(1, 2) == '~/' then
+      p = (home or vim.env.HOME or '~') .. arg:sub(2)
+    end
     if p:sub(1, 1) ~= '/' and root then
       p = vim.fs.joinpath(root, p)
     end
@@ -595,6 +631,11 @@ end
 ---the YAML front matter. Refuses empty and oversized files.
 ---@return {name:string, text:string, path:string}? skill, string? err
 function M.read_skill(path)
+  local st = vim.uv.fs_stat(path)
+  -- the cap is on the text without front matter; anything far over it is not read at all
+  if st and st.size > prompt.SKILL_MAX_CHARS + 4096 then
+    return nil, ('%s is too large (%d bytes, at most %d characters)'):format(path, st.size, prompt.SKILL_MAX_CHARS)
+  end
   local fd = io.open(path, 'r')
   if not fd then
     return nil, 'cannot read ' .. path

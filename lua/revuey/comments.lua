@@ -1056,6 +1056,11 @@ function M.delete(store, id, now)
     return nil
   end
   local t = { id = id, deleted = true, deleted_at = now or M.now_ms(), updated_at = c.updated_at }
+  if type(c.ai) == 'table' then
+    -- an AI review finding the user deleted: where it was, so a later review does not add it again
+    local a = c.anchor or {}
+    t.ai = { title = c.ai.title, anchor = { path = a.path, side = a.side, start_line = a.start_line, end_line = a.end_line } }
+  end
   touch(store, t, now)
   return c
 end

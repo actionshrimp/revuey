@@ -818,6 +818,9 @@ are in `reports/Terminal code review tool landscape.md`.
       same tools and allow/deny rules, process-group kill), `--name "revuey review: <branch>"`.
       One job per scope, keyed by the scope's comments file (`ai_review_view.jobs`), outliving
       scope switches and the review; a 100ms ticker draws the panel spinner via an extmark.
+      A job cancelled while its prompt is still gathered calls its `on_change` (guide jobs too),
+      so the spinner goes at once. The job and spinner code mirrors the guide's rather than
+      sharing a helper.
     - **Skills.** `:RevueyAIReview <skill>`: `ai_review.find_skill` looks for
       `~/.claude/skills/<name>/SKILL.md`, then the repo's `.claude/skills/<name>/SKILL.md` (the
       user's own first), or takes a path to a skill directory or a Markdown file;
@@ -826,9 +829,14 @@ are in `reports/Terminal code review tool landscape.md`.
       the skill `x`"), inside the prompt budget. revuey reads it because the restricted run
       loads no skills.
     - **Validation** (`ai_review.validate`, against the launch-time hunks): JSON repair as for
-      the guide; ids normalised (`H7`, `7`); a finding is dropped and counted by reason when
-      its hunk is unknown, its lines are not integers inside the hunk (or end before they
-      start, or an end comes without a start), it has neither title nor body, it duplicates an
+      the guide; the document must be an object with a string `summary` and `verdict` and a
+      `findings` list, else it is an error (prose around some other JSON object, a guide, `{}`,
+      a findings map), so invalid output never replaces the last review; ids normalised (`H7`,
+      `7`); a finding is dropped and counted by reason when its hunk is unknown, its lines are
+      not integers inside the hunk or past what the prompt showed (an abridged hunk numbers only
+      its first 6 lines; `guide_prompt.user_message` reports `abridged_ids`, and at its `files`
+      level every finding is whole-file), or end before they start, or an end comes without a
+      start, it has neither title nor body, it duplicates an
       earlier one (hunk, lines, title), or it is past 50. A line on a file without a text diff
       becomes a whole-file finding. Severities and verdicts are normalised (aliases such as
       `high`, `changes_requested`; unknown: `minor`, `comment`), titles one line (else the
@@ -842,10 +850,14 @@ are in `reports/Terminal code review tool landscape.md`.
       The comment: author `{kind = 'ai', name}` (`claude` for revuey's own runs, `--name` or
       `$REVUEY_AGENT_NAME` for imports), status `saved`, body `**title**`, the explanation and
       a fenced "Suggested change", and `ai = {review, severity, title, suggestion, hunk, line,
-      end_line}`. **Re-runs:** the author's untouched findings (untriaged, no live reply, never
-      sent, no draft) are deleted (tombstones, `deleted` events); every other finding still in
-      the store blocks a new one with the same path, side, lines and title (counted as
-      skipped), so a dismissed finding does not come back. Then one save (merge, lock) and a
+      end_line}`. **Re-runs:** the store is reloaded first (another instance or the CLI may have
+      triaged meanwhile); the author's untouched findings (untriaged, no live reply, never sent,
+      no draft) are then deleted with tombstones whose `updated_at` is one past the version
+      seen, so any concurrent change elsewhere (accept, dismiss, reply) is newer and wins the
+      merge (`deleted` events). Every other finding still in the store, and every one the user
+      deleted (`comments.delete` keeps an AI finding's title and lines in its tombstone), blocks
+      a new one with the same path, side, lines and title (counted as skipped), so a dismissed
+      or deleted finding does not come back. Then one save (merge, lock) and a
       `created` event per finding. A `diff` hash that differs from the hunks' is refused before
       anything is written. The UI imports into the open review's store when it shows that scope
       (then refreshes), else into the file, which a running review reloads.
@@ -857,7 +869,8 @@ are in `reports/Terminal code review tool landscape.md`.
       comment on the same line is skipped) and append `accepted`/`dismissed` events (a
       `dismissed` event with status `saved` reads "restore"). Follow-up is the agent link:
       `cs`/`cr` work unchanged, and `show` labels the comment as an AI review finding the user
-      sent. Delivery stays separate from status (decision 12).
+      sent. `cx` works as on any comment; reopening an accepted finding makes it `accepted`
+      again, and `cn` on a resolved one says to reopen it first. Delivery stays separate from status (decision 12).
     - **Record.** `<state file>.ai-review.json` next to the comments file (the scope's latest
       review): `{kind, version, id, author, summary, verdict, findings, imported, dropped,
       skipped, replaced, warnings, anchors, review, generator {provider, model, session_id,
@@ -870,7 +883,8 @@ are in `reports/Terminal code review tool landscape.md`.
       until the next run and never touch the record or the findings.
     - **From outside.** `bin/revuey hunks [--json|--prompt]` loads the review headlessly like
       `comment` and prints the user message (or the whole prompt, plus how to import), with the
-      anchors hash; `import-review [--name] [--session] <file|->` (`--schema` prints the schema)
+      anchors hash; a review loaded from a live session's `load` record gets its stack detected
+      again (the record has none), and the full scope gets the branch tags (`attribution.load`); `import-review [--name] [--session] <file|->` (`--schema` prints the schema)
       imports into the session's comments file, printing imported, dropped, skipped and
       replaced counts.
     - Not done: posting to the forge (roadmap: "add to review" and the verdict become a
