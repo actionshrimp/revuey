@@ -47,18 +47,45 @@ h.test('parse_arg: a number, #N, pr:N or a pull request URL; anything else is re
   h.eq(nil, (pr.parse_arg('12abc')))
 end)
 
-h.test('check_repo: a URL must name the clone\'s GitHub repo (wt looks the number up there)', function()
+h.test('check_repo: a URL must name the clone\'s GitHub repo, host included (wt looks the number up there)', function()
   local base = { host = 'github.com', owner = 'acme', name = 'shop' }
   h.eq(nil, pr.check_repo({ number = 7 }, nil), 'a bare number is left to wt')
   h.eq(nil, pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'ACME', name = 'Shop' } }, base))
+  h.eq(nil, pr.check_repo({ number = 7, repo = { host = 'www.github.com', owner = 'acme', name = 'shop' } }, base))
   h.eq(
     'PR #7 is in other/thing, but this clone is acme/shop: open it from a clone of other/thing',
     pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'other', name = 'thing' } }, base)
   )
   h.eq(
-    'this clone has no GitHub remote, so other/thing#7 cannot be opened here',
+    'this clone has no GitHub remote wt would use, so other/thing#7 cannot be opened here',
     pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'other', name = 'thing' } }, nil)
   )
+  -- a GitHub Enterprise clone and a github.com URL of the same owner/name
+  local ghe = { host = 'git.corp.net', owner = 'acme', name = 'shop' }
+  h.eq(
+    'PR #7 is on github.com (acme/shop), but this clone is on git.corp.net (acme/shop): open it from a clone of github.com/acme/shop',
+    pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'acme', name = 'shop' } }, ghe, { 'git.corp.net' })
+  )
+  h.eq(nil, pr.check_repo({ number = 7, repo = { host = 'git.corp.net', owner = 'acme', name = 'shop' } }, ghe, { 'git.corp.net' }))
+end)
+
+h.test('wt_remote: as wt picks it (gh-resolved, else origin, else the first remote), not like gh\'s PR lookups', function()
+  local function info(remotes, resolved)
+    local i = { names = {}, remotes = {}, resolved = resolved or {}, branches = {} }
+    for _, r in ipairs(remotes) do
+      i.names[#i.names + 1] = r[1]
+      i.remotes[r[1]] = { url = '', repo = { host = 'github.com', owner = r[2], name = 'shop' } }
+    end
+    return i
+  end
+  local fork = info({ { 'origin', 'me' }, { 'upstream', 'acme' } })
+  fork.branches.main = { up_remote = 'upstream', up_ref = 'refs/heads/main' }
+  local name, repo = pr.wt_remote(fork)
+  h.eq('origin', name, 'origin, even with an upstream remote the trunk tracks')
+  h.eq('me', repo.owner)
+  h.eq('upstream', (pr.wt_remote(info({ { 'origin', 'me' }, { 'upstream', 'acme' } }, { upstream = 'base' }))))
+  h.eq('fork', (pr.wt_remote(info({ { 'fork', 'me' }, { 'upstream', 'acme' } }))), 'no origin: the first remote')
+  h.eq(nil, (pr.wt_remote(info({}))))
 end)
 
 h.test('argv: wt switch pr:N --no-cd --format json, never --yes; the terminal form sends stdout to a file', function()
@@ -127,8 +154,15 @@ h.test('failure: approval needed (with the commands), a failed pre-start hook (w
   h.ok(not msg:find('add --yes', 1, true), 'revuey does not suggest --yes: ' .. msg)
 
   f = pr.failure(3, REAL.hook)
-  h.eq({ kind = 'hook', path = '/w/repo.feat2', text = 'pre-start project:build failed (exit code 3)\nTo skip pre-start hooks, re-run with --no-hooks' }, f)
+  h.eq({
+    kind = 'hook',
+    path = '/w/repo.feat2',
+    text = 'pre-start project:build failed (exit code 3)\nTo skip pre-start hooks, re-run with --no-hooks',
+    output = { 'npm run build', 'building' },
+  }, f)
   msg = pr.failure_message(9, f)
+  h.ok(msg:find('\n  npm run build\n  building\n', 1, true), 'the hook\'s last lines: ' .. msg)
+  h.ok(msg:find('revuey.log', 1, true), msg)
   h.ok(msg:find('wt switch pr:9 failed: pre-start project:build failed (exit code 3)', 1, true), msg)
   h.ok(msg:find("The worktree was created at /w/repo.feat2", 1, true), msg)
   h.ok(msg:find("`wt remove '/w/repo.feat2'`", 1, true), msg)
@@ -139,6 +173,13 @@ h.test('failure: approval needed (with the commands), a failed pre-start hook (w
   h.eq('gh api failed for PR #5\nHTTP 404: Not Found (https://api.github.com/repos/acme/shop/pulls/5)', pr.failure(1, REAL.unknown).text)
   h.eq({ kind = 'failed', text = 'wt exited with code 2' }, pr.failure(2, ''))
   h.eq('last words', pr.failure(1, 'a\nb\nlast words\n').text:match('last words'))
+  -- only the last few lines before the error, never wt's earlier steps
+  local long = { '◎ Running pre-start project:build @ /w/x' }
+  for i = 1, 20 do
+    long[#long + 1] = 'line ' .. i
+  end
+  long[#long + 1] = '✗ pre-start project:build failed (exit code 1)'
+  h.eq({ 'line 16', 'line 17', 'line 18', 'line 19', 'line 20' }, pr.failure(1, table.concat(long, '\n')).output)
 end)
 
 h.test('clean: wt glyphs and ANSI codes go; created_path finds the worktree the hooks ran in', function()
@@ -173,7 +214,9 @@ local function reset(scenario, branch)
     pr_view.cancel()
   end
   view.close()
-  vim.fn.delete(log)
+  for _, f in ipairs({ log, log .. '.pid', log .. '.kids' }) do
+    vim.fn.delete(f)
+  end
   progress = {}
   h.use_fake_wt(log, scenario, branch)
 end
@@ -339,7 +382,64 @@ h.test('a failed pre-start hook: no review; the message names the worktree left 
   h.ok(msg:find('wt switch pr:7 failed: pre-start project:build failed (exit code 3)', 1, true), msg)
   h.ok(msg:find('The worktree was created at ' .. d .. '.feat', 1, true), msg)
   h.ok(msg:find('wt remove', 1, true), msg)
+  h.ok(msg:find("error TS2307: Cannot find module './gone'", 1, true), 'the hook\'s output: ' .. msg)
+  h.ok(msg:find('hook pre-start` re-runs it', 1, true), msg)
   h.eq(1, vim.fn.isdirectory(d .. '.feat'), 'left for the user (wt remove)')
+  local entry = require('revuey.log').entries[#require('revuey.log').entries]
+  h.eq('pr', entry.scope)
+  h.ok(entry.msg:find('Fetching PR #7', 1, true) and entry.msg:find('error TS2307', 1, true), 'all of stderr is logged: ' .. entry.msg)
+end)
+
+h.test('long hook output: a bounded stderr tail, the created worktree tracked as lines arrive', function()
+  local d = clone('pr-noisy')
+  reset('ok', 'feat')
+  -- 2MB of output from a failing pre-start hook, in small writes
+  vim.env.REVUEY_FAKE_WT_HOOK = 'i=0; while [ $i -lt 20000 ]; do echo "compiling module $i of a large monorepo ......................................................................"; i=$((i+1)); done; exit 1'
+  local msgs, restore = h.capture_notify()
+  local s = open_pr('7', d, 20000)
+  vim.wait(20000, function()
+    return #msgs > 0
+  end, 20)
+  restore()
+  vim.env.REVUEY_FAKE_WT_HOOK = nil
+  h.eq(nil, s)
+  local msg = msgs[#msgs].msg
+  h.ok(msg:find('compiling module 19999', 1, true), msg)
+  h.ok(msg:find('The worktree was created at ' .. d .. '.feat', 1, true), msg)
+  local entry = require('revuey.log').entries[#require('revuey.log').entries]
+  h.ok(#entry.msg <= pr.STDERR_MAX + 200, 'stderr kept bounded: ' .. #entry.msg)
+end)
+
+h.test('fork clone (origin = the fork, upstream = the parent, main tracking upstream): URLs are checked against what wt uses', function()
+  local d = clone('pr-fork')
+  h.git(d, 'remote', 'set-url', 'origin', 'git@github.com:me/shop.git')
+  h.git(d, 'remote', 'add', 'upstream', 'git@github.com:acme/shop.git')
+  h.git(d, 'config', 'branch.main.remote', 'upstream')
+  h.git(d, 'config', 'branch.main.merge', 'refs/heads/main')
+  local function try(url)
+    reset('ok', 'feat')
+    local msgs, restore = h.capture_notify()
+    local s = open_pr(url, d, 3000)
+    restore()
+    view.close()
+    return s, msgs[#msgs], #h.read_calls(log)
+  end
+  local s, m, calls = try('https://github.com/acme/shop/pull/12')
+  h.eq(nil, s)
+  h.eq('revuey: PR #12 is in acme/shop, but this clone is me/shop: open it from a clone of acme/shop', m.msg)
+  h.eq(0, calls, 'wt (which would ask me/shop for #12) never ran')
+  s = try('https://github.com/me/shop/pull/12')
+  h.ok(s, 'the fork\'s URL is the one wt opens')
+  -- gh repo set-default upstream: wt asks upstream
+  h.git(d, 'config', 'remote.upstream.gh-resolved', 'base')
+  h.ok((try('https://github.com/acme/shop/pull/12')), 'gh-resolved wins')
+  h.git(d, 'config', '--unset', 'remote.upstream.gh-resolved')
+  -- no origin: the first remote
+  h.git(d, 'remote', 'rename', 'origin', 'fork')
+  h.ok((try('https://github.com/me/shop/pull/12')), 'first remote (fork)')
+  local res = vim.system({ h.root .. '/bin/revuey', 'pr', 'https://github.com/acme/shop/pull/12' }, { cwd = d, text = true }):wait(20000)
+  h.eq(2, res.code)
+  h.ok(res.stderr:find('this clone is me/shop', 1, true), 'bin/revuey checks the same way: ' .. res.stderr)
 end)
 
 h.test(':Revuey pr cancel stops wt and the hook it runs (process group); the half-made worktree is named', function()
@@ -482,9 +582,112 @@ h.test('a failing run in the approval terminal keeps the terminal (wt\'s output)
   pcall(vim.api.nvim_buf_delete, term.buf, { force = true })
 end)
 
-h.test(':Revuey completes pr, and cancel after it', function()
+h.test('leaving Neovim (ai.kill_all, as on VimLeavePre) stops a running wt and its hook', function()
+  local d = clone('pr-killall')
+  reset('hang', 'feat')
+  require('revuey').pr('7', { cwd = d })
+  vim.wait(5000, function()
+    return vim.uv.fs_stat(log .. '.kids') ~= nil and #vim.fn.readfile(log .. '.kids') > 0
+  end, 10)
+  local wt_pid = tonumber(vim.fn.readfile(log .. '.pid')[1])
+  local kid = tonumber(vim.fn.readfile(log .. '.kids')[1])
+  h.ok(vim.uv.kill(wt_pid, 0) == 0 and vim.uv.kill(kid, 0) == 0, 'running')
+  require('revuey.ai').kill_all()
+  vim.wait(3000, function()
+    return vim.uv.kill(wt_pid, 0) ~= 0 and vim.uv.kill(kid, 0) ~= 0
+  end, 20)
+  h.ok(vim.uv.kill(wt_pid, 0) ~= 0, 'wt stopped')
+  h.ok(vim.uv.kill(kid, 0) ~= 0, 'its hook stopped')
+  local msgs, restore = h.capture_notify()
+  vim.wait(3000, function()
+    return pr_view.current == nil
+  end, 10)
+  restore()
+  h.eq(nil, pr_view.current)
+  h.eq(nil, view.session)
+end)
+
+---Start `:Revuey pr 7` with approval needed, accept the terminal, and wait for wt's prompt.
+---Returns the terminal, wt's pid and its output file.
+local function approval_terminal(name)
+  local d = clone(name)
+  reset('approval', 'feat')
+  local _, restore = answer(1)
+  require('revuey').pr('7', { cwd = d })
+  local term
+  vim.wait(5000, function()
+    term = pr_view.current and pr_view.current.term
+    return term and table.concat(vim.api.nvim_buf_get_lines(term.buf, 0, -1, false), '\n'):find('Allow and remember', 1, true) ~= nil
+  end, 20)
+  restore()
+  h.ok(term, 'terminal with the prompt')
+  vim.cmd('stopinsert')
+  return term, tonumber(vim.fn.readfile(log .. '.pid')[1]), term.out
+end
+
+local function no_term_left(term, pid, out)
+  h.eq(nil, pr_view.current)
+  h.ok(not vim.api.nvim_buf_is_valid(term.buf), 'terminal buffer gone')
+  vim.wait(3000, function()
+    return vim.uv.kill(pid, 0) ~= 0
+  end, 20)
+  h.ok(vim.uv.kill(pid, 0) ~= 0, 'wt stopped')
+  h.eq(nil, vim.uv.fs_stat(out), 'output file removed')
+end
+
+h.test(':Revuey pr cancel while the approval terminal waits: wt stopped, terminal closed, nothing left', function()
+  local term, pid, out = approval_terminal('pr-termcancel')
+  local msgs, restore = h.capture_notify()
+  vim.cmd('Revuey pr cancel')
+  restore()
+  h.eq('revuey: cancelled wt switch pr:7', msgs[1].msg)
+  no_term_left(term, pid, out)
+end)
+
+h.test('the approval terminal closed by the user (:bd!, or :q hiding it): wt stopped, and the message says so', function()
+  for _, how in ipairs({ 'bd', 'q' }) do
+    local term, pid, out = approval_terminal('pr-termclose-' .. how)
+    local msgs, restore = h.capture_notify()
+    if how == 'bd' then
+      vim.cmd('bdelete! ' .. term.buf)
+    else
+      vim.api.nvim_set_current_win(vim.fn.win_findbuf(term.buf)[1])
+      vim.cmd('quit')
+    end
+    vim.wait(3000, function()
+      return #msgs > 0
+    end, 10)
+    restore()
+    h.eq('revuey: stopped wt switch pr:7: its terminal was closed (:Revuey pr 7 starts again)', msgs[1] and msgs[1].msg, how)
+    h.eq(1, #msgs, how)
+    no_term_left(term, pid, out)
+  end
+end)
+
+h.test('the approval terminal\'s output file goes after a successful run too', function()
+  local term, _, out = approval_terminal('pr-termok')
+  local session
+  vim.api.nvim_chan_send(term.job, 'y\r')
+  vim.wait(10000, function()
+    session = view.session
+    return session ~= nil
+  end, 10)
+  h.ok(session, 'opened')
+  h.eq(nil, vim.uv.fs_stat(out))
+end)
+
+h.test(':Revuey completes pr, and cancel after it; a branch named pr is listed once', function()
   h.ok(vim.tbl_contains(vim.fn.getcompletion('Revuey p', 'cmdline'), 'pr'))
   h.eq({ 'cancel' }, vim.fn.getcompletion('Revuey pr ', 'cmdline'))
+  local d = clone('pr-branch-pr')
+  h.git(d, 'branch', 'pr')
+  local cwd = vim.fn.getcwd()
+  vim.cmd.cd(d)
+  local list = vim.fn.getcompletion('Revuey p', 'cmdline')
+  vim.cmd.cd(cwd)
+  h.eq(1, #vim.tbl_filter(function(x)
+    return x == 'pr'
+  end, list), vim.inspect(list))
 end)
 
 -- ---------------------------------------------------------------------------

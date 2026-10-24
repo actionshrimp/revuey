@@ -897,17 +897,22 @@ are in `reports/Terminal code review tool landscape.md`.
     worktrunk config decides where the worktree goes and its hooks (pre-switch, then the
     blocking pre-start: install, build) set it up; there is no fresh-clone mode and no `wt`
     config of revuey's own.
-    - **Argument.** `N`, `#N`, `pr:N` or a pull request URL. wt ignores a URL's owner and name
-      (it asks the clone's own repo for that number), so a URL is turned into `pr:N` only when
-      it names the clone's base repo (`forge.remote_info` + `forge.base_remote`, resolved like
-      gh); another repo's URL is refused before wt runs. A bare number is left to wt.
+    - **Argument.** `N`, `#N`, `pr:N` or a pull request URL. wt ignores a URL's host, owner and
+      name (it asks the clone's own repo for that number), so a URL is turned into `pr:N` only
+      when host and repo are those of the remote wt uses (`pr.wt_remote` over
+      `forge.remote_info`, in wt 0.81's order: the `gh repo set-default` remote, i.e.
+      `remote.<name>.gh-resolved = base`, else `origin`, else the first remote; not
+      `forge.base_remote`, which prefers `upstream` and the trunk's remote, so in a fork clone
+      wt asks the fork); another URL is refused before wt runs. A bare number is left to wt.
+      `pr` is always the subcommand: a base branch named `pr` is `:Revuey refs/heads/pr`.
     - **Run.** `vim.system` with stdin closed (wt sees no terminal), detached (its own process
       group: `:Revuey pr cancel`, or a progress UI cancelling the message, sends SIGTERM then
       SIGKILL to the group via `ai.terminate`, so hook processes such as `npm install` stop
       too; `ai.live` kills it on `VimLeavePre`). One setup at a time (`pr_view.current`,
       claimed before the first yield); a second request is refused with a message. stdout is
       one JSON line `{action: created|existing, branch, path}`; stderr carries progress and
-      hook output, shown line by line as a Neovim 0.12 progress message (`nvim_echo`
+      hook output (kept as chunks, the latest 256KB; the created worktree's path is noted as
+      its `Running pre-start ... @ <path>` line arrives), shown line by line as a Neovim 0.12 progress message (`nvim_echo`
       `kind = 'progress'`, id `revuey.pr`, with elapsed seconds from a 1s timer), ending
       `success` or `failed`.
     - **Where the review opens.** In a new tab (as every review) with `:tcd <worktree>`
@@ -928,7 +933,8 @@ are in `reports/Terminal code review tool landscape.md`.
       the roadmap's next part.
     - **Errors.** No `wt` on PATH (or `worktrunk.cmd`): checked before anything runs. wt's own
       failures are shown in wt's words (the `✗` line and what follows, glyphs and ANSI codes
-      stripped): no `gh`, no GitHub remote, unknown PR, a failed hook. A pre-start failure
+      stripped), plus the last 5 lines a failing step printed before it; all of stderr (as
+      kept) goes to `revuey.log`: no `gh`, no GitHub remote, unknown PR, a failed hook. A pre-start failure
       leaves the worktree (wt does not remove it): its path comes from the last `Running
       pre-start ... @ <path>` line, and the message says `:Revuey pr` opens it as is (pre-start
       only runs on creation), how to re-run the hooks (`wt -C <path> hook pre-start`) and
@@ -941,7 +947,10 @@ are in `reports/Terminal code review tool landscape.md`.
       (`jobstart` with `term = true` running `sh -c 'exec "$@" > "$0"' <file> wt switch ...`:
       wt's prompt and the hooks' output go to the terminal, its JSON to the file), where the
       user answers wt's own prompt; on exit 0 the terminal closes and the review opens, on a
-      failure the terminal stays with wt's output. Declining in revuey says how to approve
+      failure the terminal stays with wt's output. Closing or hiding the terminal while wt runs
+      (`:q`, `:bd!`; `BufHidden`/`BufUnload`/`BufWipeout`) stops wt, since nobody can answer
+      its prompt any more, and says so; cancel closes the terminal; the output file is deleted
+      on every path. Declining in revuey says how to approve
       (`wt config approvals add`, or one `wt switch` in a shell). Declining in wt's prompt
       makes wt skip the project hooks and go on, which is the user's choice.
     - **bin/revuey pr** runs `wt switch` in the user's terminal itself (stdin, stderr and the

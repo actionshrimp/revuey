@@ -443,19 +443,23 @@ your shell, so your worktrunk hooks install dependencies and build it first:
    branch: the stack is detected as for any branch (local branches below it are layers), and the
    [PR status](#pull-requests) section warns when GitHub's base differs from the stack parent.
    Building the layers from the PR's base chain on GitHub is not done yet.
-3. A URL must name this clone's GitHub repo (worktrunk looks the number up in the clone's repo
-   whatever the URL says, so revuey refuses a URL from another repo instead of opening a
-   different PR). worktrunk's own errors are shown as it words them: `gh` missing, no GitHub
+3. A URL must name the repo worktrunk uses (it looks the number up there whatever the URL
+   says, so revuey refuses another repo's URL instead of opening a different PR). That is the
+   remote `gh repo set-default` chose, else `origin`, else the first remote: in a fork clone
+   (`origin` your fork, `upstream` the parent) that is the fork, so open the parent's PRs from
+   a clone of the parent, or run `gh repo set-default` there. worktrunk's own errors are shown as it words them: `gh` missing, no GitHub
    remote, an unknown PR, a failed hook.
 
 **Approvals.** worktrunk asks before running a repo's *project* hooks (`.config/wt.toml`) the first
 time, and again when they change; in the background it cannot ask and refuses. revuey never
 passes `--yes`: it shows the commands and offers to run the same `wt switch` in a terminal split,
 where you answer worktrunk's own prompt (or decline: worktrunk then skips the project hooks); the
-review opens when it succeeds. You can also approve beforehand with `wt config approvals add` in
+review opens when it succeeds. Closing the terminal (`:q`, `:bd!`) while worktrunk waits stops
+it. You can also approve beforehand with `wt config approvals add` in
 the clone. Hooks in your user config (`~/.config/worktrunk/config.toml`) need no approval.
 
-**A failed hook** leaves the worktree behind (worktrunk does not remove it); the message names it.
+**A failed hook** leaves the worktree behind (worktrunk does not remove it); the message names it
+and shows the last lines the hook printed (all of worktrunk's output goes to `revuey.log`).
 `:Revuey pr` again opens it as it is, since `pre-start` only runs when the worktree is created:
 re-run the hooks with `wt -C <path> hook pre-start`, or remove the worktree.
 
@@ -463,6 +467,9 @@ re-run the hooks with `wt -C <path> hook pre-start`, or remove the worktree.
 servers run in the worktree), then `wt remove <branch>` (or the worktree's path) removes the
 worktree, and the branch too when it is merged (`--no-delete-branch` keeps it, `-D` deletes an
 unmerged one). `wt list` shows them all.
+
+`pr` is always this subcommand: to review against a base branch named `pr`, use
+`:Revuey refs/heads/pr` (or `revuey refs/heads/pr`).
 
 From the shell, `bin/revuey pr 123` does the same, with `wt switch` running in your terminal
 (its output as it happens, its approval prompt, `^C` to stop), then starts Neovim with the review
