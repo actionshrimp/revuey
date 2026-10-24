@@ -29,7 +29,8 @@ end, {
       end, { '--stack', '--committed', '--worktree' })
     end
     local list = branches(arg)
-    if #words <= 2 and vim.startswith('pr', arg) then
+    -- (a branch named `pr` is listed once: `:Revuey pr` is always the subcommand, see README)
+    if #words <= 2 and vim.startswith('pr', arg) and not vim.tbl_contains(list, 'pr') then
       table.insert(list, 1, 'pr')
     end
     return list

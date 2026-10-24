@@ -6,9 +6,10 @@
 # origin/<branch> with --track.
 #   REVUEY_FAKE_WT         scenario: ok (default; an existing worktree is reused), slow (ok, the
 #                          pre-start hook takes $REVUEY_FAKE_WT_DELAY seconds, default 1),
-#                          approval (project hooks need approval: asks on a terminal, else fails
-#                          as wt does without one), hookfail (the worktree is created, then a
-#                          pre-start hook exits 3), hang (pre-start never ends: a `sleep` child
+#                          approval (project hooks need approval: asks on a terminal, its pid
+#                          going to $REVUEY_FAKE_WT_LOG.pid, else fails as wt does without
+#                          one), hookfail (the worktree is created, then a pre-start hook
+#                          exits 3), hang (pre-start never ends: a `sleep` child
 #                          whose pid goes to $REVUEY_FAKE_WT_LOG.kids, wt's to .pid), nogh,
 #                          notgithub, unknown (no such PR)
 #   REVUEY_FAKE_WT_BRANCH  the PR's head branch (default pr-<N>)
@@ -71,6 +72,7 @@ if [ "$scenario" = approval ]; then
     echo "↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add --yes" >&2
     exit 1
   fi
+  [ -n "${REVUEY_FAKE_WT_LOG:-}" ] && echo $$ > "$REVUEY_FAKE_WT_LOG.pid"
   printf '❯ Allow and remember? [y/N] ' >&2
   read -r answer
   case $answer in

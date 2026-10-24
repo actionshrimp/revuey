@@ -1260,9 +1260,8 @@ function M.pr_target(_, pos)
     local forge = require('revuey.forge')
     local root = git.root(vim.uv.cwd()) or die('not inside a git repository')
     local hosts = (require('revuey.config').options.forge or {}).hosts
-    local info = forge.remote_info(root, hosts)
-    local base = forge.base_remote(git.default_branch(root), info)
-    local e = pr.check_repo(p, base and info.remotes[base].repo)
+    local _, repo = pr.wt_remote(forge.remote_info(root, hosts))
+    local e = pr.check_repo(p, repo, hosts)
     if e then
       die(e, 2)
     end

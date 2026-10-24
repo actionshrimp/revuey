@@ -12,13 +12,9 @@ local M = {}
 -- progress messages (`nvim_echo` kind=progress) use one id, so each update replaces the last
 local PROGRESS_ID = 'revuey.pr'
 
----The one PR setup at a time: {number, job? (background run), term? {buf, job}, timer?}
+---The one PR setup at a time: {number, job? (background run), term? {buf, job, out}, timer?}
 ---@type table?
 M.current = nil
-
----Hook for tests: what to do once the worktree is ready (default: open the review there).
----@type fun(result:{path:string, branch?:string, action?:string}, opts:table)?
-M.on_ready = nil
 
 local function echo(n, status, text, history)
   pcall(api.nvim_echo, { { text } }, history or false, {
@@ -48,41 +44,60 @@ function M.status_text(c)
   return ('worktrunk %ds  %s'):format(secs, line)
 end
 
-local function open_review(result, opts)
-  if M.on_ready then
-    return M.on_ready(result, opts)
-  end
-  require('revuey.view').open({ cwd = result.path, tcd = true, on_ready = opts.on_open })
-end
-
 local function ready(c, result, opts)
   M.current = nil
   echo(c.number, 'success', ('worktree %s%s'):format(result.path, result.action == 'existing' and ' (existing)' or ''), true)
-  open_review(result, opts)
+  require('revuey.view').open({ cwd = result.path, tcd = true, on_ready = opts.on_open })
+end
+
+---Done with the approval terminal: its autocmds, its output file, and (`close`) its window and
+---buffer; wiping a terminal buffer stops its job, so wt stops when it still runs (`close` is
+---false only after wt exited, keeping its output on screen).
+local function close_term(c, close)
+  local t = c.term
+  if not t then
+    return
+  end
+  c.term = nil
+  t.closing = true
+  pcall(api.nvim_del_augroup_by_id, t.group)
+  vim.fn.delete(t.out)
+  if close then
+    for _, w in ipairs(vim.fn.win_findbuf(t.buf)) do
+      if #api.nvim_list_wins() > 1 then
+        pcall(api.nvim_win_close, w, true)
+      end
+    end
+    if api.nvim_buf_is_valid(t.buf) then
+      pcall(api.nvim_buf_delete, t.buf, { force = true })
+    end
+  end
 end
 
 ---Run `wt switch` in a terminal split, where wt can ask for approval (its own prompt, the
 ---user's answer); on success the review opens as after a background run. A failed run leaves
----the terminal open with wt's output.
+---the terminal open with wt's output. Closing or hiding the terminal while wt runs (`:q`,
+---`:bd!`) stops wt: nobody could answer its prompt any more.
 ---@param c table M.current
 function M.run_in_terminal(c, opts)
   local out = vim.fn.tempname()
   vim.cmd('botright 15new')
   local buf = api.nvim_get_current_buf()
-  local win = api.nvim_get_current_win()
   local cmd = config.options.worktrunk.cmd
+  local t = { buf = buf, out = out, group = api.nvim_create_augroup('revuey_pr_term_' .. buf, { clear = true }) }
+  c.term = t
   local ok, id = pcall(vim.fn.jobstart, pr.term_argv(cmd, c.number, out), {
     term = true,
     cwd = c.root,
     on_exit = function(_, code)
       vim.schedule(function()
-        if M.current ~= c then
-          return -- cancelled
+        if M.current ~= c or c.term ~= t then
+          return -- cancelled, or its terminal was closed
         end
         local text = vim.uv.fs_stat(out) and table.concat(vim.fn.readfile(out), '\n') or ''
-        vim.fn.delete(out)
         local result = code == 0 and pr.parse_result(text)
         if not result then
+          close_term(c, false)
           M.current = nil
           echo(c.number, 'failed', ('wt switch pr:%d failed (exit %d)'):format(c.number, code), true)
           return vim.notify(
@@ -90,21 +105,38 @@ function M.run_in_terminal(c, opts)
             vim.log.levels.ERROR
           )
         end
-        if api.nvim_win_is_valid(win) and #api.nvim_list_wins() > 1 then
-          pcall(api.nvim_win_close, win, true)
-        end
-        if api.nvim_buf_is_valid(buf) then
-          pcall(api.nvim_buf_delete, buf, { force = true })
-        end
+        close_term(c, true)
         ready(c, result, opts)
       end)
     end,
   })
   if not ok or id <= 0 then
+    close_term(c, true)
     M.current = nil
     return vim.notify('revuey: could not start ' .. cmd .. ' in a terminal: ' .. tostring(id), vim.log.levels.ERROR)
   end
-  c.term = { buf = buf, job = id }
+  t.job = id
+  api.nvim_create_autocmd({ 'BufHidden', 'BufUnload', 'BufWipeout' }, {
+    group = t.group,
+    buffer = buf,
+    callback = function()
+      if t.closing or M.current ~= c or c.term ~= t then
+        return
+      end
+      vim.schedule(function()
+        if M.current ~= c or c.term ~= t then
+          return
+        end
+        close_term(c, true)
+        M.current = nil
+        echo(c.number, 'failed', 'terminal closed', true)
+        vim.notify(
+          ('revuey: stopped wt switch pr:%d: its terminal was closed (:Revuey pr %d starts again)'):format(c.number, c.number),
+          vim.log.levels.WARN
+        )
+      end)
+    end,
+  })
   vim.cmd('startinsert')
 end
 
@@ -157,9 +189,7 @@ function M.cancel()
     c.job:cancel() -- on_done reports it
   else
     M.current = nil
-    if c.term then
-      pcall(vim.fn.jobstop, c.term.job)
-    end
+    close_term(c, true)
     echo(c.number, 'failed', 'cancelled', true)
     vim.notify(('revuey: cancelled wt switch pr:%d'):format(c.number), vim.log.levels.WARN)
   end
@@ -203,11 +233,9 @@ function M.command(arg, opts)
     if not root then
       err = 'not inside a git repository: run :Revuey pr from a clone of the PR\'s repo'
     elseif p.repo then
-      local forge = require('revuey.forge')
       local hosts = config.options.forge.hosts
-      local info = forge.remote_info(root, hosts)
-      local base = forge.base_remote(git.default_branch(root), info)
-      err = pr.check_repo(p, base and info.remotes[base].repo)
+      local _, repo = pr.wt_remote(require('revuey.forge').remote_info(root, hosts))
+      err = pr.check_repo(p, repo, hosts)
     end
     if err then
       M.current = nil
