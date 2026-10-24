@@ -26,7 +26,10 @@ M.VERSION = 1
 M.EVENTS_MAX = 1024 * 1024
 M.EVENT_SNIPPET_MAX = 200 -- snippet lines in an event (the comment keeps all of them)
 M.CONTEXT = 2 -- lines of context either side in context_hash
-M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true }
+M.EVENT_KINDS = {
+  created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true,
+  accepted = true, dismissed = true, -- AI review findings: triage (dismissed with status saved: restored)
+}
 
 ---@class revuey.CommentAnchor
 ---@field path string
@@ -72,6 +75,9 @@ M.EVENT_KINDS = { created = true, updated = true, deleted = true, resolved = tru
 ---@field delivered_at? integer     a `watch` printed it to an agent (not printed again on catch-up)
 ---@field acked_at? integer         the agent acknowledged it (`bin/revuey ack`, or a reply)
 ---@field answered_at? integer      the agent replied (`bin/revuey reply`)
+---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
+---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
+---                                 accepted_at?, dismissed_at?}
 
 ---Milliseconds since the epoch.
 function M.now_ms()
@@ -1050,6 +1056,11 @@ function M.delete(store, id, now)
     return nil
   end
   local t = { id = id, deleted = true, deleted_at = now or M.now_ms(), updated_at = c.updated_at }
+  if type(c.ai) == 'table' then
+    -- an AI review finding the user deleted: where it was, so a later review does not add it again
+    local a = c.anchor or {}
+    t.ai = { title = c.ai.title, anchor = { path = a.path, side = a.side, start_line = a.start_line, end_line = a.end_line } }
+  end
   touch(store, t, now)
   return c
 end
@@ -1415,13 +1426,18 @@ function M.first_line(text)
   return l
 end
 
-local VERB = { created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send', acked = 'ack' }
+local VERB = {
+  created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send', acked = 'ack',
+  accepted = 'accept', dismissed = 'dismiss',
+}
 
 ---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
 function M.event_line(ev)
   local verb = VERB[ev.kind] or ev.kind
   if ev.kind == 'resolved' and ev.status ~= 'resolved' then
     verb = 'reopen'
+  elseif ev.kind == 'dismissed' and ev.status ~= 'dismissed' then
+    verb = 'restore'
   end
   local loc = ev.location or (ev.anchor and ev.anchor.path) or '?'
   local side = ev.file_level and 'file' or (ev.anchor and ev.anchor.side or 'new')

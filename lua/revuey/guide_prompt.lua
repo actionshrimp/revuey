@@ -231,8 +231,14 @@ M.PREVIEW_LINES = 6
 -- Full stack scope: commit subjects listed per branch (the rest are counted).
 M.MAX_LAYER_COMMITS = 15
 
+---A hunk line as the prompt shows it: as git shows it, or with `numbered` its 1-based index in
+---the hunk first (`3|+text`), which AI review findings use as their offset.
+local function body_line(h, i, numbered)
+  return numbered and (i .. '|' .. h.text[i]) or h.text[i]
+end
+
 ---Lines of one hunk in the diff section: full, or an index entry ("abridged").
-local function hunk_lines(h, abridged)
+local function hunk_lines(h, abridged, numbered)
   local marker = ('@@ %s %s @@'):format(h.id, h.path)
   if h.layers and #h.layers > 0 then
     marker = marker .. ' [' .. table.concat(h.layers, ', ') .. ']'
@@ -243,15 +249,27 @@ local function hunk_lines(h, abridged)
   elseif abridged then
     out[#out + 1] = h.header .. '  [abridged: ' .. counts(h) .. ', ' .. #h.text .. ' lines]'
     for i = 1, math.min(M.PREVIEW_LINES, #h.text) do
-      out[#out + 1] = h.text[i]
+      out[#out + 1] = body_line(h, i, numbered)
     end
     out[#out + 1] = '[... ' .. math.max(#h.text - M.PREVIEW_LINES, 0) .. ' more lines]'
   else
     out[#out + 1] = h.header
-    vim.list_extend(out, h.text)
+    for i = 1, #h.text do
+      out[#out + 1] = body_line(h, i, numbered)
+    end
   end
   return out
 end
+
+-- Texts of the user message that depend on the task: the guide's (default) and the AI review's
+-- (ai_review_prompt.lua passes its own, with `numbered` hunk lines).
+M.GUIDE_TEXTS = {
+  intro = 'Organize the following code changes into a guided review.',
+  ids = 'Hunk ids: h1 to h%d. Every id must appear exactly once in a section or in `unplaced`.',
+  abridged = 'The files are in the current directory. Read one only if a section really needs it.',
+  files = 'Group whole files, or a file\'s hunks in order, by what the file names and commits suggest. ',
+  too_large = 'the review is too large for one guide',
+}
 
 local function size(lines)
   local n = 0
@@ -286,16 +304,21 @@ end
 ---and when even the file list does not fit, nothing is sent (nil + a message).
 ---@param ctx revuey.GuideContext
 ---@param hunks revuey.GuideHunk[]
----@param opts? {budget?: integer}
+---`opts.texts` replaces the task-dependent texts (M.GUIDE_TEXTS) and `opts.numbered` numbers each
+---hunk's lines (AI reviews).
+---@param opts? {budget?: integer, texts?: table, numbered?: boolean}
 ---@return string? message
----@return {level: 'full'|'abridged'|'files', abridged: integer}|string info, or the error
+---`abridged_ids` is the set of hunk ids sent as an index entry (every id at the `files` level).
+---@return {level: 'full'|'abridged'|'files', abridged: integer, abridged_ids: table<string, boolean>}|string info, or the error
 function M.user_message(ctx, hunks, opts)
   local budget = (opts and opts.budget) or 150000
+  local T = vim.tbl_extend('force', M.GUIDE_TEXTS, (opts and opts.texts) or {})
+  local numbered = opts and opts.numbered or false
   local head = {}
   local function add(s)
     head[#head + 1] = s
   end
-  add('Organize the following code changes into a guided review.')
+  add(T.intro)
   add('')
   add(('Repository: %s'):format(ctx.repo))
   local st = ctx.stack
@@ -387,15 +410,15 @@ function M.user_message(ctx, hunks, opts)
     add(('%s%s (+%d -%d): %s'):format(name, status, f.added, f.removed, table.concat(f.ids, ' ')))
   end
   add('')
-  add(('Hunk ids: h1 to h%d. Every id must appear exactly once in a section or in `unplaced`.'):format(#hunks))
+  add(T.ids:format(#hunks))
 
   local bodies, total = {}, size(head) + 8 -- + 'Diff:' heading
   for i, h in ipairs(hunks) do
-    bodies[i] = hunk_lines(h, false)
+    bodies[i] = hunk_lines(h, false, numbered)
     total = total + size(bodies[i])
   end
   local NOTE = 400 -- room for the explanation added when abridging
-  local level, n_abridged = 'full', 0
+  local level, n_abridged, abridged_ids = 'full', 0, {}
   if total > budget then
     -- abridge the largest hunks first until it fits
     level = 'abridged'
@@ -418,12 +441,13 @@ function M.user_message(ctx, hunks, opts)
       if total <= budget then
         break
       end
-      local short = hunk_lines(hunks[i], true)
+      local short = hunk_lines(hunks[i], true, numbered)
       local saved = sizes[i] - size(short)
       if saved > 0 then
         bodies[i] = short
         total = total - saved
         n_abridged = n_abridged + 1
+        abridged_ids[hunks[i].id] = true
       end
     end
   end
@@ -434,7 +458,7 @@ function M.user_message(ctx, hunks, opts)
       out[#out + 1] = ('The diff is large, so %d hunk%s marked [abridged] show only an index entry: header, counts and the first lines. '):format(
         n_abridged,
         n_abridged == 1 and ' is' or 's are'
-      ) .. 'The files are in the current directory. Read one only if a section really needs it.'
+      ) .. T.abridged
     end
     out[#out + 1] = ''
     out[#out + 1] = 'Diff:'
@@ -443,20 +467,24 @@ function M.user_message(ctx, hunks, opts)
     end
     local msg = table.concat(out, '\n') .. '\n'
     if #msg <= budget then
-      return msg, { level = level, abridged = n_abridged }
+      return msg, { level = level, abridged = n_abridged, abridged_ids = abridged_ids }
     end
   end
   -- per-file only: the list above already carries every id
   out = vim.deepcopy(head)
   out[#out + 1] = ''
   out[#out + 1] = 'The diff is too large to include. Use the file list above: each file lists its hunk ids in order. '
-    .. 'Group whole files, or a file\'s hunks in order, by what the file names and commits suggest. '
+    .. T.files
     .. ('To see one file\'s changes, run `%s -- <path>` (one file at a time, only where a section needs it).'):format(ctx.diff_cmd or 'git diff')
   local msg = table.concat(out, '\n') .. '\n'
   if #msg <= budget then
-    return msg, { level = 'files', abridged = #hunks }
+    local all = {}
+    for _, h in ipairs(hunks) do
+      all[h.id] = true
+    end
+    return msg, { level = 'files', abridged = #hunks, abridged_ids = all }
   end
-  return nil, ('the review is too large for one guide (%d files, %d hunks; even the file list is %d characters, over ai.max_prompt_chars = %d). '
+  return nil, (T.too_large .. ' (%d files, %d hunks; even the file list is %d characters, over ai.max_prompt_chars = %d). '
     .. 'Review one stack layer at a time, or raise ai.max_prompt_chars.'):format(#order, #hunks, #msg, budget)
 end
 

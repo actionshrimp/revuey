@@ -28,7 +28,9 @@ is available.
 ## Fakes for external tools
 - **AI:** tests never call the real `claude`. A fake `claude` executable placed first on `PATH` replays recorded
   `stream-json` fixtures, can simulate slow streams, errors and cancellation, and records the argv it was given so
-  tests can assert on flags such as `--resume`, `--allowedTools` and `--json-schema`.
+  tests can assert on flags such as `--resume`, `--allowedTools` and `--json-schema`. A run whose
+  schema has `findings` (an AI review) answers with a canned review, or with
+  `$REVUEY_FAKE_CLAUDE_OUTPUT` when a test sets it.
 - **GitHub:** a fake `gh` (`tests/bin/gh`, `h.use_fake_gh`) records its argv and returns canned JSON for
   GraphQL PR lookups (PR nodes per `owner/name:branch`, forks' parents, repos that resolve to null), or a
   failure scenario (exit 1, garbage, rate limit, GraphQL errors, a hang that dies on SIGTERM). `tests/helpers.lua` puts a blocker for the real `gh` first on PATH, so no spec

@@ -17,6 +17,12 @@
 --   comment --path <path> (--line N [--end M] [--side new|old] | --file) [--session <id>] <text|->
 --       leave a new comment (author agent) on lines of the review's diff or on a whole changed
 --       file, in the review the session (or, with none running, the CLI's scope) shows
+--   hunks [--json] [--prompt] [--session <id>]
+--       the review's hunks with their ids and numbered lines (what an AI review sees), and the
+--       diff hash; --prompt: the whole prompt revuey's own AI review sends
+--   import-review [--name <n>] [--session <id>] <file|->   |   import-review --schema
+--       import an AI review document (ai_review_prompt.SCHEMA): its findings become AI comments
+--       to triage in the review, its summary and verdict the review's record
 --   ack <id>           mark a sent message handled without replying (no re-delivery)
 --   inbox [--json]     sent messages not acknowledged yet, then exit (no Monitor needed)
 --   comments [--json] [--all] [--scope current|all|<branch>]
@@ -86,6 +92,16 @@ For coding agents (no UI; run inside the reviewed worktree):
       inside a hunk on that side, or on a whole changed file (--file). Prints the comment id
       and where it went. Same review as watch: the only live one, else --session <id>; with
       none running, the review `revuey` would open here.
+  revuey hunks [--json] [--prompt] [--session <id>]
+      the review's hunks, each under its id (`@@ h7 path @@`) with its lines numbered within
+      the hunk (`3|+code`), and the diff hash; --prompt prints the whole prompt revuey's own
+      AI review uses (instructions, then the diff). Same review as comment.
+  revuey import-review [--name <reviewer>] [--session <id>] <file|->
+      import a review (JSON: summary, verdict, findings anchored to a hunk id and line numbers
+      of that hunk; `--schema` prints the JSON schema; an optional "diff" must match the hash
+      `hunks` printed). Each finding becomes an AI comment for the user to accept or dismiss
+      (local only, never posted). Findings with bad anchors are dropped and counted; untouched
+      findings of the reviewer's previous import are replaced.
   revuey ack <id>                mark it handled without replying (it is not delivered again)
   revuey inbox [--session <id>] [--json]
       messages not answered or acknowledged yet, then exit (also when Monitor is missing);
@@ -109,6 +125,7 @@ local VALUE_FLAGS = {
   ['--line'] = 'line',
   ['--end'] = 'end_line',
   ['--side'] = 'side',
+  ['--name'] = 'name',
 }
 local BOOL_FLAGS = {
   ['--json'] = 'json',
@@ -118,6 +135,8 @@ local BOOL_FLAGS = {
   ['--copy'] = 'copy',
   ['--replay'] = 'replay',
   ['--file'] = 'file',
+  ['--schema'] = 'schema',
+  ['--prompt'] = 'prompt',
 }
 
 ---@return table opts, string[] positional
@@ -1027,6 +1046,16 @@ local function comment_review(o, ctx, attached)
   return r, info, cpath, epath
 end
 
+---"feat vs main, working tree, session 123" (or that no review is running).
+local function where_text(info, attached)
+  return ('%s vs %s, %s%s'):format(
+    sessions.scope_label(info),
+    info.base or '?',
+    info.mode == 'committed' and 'committed' or 'working tree',
+    attached and (', session ' .. attached.id) or ' (no review running: it shows when the review is opened)'
+  )
+end
+
 function M.comment(o, pos)
   local a, aerr = M.comment_args(o, pos)
   if not a then
@@ -1063,15 +1092,151 @@ function M.comment(o, pos)
     die(tostring(serr))
   end
   comments.append_event(epath, comments.event('created', comments.get(store, c.id) or c, info))
-  out(('%s\ncommented on %s (%s) in %s vs %s, %s%s\n'):format(
-    c.id,
-    comments.location(c),
-    c.file_level and 'file' or anchor.side,
-    sessions.scope_label(info),
-    info.base or '?',
-    info.mode == 'committed' and 'committed' or 'working tree',
-    attached and (', session ' .. attached.id) or ' (no review running: it shows when the review is opened)'
+  out(('%s\ncommented on %s (%s) in %s\n'):format(c.id, comments.location(c), c.file_level and 'file' or anchor.side, where_text(info, attached)))
+end
+
+---The stack of a review loaded from a session's `load` record (which has the diff, not the stack
+---object): detected again, for the prompt's scope wording and branch tags.
+local function restore_stack(o, ctx, r, info, attached)
+  if r.stack or info.scope == 'branch' then
+    return
+  end
+  -- the state dir comment_review loaded the review with (its stack ignore list is the UI's)
+  local dir = (attached and attached.state_dir) or state_dir(o)
+  if o.state_dir and o.state_dir ~= '' then
+    dir = o.state_dir
+  end
+  local last = sessions.read_last(sessions.bases(ctx.root, dir), ctx.root) or {}
+  local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
+    or git.default_branch(ctx.root)
+  local ok, st = pcall(require('revuey.stack').detect, ctx.root, trunk, nil, { state_dir = dir })
+  if not (ok and st) then
+    return
+  end
+  if info.scope == 'full' then
+    r.stack, r.scope = st, { kind = 'full' }
+    return
+  end
+  for i, l in ipairs(st.layers) do
+    if l.name == r.branch then
+      r.stack, r.scope = st, { kind = 'layer', index = i }
+      break
+    end
+  end
+end
+
+---The hunks of the review `comment` would use, with the AI review's ids (guide.hunks) and, in
+---the full-stack scope, the branch that introduced each one (as the UI tags them).
+local function review_hunks(o)
+  local ctx = here(o)
+  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  local r, info, cpath, epath = comment_review(o, ctx, attached)
+  restore_stack(o, ctx, r, info, attached)
+  local hunks = require('revuey.review').units(r).hunks
+  local labels = require('revuey.attribution').load(r)
+  if labels then
+    for _, h in ipairs(hunks) do
+      h.layers = labels[h.file_idx] and labels[h.file_idx][h.hunk_idx or 0] or nil
+    end
+  end
+  return r, hunks, info, cpath, epath, attached
+end
+
+function M.hunks(o)
+  local r, hunks, info = review_hunks(o)
+  local diff = require('revuey.guide').anchors_hash(hunks)
+  if o.json then
+    local list = {}
+    for _, h in ipairs(hunks) do
+      list[#list + 1] = {
+        id = h.id,
+        path = h.path,
+        old_path = h.old_path,
+        status = h.status,
+        header = h.header,
+        lines = h.hunk_idx and h.text or {},
+      }
+    end
+    out(vim.json.encode({ diff = diff, review = info, hunks = list }) .. '\n')
+    return
+  end
+  local prompt = require('revuey.ai_review_prompt')
+  local pctx = require('revuey.guide_view').prompt_context(r)
+  local text, perr
+  if o.prompt then
+    text, perr = prompt.build(pctx, hunks, { budget = math.huge })
+  else
+    text, perr = prompt.user_message(pctx, hunks, { budget = math.huge })
+  end
+  if not text then
+    die(perr)
+  end
+  out(('# Hunks of %s vs %s (%s): %d\n'):format(info.branch or '?', info.base or '?', info.mode == 'committed' and 'committed' or 'working tree', #hunks))
+  out(('Diff: %s (give it as "diff" in the review, so import-review can tell when the code changed)\n\n'):format(diff))
+  out(text)
+  if o.prompt then
+    out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review <file>`.\n'):format(bin(), diff, bin()))
+  end
+end
+
+function M.import_review(o, pos)
+  local prompt = require('revuey.ai_review_prompt')
+  if o.schema then
+    out(prompt.schema_json() .. '\n')
+    return
+  end
+  local usage = 'usage: revuey import-review [--name <reviewer>] [--session <id>] <file|->  (--schema prints the schema)'
+  if #pos ~= 1 then
+    die((#pos == 0 and 'import-review needs a file (or - for stdin)\n' or 'import-review takes one file\n') .. usage, 2)
+  end
+  local text
+  if pos[1] == '-' then
+    text = io.stdin:read('*a') or ''
+  else
+    local fd, ferr = io.open(pos[1], 'r')
+    if not fd then
+      die('cannot read ' .. pos[1] .. ': ' .. tostring(ferr))
+    end
+    text = fd:read('*a') or ''
+    fd:close()
+  end
+  if vim.trim(text) == '' then
+    die('empty review')
+  end
+  local ai_review = require('revuey.ai_review')
+  local r, hunks, info, cpath, epath, attached = review_hunks(o)
+  local name = o.name or vim.env.REVUEY_AGENT_NAME
+  local ok, rec, ierr = pcall(ai_review.import, text, {
+    review = r,
+    hunks = hunks,
+    store = comments.load(cpath),
+    events = epath,
+    info = info,
+    author = { kind = 'ai', name = (name and name ~= '') and name or nil },
+    record_path = ai_review.record_path(cpath),
+    generator = { provider = 'import', source = pos[1] == '-' and 'stdin' or pos[1], head = r.head, merge_base = r.merge_base, mode = r.mode },
+  })
+  if not ok then
+    die(tostring(rec))
+  elseif not rec then
+    die(ierr)
+  end
+  out(('imported %d finding%s (verdict: %s) into %s\n'):format(
+    rec.imported,
+    rec.imported == 1 and '' or 's',
+    ai_review.VERDICT_LABEL[rec.verdict],
+    where_text(info, attached)
   ))
+  local dropped = ai_review.dropped_text(rec.warnings)
+  if dropped then
+    out(dropped .. '\n')
+  end
+  if rec.skipped > 0 then
+    out(('%d skipped: the user already triaged them\n'):format(rec.skipped))
+  end
+  if rec.replaced > 0 then
+    out(('%d untriaged finding%s of the previous review replaced\n'):format(rec.replaced, rec.replaced == 1 and '' or 's'))
+  end
 end
 
 ---`install-skill`: link (default) or copy skill/revuey into $HOME/.claude/skills/revuey.
@@ -1176,6 +1341,8 @@ local COMMANDS = {
   show = M.show,
   ack = M.ack,
   inbox = M.inbox,
+  hunks = M.hunks,
+  ['import-review'] = M.import_review,
   ['install-skill'] = M.install_skill,
 }
 

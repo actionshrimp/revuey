@@ -235,6 +235,7 @@ local function norm_id(v)
   local n = vim.trim(v):lower():match('^h?(%d+)$')
   return n and ('h' .. tonumber(n)) or nil
 end
+M.norm_id = norm_id
 
 M.OTHER_TITLE = 'Other changes'
 

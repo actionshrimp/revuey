@@ -587,4 +587,51 @@ h.test('agent link: connected indicator, sent and answered markers', function()
   screenshot('agent-link')
 end)
 
+-- An AI review: the panel's block (verdict, findings to triage, summary) and a finding's thread
+-- (AI author, severity, the accept / dismiss keys, a suggested change).
+h.test('AI review: panel block and an untriaged finding', function()
+  start(fixture, 'main', 34, 120)
+  child.lua([[
+    local s = require('revuey.view').session
+    local comments = require('revuey.comments')
+    local ai_review = require('revuey.ai_review')
+    local cv = require('revuey.comments_view')
+    local hunks = require('revuey.review').units(s.review).hunks
+    local cart
+    for _, hk in ipairs(hunks) do
+      if hk.path == 'src/cart.ts' and not cart then
+        cart = hk
+      end
+    end
+    local first_add
+    for i, l in ipairs(cart.text) do
+      if l:sub(1, 1) == '+' and not first_add then
+        first_add = i
+      end
+    end
+    local store = cv.sync_store(s)
+    assert(ai_review.import({
+      summary = 'The cart total moves into its own module. Rounding is the main risk.',
+      verdict = 'request_changes',
+      findings = {
+        { hunk = cart.id, line = first_add, severity = 'major', title = 'Import both helpers from one place',
+          body = 'Two imports of the same module drift apart.', suggestion = "import { sum, round } from './math';" },
+        { hunk = 'h999', line = 1, severity = 'minor', title = 'Ghost', body = 'dropped' },
+      },
+    }, {
+      review = s.review, hunks = hunks, store = store,
+      events = comments.events_path_for(s.review.state._path), info = comments.review_info(s.review),
+      author = { kind = 'ai', name = 'claude' }, record_path = ai_review.record_path(store.path), now = 1767225600000,
+    }))
+    cv.refresh(s)
+    for row, e in ipairs(s.layout.map) do
+      if e.path == 'src/cart.ts' and e.hunk_idx == cart.hunk_idx and e.line_idx == first_add then
+        vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+      end
+    end
+    vim.cmd('normal! zt')
+  ]])
+  screenshot('ai-review')
+end)
+
 h.run()
