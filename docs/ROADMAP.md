@@ -78,6 +78,16 @@ sequence; later items build on earlier ones.
    the PR `stack`/`stackEntry` GraphQL fields (joined to the existing PR-status query) and the `gh stack`
    extension's local `.git/gh-stack` file, as explicit stack sources like Graphite metadata; confirm both formats
    against a real stacked repo first.
+   **Up-to-date builds for the LSP.** In TypeScript monorepos, workspace packages often point `types`/`exports` at
+   `dist/`, so tsserver is wrong or empty until the tree is built. New PR worktrees: document a worktrunk
+   `pre-start` pipeline (install, then build; `pre-start` because it blocks, so `wt switch` returns with the tree
+   built, which a background `post-start` would not), and have revuey wait for `wt switch` before starting LSP.
+   `gS` uses plain `git switch`, so no `wt` hook fires: add an opt-in `stack.after_switch` command (e.g.
+   `{ "wt", "hook", "post-switch", "build", "--foreground" }`, keeping the build in the user's worktrunk config),
+   run in the background after a successful switch with "building…" in the panel header and failures in
+   `revuey.log`, then restart the worktree's LSP clients so tsserver picks up the new `.d.ts` files. Incremental
+   builds (`tsc -b`, turbo) keep this cheap. Document the build-free alternative for repos that can change:
+   a `source` export condition plus `customConditions`, or project references with `declarationMap`.
 3. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
    and render them inline alongside local comments, including resolved and outdated state.
 4. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
