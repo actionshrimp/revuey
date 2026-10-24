@@ -11,6 +11,7 @@ local M = {}
 M.VERDICTS = { 'approve', 'comment', 'request_changes' }
 M.SEVERITIES = { 'critical', 'major', 'minor', 'nit' }
 M.MAX_FINDINGS = 30
+M.PREVIEW_LINES = guide_prompt.PREVIEW_LINES -- lines an abridged hunk shows (and numbers)
 
 ---Output schema (additionalProperties: false everywhere). `bin/revuey import-review` accepts the
 ---same document (plus an optional top-level `diff`, the hash `bin/revuey hunks` prints).

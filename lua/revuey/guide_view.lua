@@ -460,7 +460,7 @@ function M.generate(s, on_change)
   local dir = guide.dir(state_dir(s))
   local cfg = config.options.ai or {}
   M.errors[ks] = nil
-  local entry = { label = r.branch, started = vim.uv.hrtime() }
+  local entry = { label = r.branch, started = vim.uv.hrtime(), on_change = on_change }
   M.jobs[ks] = entry
   ensure_ticker()
   on_change()
@@ -557,6 +557,9 @@ function M.cancel(s)
     -- still gathering commits: forget it; the coroutine checks before spawning
     M.jobs[g.ks] = nil
     vim.notify('revuey: guide generation cancelled', vim.log.levels.INFO)
+    if j.on_change then
+      j.on_change() -- the guide view and the panel drop the spinner
+    end
   end
   return true
 end

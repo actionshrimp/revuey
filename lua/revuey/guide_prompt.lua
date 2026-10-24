@@ -308,7 +308,8 @@ end
 ---hunk's lines (AI reviews).
 ---@param opts? {budget?: integer, texts?: table, numbered?: boolean}
 ---@return string? message
----@return {level: 'full'|'abridged'|'files', abridged: integer}|string info, or the error
+---`abridged_ids` is the set of hunk ids sent as an index entry (every id at the `files` level).
+---@return {level: 'full'|'abridged'|'files', abridged: integer, abridged_ids: table<string, boolean>}|string info, or the error
 function M.user_message(ctx, hunks, opts)
   local budget = (opts and opts.budget) or 150000
   local T = vim.tbl_extend('force', M.GUIDE_TEXTS, (opts and opts.texts) or {})
@@ -417,7 +418,7 @@ function M.user_message(ctx, hunks, opts)
     total = total + size(bodies[i])
   end
   local NOTE = 400 -- room for the explanation added when abridging
-  local level, n_abridged = 'full', 0
+  local level, n_abridged, abridged_ids = 'full', 0, {}
   if total > budget then
     -- abridge the largest hunks first until it fits
     level = 'abridged'
@@ -446,6 +447,7 @@ function M.user_message(ctx, hunks, opts)
         bodies[i] = short
         total = total - saved
         n_abridged = n_abridged + 1
+        abridged_ids[hunks[i].id] = true
       end
     end
   end
@@ -465,7 +467,7 @@ function M.user_message(ctx, hunks, opts)
     end
     local msg = table.concat(out, '\n') .. '\n'
     if #msg <= budget then
-      return msg, { level = level, abridged = n_abridged }
+      return msg, { level = level, abridged = n_abridged, abridged_ids = abridged_ids }
     end
   end
   -- per-file only: the list above already carries every id
@@ -476,7 +478,11 @@ function M.user_message(ctx, hunks, opts)
     .. ('To see one file\'s changes, run `%s -- <path>` (one file at a time, only where a section needs it).'):format(ctx.diff_cmd or 'git diff')
   local msg = table.concat(out, '\n') .. '\n'
   if #msg <= budget then
-    return msg, { level = 'files', abridged = #hunks }
+    local all = {}
+    for _, h in ipairs(hunks) do
+      all[h.id] = true
+    end
+    return msg, { level = 'files', abridged = #hunks, abridged_ids = all }
   end
   return nil, (T.too_large .. ' (%d files, %d hunks; even the file list is %d characters, over ai.max_prompt_chars = %d). '
     .. 'Review one stack layer at a time, or raise ai.max_prompt_chars.'):format(#order, #hunks, #msg, budget)

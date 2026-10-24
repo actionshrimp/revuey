@@ -187,9 +187,9 @@ h.test('validate: verdicts and severities normalised, strings sanitised, JSON re
   local fenced = 'Here:\n```json\n' .. vim.json.encode({ summary = 's', verdict = 'approve', findings = {} }) .. '\n```'
   h.ok(ai_review.validate(fenced, hunks))
   h.eq({ nil, 'the review is not valid JSON' }, { ai_review.validate('no json here', hunks) })
-  h.eq({ nil, 'findings must be an array' }, { ai_review.validate({ findings = 'x' }, hunks) })
+  h.eq({ nil, 'findings must be an array' }, { ai_review.validate({ summary = 's', verdict = 'approve', findings = 'x' }, hunks) })
   -- no findings is a fine review
-  doc = ai_review.validate({ summary = 'Clean.', verdict = 'approve' }, hunks)
+  doc = ai_review.validate({ summary = 'Clean.', verdict = 'approve', findings = {} }, hunks)
   h.eq({}, doc.findings)
   -- at most MAX_FINDINGS
   local many = {}
@@ -403,6 +403,208 @@ h.test('skills: by name (yours first, then the repo\'s), by path; front matter s
   h.write(home, '.claude/skills/huge/SKILL.md', string.rep('x', prompt.SKILL_MAX_CHARS + 1))
   none, e2 = ai_review.read_skill(home .. '/.claude/skills/huge/SKILL.md')
   h.ok(not none and e2:find('too large', 1, true), tostring(e2))
+end)
+
+-- ---------------------------------------------------------------------------
+-- Review fixes: invalid documents, concurrent triage, abridged hunks, deleted findings
+-- ---------------------------------------------------------------------------
+
+h.test('validate: only a review document is accepted (prose with a stray object, {}, a guide, a findings map, an array)', function()
+  local m = hunk_of('m.txt')
+  local bad = {
+    'Looks good. Example config: {"retries": 3}',
+    '{}',
+    '[]',
+    vim.json.encode({ title = 'Guide', summary = 's', sections = {}, unplaced = {} }),
+    vim.json.encode({ summary = 's', verdict = 'approve', findings = { a = { hunk = m.id, line = 1, severity = 'nit', title = 't', body = 'b' } } }),
+    vim.json.encode({ { summary = 's', verdict = 'approve', findings = {} } }),
+    vim.json.encode({ verdict = 'approve', findings = {} }),
+    vim.json.encode({ summary = 's', findings = {} }),
+  }
+  for _, text in ipairs(bad) do
+    local doc, err = ai_review.validate(text, hunks)
+    h.eq(nil, doc, text)
+    h.ok(type(err) == 'string' and err ~= '', text)
+  end
+  -- decoded tables too
+  h.eq(nil, (ai_review.validate({}, hunks)))
+  h.eq(nil, (ai_review.validate({ summary = 's', verdict = 'approve', findings = 'x' }, hunks)))
+  -- still fine: no findings (an empty list) and an empty summary
+  h.ok(ai_review.validate({ summary = '', verdict = 'approve', findings = {} }, hunks))
+  h.ok(ai_review.validate('{"summary": "Clean.", "verdict": "approve", "findings": []}', hunks))
+end)
+
+h.test('import: invalid output leaves the last review and its untouched findings alone', function()
+  local d = h.repo('ai-review-invalid', { ['a.txt'] = 'a\nb\nc\n' }, { ['a.txt'] = 'a\nB\nc\n' })
+  local rr = assert(review_mod.load({ cwd = d, base = 'main', mode = 'committed', state_dir = state_dir }))
+  local hh = review_mod.units(rr).hunks
+  local cpath = comments.path_for(rr.state._path)
+  local function imp(doc)
+    return ai_review.import(doc, { review = rr, hunks = hh, store = comments.load(cpath), events = comments.events_path_for(rr.state._path),
+      info = comments.review_info(rr), author = CLAUDE, record_path = ai_review.record_path(cpath) })
+  end
+  assert(imp({ summary = 'First.', verdict = 'comment', findings = { { hunk = 'h1', line = 2, severity = 'nit', title = 'Keep me', body = 'b' } } }))
+  local rec, err = imp('I could not do it. Example: {"retries": 3}')
+  h.eq(nil, rec)
+  h.ok(err, 'an error')
+  h.eq(1, #findings_of(comments.load(cpath, { readonly = true })), 'the untouched finding is still there')
+  h.eq('First.', ai_review.read_record(ai_review.record_path(cpath)).summary)
+end)
+
+h.test('import: a concurrent accept in another instance is never deleted by a re-run', function()
+  local d = h.repo('ai-review-race', { ['a.txt'] = 'a\nb\nc\n' }, { ['a.txt'] = 'a\nB\nc\n' })
+  local rr = assert(review_mod.load({ cwd = d, base = 'main', mode = 'committed', state_dir = state_dir }))
+  local hh = review_mod.units(rr).hunks
+  local cpath = comments.path_for(rr.state._path)
+  local function imp(doc, store, now)
+    return ai_review.import(doc, { review = rr, hunks = hh, store = store, events = comments.events_path_for(rr.state._path),
+      info = comments.review_info(rr), author = CLAUDE, record_path = ai_review.record_path(cpath), now = now })
+  end
+  local one = { summary = '', verdict = 'comment', findings = { { hunk = 'h1', line = 2, severity = 'nit', title = 'X', body = 'b' } } }
+  local none = { summary = '', verdict = 'comment', findings = {} }
+  assert(imp(one, comments.load(cpath)))
+  local function x_of(store, title)
+    for id, c in pairs(store.comments) do
+      if c.ai and c.ai.title == (title or 'X') and not c.deleted then
+        return id
+      end
+    end
+  end
+  -- 1. A's store is stale: B accepted and saved before A's re-run
+  local A, B = comments.load(cpath), comments.load(cpath)
+  local id = x_of(B)
+  assert(ai_review.accept(B, id))
+  comments.save(B)
+  assert(imp(none, A))
+  local c = comments.load(cpath, { readonly = true }).comments[id]
+  h.eq({ nil, 'accepted' }, { c.deleted, c.status }, 'reloaded first: the accepted finding is not replaced')
+  -- 2. B accepts in memory before A's re-run, and saves only after it: the accept still wins
+  local two = { summary = '', verdict = 'comment', findings = { { hunk = 'h1', line = 1, severity = 'nit', title = 'Y', body = 'b' } } }
+  assert(imp(two, comments.load(cpath)))
+  B = comments.load(cpath)
+  local id2 = x_of(B, 'Y')
+  h.ok(id2, 'Y imported')
+  local t0 = comments.now_ms()
+  assert(ai_review.accept(B, id2, t0))
+  assert(imp(none, comments.load(cpath), t0 + 60000))
+  comments.save(B)
+  c = comments.load(cpath, { readonly = true }).comments[id2]
+  h.eq({ nil, 'accepted' }, { c.deleted, c.status }, 'the replacement tombstone loses to the concurrent accept')
+end)
+
+h.test('validate: lines past an abridged hunk\'s preview are dropped; with no hunk bodies findings are whole-file', function()
+  local big = {}
+  for k = 1, 20 do
+    big[k] = '+line ' .. k
+  end
+  local hs = { { id = 'h1', file_idx = 1, hunk_idx = 1, path = 'f', old_path = 'f', status = 'M', header = '@@ -1 +1,20 @@', added = 20, removed = 0, text = big } }
+  local doc = { summary = 's', verdict = 'comment', findings = {
+    { hunk = 'h1', line = 3, severity = 'nit', title = 'shown', body = 'b' },
+    { hunk = 'h1', line = 15, severity = 'nit', title = 'not shown', body = 'b' },
+    { hunk = 'h1', line = 5, end_line = 12, severity = 'nit', title = 'runs past the preview', body = 'b' },
+  } }
+  local v, w = ai_review.validate(doc, hs, { level = 'abridged', abridged = { h1 = true } })
+  h.eq({ 'shown' }, vim.tbl_map(function(f)
+    return f.title
+  end, v.findings))
+  h.eq(2, w.bad_line)
+  -- not abridged: every line counts
+  v = ai_review.validate(doc, hs, { level = 'abridged', abridged = {} })
+  h.eq(3, #v.findings)
+  -- `files` level: the model saw no numbered lines
+  v = ai_review.validate(doc, hs, { level = 'files' })
+  h.eq({ nil, nil, nil }, { v.findings[1].line, v.findings[2].line, v.findings[3].line })
+  -- the prompt reports which hunks it abridged
+  local many = {}
+  for i = 1, 400 do
+    local t = {}
+    for k = 1, 30 do
+      t[k] = '+line ' .. k .. ' of hunk ' .. i
+    end
+    many[i] = { id = 'h' .. i, file_idx = i, hunk_idx = 1, path = 'f' .. i, old_path = 'f' .. i, status = 'M', header = '@@ -1 +1,30 @@', added = 30, removed = 0, text = t }
+  end
+  local _, info = prompt.build({ repo = 'r', branch = 'b', base = 'main' }, many, { budget = 150000 })
+  h.eq('abridged', info.level)
+  h.eq(info.abridged, vim.tbl_count(info.abridged_ids))
+end)
+
+h.test('a finding the user deleted is not imported again; one a re-run replaced is', function()
+  local d = h.repo('ai-review-deleted', { ['a.txt'] = 'a\nb\nc\nd\ne\n' }, { ['a.txt'] = 'a\nB\nc\nD\ne\n' })
+  local rr = assert(review_mod.load({ cwd = d, base = 'main', mode = 'committed', state_dir = state_dir }))
+  local hh = review_mod.units(rr).hunks
+  local cpath = comments.path_for(rr.state._path)
+  local function imp(doc)
+    return ai_review.import(doc, { review = rr, hunks = hh, store = comments.load(cpath), events = comments.events_path_for(rr.state._path),
+      info = comments.review_info(rr), author = CLAUDE, record_path = ai_review.record_path(cpath) })
+  end
+  local doc = { summary = '', verdict = 'comment', findings = {
+    { hunk = 'h1', line = 2, severity = 'nit', title = 'Deleted by you', body = 'b' },
+    { hunk = 'h1', line = 4, severity = 'nit', title = 'Replaced', body = 'b' },
+  } }
+  assert(imp(doc))
+  local store = comments.load(cpath)
+  for id, c in pairs(store.comments) do
+    if c.ai and c.ai.title == 'Deleted by you' then
+      comments.delete(store, id)
+    end
+  end
+  comments.save(store)
+  local rec = assert(imp(doc))
+  h.eq({ 1, 1, 1 }, { rec.imported, rec.skipped, rec.replaced })
+  local titles = vim.tbl_map(function(c)
+    return c.ai.title
+  end, findings_of(comments.load(cpath, { readonly = true })))
+  h.eq({ 'Replaced' }, titles)
+end)
+
+h.test('import: findings on a deleted file (old side) and a renamed file (new path) are placed', function()
+  local function num(n, ed)
+    local t = {}
+    for i = 1, n do
+      t[i] = (ed and ed[i]) or ('line ' .. i)
+    end
+    return table.concat(t, '\n') .. '\n'
+  end
+  local d = h.repo('ai-review-moves', { ['gone.txt'] = 'g1\ng2\n', ['old.txt'] = num(20) }, { ['gone.txt'] = false })
+  h.git(d, 'mv', 'old.txt', 'renamed.txt')
+  h.write(d, 'renamed.txt', num(20, { [10] = 'ten' }))
+  h.git(d, 'commit', '-qam', 'mv')
+  local rr = assert(review_mod.load({ cwd = d, base = 'main', mode = 'committed', state_dir = state_dir }))
+  local hh = review_mod.units(rr).hunks
+  local fs = {}
+  for _, x in ipairs(hh) do
+    fs[#fs + 1] = { hunk = x.id, line = 1, end_line = #x.text, severity = 'nit', title = 'all of ' .. x.path, body = 'b' }
+  end
+  local cpath = comments.path_for(rr.state._path)
+  local store = comments.load(cpath)
+  local rec = assert(ai_review.import({ summary = '', verdict = 'comment', findings = fs }, { review = rr, hunks = hh, store = store,
+    events = comments.events_path_for(rr.state._path), info = comments.review_info(rr), author = CLAUDE, record_path = ai_review.record_path(cpath) }))
+  h.eq({ 2, 0 }, { rec.imported, rec.dropped })
+  local U = review_mod.units(rr)
+  local ctx = comments.context(rr.files, U, function(path, side)
+    return review_mod.side_text(rr, rr.files[U.by_path[path]], side)
+  end)
+  local got = {}
+  for _, c in ipairs(findings_of(store)) do
+    local p = comments.place(c, ctx)
+    got[c.anchor.path] = { c.anchor.side, p.start_line, p.end_line, p.outdated }
+  end
+  h.eq({ 'old', 1, 2, false }, got['gone.txt'])
+  h.eq({ 'new', 7, 13, false }, got['renamed.txt'])
+end)
+
+h.test('skills: paths are taken literally (no %, # or wildcard expansion); ~ is your home', function()
+  h.write(repo, '#notes/review.md', 'Hash dir.\n')
+  h.write(repo, 'a*b/review.md', 'Star dir.\n')
+  h.eq(repo .. '/#notes/review.md', ai_review.find_skill('#notes/review.md', repo))
+  h.eq(repo .. '/a*b/review.md', ai_review.find_skill('a*b/review.md', repo))
+  local home = h.tmpdir('ai-review-home2')
+  h.write(home, 'my/review.md', 'Mine.\n')
+  local saved = vim.env.HOME
+  vim.env.HOME = home
+  local p = ai_review.find_skill('~/my/review.md', repo)
+  vim.env.HOME = saved
+  h.eq(home .. '/my/review.md', p)
 end)
 
 h.run()
