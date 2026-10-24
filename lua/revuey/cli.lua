@@ -29,6 +29,9 @@
 --       the comments of the current repo and branch (Markdown, like :RevueyCommentsExport)
 --   install-skill [--force] [--copy]
 --       link (or copy) the Claude Code skill into ~/.claude/skills/revuey
+--   pr-target <number|url>, pr-path   (used by `bin/revuey pr`)
+--       the `wt switch` target for a PR (`pr:<N>`; a URL must name this clone's GitHub repo),
+--       and the worktree path from `wt switch --format json` on stdin
 --
 -- Common: --state-dir <dir> (default $REVUEY_STATE_DIR, else stdpath('data')/revuey; the state
 -- dirs of live sessions are searched too).
@@ -68,6 +71,8 @@ end
 
 M.USAGE = [[
 usage: revuey [base] [--stack] [--committed|--worktree]     open the review UI (Neovim)
+       revuey pr <number|url>     set the PR's worktree up with worktrunk (wt switch pr:<N>,
+                                  your hooks), then open the review UI there
 
 For coding agents (no UI; run inside the reviewed worktree):
   revuey sessions [--json] [--all]
@@ -1240,6 +1245,40 @@ function M.import_review(o, pos)
 end
 
 ---`install-skill`: link (default) or copy skill/revuey into $HOME/.claude/skills/revuey.
+---`pr-target <number|url>`: print `pr:<N>` for `wt switch` (bin/revuey pr). A URL must be in
+---this clone's GitHub repo: wt looks the number up there whatever the URL says.
+function M.pr_target(_, pos)
+  local pr = require('revuey.pr')
+  if #pos > 1 then
+    die('usage: revuey pr <number|url>', 2)
+  end
+  local p, perr = pr.parse_arg(pos[1])
+  if not p then
+    die(perr .. '\nusage: revuey pr <number|url>', 2)
+  end
+  if p.repo then
+    local forge = require('revuey.forge')
+    local root = git.root(vim.uv.cwd()) or die('not inside a git repository')
+    local hosts = (require('revuey.config').options.forge or {}).hosts
+    local info = forge.remote_info(root, hosts)
+    local base = forge.base_remote(git.default_branch(root), info)
+    local e = pr.check_repo(p, base and info.remotes[base].repo)
+    if e then
+      die(e, 2)
+    end
+  end
+  out('pr:' .. p.number .. '\n')
+end
+
+---`pr-path`: the worktree path from `wt switch --format json` (stdin).
+function M.pr_path()
+  local r = require('revuey.pr').parse_result(io.stdin:read('*a'))
+  if not r then
+    die('wt switch printed no worktree path')
+  end
+  out(r.path .. '\n')
+end
+
 function M.install_skill(o)
   local src = vim.fs.joinpath(plugin, 'skill', 'revuey')
   if not vim.uv.fs_stat(vim.fs.joinpath(src, 'SKILL.md')) then
@@ -1344,6 +1383,8 @@ local COMMANDS = {
   hunks = M.hunks,
   ['import-review'] = M.import_review,
   ['install-skill'] = M.install_skill,
+  ['pr-target'] = M.pr_target,
+  ['pr-path'] = M.pr_path,
 }
 
 function M.main(args)

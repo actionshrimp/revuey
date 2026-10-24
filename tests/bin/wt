@@ -1,0 +1,117 @@
+#!/bin/sh
+# Fake worktrunk `wt` for tests (never the real one). Put tests/bin first on PATH. Handles
+# `wt switch pr:<N> --no-cd --format json` like wt 0.81: progress and hook output on stderr, one
+# JSON object {action, branch, path} on stdout, a worktree at <repo>.<branch> (as wt's default
+# worktree-path template), created with `git worktree add` from the local branch, else from
+# origin/<branch> with --track.
+#   REVUEY_FAKE_WT         scenario: ok (default; an existing worktree is reused), slow (ok, the
+#                          pre-start hook takes $REVUEY_FAKE_WT_DELAY seconds, default 1),
+#                          approval (project hooks need approval: asks on a terminal, else fails
+#                          as wt does without one), hookfail (the worktree is created, then a
+#                          pre-start hook exits 3), hang (pre-start never ends: a `sleep` child
+#                          whose pid goes to $REVUEY_FAKE_WT_LOG.kids, wt's to .pid), nogh,
+#                          notgithub, unknown (no such PR)
+#   REVUEY_FAKE_WT_BRANCH  the PR's head branch (default pr-<N>)
+#   REVUEY_FAKE_WT_HOOK    shell command run as the pre-start hook in the new worktree
+#   REVUEY_FAKE_WT_LOG     file to append {argv, cwd, tty} to (one JSON object per line)
+json() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+if [ -n "${REVUEY_FAKE_WT_LOG:-}" ]; then
+  tty=false
+  [ -t 0 ] && tty=true
+  {
+    printf '{"argv":["wt"'
+    for a in "$@"; do printf ',"%s"' "$(json "$a")"; done
+    printf '],"cwd":"%s","tty":%s}\n' "$(json "$(pwd)")" "$tty"
+  } >> "$REVUEY_FAKE_WT_LOG"
+fi
+for a in "$@"; do
+  if [ "$a" = --yes ] || [ "$a" = -y ]; then
+    echo "fake wt: --yes must never be passed (approval is the user's)" >&2
+    exit 98
+  fi
+done
+if [ "${1:-}" != switch ]; then
+  echo "fake wt: unsupported command $*" >&2
+  exit 2
+fi
+case "${2:-}" in
+  pr:*) n=${2#pr:} ;;
+  *) echo "✗ No branch or worktree named ${2:-}" >&2; exit 1 ;;
+esac
+scenario=${REVUEY_FAKE_WT:-ok}
+echo "◎ Fetching PR #$n..." >&2
+case $scenario in
+  nogh) echo "✗ GitHub CLI (gh) not installed; install from https://cli.github.com/" >&2; exit 1 ;;
+  notgithub) echo "✗ No GitHub remote configured" >&2; exit 1 ;;
+  unknown)
+    echo "✗ gh api failed for PR #$n" >&2
+    echo "  HTTP 404: Not Found (https://api.github.com/repos/acme/shop/pulls/$n)" >&2
+    exit 1
+    ;;
+esac
+branch=${REVUEY_FAKE_WT_BRANCH:-pr-$n}
+echo "  PR title (#$n)" >&2
+echo "  by @alice · open · $branch · https://github.com/acme/shop/pull/$n" >&2
+git rev-parse --show-toplevel >/dev/null || exit 1
+# the main worktree (wt places worktrees next to the repo, not next to a linked worktree)
+main=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+path="$main.$(printf '%s' "$branch" | tr '/\\' '--')"
+if git worktree list --porcelain | grep -qxF "worktree $path"; then
+  printf '{"action":"existing","branch":"%s","path":"%s"}\n' "$(json "$branch")" "$(json "$path")"
+  echo "○ Worktree for $branch @ $path (directory change disabled)" >&2
+  exit 0
+fi
+hooks=yes
+if [ "$scenario" = approval ]; then
+  echo "▲ shop needs approval to execute 1 command:" >&2
+  echo "○ pre-start build:" >&2
+  echo "  npm run build" >&2
+  if [ ! -t 0 ]; then
+    echo "✗ Cannot prompt for approval in non-interactive environment" >&2
+    echo "↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add --yes" >&2
+    exit 1
+  fi
+  printf '❯ Allow and remember? [y/N] ' >&2
+  read -r answer
+  case $answer in
+    y|Y|yes) ;;
+    *) echo "○ Commands declined" >&2; hooks=no ;;
+  esac
+fi
+if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+  git worktree add -q "$path" "$branch" >&2 || exit 1
+elif git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
+  echo "◎ Fetching $branch from origin..." >&2
+  git worktree add -q --track -b "$branch" "$path" "origin/$branch" >&2 || exit 1
+else
+  echo "✗ Branch $branch not found" >&2
+  exit 1
+fi
+if [ "$hooks" = yes ]; then
+  echo "◎ Running pre-start project:build @ $path" >&2
+  case $scenario in
+    slow) sleep "${REVUEY_FAKE_WT_DELAY:-1}" ;;
+    hookfail)
+      echo "  npm run build" >&2
+      echo "error TS2307: Cannot find module './gone'" >&2
+      echo "✗ pre-start project:build failed (exit code 3)" >&2
+      echo "↳ To skip pre-start hooks, re-run with --no-hooks" >&2
+      exit 3
+      ;;
+    hang)
+      [ -n "${REVUEY_FAKE_WT_LOG:-}" ] && echo $$ > "$REVUEY_FAKE_WT_LOG.pid"
+      sleep 60 &
+      [ -n "${REVUEY_FAKE_WT_LOG:-}" ] && echo $! > "$REVUEY_FAKE_WT_LOG.kids"
+      wait
+      exit 1
+      ;;
+  esac
+  if [ -n "${REVUEY_FAKE_WT_HOOK:-}" ]; then
+    (cd "$path" && sh -c "$REVUEY_FAKE_WT_HOOK") >&2 || {
+      echo "✗ pre-start project:build failed (exit code 1)" >&2
+      exit 1
+    }
+  fi
+fi
+printf '{"action":"created","branch":"%s","path":"%s","created_branch":false}\n' "$(json "$branch")" "$(json "$path")"
+echo "✓ Created worktree for $branch @ $path" >&2
