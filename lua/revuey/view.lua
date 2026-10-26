@@ -1824,6 +1824,10 @@ function M.comment_keymaps(s)
   map(buf, k.comment_accept, with(comments_view.accept), 'accept the AI review finding on this line')
   map(buf, k.comment_dismiss, with(comments_view.dismiss), 'dismiss / restore the AI review finding on this line')
   map(buf, k.forge_threads, with(comments_view.toggle_forge), 'GitHub threads: all / open only / hidden')
+  map(buf, k.comment_include, with(comments_view.toggle_include), 'add the comment on this line to the GitHub review / take it out')
+  map(buf, k.forge_submit, with(function(x)
+    require('revuey.forge_post_view').start(x)
+  end), 'submit the review to GitHub (verdict, then a confirmation)')
   -- `gx` (keymaps.forge_open) on a GitHub thread opens it; elsewhere the key does what it does
   -- outside revuey: its global mapping (Neovim's default `gx` opens the URL under the cursor),
   -- else the built-in command
@@ -1864,6 +1868,11 @@ function M.comment_keymaps(s)
   map(buf, k.comment_prev, function()
     comments_view.next(M.session, -1)
   end, 'previous comment')
+end
+
+---`:RevueySubmit [verdict]`: submit the review to GitHub (forge_post_view).
+function M.submit(verdict)
+  return require('revuey.forge_post_view').start(M.session, verdict)
 end
 
 ---`:RevueyComments`: the comments list of the open review.
@@ -1970,6 +1979,9 @@ local function panel_keymaps(s)
   map(buf, k.forge_open, function()
     require('revuey.forge_view').open(s, api.nvim_win_get_cursor(0)[1])
   end, 'open the pull request in the browser')
+  map(buf, k.forge_submit, function()
+    require('revuey.forge_post_view').start(s)
+  end, 'submit the review to GitHub (verdict, then a confirmation)')
   -- <Tab> on the pull request heading folds its details; elsewhere it stays <C-i>
   map(buf, k.toggle_fold, function()
     if vim.v.count == 0 and require('revuey.forge_view').toggle(s, api.nvim_win_get_cursor(0)[1]) then

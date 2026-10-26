@@ -107,8 +107,10 @@ end
 ---Put the fake `gh` (tests/bin/gh) first on PATH: it appends each call to `log` and answers
 ---GraphQL PR lookups from `prs` ({ ["owner/name:branch"] = { PullRequest nodes } }), written to
 ---a JSON file. `scenario` (REVUEY_FAKE_GH) picks a failure mode. `threads` ({ ["owner/name#N"] =
----{ review thread nodes } }) answers review-thread queries (none when nil).
-function M.use_fake_gh(log, prs, scenario, threads)
+---{ review thread nodes } }) answers review-thread queries (none when nil). `post` (see
+---tests/bin/fake_gh.lua: viewer, prs, files, reviews, fail) answers the posting preflight, the PR
+---files and the review mutations, which are recorded to `log .. '.mutations.ndjson'`.
+function M.use_fake_gh(log, prs, scenario, threads, post)
   vim.env.PATH = M.root .. '/tests/bin:' .. vim.env.PATH
   vim.env.REVUEY_FAKE_NVIM = vim.v.progpath
   vim.env.REVUEY_FAKE_GH_LOG = log
@@ -120,6 +122,10 @@ function M.use_fake_gh(log, prs, scenario, threads)
   local tfile = log .. '.threads.json'
   vim.fn.writefile({ vim.json.encode(threads or vim.empty_dict()) }, tfile)
   vim.env.REVUEY_FAKE_GH_THREADS = tfile
+  local pfile = log .. '.post.json'
+  vim.fn.writefile({ vim.json.encode(post or vim.empty_dict()) }, pfile)
+  vim.env.REVUEY_FAKE_GH_POST = pfile
+  vim.env.REVUEY_FAKE_GH_MUTATIONS = log .. '.mutations.ndjson'
 end
 
 ---Put the fake `wt` (tests/bin/wt) first on PATH: it appends each call to `log` and handles

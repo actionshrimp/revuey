@@ -506,6 +506,13 @@ function M.render(s, o)
   if tk and forge_view.has_threads(s) then
     help[#help + 1] = ' ' .. tk .. ' GitHub threads (all/open/none)'
   end
+  -- comments added to the review to post on GitHub
+  local sk = require('revuey.config').options.keymaps.forge_submit
+  sk = type(sk) == 'table' and sk[1] or sk
+  local n_review = s.cm and s.cm.store and require('revuey.forge_post_view').count(s.cm.store) or 0
+  if sk and n_review > 0 then
+    help[#help + 1] = (' %s submit review (%d in review)'):format(sk, n_review)
+  end
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })
   end

@@ -63,7 +63,7 @@ M.SWITCHED = 'switched'
 ---@field body string               markdown
 ---@field author {kind:'user'|'ai'|'agent', name?:string}
 ---@field status 'draft'|'saved'|'resolved'|'dismissed'|'accepted'
----@field in_review boolean         "add to review" for a later forge post
+---@field in_review boolean         "add to review": posted by the next review submit (`ci`)
 ---@field thread revuey.CommentReply[]
 ---@field created_at integer        ms since the epoch
 ---@field updated_at integer
@@ -79,7 +79,11 @@ M.SWITCHED = 'switched'
 ---@field acked_at? integer         the agent acknowledged it (`bin/revuey ack`, or a reply)
 ---@field answered_at? integer      the agent replied (`bin/revuey reply`)
 ---@field forge_reply? table        a local reply to a GitHub review thread (`cr` on one):
----                                 {thread_id, pr, repo, url, comment_id, database_id}; never posted
+---                                 {thread_id, pr, repo, url, comment_id, database_id}; a review
+---                                 submit posts it as a reply in that thread
+---@field forge_post? table         where it is on GitHub once a submit took it (forge_post_view):
+---                                 {state = 'pending'|'posted', pr, repo, review_id, thread_id?,
+---                                 comment_id, database_id?, url?, posted_at?}
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
 ---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
 ---                                 accepted_at?, dismissed_at?}

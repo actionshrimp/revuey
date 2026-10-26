@@ -91,6 +91,10 @@ M.defaults = {
     -- (again: restore). `cs` sends one to the agent session to follow up, as any comment.
     comment_accept = 'ca',
     comment_dismiss = 'cn',
+    -- "add to review": include the comment on this line in the review posted to GitHub (or take
+    -- it out); a local flag until you submit (forge_submit). `ci` shadows `ci{motion}` like the
+    -- other c* keys.
+    comment_include = 'ci',
     comment_send = '<C-a>', -- in the comment editor: save and send to the coding-agent session
     send_comment = 'cs', -- send the comment on this line to the agent session
     -- ask the agent about this line or the visual selection: the comment editor, where
@@ -104,6 +108,10 @@ M.defaults = {
     -- `gH` (select-line mode) means nothing in a read-only review buffer. In the diff, `gx` on a
     -- thread opens it on GitHub.
     forge_threads = 'gH',
+    -- submit the review to GitHub (:RevueySubmit): pick a verdict, the comments added with
+    -- comment_include go into your pending review, then a confirmation before anything is
+    -- published. `gP` (put before) means nothing in a read-only review buffer.
+    forge_submit = 'gP',
     -- edit the real file at this line in a float (working-tree mode, checked-out layer only).
     -- `ge` (backward to the end of a word) means little in a read-only review buffer.
     edit = 'ge',

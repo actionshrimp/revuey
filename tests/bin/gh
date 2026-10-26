@@ -18,6 +18,10 @@
 #                        `_heads` = the headRefOid each PR's thread pages report
 #   REVUEY_FAKE_GH_THREADS_SCENARIO  fail | errors | fail_after (later pages only) for thread
 #                        queries only
+#   REVUEY_FAKE_GH_POST  JSON file: the GitHub side of posting a review (viewer, PRs with node ids,
+#                        heads and pending reviews, REST PR files, review states, failures); it is
+#                        also the fake's state: review mutations rewrite it (see fake_gh.lua)
+#   REVUEY_FAKE_GH_MUTATIONS  file every mutation alias is appended to as {op, alias, input}
 #   REVUEY_FAKE_NVIM     nvim binary that runs the Lua half (default: nvim)
 dir=$(cd "$(dirname "$0")" && pwd)
 if [ "${REVUEY_FAKE_GH:-}" = hang ]; then

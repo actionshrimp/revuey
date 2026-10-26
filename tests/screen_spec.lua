@@ -412,6 +412,47 @@ h.test('stack with pull requests: GitHub review threads inline', function()
   screenshot('forge-threads')
 end)
 
+h.test('posting a review: comments added to the review, one in the pending review, the panel hint', function()
+  local d = h.tmpdir('screen-forge-post')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  h.use_fake_gh(h.tmpdir('screen-forge-post-gh') .. '/calls.ndjson', {
+    ['acme/shop:stack/cart'] = { {
+      number = 42, title = 'Cart totals', url = 'https://github.com/acme/shop/pull/42', state = 'OPEN', isDraft = false,
+      author = { login = 'alice' }, latestReviews = { nodes = {} }, reviewRequests = { nodes = {} }, mergeable = 'MERGEABLE',
+      baseRefName = 'stack/math', headRefName = 'stack/cart', headRepositoryOwner = { login = 'acme' }, commits = { nodes = {} },
+      updatedAt = '2026-01-01T00:00:00Z',
+    } },
+  }, nil, {})
+  start(d, '', 40, 120)
+  h.ok(child.lua([[
+    local s = require('revuey.view').session
+    local ok = vim.wait(10000, function()
+      return s and not s.refreshing and s.forge and s.forge.ready and not s.forge.busy
+    end, 10)
+    local comments = require('revuey.comments')
+    local cv = require('revuey.comments_view')
+    local store = cv.sync_store(s)
+    local function add(l1, l2, body, extra)
+      local anchor = comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+        { path = 'src/cart.ts', side = 'new', start_line = l1, end_line = l2 }, cv.context(s).get_line)
+      local c = comments.new(anchor, body)
+      for k, v in pairs(extra) do
+        c[k] = v
+      end
+      comments.put(store, c)
+    end
+    add(10, 10, 'Readonly array?', { in_review = true })
+    add(12, 14, 'Return a copy instead of `this`?', { in_review = true, forge_post = { state = 'pending', pr = 42, review_id = 'PRR_1', comment_id = 'C9' } })
+    add(18, 18, 'Not for GitHub: check the rounding.', {})
+    cv.refresh(s)
+    vim.cmd('redraw')
+    return ok
+  ]]), 'review did not load')
+  screenshot('forge-post')
+end)
+
 -- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
 -- panel, and `!` opens the details float.
 h.test('stack notes: panel summary line and the details float', function()
