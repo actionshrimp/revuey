@@ -81,9 +81,11 @@ M.SWITCHED = 'switched'
 ---@field forge_reply? table        a local reply to a GitHub review thread (`cr` on one):
 ---                                 {thread_id, pr, repo, url, comment_id, database_id}; a review
 ---                                 submit posts it as a reply in that thread
----@field forge_post? table         where it is on GitHub once a submit took it (forge_post_view):
----                                 {state = 'pending'|'posted', pr, repo, review_id, thread_id?,
----                                 comment_id, database_id?, url?, posted_at?}
+---@field forge_post? table         where it is on GitHub once a submit sent it (forge_post_view,
+---                                 its state machine): {state = 'sending'|'unknown'|'pending'|
+---                                 'posted', pr, repo, review_id? | ledger?, payload (what was
+---                                 sent), before?, sent_at, thread_id?, comment_id?, database_id?,
+---                                 url?, posted_at?}
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
 ---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
 ---                                 accepted_at?, dismissed_at?}

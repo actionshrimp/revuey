@@ -59,7 +59,7 @@ Requirements:
 | `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
 | `:RevueyAIReview cancel` | Stop a running AI review. |
 | `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
-| `:RevueySubmit [approve\|comment\|request-changes]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. |
+| `:RevueySubmit [approve\|comment\|request-changes]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
@@ -504,33 +504,43 @@ comments.
 
 What happens, in order:
 
-1. **Checks.** revuey reads the PR's files as GitHub has them and the PR itself (its head commit,
-   your pending review). Each comment is checked against GitHub's diff (below); what can't be
-   posted is left out with the reason.
-2. **Your pending review.** The comments go into your *pending* review on the PR: the one you
-   already have (GitHub allows one per PR; one started in GitHub's UI or another tool such as
-   Graphite is reused, never replaced or emptied), else a new one on the commit you reviewed. A
-   pending review is visible only to you. A comment already in it (added by an earlier submit)
-   is not added again.
-3. **Confirmation.** The verdict, and per PR the comments and replies revuey added, the comments
-   your pending review already had from elsewhere (submitted too), the commit it is bound to when
-   that is not the one you reviewed, and everything left out with the reason. `Write body` adds a
-   review body (a Comment review with nothing in it needs one). When something was left out,
-   Cancel is the default.
-4. **Submit.** The review is published with the verdict. Posted comments are marked `posted to
-   GitHub #42` and the threads are fetched again: from then on the GitHub thread stands for the
-   comment (your local copy is not drawn twice; with GitHub threads hidden, `gH`, it shows with the
-   `posted` mark; one with local replies, which are not posted, stays shown, collapsed).
+1. **Reading (nothing is sent).** revuey reads the PR's files as GitHub has them, the PR itself
+   (its head commit, your pending review, its latest reviews) and every review it sent comments
+   to before, and settles what became of those (below). Each comment is checked against GitHub's
+   diff (below); what can't be posted is left out with the reason.
+2. **Confirmation.** The verdict, and per PR exactly what will happen: the comments and replies
+   revuey will add (`+`), those already in your pending review (`=`, with GitHub's text when you
+   edited one since), the comments your pending review has from elsewhere (submitted too), the
+   commit it is bound to when that is not the one you reviewed, PRs that are blocked and why,
+   and everything left out with the reason; in the full-stack scope every PR of the stack
+   (`PR #13: nothing to post, no review`). `Write body` adds a review body (a Comment review
+   with nothing in it needs one). Cancel leaves GitHub untouched.
+3. **Sending.** On a PR where you have no pending review and everything is a line comment, one
+   request creates and submits the review with all its comments: it exists whole, or not at all.
+   Otherwise (your pending review there, started in GitHub's UI or another tool such as
+   Graphite, which is reused and never replaced or emptied; or replies to threads and file
+   comments, which need it) the comments go into the pending review, then it is submitted, only
+   when every comment went in. Before each request revuey saves what it sends, so a request that
+   gets no answer (a timeout) or a Neovim that dies meanwhile leaves a record.
+4. **Posted.** Posted comments are marked `posted to GitHub #42` and the threads are fetched
+   again: from then on the GitHub thread stands for the comment (your local copy is not drawn
+   twice; with GitHub threads hidden, `gH`, it shows with the `posted` mark; one with local
+   replies, which are not posted, stays shown, collapsed).
 
-If you cancel at the confirmation, or the submit fails, the comments stay in your pending review
-on GitHub (`in your pending review on GitHub #42`; you can see them there and in other tools), and
-the next submit publishes them without adding them again (revuey knows them by their GitHub ids,
-never by their text). One you take out with `ci` stays in the pending review until you delete it
-there; then revuey forgets it. If GitHub does not answer an add, revuey reads your pending review
-again to see whether it went in; when it cannot tell, nothing can be submitted until a later
-submit has checked. One submit runs at a time; closing the review before the confirmation stops
-there. In the full-stack scope only PRs with comments from revuey get the verdict; a pending
-review of yours on another PR of the stack is mentioned, not submitted.
+**When GitHub does not answer.** The next `gP` first looks for what was sent, exactly as it was
+sent (not your comment as it is now): found once, it is recorded (`in your pending review on
+GitHub #42`, or posted); proven absent (the review read whole without it), it is forgotten and
+sent again if it is still in the review. Anything else (GitHub unreadable, a pending review too
+long to read whole, two comments it cannot tell apart, a comment of yours from elsewhere with
+the same text) marks it `maybe on GitHub #42 (unconfirmed)` and blocks that PR: nothing more
+goes to it until a later `gP` can tell. Check the PR on GitHub; `:RevueySubmit forget` on such a
+comment drops revuey's record of it (it may exist on GitHub, so it could be posted twice). A
+comment in your pending review that you take out with `ci` stays there until you delete it on
+GitHub; then revuey forgets it. A failed or cancelled submit leaves your pending review as it
+is. One submit runs at a time per Neovim; two Neovims on the same review do not see each
+other's submit, so do not submit from both at once. In the full-stack scope only PRs with
+comments from revuey get the verdict; a pending review of yours on another PR of the stack is
+mentioned, not submitted.
 
 **Which line on GitHub.** GitHub numbers a comment's lines in the file at the PR's head (the old
 side: in its base), and only takes lines inside the PR diff's hunks. A comment is posted on the
@@ -549,7 +559,7 @@ line you wrote it on, or not at all:
   PRs without comments get none.
 - File comments go to the PR that has the file as you see it.
 - GitHub does not let a PR's author approve it or request changes; that is refused before
-  anything is added.
+  anything is sent.
 
 ```lua
 require('revuey').setup({

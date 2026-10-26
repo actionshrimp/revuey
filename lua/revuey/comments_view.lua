@@ -455,6 +455,9 @@ function M.post_label(c)
     return { text = 'posted to GitHub #' .. tostring(fp.pr), hl = 'RevueyForgeNumber' }
   elseif st == 'pending' then
     return { text = 'in your pending review on GitHub #' .. tostring(fp.pr), hl = 'RevueyCommentInReview' }
+  elseif st == 'sending' or st == 'unknown' then
+    -- GitHub never answered for it: the next submit checks (:RevueySubmit forget drops it)
+    return { text = 'maybe on GitHub #' .. tostring(fp.pr) .. ' (unconfirmed)', hl = 'RevueyCommentDraft' }
   elseif c.in_review then
     return { text = 'in review', hl = 'RevueyCommentInReview' }
   end
@@ -507,7 +510,7 @@ end
 ---comment among the threads drawn (`ids`: forge_shown_ids)? Then only the GitHub thread is shown.
 function M.superseded(cmt, ids)
   local fp = type(cmt.forge_post) == 'table' and cmt.forge_post or nil
-  if not fp or not fp.state then
+  if not fp or (fp.state ~= 'pending' and fp.state ~= 'posted') then
     return false
   end
   for _, r in ipairs(cmt.thread or {}) do
