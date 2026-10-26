@@ -240,7 +240,9 @@ end
 ---Blobs of the threads' files at the head commit their threads were numbered against
 ---(forge.threads_head: `<oid>:<path>` -> blob), looked up with one `git cat-file --batch-check`
 ---for the keys not known yet. Found blobs are immutable facts, kept for the review; a commit or
----path missing here is asked again on the next update (the user may fetch it meanwhile).
+---path missing here is asked again on the next update (the user may fetch it meanwhile), so a
+---missing head costs one `git cat-file --batch-check` per update (open, refresh, scope switch,
+---`R`, the lazy refetch) until the commit is found.
 ---Placement trusts GitHub's line numbers when the review's new side of a file is that blob.
 ---Call inside git.async. Returns true when a blob was found.
 function M.load_head_blobs(s, prs, root)

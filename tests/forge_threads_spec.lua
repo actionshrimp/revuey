@@ -243,6 +243,40 @@ h.test('place: a range across both sides is anchored on its last line', function
   h.eq({ 'line', 'new', 21, 21 }, { p.how, p.side, p.start_line, p.end_line })
 end)
 
+local GO = {
+  'package x', '', 'func a() error {', '\tdefer c.Close()', '', '\tif err := one(); err != nil {', '\t\treturn wrap(err)', '\t}',
+  '\treturn nil', '}', '', 'func b() error {', '\tdefer c.Close()', '', '\tif err := one(); err != nil {', '\t\treturn err',
+  '\t}', '\treturn nil', '}',
+}
+
+h.test('place: a weak line still at GitHub\'s line never moves to the same block elsewhere (RIGHT and LEFT)', function()
+  local text = table.concat(GO, '\n') .. '\n'
+  -- the brace closing a()'s `if`: its hunk is from before a later push changed `return err`
+  local before = { '', '\tif err := one(); err != nil {', '\t\treturn err' }
+  for _, side in ipairs({ 'RIGHT', 'LEFT' }) do
+    -- every line shown: a new file (RIGHT), a deleted one (LEFT)
+    local ctx = side == 'RIGHT' and ctx_for('', text) or ctx_for(text, '')
+    local p = ft.place(thread({ line = 8, original_line = 8, side = side, before = before, text = { '\t}' } }), ctx)
+    h.eq({ 'outside', 8 }, { p.how, p.start_line }, side .. ': not b()\'s brace at 17')
+  end
+  -- `return err` with its `if` line edited: not the other function's `return err`
+  local go2 = vim.deepcopy(GO)
+  go2[6], go2[7] = '\tif err := two(); err != nil {', '\t\treturn err'
+  local p = ft.place(thread({ line = 7, original_line = 7, before = { '\tdefer c.Close()', '', '\tif err := one(); err != nil {' },
+    text = { '\t\treturn err' } }), ctx_for('', table.concat(go2, '\n') .. '\n'))
+  h.eq({ 'outside', 7 }, { p.how, p.start_line }, 'not b()\'s return err at 16')
+end)
+
+h.test('place: a `}` whose GitHub line now holds other text is found by its whole context', function()
+  -- lines inserted above locally: line 8 is no longer the brace; its block (all context) is at 10
+  local go = vim.deepcopy(GO)
+  table.insert(go, 4, '\t// one')
+  table.insert(go, 5, '\t// two')
+  local before = { '', '\tif err := one(); err != nil {', '\t\treturn wrap(err)' }
+  local p = ft.place(thread({ line = 8, before = before, text = { '\t}' } }), ctx_for('', table.concat(go, '\n') .. '\n'))
+  h.eq({ 'moved', 10 }, { p.how, p.start_line })
+end)
+
 h.test('place: context edited by a later push (GitHub keeps the thread on its line)', function()
   local a = numbered(40)
   local b = numbered(40, { [17] = 'reworded above', [18] = 'also reworded', [19] = 'and this',
@@ -954,7 +988,10 @@ h.test('kept threads from an older head are not trusted against the new head\'s 
   restore()
   vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
   local p = s.cm.forge_place['gh:TB']
-  h.eq({ 'moved', 20 }, { p.how, p.start_line }, 'the end of addItem, not clear()\'s brace at 15')
+  -- `  }` is still at line 15 (clear()'s now), only its context changed: listed apart, never
+  -- on clear()'s brace and never guessed
+  h.eq({ 'outside', 15 }, { p.how, p.start_line }, 'not trusted on clear()\'s brace')
+  h.eq('gh_outside', s.cm.forge_rows['gh:TB'].group)
   -- control: threads renumbered by GitHub against H2 are trusted at their line
   h.use_fake_gh(calls, prs(h2), nil, on(20, h2))
   _, restore = h.capture_notify()
