@@ -76,8 +76,9 @@ end
 
 ---Run `wt switch` in a terminal split, where wt can ask for approval (its own prompt, the
 ---user's answer); on success the review opens as after a background run. A failed run leaves
----the terminal open with wt's output. Closing or hiding the terminal while wt runs (`:q`,
----`:bd!`) stops wt: nobody could answer its prompt any more.
+---the terminal open with wt's output. Closing the terminal while wt runs (`:q` on its last
+---window, `:bd!`) stops wt: nobody could answer its prompt any more. Hiding it (another
+---buffer in its window) does not; `:Revuey pr` shows it again (M.show_terminal).
 ---@param c table M.current
 function M.run_in_terminal(c, opts)
   local out = vim.fn.tempname()
@@ -116,25 +117,40 @@ function M.run_in_terminal(c, opts)
     return vim.notify('revuey: could not start ' .. cmd .. ' in a terminal: ' .. tostring(id), vim.log.levels.ERROR)
   end
   t.job = id
-  api.nvim_create_autocmd({ 'BufHidden', 'BufUnload', 'BufWipeout' }, {
-    group = t.group,
-    buffer = buf,
-    callback = function()
-      if t.closing or M.current ~= c or c.term ~= t then
+  local function closed()
+    if t.closing or M.current ~= c or c.term ~= t then
+      return
+    end
+    vim.schedule(function()
+      if M.current ~= c or c.term ~= t then
         return
       end
-      vim.schedule(function()
-        if M.current ~= c or c.term ~= t then
+      close_term(c, true)
+      M.current = nil
+      echo(c.number, 'failed', 'terminal closed', true)
+      vim.notify(
+        ('revuey: stopped wt switch pr:%d: its terminal was closed (:Revuey pr %d starts again)'):format(c.number, c.number),
+        vim.log.levels.WARN
+      )
+    end)
+  end
+  -- unloaded or wiped (`:bd!`), or its last window closed (`:q`): stop wt. Switching buffers
+  -- in its window (`:e .config/wt.toml` to read the hooks first, `<C-^>`) only hides it, and
+  -- wt keeps waiting; `:Revuey pr` shows it again.
+  api.nvim_create_autocmd({ 'BufUnload', 'BufWipeout' }, { group = t.group, buffer = buf, callback = closed })
+  api.nvim_create_autocmd('WinClosed', {
+    group = t.group,
+    callback = function(ev)
+      local win = tonumber(ev.match)
+      if not (win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == buf) then
+        return
+      end
+      for _, w in ipairs(vim.fn.win_findbuf(buf)) do
+        if w ~= win then
           return
         end
-        close_term(c, true)
-        M.current = nil
-        echo(c.number, 'failed', 'terminal closed', true)
-        vim.notify(
-          ('revuey: stopped wt switch pr:%d: its terminal was closed (:Revuey pr %d starts again)'):format(c.number, c.number),
-          vim.log.levels.WARN
-        )
-      end)
+      end
+      closed()
     end,
   })
   vim.cmd('startinsert')
@@ -178,6 +194,24 @@ local function failed(c, err, opts)
   end)
 end
 
+---Show the approval terminal of the running setup again (in a split) when no window shows it.
+---Returns true when there is one.
+function M.show_terminal()
+  local t = M.current and M.current.term
+  if not (t and api.nvim_buf_is_valid(t.buf)) then
+    return false
+  end
+  local wins = vim.fn.win_findbuf(t.buf)
+  if #wins > 0 then
+    api.nvim_set_current_win(wins[1])
+  else
+    vim.cmd('botright 15split')
+    api.nvim_win_set_buf(0, t.buf)
+  end
+  vim.cmd('startinsert')
+  return true
+end
+
 ---Stop the running setup (background wt or the terminal). Returns false when none runs.
 function M.cancel()
   local c = M.current
@@ -207,6 +241,12 @@ function M.command(arg, opts)
     end
     return
   end
+  if M.current and M.show_terminal() then
+    return vim.notify(
+      ('revuey: PR #%d waits for your answer in its terminal (:Revuey pr cancel stops it)'):format(M.current.number),
+      vim.log.levels.INFO
+    )
+  end
   if M.current then
     return vim.notify(
       ('revuey: PR #%d is still being set up (:Revuey pr cancel stops it)'):format(M.current.number),
@@ -234,8 +274,7 @@ function M.command(arg, opts)
       err = 'not inside a git repository: run :Revuey pr from a clone of the PR\'s repo'
     elseif p.repo then
       local hosts = config.options.forge.hosts
-      local _, repo = pr.wt_remote(require('revuey.forge').remote_info(root, hosts))
-      err = pr.check_repo(p, repo, hosts)
+      err = pr.check_repo(p, pr.wt_repo(root, config.options.forge.cmd, hosts), hosts)
     end
     if err then
       M.current = nil

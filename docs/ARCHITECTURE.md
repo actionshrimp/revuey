@@ -899,11 +899,14 @@ are in `reports/Terminal code review tool landscape.md`.
     config of revuey's own.
     - **Argument.** `N`, `#N`, `pr:N` or a pull request URL. wt ignores a URL's host, owner and
       name (it asks the clone's own repo for that number), so a URL is turned into `pr:N` only
-      when host and repo are those of the remote wt uses (`pr.wt_remote` over
-      `forge.remote_info`, in wt 0.81's order: the `gh repo set-default` remote, i.e.
-      `remote.<name>.gh-resolved = base`, else `origin`, else the first remote; not
-      `forge.base_remote`, which prefers `upstream` and the trunk's remote, so in a fork clone
-      wt asks the fork); another URL is refused before wt runs. A bare number is left to wt.
+      when host and repo are those wt asks (`pr.wt_repo`, as wt 0.81 picks it: gh's default
+      repo from `gh repo set-default --view`, offline since gh reads `remote.<name>.gh-resolved`
+      (`base` or an `owner/name`), else the first remote with a GitHub URL in git config order
+      (`git config --get-regexp '^remote\..*\.url$'`; other forges and paths skipped, no
+      preference for `origin`). Not `forge.base_remote`, which prefers `upstream` and the
+      trunk's remote: after `gh repo fork` in an existing clone (origin renamed to upstream,
+      the fork added as origin) wt asks the parent. Another URL is refused before wt runs; a
+      bare number is left to wt.
       `pr` is always the subcommand: a base branch named `pr` is `:Revuey refs/heads/pr`.
     - **Run.** `vim.system` with stdin closed (wt sees no terminal), detached (its own process
       group: `:Revuey pr cancel`, or a progress UI cancelling the message, sends SIGTERM then
@@ -911,8 +914,10 @@ are in `reports/Terminal code review tool landscape.md`.
       too; `ai.live` kills it on `VimLeavePre`). One setup at a time (`pr_view.current`,
       claimed before the first yield); a second request is refused with a message. stdout is
       one JSON line `{action: created|existing, branch, path}`; stderr carries progress and
-      hook output (kept as chunks, the latest 256KB; the created worktree's path is noted as
-      its `Running pre-start ... @ <path>` line arrives), shown line by line as a Neovim 0.12 progress message (`nvim_echo`
+      hook output (kept as chunks, the latest 256KB; split at `\n` and `\r`, so a progress
+      bar's updates are lines, and an unfinished line keeps only its last 4KB; the created
+      worktree's path is noted as its `Running pre-start ... @ <path>` line arrives), shown
+      line by line as a Neovim 0.12 progress message (`nvim_echo`
       `kind = 'progress'`, id `revuey.pr`, with elapsed seconds from a 1s timer), ending
       `success` or `failed`.
     - **Where the review opens.** In a new tab (as every review) with `:tcd <worktree>`
@@ -933,8 +938,11 @@ are in `reports/Terminal code review tool landscape.md`.
       the roadmap's next part.
     - **Errors.** No `wt` on PATH (or `worktrunk.cmd`): checked before anything runs. wt's own
       failures are shown in wt's words (the `✗` line and what follows, glyphs and ANSI codes
-      stripped), plus the last 5 lines a failing step printed before it; all of stderr (as
-      kept) goes to `revuey.log`: no `gh`, no GitHub remote, unknown PR, a failed hook. A pre-start failure
+      stripped; the last `✗` line, since a hook may print its own), plus the last 5 lines the
+      failing step printed (after its `◎ Running` line and wt's indented echo of the command;
+      `\r` updates reduced to the last); the last 4KB of stderr go to `revuey.log` one entry per
+      line (a single entry would fill the log and rotate earlier diagnostics away), and the
+      message names the log file: no `gh`, no GitHub remote, unknown PR, a failed hook. A pre-start failure
       leaves the worktree (wt does not remove it): its path comes from the last `Running
       pre-start ... @ <path>` line, and the message says `:Revuey pr` opens it as is (pre-start
       only runs on creation), how to re-run the hooks (`wt -C <path> hook pre-start`) and
@@ -947,9 +955,10 @@ are in `reports/Terminal code review tool landscape.md`.
       (`jobstart` with `term = true` running `sh -c 'exec "$@" > "$0"' <file> wt switch ...`:
       wt's prompt and the hooks' output go to the terminal, its JSON to the file), where the
       user answers wt's own prompt; on exit 0 the terminal closes and the review opens, on a
-      failure the terminal stays with wt's output. Closing or hiding the terminal while wt runs
-      (`:q`, `:bd!`; `BufHidden`/`BufUnload`/`BufWipeout`) stops wt, since nobody can answer
-      its prompt any more, and says so; cancel closes the terminal; the output file is deleted
+      failure the terminal stays with wt's output. Closing the terminal while wt runs (its
+      last window, `WinClosed`; or unloading it, `:bd!`) stops wt, since nobody can answer its
+      prompt any more, and says so. Switching buffers in its window (to read `.config/wt.toml`
+      first) only hides it: wt keeps waiting and `:Revuey pr` shows the terminal again; cancel closes the terminal; the output file is deleted
       on every path. Declining in revuey says how to approve
       (`wt config approvals add`, or one `wt switch` in a shell). Declining in wt's prompt
       makes wt skip the project hooks and go on, which is the user's choice.

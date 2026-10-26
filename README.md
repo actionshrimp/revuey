@@ -444,22 +444,24 @@ your shell, so your worktrunk hooks install dependencies and build it first:
    [PR status](#pull-requests) section warns when GitHub's base differs from the stack parent.
    Building the layers from the PR's base chain on GitHub is not done yet.
 3. A URL must name the repo worktrunk uses (it looks the number up there whatever the URL
-   says, so revuey refuses another repo's URL instead of opening a different PR). That is the
-   remote `gh repo set-default` chose, else `origin`, else the first remote: in a fork clone
-   (`origin` your fork, `upstream` the parent) that is the fork, so open the parent's PRs from
-   a clone of the parent, or run `gh repo set-default` there. worktrunk's own errors are shown as it words them: `gh` missing, no GitHub
+   says, so revuey refuses another repo's URL instead of opening a different PR). That is gh's
+   default repo (`gh repo set-default`), else the first remote with a GitHub URL in
+   `.git/config` order (not necessarily `origin`). In a fork clone, `gh repo set-default`
+   picks which of the two `:Revuey pr` opens PRs of. worktrunk's own errors are shown as it words them: `gh` missing, no GitHub
    remote, an unknown PR, a failed hook.
 
 **Approvals.** worktrunk asks before running a repo's *project* hooks (`.config/wt.toml`) the first
 time, and again when they change; in the background it cannot ask and refuses. revuey never
 passes `--yes`: it shows the commands and offers to run the same `wt switch` in a terminal split,
 where you answer worktrunk's own prompt (or decline: worktrunk then skips the project hooks); the
-review opens when it succeeds. Closing the terminal (`:q`, `:bd!`) while worktrunk waits stops
-it. You can also approve beforehand with `wt config approvals add` in
+review opens when it succeeds. Closing the terminal (`:q` on its window, `:bd!`) while
+worktrunk waits stops it; switching to another buffer there (to read `.config/wt.toml` first,
+say) does not, and `:Revuey pr` shows the terminal again. You can also approve beforehand with `wt config approvals add` in
 the clone. Hooks in your user config (`~/.config/worktrunk/config.toml`) need no approval.
 
 **A failed hook** leaves the worktree behind (worktrunk does not remove it); the message names it
-and shows the last lines the hook printed (all of worktrunk's output goes to `revuey.log`).
+and shows the last lines the hook printed (the end of worktrunk's output goes to the log file,
+`stdpath('log')/revuey.log` by default, which the message names).
 `:Revuey pr` again opens it as it is, since `pre-start` only runs when the worktree is created:
 re-run the hooks with `wt -C <path> hook pre-start`, or remove the worktree.
 

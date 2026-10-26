@@ -10,6 +10,25 @@ if log and log ~= '' then
   out:close()
 end
 
+-- `gh repo set-default --view`: offline, from `remote.<name>.gh-resolved` as gh reads it
+-- (`base` names that remote's repo; any other value is the repo itself)
+if argv[2] == 'repo' and argv[3] == 'set-default' and argv[4] == '--view' then
+  local out = vim.system({ 'git', 'config', '--get-regexp', '^remote\\..*\\.gh-resolved$' }, { text = true }):wait().stdout or ''
+  for line in out:gmatch('[^\n]+') do
+    local remote, val = line:match('^remote%.(.-)%.gh%-resolved (.*)$')
+    if val == 'base' then
+      local url = vim.trim(vim.system({ 'git', 'remote', 'get-url', remote }, { text = true }):wait().stdout or '')
+      val = url:gsub('%.git$', ''):match('([^/:]+/[^/:]+)$')
+    end
+    if val and val ~= '' then
+      io.stdout:write(val, '\n')
+      os.exit(0)
+    end
+  end
+  io.stderr:write('no default repository has been set; use `gh repo set-default` to select one\n')
+  os.exit(0)
+end
+
 local scenario = os.getenv('REVUEY_FAKE_GH') or 'ok'
 if scenario == 'slow' then
   scenario = 'ok'

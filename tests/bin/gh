@@ -4,6 +4,8 @@
 #                        errors (GraphQL errors and no data), slow (ok after
 #                        $REVUEY_FAKE_GH_DELAY seconds, default 1), hang (sleeps 60s; its pid goes to
 #                        $REVUEY_FAKE_GH_LOG.pid, as for every call)
+#                        `gh repo set-default --view` answers from git config (gh-resolved),
+#                        offline as gh does (only hang and slow apply to it)
 #   REVUEY_FAKE_GH_LOG   file to append {argv, cwd} to (one JSON object per line)
 #   REVUEY_FAKE_GH_PRS   JSON file: { "owner/name:branch": [PullRequest nodes, newest first] }
 #                        answering the `gh api graphql` queries built by lua/revuey/forge.lua;

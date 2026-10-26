@@ -7,13 +7,17 @@ local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h')
 vim.cmd('runtime plugin/revuey.lua')
 
 local state_dir = h.tmpdir('pr-state')
-require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
+-- failures are logged: to a log of the spec's own, never the developer's revuey.log
+local log_file = h.tmpdir('pr-log') .. '/revuey.log'
+require('revuey').setup({ state_dir = state_dir, lsp_warmup = false, log_file = log_file })
 local pr = require('revuey.pr')
 local pr_view = require('revuey.pr_view')
 local view = require('revuey.view')
 
 local log = h.tmpdir('pr-wt') .. '/calls.jsonl'
 h.use_fake_wt(log)
+-- `gh repo set-default --view` (offline) for the URL check; nothing else calls gh here
+h.use_fake_gh(h.tmpdir('pr-gh') .. '/calls.jsonl')
 
 -- progress messages (nvim_echo kind=progress) as the Progress event reports them; not shown
 -- in the test output
@@ -57,7 +61,7 @@ h.test('check_repo: a URL must name the clone\'s GitHub repo, host included (wt 
     pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'other', name = 'thing' } }, base)
   )
   h.eq(
-    'this clone has no GitHub remote wt would use, so other/thing#7 cannot be opened here',
+    'this clone has no GitHub repo wt would use, so other/thing#7 cannot be opened here',
     pr.check_repo({ number = 7, repo = { host = 'github.com', owner = 'other', name = 'thing' } }, nil)
   )
   -- a GitHub Enterprise clone and a github.com URL of the same owner/name
@@ -69,23 +73,27 @@ h.test('check_repo: a URL must name the clone\'s GitHub repo, host included (wt 
   h.eq(nil, pr.check_repo({ number = 7, repo = { host = 'git.corp.net', owner = 'acme', name = 'shop' } }, ghe, { 'git.corp.net' }))
 end)
 
-h.test('wt_remote: as wt picks it (gh-resolved, else origin, else the first remote), not like gh\'s PR lookups', function()
-  local function info(remotes, resolved)
-    local i = { names = {}, remotes = {}, resolved = resolved or {}, branches = {} }
-    for _, r in ipairs(remotes) do
-      i.names[#i.names + 1] = r[1]
-      i.remotes[r[1]] = { url = '', repo = { host = 'github.com', owner = r[2], name = 'shop' } }
-    end
-    return i
+h.test('pick_wt_repo: as wt picks it (gh\'s default repo, else the first GitHub remote in config order)', function()
+  local function key(r)
+    return r and (r.host .. '/' .. r.owner .. '/' .. r.name) or nil
   end
-  local fork = info({ { 'origin', 'me' }, { 'upstream', 'acme' } })
-  fork.branches.main = { up_remote = 'upstream', up_ref = 'refs/heads/main' }
-  local name, repo = pr.wt_remote(fork)
-  h.eq('origin', name, 'origin, even with an upstream remote the trunk tracks')
-  h.eq('me', repo.owner)
-  h.eq('upstream', (pr.wt_remote(info({ { 'origin', 'me' }, { 'upstream', 'acme' } }, { upstream = 'base' }))))
-  h.eq('fork', (pr.wt_remote(info({ { 'fork', 'me' }, { 'upstream', 'acme' } }))), 'no origin: the first remote')
-  h.eq(nil, (pr.wt_remote(info({}))))
+  local fork = {
+    { name = 'upstream', url = 'git@github.com:acme/shop.git' },
+    { name = 'origin', url = 'git@github.com:me/shop.git' },
+  }
+  h.eq('github.com/acme/shop', key(pr.pick_wt_repo(nil, fork)), 'config order, no origin preference')
+  h.eq('github.com/acme/shop', key(pr.pick_wt_repo('', fork)))
+  h.eq('github.com/me/shop', key(pr.pick_wt_repo('me/shop\n', fork)), 'gh\'s default wins')
+  h.eq('github.com/other/thing', key(pr.pick_wt_repo('other/thing', fork)), 'a default naming no remote')
+  local gitlab = {
+    { name = 'origin', url = 'git@gitlab.com:acme/shop.git' },
+    { name = 'local', url = '/srv/git/shop.git' },
+    { name = 'gh', url = 'https://github.com/acme/shop.git' },
+  }
+  h.eq('github.com/acme/shop', key(pr.pick_wt_repo(nil, gitlab)), 'other forges and paths skipped')
+  local ghe = { { name = 'origin', url = 'git@git.corp.net:acme/shop.git' } }
+  h.eq('git.corp.net/acme/shop', key(pr.pick_wt_repo('acme/shop', ghe, { 'git.corp.net' })), 'the default\'s host from its remote')
+  h.eq(nil, pr.pick_wt_repo(nil, {}))
 end)
 
 h.test('argv: wt switch pr:N --no-cd --format json, never --yes; the terminal form sends stdout to a file', function()
@@ -158,11 +166,12 @@ h.test('failure: approval needed (with the commands), a failed pre-start hook (w
     kind = 'hook',
     path = '/w/repo.feat2',
     text = 'pre-start project:build failed (exit code 3)\nTo skip pre-start hooks, re-run with --no-hooks',
-    output = { 'npm run build', 'building' },
+    output = { 'building' },
   }, f)
+  f.log = '/state/revuey.log'
   msg = pr.failure_message(9, f)
-  h.ok(msg:find('\n  npm run build\n  building\n', 1, true), 'the hook\'s last lines: ' .. msg)
-  h.ok(msg:find('revuey.log', 1, true), msg)
+  h.ok(msg:find('--no-hooks\n  building\n', 1, true), 'the hook\'s last lines, not wt\'s echo of the command: ' .. msg)
+  h.ok(msg:find("(the end of wt's output is in /state/revuey.log)", 1, true), msg)
   h.ok(msg:find('wt switch pr:9 failed: pre-start project:build failed (exit code 3)', 1, true), msg)
   h.ok(msg:find("The worktree was created at /w/repo.feat2", 1, true), msg)
   h.ok(msg:find("`wt remove '/w/repo.feat2'`", 1, true), msg)
@@ -180,6 +189,20 @@ h.test('failure: approval needed (with the commands), a failed pre-start hook (w
   end
   long[#long + 1] = '✗ pre-start project:build failed (exit code 1)'
   h.eq({ 'line 16', 'line 17', 'line 18', 'line 19', 'line 20' }, pr.failure(1, table.concat(long, '\n')).output)
+  -- progress redrawn with \r, a hook's own ✗ line, wt's multi-line command echo
+  f = pr.failure(1, table.concat({
+    '◎ Running pre-start project:build @ /w/x',
+    '  npm ci &&',
+    '  npm run build',
+    'fetch 10%\rfetch 50%\rfetch 100%\r',
+    '✗ 2 tests failed',
+    'see above',
+    '✗ pre-start project:build failed (exit code 1)',
+    '',
+  }, '\n'))
+  h.eq('pre-start project:build failed (exit code 1)', f.text, 'wt\'s own (last) ✗ line')
+  h.eq({ 'fetch 100%', '2 tests failed', 'see above' }, f.output)
+  h.eq('fetch 100%', pr.plain('fetch 10%\rfetch 100%\r\r'))
 end)
 
 h.test('clean: wt glyphs and ANSI codes go; created_path finds the worktree the hooks ran in', function()
@@ -338,7 +361,7 @@ h.test('errors: no wt, not a repo, a URL of another repo, a bad argument, and wt
   local function run(arg, cwd, scenario, cfg)
     reset(scenario, 'feat')
     if cfg then
-      require('revuey').setup(vim.tbl_extend('force', { state_dir = state_dir, lsp_warmup = false }, cfg))
+      require('revuey').setup(vim.tbl_extend('force', { state_dir = state_dir, lsp_warmup = false, log_file = log_file }, cfg))
     end
     local msgs, restore = h.capture_notify()
     local s = open_pr(arg, cwd, 3000)
@@ -346,7 +369,7 @@ h.test('errors: no wt, not a repo, a URL of another repo, a bad argument, and wt
       return #msgs > 0 and pr_view.current == nil
     end, 10)
     restore()
-    require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
+    require('revuey').setup({ state_dir = state_dir, lsp_warmup = false, log_file = log_file })
     h.eq(nil, s, 'no review')
     h.eq(nil, pr_view.current)
     return msgs[#msgs] or {}, h.read_calls(log)
@@ -385,9 +408,15 @@ h.test('a failed pre-start hook: no review; the message names the worktree left 
   h.ok(msg:find("error TS2307: Cannot find module './gone'", 1, true), 'the hook\'s output: ' .. msg)
   h.ok(msg:find('hook pre-start` re-runs it', 1, true), msg)
   h.eq(1, vim.fn.isdirectory(d .. '.feat'), 'left for the user (wt remove)')
-  local entry = require('revuey.log').entries[#require('revuey.log').entries]
-  h.eq('pr', entry.scope)
-  h.ok(entry.msg:find('Fetching PR #7', 1, true) and entry.msg:find('error TS2307', 1, true), 'all of stderr is logged: ' .. entry.msg)
+  local log_path = require('revuey.log').path()
+  h.ok(msg:find("(the end of wt's output is in " .. log_path .. ')', 1, true), msg)
+  local logged = vim.tbl_map(function(e)
+    return e.msg
+  end, vim.tbl_filter(function(e)
+    return e.scope == 'pr'
+  end, require('revuey.log').entries))
+  h.ok(vim.tbl_contains(logged, '  ◎ Fetching PR #7...'), vim.inspect(logged))
+  h.ok(vim.tbl_contains(logged, "  error TS2307: Cannot find module './gone'"), 'one log entry per line: ' .. vim.inspect(logged))
 end)
 
 h.test('long hook output: a bounded stderr tail, the created worktree tracked as lines arrive', function()
@@ -406,40 +435,88 @@ h.test('long hook output: a bounded stderr tail, the created worktree tracked as
   local msg = msgs[#msgs].msg
   h.ok(msg:find('compiling module 19999', 1, true), msg)
   h.ok(msg:find('The worktree was created at ' .. d .. '.feat', 1, true), msg)
-  local entry = require('revuey.log').entries[#require('revuey.log').entries]
-  h.ok(#entry.msg <= pr.STDERR_MAX + 200, 'stderr kept bounded: ' .. #entry.msg)
+  -- the log gets the end only, a line per entry, so it does not rotate earlier diagnostics away
+  local log = require('revuey.log')
+  local n, bytes = 0, 0
+  for _, e in ipairs(log.entries) do
+    if e.scope == 'pr' and e.msg:find('compiling module', 1, true) then
+      n, bytes = n + 1, bytes + #e.msg
+      h.ok(#e.msg < 200, e.msg)
+    end
+  end
+  h.ok(n > 10 and bytes <= pr.LOG_MAX, ('%d lines, %d bytes logged'):format(n, bytes))
+  h.ok(vim.uv.fs_stat(log.path()).size < log.max_bytes, 'the log file was not rotated')
 end)
 
-h.test('fork clone (origin = the fork, upstream = the parent, main tracking upstream): URLs are checked against what wt uses', function()
-  local d = clone('pr-fork')
-  h.git(d, 'remote', 'set-url', 'origin', 'git@github.com:me/shop.git')
-  h.git(d, 'remote', 'add', 'upstream', 'git@github.com:acme/shop.git')
-  h.git(d, 'config', 'branch.main.remote', 'upstream')
-  h.git(d, 'config', 'branch.main.merge', 'refs/heads/main')
-  local function try(url)
+h.test('progress redrawn with \\r only (no newlines): the latest update shows; a line without any end stays bounded', function()
+  local d = clone('pr-cr')
+  reset('ok', 'feat')
+  -- 1MB without a line end, then a \r progress bar, then a pause so the last update can show
+  vim.env.REVUEY_FAKE_WT_HOOK = [[i=0; while [ $i -lt 4000 ]; do printf '%0256d' 0; i=$((i+1)); done; ]]
+    .. [[for p in 10 50 100; do printf '\rinstalling %d%%' $p; done; sleep 1]]
+  local seen
+  local t0 = vim.uv.hrtime()
+  local s = open_pr('7', d, 30000)
+  vim.env.REVUEY_FAKE_WT_HOOK = nil
+  h.ok(s, 'opened')
+  for _, p in ipairs(progress) do
+    if p.text:find('installing 100%', 1, true) then
+      seen = p.text
+    end
+  end
+  h.ok(seen, 'the \\r update showed: ' .. vim.inspect(vim.tbl_map(function(p)
+    return p.text
+  end, progress)))
+  h.ok((vim.uv.hrtime() - t0) / 1e9 < 15, 'no quadratic rescans')
+end)
+
+h.test('URLs are checked against the repo wt asks: gh\'s default, else the first GitHub remote in config order', function()
+  local function layout(name, remotes, resolved)
+    local d = clone(name)
+    h.git(d, 'remote', 'remove', 'origin')
+    for _, r in ipairs(remotes) do
+      h.git(d, 'remote', 'add', r[1], r[2])
+    end
+    for remote, val in pairs(resolved or {}) do
+      h.git(d, 'config', 'remote.' .. remote .. '.gh-resolved', val)
+    end
+    return d
+  end
+  local function try(d, url)
     reset('ok', 'feat')
     local msgs, restore = h.capture_notify()
     local s = open_pr(url, d, 3000)
     restore()
     view.close()
-    return s, msgs[#msgs], #h.read_calls(log)
+    return s ~= nil, msgs[#msgs] and msgs[#msgs].msg, #h.read_calls(log)
   end
-  local s, m, calls = try('https://github.com/acme/shop/pull/12')
-  h.eq(nil, s)
-  h.eq('revuey: PR #12 is in acme/shop, but this clone is me/shop: open it from a clone of acme/shop', m.msg)
-  h.eq(0, calls, 'wt (which would ask me/shop for #12) never ran')
-  s = try('https://github.com/me/shop/pull/12')
-  h.ok(s, 'the fork\'s URL is the one wt opens')
-  -- gh repo set-default upstream: wt asks upstream
-  h.git(d, 'config', 'remote.upstream.gh-resolved', 'base')
-  h.ok((try('https://github.com/acme/shop/pull/12')), 'gh-resolved wins')
-  h.git(d, 'config', '--unset', 'remote.upstream.gh-resolved')
-  -- no origin: the first remote
-  h.git(d, 'remote', 'rename', 'origin', 'fork')
-  h.ok((try('https://github.com/me/shop/pull/12')), 'first remote (fork)')
-  local res = vim.system({ h.root .. '/bin/revuey', 'pr', 'https://github.com/acme/shop/pull/12' }, { cwd = d, text = true }):wait(20000)
+  local ACME, ME = 'https://github.com/acme/shop/pull/12', 'https://github.com/me/shop/pull/12'
+  -- after `gh repo fork` in an existing clone: origin renamed to upstream (first in the config),
+  -- the fork added as origin; main tracks upstream
+  local d = clone('pr-ghfork')
+  h.git(d, 'remote', 'rename', 'origin', 'upstream')
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:me/shop.git')
+  local ok, m, calls = try(d, ME)
+  h.eq(false, ok)
+  h.eq('revuey: PR #12 is in me/shop, but this clone is acme/shop: open it from a clone of me/shop', m)
+  h.eq(0, calls, 'wt (which would ask acme/shop for #12) never ran')
+  h.ok((try(d, ACME)), 'the parent\'s URL is the one wt opens')
+  local res = vim.system({ h.root .. '/bin/revuey', 'pr', ME }, { cwd = d, text = true }):wait(20000)
   h.eq(2, res.code)
-  h.ok(res.stderr:find('this clone is me/shop', 1, true), 'bin/revuey checks the same way: ' .. res.stderr)
+  h.ok(res.stderr:find('this clone is acme/shop', 1, true), 'bin/revuey checks the same way: ' .. res.stderr)
+  -- a remote added before origin is first
+  d = layout('pr-before-origin', { { 'zfork', 'git@github.com:me/shop.git' }, { 'origin', 'git@github.com:acme/shop.git' } })
+  h.ok((try(d, ME)), 'zfork (first in the config), not origin')
+  h.eq(false, (try(d, ACME)))
+  -- gh repo set-default: `base` on a remote, or an owner/name value
+  d = layout('pr-resolved-base', { { 'origin', 'git@github.com:me/shop.git' }, { 'upstream', 'git@github.com:acme/shop.git' } }, { upstream = 'base' })
+  h.ok((try(d, ACME)), 'gh-resolved = base')
+  d = layout('pr-resolved-name', { { 'origin', 'git@github.com:me/shop.git' }, { 'upstream', 'git@github.com:acme/shop.git' } }, { origin = 'acme/shop' })
+  h.ok((try(d, ACME)), 'gh-resolved = owner/name')
+  h.eq(false, (try(d, ME)))
+  -- a GitLab origin is skipped
+  d = layout('pr-gitlab', { { 'origin', 'git@gitlab.com:acme/shop.git' }, { 'hub', 'git@github.com:acme/shop.git' } })
+  h.ok((try(d, ACME)), 'the first GitHub remote')
 end)
 
 h.test(':Revuey pr cancel stops wt and the hook it runs (process group); the half-made worktree is named', function()
@@ -644,7 +721,7 @@ h.test(':Revuey pr cancel while the approval terminal waits: wt stopped, termina
   no_term_left(term, pid, out)
 end)
 
-h.test('the approval terminal closed by the user (:bd!, or :q hiding it): wt stopped, and the message says so', function()
+h.test('the approval terminal closed by the user (:bd!, or :q on its window): wt stopped, and the message says so', function()
   for _, how in ipairs({ 'bd', 'q' }) do
     local term, pid, out = approval_terminal('pr-termclose-' .. how)
     local msgs, restore = h.capture_notify()
@@ -662,6 +739,33 @@ h.test('the approval terminal closed by the user (:bd!, or :q hiding it): wt sto
     h.eq(1, #msgs, how)
     no_term_left(term, pid, out)
   end
+end)
+
+h.test('switching buffers in the approval terminal\'s window keeps wt waiting; :Revuey pr shows it again', function()
+  local term, pid = approval_terminal('pr-termhide')
+  local win = vim.fn.win_findbuf(term.buf)[1]
+  vim.api.nvim_set_current_win(win)
+  local msgs, restore = h.capture_notify()
+  vim.cmd('enew') -- e.g. to read .config/wt.toml before approving
+  vim.cmd('buffer #')
+  vim.cmd('enew')
+  vim.wait(300)
+  h.eq({}, vim.fn.win_findbuf(term.buf), 'hidden')
+  h.ok(pr_view.current and pr_view.current.term == term, 'still running')
+  h.eq(0, vim.uv.kill(pid, 0), 'wt alive')
+  h.eq(0, #msgs, vim.inspect(msgs))
+  require('revuey').pr('7')
+  restore()
+  h.ok(msgs[1].msg:find('PR #7 waits for your answer in its terminal', 1, true), vim.inspect(msgs))
+  h.eq(1, #vim.fn.win_findbuf(term.buf), 'shown again')
+  vim.cmd('stopinsert')
+  local session
+  vim.api.nvim_chan_send(term.job, 'y\r')
+  vim.wait(10000, function()
+    session = view.session
+    return session ~= nil
+  end, 10)
+  h.ok(session, 'opened after the answer')
 end)
 
 h.test('the approval terminal\'s output file goes after a successful run too', function()
