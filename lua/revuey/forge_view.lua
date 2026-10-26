@@ -237,19 +237,21 @@ function M.thread_items(s)
   return out
 end
 
----Blobs of the threads' files at their PRs' head commits (`<head oid>:<path>` -> blob, false
----when the commit or path is not in this clone), looked up with one `git cat-file
------batch-check` for the keys not known yet (immutable facts, kept for the review). Placement
----trusts GitHub's line numbers when the review's new side of a file is that blob. Call inside
----git.async. Returns true when it learned anything.
+---Blobs of the threads' files at the head commit their threads were numbered against
+---(forge.threads_head: `<oid>:<path>` -> blob), looked up with one `git cat-file --batch-check`
+---for the keys not known yet. Found blobs are immutable facts, kept for the review; a commit or
+---path missing here is asked again on the next update (the user may fetch it meanwhile).
+---Placement trusts GitHub's line numbers when the review's new side of a file is that blob.
+---Call inside git.async. Returns true when a blob was found.
 function M.load_head_blobs(s, prs, root)
   local f = state(s)
   f.head_blobs = f.head_blobs or {}
   local keys, seen = {}, {}
   for _, pr in ipairs(prs) do
-    for _, t in ipairs(pr.head_oid and forge.threads_for(pr) or {}) do
-      local k = pr.head_oid .. ':' .. t.path
-      if f.head_blobs[k] == nil and not seen[k] and not k:find('\n', 1, true) then
+    local head = forge.threads_head(pr)
+    for _, t in ipairs(head and forge.threads_for(pr) or {}) do
+      local k = head .. ':' .. t.path
+      if not f.head_blobs[k] and not seen[k] and not k:find('\n', 1, true) then
         seen[k] = true
         keys[#keys + 1] = k
       end
@@ -260,16 +262,22 @@ function M.load_head_blobs(s, prs, root)
   end
   local res = git.system({ 'git', 'cat-file', '--batch-check' }, { cwd = root, stdin = table.concat(keys, '\n') .. '\n' })
   local out = vim.split(res.stdout or '', '\n', { plain = true })
+  local found = false
   for i, k in ipairs(keys) do
     local oid, kind = (out[i] or ''):match('^(%x+) (%a+)')
-    f.head_blobs[k] = (res.code == 0 and kind == 'blob') and oid or false
+    if res.code == 0 and kind == 'blob' then
+      f.head_blobs[k] = oid
+      found = true
+    end
   end
-  return true
+  return found
 end
 
----Blob of `path` at the PR's head commit, when known (see load_head_blobs).
+---Blob of `path` at the head commit the PR's threads were numbered against, when known (see
+---load_head_blobs).
 function M.head_blob(s, pr, path)
-  local b = s.forge and s.forge.head_blobs and pr.head_oid and s.forge.head_blobs[pr.head_oid .. ':' .. path]
+  local head = forge.threads_head(pr)
+  local b = s.forge and s.forge.head_blobs and head and s.forge.head_blobs[head .. ':' .. path]
   return b or nil
 end
 
@@ -296,6 +304,7 @@ function M.threads_signature(s)
     local e = forge.threads_cache[forge.thread_key(pr)]
     -- stale and cut lists change the panel's threads line
     parts[#parts + 1] = forge.thread_key(pr) .. '=' .. (e and e.sig or '-') .. (e and e.failed and '?' or '') .. (e and e.truncated and '+' or '')
+      .. '@' .. (e and e.head_oid or '') -- the head the placement trusts
   end
   return table.concat(parts, '\n')
 end
