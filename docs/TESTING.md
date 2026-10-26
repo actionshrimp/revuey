@@ -36,7 +36,18 @@ is available.
   failure scenario (exit 1, garbage, rate limit, GraphQL errors, a hang that dies on SIGTERM). It also
   answers review-thread queries (thread nodes per `owner/name#N`, cut into pages by the query's
   `first`/`after`, PRs that resolve to null) with a failure scenario of their own
-  (`REVUEY_FAKE_GH_THREADS_SCENARIO`), so a working PR lookup can be combined with failing threads. `tests/helpers.lua` puts a blocker for the real `gh` first on PATH, so no spec
+  (`REVUEY_FAKE_GH_THREADS_SCENARIO`), so a working PR lookup can be combined with failing threads.
+- **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
+  threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the
+  file at the PR head (the thread's lines ±110, enough for placement's ±100-line search and the
+  hunk context, renumbered), the thread's GitHub positions and diff hunk, its source and the
+  expected placement with head trust on and off (`NOTICE` lists the licences).
+  `forge_corpus_spec.lua` places every case in both modes; `forge_corpus_e2e_spec.lua` builds a
+  repository from the excerpts, serves the threads through the fake `gh` and checks where the
+  review draws each one. `scripts/trim-forge-corpus.lua` rebuilds the corpus from a cases file
+  and file snapshots (collected once with `gh`, never during tests) and refuses to write unless
+  every excerpt places exactly as its whole file. Add a case there when a real thread is
+  misplaced, and fix the code, not the expectation, unless the new placement is the safer one. `tests/helpers.lua` puts a blocker for the real `gh` first on PATH, so no spec
   can reach GitHub. A fake `wt` (`tests/bin/wt`, `h.use_fake_wt`) stands in for worktrunk's
   `wt switch pr:<N>`: it records argv, cwd and whether stdin is a terminal, creates real
   worktrees, and plays wt's progress, hook, approval and error output; the real `wt` is
