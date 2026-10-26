@@ -39,9 +39,9 @@ local function short(oid)
 end
 M.short = short
 
----Where a comment is with GitHub: nil, 'pending' (in the viewer's pending review, not yet
----submitted), 'unknown' (an add whose answer was lost: maybe in the pending review) or
----'posted'.
+---Where a comment is with GitHub (forge_post_view: the state machine): nil, 'sending' (written
+---ahead of a mutation, no answer yet), 'unknown' (no answer, and a reconcile could not tell),
+---'pending' (in the viewer's pending review), 'posted'.
 function M.state(c)
   return c and type(c.forge_post) == 'table' and c.forge_post.state or nil
 end
@@ -295,8 +295,7 @@ function M.plan(o)
   for _, c in ipairs(o.comments) do
     local ok, why = M.includable(c)
     local body = body_of(c)
-    -- one whose add answer was lost may be in the pending review: matched whatever its state now
-    if not ok and M.state(c) ~= 'unknown' then
+    if not ok then
       refuse(c, why)
     elseif body == '' then
       refuse(c, 'the comment is empty')
@@ -408,36 +407,136 @@ function M.by_id(pending, id)
   end
 end
 
----After an add whose answer was lost (a timeout: GitHub may have applied it), the comment of
----the pending review that is this item, matched strictly: the same body and, for a thread, the
----same path, line and start line (a file comment: FILE), not a reply; for a reply, a reply to
----one of `thread_comments` (the ids of the thread's comments). A comment of the pending review
----is given to at most one local comment (`claimed`, updated). GitHub's review comments do not
----say which side they are on, so a LEFT and a RIGHT comment with the same text on the same line
----number would be taken for each other.
----@param pending revuey.ForgePending
----@param claimed table<string, true>
----@param thread_comments? table<string, true>
-function M.match_lost(item, pending, claimed, thread_comments)
-  local body = norm_body(item.body)
-  for _, pc in ipairs(pending and pending.comments or {}) do
-    if not claimed[pc.id] and norm_body(pc.body) == body then
-      local ok
-      if item.kind == 'reply' then
-        ok = pc.reply_to ~= nil and (thread_comments or {})[pc.reply_to] == true
-      elseif pc.reply_to == nil and pc.path == item.path then
-        if item.subject == 'FILE' then
-          ok = pc.subject == 'FILE'
-        else
-          ok = pc.subject ~= 'FILE' and pc.line == item.line and (pc.start_line or pc.line) == (item.start_line or item.line)
+---Does a review comment match a stored payload (exactly what was sent)? The same body and, for
+---a thread, the same path, line and start line (a file comment: FILE), not a reply; for a reply,
+---a reply to a comment of the same thread (`thread_comments`: the ids of its comments). GitHub's
+---review comments do not say their side, so a LEFT and a RIGHT payload with the same text on
+---the same number both match one comment: reconcile then calls both unknown.
+function M.payload_matches(pc, p, thread_comments)
+  if norm_body(pc.body) ~= norm_body(p.body) then
+    return false
+  end
+  if p.kind == 'reply' then
+    return pc.reply_to ~= nil and (thread_comments or {})[pc.reply_to] == true
+  end
+  if pc.reply_to ~= nil or pc.path ~= p.path then
+    return false
+  end
+  if p.subject == 'FILE' then
+    return pc.subject == 'FILE'
+  end
+  return pc.subject ~= 'FILE' and pc.line == p.line and (pc.start_line or pc.line) == (p.start_line or p.line)
+end
+
+---@class revuey.ReconcileEntry
+---@field key any
+---@field id? string            a recorded GitHub comment id (checked by id only)
+---@field payload? table        else what was sent (matched by payload_matches)
+---@field pool? table[]         the comments of the review it went to; nil: could not be read
+---@field complete? boolean     `pool` is all of them
+---@field gone? boolean         the review does not exist (NOT_FOUND)
+---@field before? table<string, true> ids that were there before it was sent (never it)
+---@field thread_comments? table<string, true>
+
+---Decide what became of comments sent to GitHub (pure). Results per key: `{found = pc}`,
+---`{absent = true}` (GitHub definitely does not have it: the review is gone, or a complete read
+---of it has no such comment) or `{unknown = why}` (anything else: a partial or failed read,
+---several candidates, a candidate another entry also matches, or one that was there before).
+---Recorded ids are settled first and claim their comments.
+---@param entries revuey.ReconcileEntry[]
+---@return table<any, table>
+function M.reconcile(entries)
+  local out, claimed = {}, {}
+  for _, e in ipairs(entries) do
+    if e.id then
+      local hit
+      for _, pc in ipairs(e.pool or {}) do
+        if pc.id == e.id then
+          hit = pc
         end
       end
-      if ok then
-        claimed[pc.id] = true
-        return pc
+      if hit then
+        claimed[hit.id] = true
+        out[e.key] = { found = hit }
+      elseif e.gone or (e.pool and e.complete) then
+        out[e.key] = { absent = true }
+      else
+        out[e.key] = { unknown = 'its review could not be read whole' }
       end
     end
   end
+  local cands, users = {}, {}
+  for _, e in ipairs(entries) do
+    if not e.id then
+      local list, taken = {}, false
+      for _, pc in ipairs(e.pool or {}) do
+        if M.payload_matches(pc, e.payload, e.thread_comments) then
+          if claimed[pc.id] or (e.before or {})[pc.id] then
+            taken = true
+          else
+            list[#list + 1] = pc
+            users[pc.id] = (users[pc.id] or 0) + 1
+          end
+        end
+      end
+      cands[e.key] = { list = list, taken = taken }
+    end
+  end
+  for _, e in ipairs(entries) do
+    if not e.id then
+      local c = cands[e.key]
+      if e.gone then
+        out[e.key] = { absent = true }
+      elseif not e.pool then
+        out[e.key] = { unknown = 'GitHub could not be read' }
+      elseif #c.list == 1 and users[c.list[1].id] == 1 and not c.taken then
+        out[e.key] = { found = c.list[1] }
+      elseif #c.list == 0 and not c.taken and e.complete then
+        out[e.key] = { absent = true }
+      elseif #c.list == 0 and not c.taken then
+        out[e.key] = { unknown = 'its review could not be read whole' }
+      else
+        out[e.key] = { unknown = 'GitHub has comments it cannot be told apart from' }
+      end
+    end
+  end
+  return out
+end
+
+M.EVENT_STATE = { APPROVE = 'APPROVED', COMMENT = 'COMMENTED', REQUEST_CHANGES = 'CHANGES_REQUESTED' }
+M.SKEW = 600 -- seconds of clock difference allowed between this machine and GitHub
+
+---"2026-01-02T03:04:05Z" for seconds since the epoch.
+function M.iso(t)
+  return os.date('!%Y-%m-%dT%H:%M:%SZ', t)
+end
+
+---What became of a review created and submitted at once whose answer was lost (`entry`: {commit,
+---event, body, started_at}), from the PR's latest reviews (forge.normalize_preflight): `{found =
+---review}` when exactly one of the viewer's reviews has that commit, verdict and body and was made
+---after it was sent; `{absent = true}` when there is none and the reviews read go back past that
+---time; else `{unknown = why}`.
+function M.find_atomic(entry, pf)
+  if not pf or not pf.recent_read then
+    return { unknown = 'GitHub could not be read' }
+  end
+  local since = M.iso(entry.started_at - M.SKEW)
+  local hits = {}
+  for _, rv in ipairs(pf.recent) do
+    if rv.mine and rv.commit == entry.commit and rv.state == M.EVENT_STATE[entry.event]
+      and norm_body(rv.body) == norm_body(entry.body) and rv.created_at >= since then
+      hits[#hits + 1] = rv
+    end
+  end
+  if #hits == 1 then
+    return { found = hits[1] }
+  elseif #hits > 1 then
+    return { unknown = 'several reviews of yours could be it' }
+  end
+  if pf.recent_all or (pf.recent_since and pf.recent_since < since) then
+    return { absent = true }
+  end
+  return { unknown = 'not all of the PR\'s recent reviews could be read' }
 end
 
 ---"src/a.ts:12" for a comment of a pending review.
@@ -465,39 +564,65 @@ local function count(n, one, many)
   return ('%d %s'):format(n, n == 1 and one or many)
 end
 
----The confirmation text of a prepared submit (after the add step): the verdict and, per PR, what
----the review will publish: comments and replies revuey added (now and earlier), the pending
----review's own comments from elsewhere (they are submitted too), the commit it is bound to;
----then what is left out and why. `r`: the prepared result (forge_post_view.prepare).
+---How a PR's review is made, for the confirmation.
+local MODE_TEXT = {
+  atomic = 'a new review, created and submitted in one step',
+  existing = 'added to your pending review on GitHub, then submitted',
+  new_pending = 'a new pending review, filled, then submitted',
+  submit = 'your pending review on GitHub, submitted',
+}
+
+---The confirmation text of a prepared submit (nothing has been sent yet): the verdict and, per
+---PR, how its review is made and what it will publish: the comments and replies revuey will add
+---(`+`), revuey's comments already in the pending review (`=`), the pending review's comments
+---from elsewhere (submitted too), the commit it is bound to; a PR that is blocked and why; in a
+---full stack, every PR of the stack. Then what is left out and why.
+---@param r table forge_post_view.result
 ---@return string[] lines
 function M.summary(r)
   local L = {}
   L[#L + 1] = ('Submit a "%s" review to GitHub%s'):format(M.VERDICT_TEXT[r.verdict] or r.verdict, r.body and r.body ~= '' and ' with a body' or '')
   for _, x in ipairs(r.prs) do
     local t = x.target
-    local parts = {}
-    if x.threads > 0 then
-      parts[#parts + 1] = count(x.threads, 'comment', 'comments')
-    end
-    if x.replies > 0 then
-      parts[#parts + 1] = count(x.replies, 'reply', 'replies')
-    end
     L[#L + 1] = ''
-    L[#L + 1] = ('PR #%d (%s): %s from revuey'):format(t.pr.number, t.pr.repo:gsub('^[^/]+/', ''), #parts > 0 and table.concat(parts, ', ') or 'no comments')
-    for _, e in ipairs(x.entries) do
-      L[#L + 1] = '  + ' .. e
-    end
-    if #x.others > 0 then
-      L[#L + 1] = ('  Your pending review on GitHub already has %s from elsewhere; they are submitted too:'):format(count(x.pending_total, 'comment', 'comments'))
-      for _, e in ipairs(x.others) do
-        L[#L + 1] = '    ' .. e
+    if x.nothing then
+      L[#L + 1] = ('PR #%d: nothing to post, no review'):format(t.pr.number)
+    else
+      local parts = {}
+      if x.threads > 0 then
+        parts[#parts + 1] = count(x.threads, 'comment', 'comments')
       end
-      if x.pending_total > #x.others then
-        L[#L + 1] = ('    … %d more'):format(x.pending_total - #x.others)
+      if x.replies > 0 then
+        parts[#parts + 1] = count(x.replies, 'reply', 'replies')
       end
-    end
-    if x.commit_note then
-      L[#L + 1] = '  ' .. x.commit_note
+      L[#L + 1] = ('PR #%d (%s): %s from revuey'):format(t.pr.number, t.pr.repo:gsub('^[^/]+/', ''), #parts > 0 and table.concat(parts, ', ') or 'no comments')
+      if x.blocked then
+        L[#L + 1] = '  BLOCKED, not submitted: ' .. x.blocked
+        L[#L + 1] = '  Check the PR on GitHub; `:RevueySubmit forget` on a comment drops revuey\'s record of it (it may exist on GitHub).'
+      elseif x.mode then
+        L[#L + 1] = '  ' .. MODE_TEXT[x.mode]
+      end
+      for _, e in ipairs(x.already) do
+        L[#L + 1] = '  = ' .. e
+      end
+      for _, e in ipairs(x.entries) do
+        L[#L + 1] = '  + ' .. e
+      end
+      for _, e in ipairs(x.unknown or {}) do
+        L[#L + 1] = '  ? ' .. e
+      end
+      if #x.others > 0 then
+        L[#L + 1] = ('  Your pending review on GitHub already has %s from elsewhere; they are submitted too:'):format(count(x.pending_total, 'comment', 'comments'))
+        for _, e in ipairs(x.others) do
+          L[#L + 1] = '    ' .. e
+        end
+        if x.pending_total > #x.others then
+          L[#L + 1] = ('    … %d more'):format(x.pending_total - #x.others)
+        end
+      end
+      if x.commit_note then
+        L[#L + 1] = '  ' .. x.commit_note
+      end
     end
   end
   if #r.left_out > 0 then

@@ -1,20 +1,30 @@
 -- Posting a review to GitHub (UI glue over forge_post.lua and forge.lua). `:RevueySubmit` / the
--- forge_submit key runs, one submit at a time:
---   1. prepare: the scope's open PRs (forge_view), each PR's files (REST) and a preflight
---      (GraphQL: the PR's node id, head, author, the viewer's pending review and its comments),
---      then forge_post.plan routes and checks every comment added to the review (`in_review`);
---   2. add (`add_to_pending`): the planned comments and replies go into the viewer's pending
---      review on each PR (theirs when they have one, which GitHub allows only one of; else a new
---      one bound to the reviewed head), skipping those already there; each added comment is
---      recorded at once as "in pending review" (`forge_post.state = 'pending'`), so a later
---      submit never adds it twice. Nothing is visible to anyone else yet;
---   3. confirm: the verdict, per PR what revuey added and what the pending review already had
---      from elsewhere (submitted too), the commit it is bound to, and what was left out and why;
---      the body can be written here;
---   4. submit (`submit`): `submitPullRequestReview` per PR; its comments become `posted`, and
---      the threads are fetched again so they show as GitHub threads.
--- Cancelling at 3, or a failed submit, leaves the pending review on GitHub as it is (it is the
--- user's, visible in GitHub's UI and in other tools such as Graphite); nothing is ever deleted.
+-- forge_submit key, one submit at a time:
+--   1. prepare (reads only): the scope's open PRs (forge_view), each PR's files (REST) and a
+--      preflight (GraphQL: the PR's node id, head and author, the viewer's pending review, the
+--      PR's latest reviews and every review revuey sent comments to, all read whole);
+--      reconcile: what became of every comment revuey sent before (its write-ahead record
+--      against those reads); then forge_post.plan routes and checks what is to be added.
+--   2. confirm: exactly what each PR's review will publish, what is already pending, what is
+--      left out and why, PRs that are blocked; nothing has been sent yet. Cancel: GitHub is
+--      untouched.
+--   3. execute: per PR, with no pending review of the user's and nothing but line comments, one
+--      `addPullRequestReview` with the event and all threads (created and submitted at once);
+--      else the pending flow: the user's pending review (or a new one), threads and replies in
+--      batches, then `submitPullRequestReview` only when every add was answered. Every mutation
+--      is written ahead: the comment's record (`sending`, the exact payload) is saved before the
+--      call, so a lost answer or a crash leaves a record the next prepare reconciles.
+--
+-- A comment's record (`forge_post`) and its states:
+--   nil      -> sending   written ahead of the mutation that adds it
+--   sending  -> pending   answered, in a pending review (ids recorded)
+--   sending  -> posted    answered, in a submitted review (created and submitted at once)
+--   sending  -> nil       GitHub refused it (reported), or a later reconcile proves it absent
+--   sending  -> unknown   a later reconcile cannot tell (its PR is blocked until it can)
+--   unknown  -> pending / posted / nil   a later reconcile decides; or `:RevueySubmit forget`
+--   pending  -> posted    its review was submitted (here, or elsewhere)
+--   pending  -> nil       its review is gone (NOT_FOUND) or a complete read lacks it
+-- Nothing is ever deleted on GitHub.
 local api = vim.api
 local comments = require('revuey.comments')
 local forge = require('revuey.forge')
@@ -24,7 +34,8 @@ local log = require('revuey.log')
 
 local M = {}
 
----The running submit (one at a time, whatever review it came from): {s, phase}.
+---The running submit (one at a time per Neovim, whatever review it came from): {r, phase}.
+---Two Neovims on one review do not see each other's: see README.
 M.job = nil
 
 ---Ask with choices (vim.fn.confirm); tests replace this.
@@ -49,13 +60,15 @@ local function notify(msg, level)
   vim.notify('revuey: ' .. msg, level or vim.log.levels.INFO)
 end
 
----Comments added to the review in this scope (not posted yet), and those revuey put into a
----pending review earlier (published by its submit whatever their toggle says now).
+local SENT = { sending = true, unknown = true, pending = true }
+
+---Comments added to the review in this scope (not posted yet), and every comment revuey sent
+---and has not seen posted (reconciled whatever their toggle says now).
 function M.included(store)
   local out = {}
   for _, c in ipairs(comments.list(store, { include_resolved = true, include_drafts = true })) do
     local st = post.state(c)
-    if st ~= 'posted' and (c.in_review or st == 'pending' or st == 'unknown') then
+    if st ~= 'posted' and (c.in_review or SENT[st]) then
       out[#out + 1] = c
     end
   end
@@ -125,18 +138,26 @@ local function review_access(s)
   }, ctx
 end
 
----Record where a comment is on GitHub (merged and saved like any change; no event).
-local function record(store, id, fields)
+---Set a comment's record (nil: forget it). `posted` takes it out of the review.
+local function set_record(store, id, fp)
   local cur = comments.get(store, id)
   if not cur then
-    return
+    return nil
   end
   local c = vim.deepcopy(cur)
-  c.forge_post = vim.tbl_extend('force', type(c.forge_post) == 'table' and c.forge_post or {}, fields)
-  if fields.state == 'posted' then
+  c.forge_post = fp
+  if fp and fp.state == 'posted' then
     c.in_review = false
   end
   comments.put(store, c)
+  return c
+end
+
+---Update fields of a comment's record.
+local function update_record(store, id, fields)
+  local cur = comments.get(store, id)
+  local fp = vim.tbl_extend('force', cur and type(cur.forge_post) == 'table' and cur.forge_post or {}, fields)
+  return set_record(store, id, fp)
 end
 
 local function save(store)
@@ -144,6 +165,19 @@ local function save(store)
   if not ok then
     log.write('forge', 'saving posted comments failed: ' .. tostring(err))
   end
+end
+
+---Save and make sure it is on disk now (a busy lock defers saves in the UI): write-ahead records
+---must be durable before their mutation is sent.
+local function durable_save(store)
+  local ok, err = pcall(comments.save, store)
+  if not ok then
+    return false, tostring(err)
+  end
+  if require('revuey.lock').pending(store.path) then
+    return false, 'the comments file is locked by another process'
+  end
+  return true
 end
 
 local function host_of(t)
@@ -169,13 +203,65 @@ local function entry(c, extra)
 end
 
 -- ---------------------------------------------------------------------------
--- 1. Prepare
+-- Write-ahead ledger of reviews created and submitted at once
+-- ---------------------------------------------------------------------------
+-- A comment's write-ahead record lives on the comment; a review made in one step (with a verdict
+-- and maybe no comment at all) needs one of its own: `<state>.forge.json` next to the comments
+-- file, {reviews = {[id] = {id, pr, repo, commit, event, body, started_at}}}.
+
+function M.ledger_path(store)
+  return (store.path:gsub('%.comments%.json$', '')) .. '.forge.json'
+end
+
+function M.ledger_read(store)
+  local fd = io.open(M.ledger_path(store), 'r')
+  if not fd then
+    return { reviews = {} }
+  end
+  local ok, data = pcall(vim.json.decode, fd:read('*a'), { luanil = { object = true, array = true } })
+  fd:close()
+  if not ok or type(data) ~= 'table' or type(data.reviews) ~= 'table' then
+    return { reviews = {} }
+  end
+  if vim.islist(data.reviews) then
+    data.reviews = {}
+  end
+  return data
+end
+
+---Write the ledger (temp file and rename). Returns true, or false and why.
+function M.ledger_write(store, data)
+  local path = M.ledger_path(store)
+  local tmp = ('%s.tmp.%d'):format(path, vim.uv.os_getpid())
+  local fd, err = io.open(tmp, 'w')
+  if not fd then
+    return false, tostring(err)
+  end
+  fd:write(vim.json.encode({ reviews = next(data.reviews) and data.reviews or vim.empty_dict() }))
+  fd:close()
+  local ok, rerr = os.rename(tmp, path)
+  if not ok then
+    os.remove(tmp)
+    return false, tostring(rerr)
+  end
+  return true
+end
+
+local function ledger_set(store, id, e)
+  local data = M.ledger_read(store)
+  data.reviews[id] = e
+  return M.ledger_write(store, data)
+end
+
+-- ---------------------------------------------------------------------------
+-- 1. Prepare (reads only)
 -- ---------------------------------------------------------------------------
 
----Run the preflight for `targets` (one query per host) and read the rest of each pending
----review's comments. Sets `t.pf` per target, `r.viewer` and `r.reviews` (review id -> state,
----false when GitHub says it does not exist). Call inside git.async. Returns true, or false and
----why. A pending review whose comments could not all be read is marked `incomplete`.
+---Run the preflight for `targets` (one query per host) and read every review it returns whole
+---(the pending review, the reviews revuey sent comments to). Sets `t.pf` per target, `r.viewer`
+---and `r.reviews` (review id -> review, false when GitHub says it does not exist). A review
+---whose comments could not all be read keeps its `cursor` (incomplete). Call inside git.async.
+---Returns true, or false and why.
 function M.preflight(r, targets, review_ids)
   local by_host = {}
   for _, t in ipairs(targets) do
@@ -203,16 +289,23 @@ function M.preflight(r, targets, review_ids)
     for alias, pf in pairs(pfs) do
       aliases[alias].t.pf = pf
     end
-    for id, st in pairs(reviews) do
-      r.reviews[id] = st
+    local to_read = {}
+    for id, rv in pairs(reviews) do
+      r.reviews[id] = rv
+      if rv then
+        to_read[#to_read + 1] = rv
+      end
     end
     for _, t in ipairs(list) do
-      local p = t.pf and t.pf.pending
-      if p and p.cursor then
-        local done, perr = forge.fetch_pending_comments(p, host)
+      if t.pf and t.pf.pending then
+        to_read[#to_read + 1] = t.pf.pending
+      end
+    end
+    for _, rv in ipairs(to_read) do
+      if rv.cursor then
+        local done, perr = forge.fetch_pending_comments(rv, host)
         if not done then
-          p.incomplete = true
-          log.write('forge', ('PR #%d: reading the pending review failed: %s'):format(t.pr.number, tostring(perr)))
+          log.write('forge', ('reading review %s failed: %s'):format(rv.id, tostring(perr)))
         end
       end
     end
@@ -220,102 +313,176 @@ function M.preflight(r, targets, review_ids)
   return true
 end
 
----Clear a comment's GitHub record (and with `untoggle`, its "add to review").
-local function forget(store, c)
-  local cur = comments.get(store, c.id)
-  if not cur then
-    return c
+---The ids of a GitHub thread's comments (from the fetched threads, plus the one the local reply
+---was made on): a reply that answers one of them is in that thread.
+local function thread_comments(t, c)
+  local ids = {}
+  local fr = c.forge_reply or {}
+  if fr.comment_id then
+    ids[fr.comment_id] = true
   end
-  local copy = vim.deepcopy(cur)
-  copy.forge_post = nil
-  comments.put(store, copy)
-  return copy
+  for _, th in ipairs(forge.threads_for(t.pr) or {}) do
+    if th.id == fr.thread_id then
+      for _, gc in ipairs(th.comments) do
+        ids[gc.id] = true
+      end
+    end
+  end
+  return ids
 end
 
----Sort the comments of a submit by where they are with GitHub (after the preflight): recorded
----in the pending review and still there (by id: `t.already`, never planned again), in a review
----submitted meanwhile (posted), in a review or comment that is gone (forgotten; planned again
----only when still added to the review), unknown (planned, matched strictly in the add step),
----or new. Returns the comments to plan and those left out with the reason.
----@return revuey.Comment[] todo, {c:revuey.Comment, why:string}[] left
-function M.classify(r, included)
-  local store = r.store
-  local todo, left = {}, {}
-  local posted_elsewhere, dirty = 0, false
-  for _, t in ipairs(r.targets) do
-    t.already = {}
+local function id_set(list)
+  local out = {}
+  for _, id in ipairs(list or {}) do
+    out[id] = true
   end
-  local function target_of(fp)
-    for _, t in ipairs(r.targets) do
-      if t.pr.number == fp.pr and (not fp.repo or fp.repo == t.pr.repo) then
-        return t
+  return out
+end
+
+local function posted_fields(fp, rv, pc)
+  local out = vim.deepcopy(fp or {})
+  out.state, out.review_id, out.posted_at, out.ledger, out.before = 'posted', rv and rv.id or out.review_id, comments.now_ms(), nil, nil
+  out.comment_id = pc and pc.id or nil
+  out.database_id = pc and pc.database_id or nil
+  out.url = pc and pc.url or nil
+  return out
+end
+
+---What became of every comment revuey sent before, from the reads of the preflight: its record's
+---payload (or recorded id) against the review it went to (forge_post.reconcile; a review made in
+---one step: found through the ledger, forge_post.find_atomic). Records found are updated
+---(pending, posted), records proven absent are forgotten (and the comment planned again while it
+---is still added to the review), anything else makes the record `unknown` and blocks its PR
+---(`t.blocked`). A pending review that could not be read whole blocks its PR too. Returns the
+---comments to plan and those left out with the reason.
+---@return revuey.Comment[] todo, {c:revuey.Comment, why:string}[] left
+function M.reconcile(r, included)
+  local store = r.store
+  local by_pr = {}
+  for _, t in ipairs(r.targets) do
+    by_pr[t.pr.repo .. '#' .. t.pr.number] = t
+    t.already, t.unknown = {}, {}
+    if t.pf and t.pf.pending and t.pf.pending.cursor then
+      t.blocked = 'your pending review on GitHub could not be read whole'
+    end
+  end
+  local todo, left = {}, {}
+  local ledger = M.ledger_read(store)
+  local lres, ledger_dirty = {}, false
+  r.warnings = r.warnings or {}
+  for id, e in pairs(ledger.reviews) do
+    local t = by_pr[(e.repo or '') .. '#' .. tostring(e.pr)]
+    if t then
+      local x = post.find_atomic(e, t.pf)
+      lres[id] = x
+      if x.unknown then
+        t.blocked = t.blocked or ('a review sent earlier got no answer, and ' .. x.unknown)
+      else
+        if x.found then
+          t.found_review = true
+          table.insert(r.warnings, ('PR #%d: the %s review sent earlier without an answer was made after all.'):format(t.pr.number, post.VERDICT_TEXT[(e.event or ''):lower()] or e.event))
+        end
+        ledger.reviews[id] = nil
+        ledger_dirty = true
       end
     end
+  end
+  local entries, owners = {}, {}
+  local dirty = false
+  local function unknown(c, t, why)
+    if post.state(c) ~= 'pending' then
+      update_record(store, c.id, { state = 'unknown' })
+      dirty = true
+    end
+    t.blocked = t.blocked or why
+    table.insert(t.unknown, c)
   end
   for _, c in ipairs(included) do
-    local st = post.state(c)
-    local fp = c.forge_post
-    local rst -- that review's state: a state, false (gone), nil (not asked, or unknown)
-    if st == 'pending' or st == 'unknown' then
-      rst = r.reviews[fp.review_id]
-    end
-    local t = fp and target_of(fp)
-    local p = t and t.pf and t.pf.pending
-    if (st == 'pending' or st == 'unknown') and rst == nil then
-      -- GitHub did not say what became of that review (not a NOT_FOUND): never guess
-      left[#left + 1] = { c = c, why = 'could not check your earlier pending review on GitHub; try again' }
-    elseif st == 'pending' and rst ~= 'PENDING' and rst ~= false then
-      -- submitted meanwhile (from GitHub or another tool): it is on GitHub now
-      record(store, c.id, { state = 'posted', posted_at = comments.now_ms() })
-      posted_elsewhere = posted_elsewhere + 1
-    elseif st == 'unknown' and rst ~= 'PENDING' and rst ~= false then
-      -- that review was published, maybe with it: never add it again unasked
-      local copy = forget(store, c)
-      copy.in_review = false
-      comments.put(store, copy)
-      dirty = true
-      left[#left + 1] = { c = c, why = 'an earlier submit may have posted it (GitHub did not answer, and that review is published now): check on GitHub; ci adds it again' }
-    elseif st == 'pending' and rst == 'PENDING' and not t then
-      left[#left + 1] = { c = c, why = ('it is in your pending review on PR #%s, which is not an open PR of this scope'):format(tostring(fp.pr)) }
-    elseif st == 'pending' and rst == 'PENDING' and p and p.id == fp.review_id and post.by_id(p, fp.comment_id) then
-      local pc = post.by_id(p, fp.comment_id)
-      r.claimed[pc.id] = true
-      table.insert(t.already, { c = c, pc = pc })
-    elseif st == 'pending' and rst == 'PENDING' and p and p.incomplete then
-      left[#left + 1] = { c = c, why = 'could not read all of your pending review on GitHub; try again' }
-    elseif st == 'pending' then
-      -- the review or this comment is gone (discarded, deleted on GitHub): forget it, and add
-      -- it again only when it is still added to the review
-      c = forget(store, c)
-      dirty = true
+    local fp, st = c.forge_post, post.state(c)
+    local t = SENT[st] and by_pr[(fp.repo or '') .. '#' .. tostring(fp.pr)] or nil
+    if not SENT[st] then
       if c.in_review then
         todo[#todo + 1] = c
       end
-    elseif st == 'unknown' and rst == false then
-      c = forget(store, c)
-      dirty = true
-      if c.in_review then
-        todo[#todo + 1] = c
+    elseif not t then
+      left[#left + 1] = { c = c, why = ('revuey sent it to PR #%s, which is not an open PR of this scope'):format(tostring(fp.pr)) }
+    elseif st ~= 'pending' and type(fp.payload) ~= 'table' then
+      unknown(c, t, 'revuey has no record of what it sent')
+    elseif fp.ledger then
+      local x = lres[fp.ledger]
+      if not x then
+        unknown(c, t, 'the record of the review it went with is missing')
+      elseif x.found then
+        entries[#entries + 1] = { key = c, payload = fp.payload, pool = x.found.comments, complete = x.found.cursor == nil }
+        owners[c] = { t = t, review = x.found, atomic = true }
+      elseif x.absent then
+        set_record(store, c.id, nil)
+        dirty = true
+        if c.in_review then
+          todo[#todo + 1] = comments.get(store, c.id)
+        end
+      else
+        unknown(c, t, 'a review sent earlier got no answer, and ' .. x.unknown)
       end
-    elseif st == 'unknown' then
-      todo[#todo + 1] = c -- matched strictly against the pending review in the add step
-    elseif c.in_review then
-      todo[#todo + 1] = c
+    else
+      local rv
+      if t.pf and t.pf.pending and t.pf.pending.id == fp.review_id then
+        rv = t.pf.pending
+      else
+        rv = r.reviews[fp.review_id]
+      end
+      entries[#entries + 1] = {
+        key = c,
+        id = st == 'pending' and fp.comment_id or nil,
+        payload = fp.payload,
+        pool = rv and rv.comments or nil,
+        complete = rv and rv.cursor == nil or false,
+        gone = rv == false,
+        before = id_set(fp.before),
+        thread_comments = fp.payload and fp.payload.kind == 'reply' and thread_comments(t, c) or nil,
+      }
+      owners[c] = { t = t, review = rv }
     end
   end
-  if posted_elsewhere > 0 or dirty then
+  local res = post.reconcile(entries)
+  for _, e in ipairs(entries) do
+    local c, o, x = e.key, owners[e.key], res[e.key]
+    local fp = c.forge_post
+    if o.atomic then
+      -- that review exists, so all its threads do: with ids when told apart
+      set_record(store, c.id, posted_fields(fp, o.review, x.found))
+      dirty = true
+    elseif x.found and o.review.state == 'PENDING' then
+      if post.state(c) ~= 'pending' or fp.comment_id ~= x.found.id then
+        update_record(store, c.id, { state = 'pending', review_id = o.review.id, comment_id = x.found.id, database_id = x.found.database_id, url = x.found.url })
+        dirty = true
+      end
+      table.insert(o.t.already, { c = comments.get(store, c.id), pc = x.found })
+    elseif x.found then
+      set_record(store, c.id, posted_fields(fp, o.review, x.found))
+      dirty = true
+    elseif x.absent then
+      set_record(store, c.id, nil)
+      dirty = true
+      local cur = comments.get(store, c.id)
+      if cur and cur.in_review then
+        todo[#todo + 1] = cur
+      end
+    else
+      unknown(c, o.t, x.unknown)
+    end
+  end
+  if dirty then
     save(store)
   end
-  if posted_elsewhere > 0 then
-    r.warnings = r.warnings or {}
-    table.insert(r.warnings, ('%d comment%s revuey added earlier %s published meanwhile (the pending review was submitted elsewhere); marked posted.'):format(
-      posted_elsewhere, posted_elsewhere == 1 and '' or 's', posted_elsewhere == 1 and 'was' or 'were'))
+  if ledger_dirty then
+    M.ledger_write(store, ledger)
   end
   return todo, left
 end
 
----Read GitHub (files, preflight) and plan. Call inside git.async. Returns the prepared run, or
----nil and a message.
+---Read GitHub (files, preflight), reconcile and plan. Sends nothing. Call inside git.async.
+---Returns the prepared run, or nil and a message.
 function M.prepare(s, verdict)
   local store = require('revuey.comments_view').sync_store(s)
   local f = s.forge
@@ -328,10 +495,7 @@ function M.prepare(s, verdict)
   end
   local full = s.review.stack ~= nil and require('revuey.forge_view').current_key(s) == nil
   local included = M.included(store)
-  if full and #included == 0 then
-    return nil, 'nothing added to the review in the full stack (ci adds a comment); submit a verdict alone from a layer\'s scope'
-  end
-  local r = { s = s, store = store, verdict = verdict, targets = targets, full = full }
+  local r = { s = s, store = store, verdict = verdict, targets = targets, full = full, warnings = {} }
   -- every PR's files (only when a line or file comment may go to it), concurrently
   local need_files = false
   for _, c in ipairs(included) do
@@ -352,11 +516,9 @@ function M.prepare(s, verdict)
       end
     end
   end
-  -- the preflight, per host (in practice one call), and the rest of each pending review
   local review_ids, seen = {}, {}
   for _, c in ipairs(included) do
-    local st = post.state(c)
-    local id = (st == 'pending' or st == 'unknown') and c.forge_post.review_id
+    local id = SENT[post.state(c)] and c.forge_post.review_id
     if id and not seen[id] then
       seen[id] = true
       review_ids[#review_ids + 1] = id
@@ -366,10 +528,17 @@ function M.prepare(s, verdict)
   if not ok then
     return nil, 'could not read the pull requests from GitHub: ' .. tostring(err)
   end
-  r.claimed = {}
-  local todo, left = M.classify(r, included)
-  r.left_early = left
-    local access, ctx = review_access(s)
+  local todo, left = M.reconcile(r, included)
+  if full and #todo == 0 then
+    local any = false
+    for _, t in ipairs(targets) do
+      any = any or #t.already > 0 or #t.unknown > 0
+    end
+    if not any then
+      return nil, 'nothing added to the review in the full stack (ci adds a comment); submit a verdict alone from a layer\'s scope'
+    end
+  end
+  local access, ctx = review_access(s)
   local cm = s.cm or {}
   r.plan = post.plan({
     comments = todo,
@@ -386,8 +555,30 @@ function M.prepare(s, verdict)
     table.insert(r.plan.refused, x)
   end
   M.check_binding(r, access)
+  for _, t in ipairs(targets) do
+    local items = r.plan.items[t] or {}
+    local p = t.pf and t.pf.pending
+    if p then
+      t.mode = #items > 0 and 'existing' or 'submit'
+    else
+      local needs_pending = false
+      for _, x in ipairs(items) do
+        needs_pending = needs_pending or x.item.kind == 'reply' or x.item.subject == 'FILE'
+      end
+      t.mode = needs_pending and 'new_pending' or 'atomic'
+    end
+    -- the pending review's comments with the same text as an item: never that item
+    for _, x in ipairs(items) do
+      local before = {}
+      for _, pc in ipairs(p and p.comments or {}) do
+        if post.norm_body(pc.body) == post.norm_body(x.item.body) then
+          before[#before + 1] = pc.id
+        end
+      end
+      x.before = before
+    end
+  end
   if s.review.mode == 'worktree' and s.review.dirty then
-    r.warnings = r.warnings or {}
     table.insert(r.warnings, 'This review shows uncommitted changes: they are not part of the pull request, and comments on them were left out.')
   end
   return r
@@ -457,172 +648,15 @@ function M.check_binding(r, access)
   end
 end
 
--- ---------------------------------------------------------------------------
--- 2. Add to the pending review
--- ---------------------------------------------------------------------------
-
----The ids of a GitHub thread's comments (from the fetched threads, plus the one the local reply
----was made on): a reply in the pending review that answers one of them is in that thread.
-local function thread_comments(t, c)
-  local ids = {}
-  local fr = c.forge_reply or {}
-  if fr.comment_id then
-    ids[fr.comment_id] = true
-  end
-  for _, th in ipairs(forge.threads_for(t.pr) or {}) do
-    if th.id == fr.thread_id then
-      for _, gc in ipairs(th.comments) do
-        ids[gc.id] = true
-      end
-    end
-  end
-  return ids
-end
-
----Read one PR's pending review again (after an add or create call whose answer was lost).
----Returns it (or false when there is none), or nil when GitHub could not be read.
-local function reread(r, t)
-  local probe = { reviews = {} }
-  local saved = t.pf
-  local ok = M.preflight(probe, { t }, {})
-  local pf = t.pf
-  t.pf = saved
-  if not ok or not pf or (pf.pending and pf.pending.incomplete) then
-    return nil
-  end
-  return pf.pending or false
-end
-
-local function pending_fields(t, review_id, it, gh)
-  return {
-    state = 'pending', pr = t.pr.number, repo = t.pr.repo, review_id = review_id,
-    thread_id = (gh and gh.thread_id) or (it.kind == 'reply' and it.thread_id or nil),
-    comment_id = gh and gh.comment_id, database_id = gh and gh.database_id, url = gh and gh.url,
-  }
-end
-
----Add the planned comments and replies of every PR to the viewer's pending review there
----(theirs, else a new one bound to the reviewed head), and record each one added as "in pending
----review" at once. Call inside git.async. Comments recorded there by id were sorted out before
----(M.classify: `t.already`). A comment whose earlier add answer was lost (`unknown`) is first
----matched strictly against the pending review (forge_post.match_lost). When a call's answer is
----lost now (no data: a timeout, GitHub may have applied it), the pending review is read again
----and the batch matched the same way; what still cannot be told is recorded `unknown` and the
----submit is blocked until a later prepare sorts it out (`r.blocked`). Fills per target:
----`review_id`, `added` ({c, gh}), `already` ({c, pc}), `failed` ({c, why}), `unknown` ({c}).
-function M.add_to_pending(r)
-  local store = r.store
-  local claimed = r.claimed or {}
-  for _, t in ipairs(r.targets) do
-    t.added, t.failed, t.unknown = {}, {}, {}
-    t.already = t.already or {}
-    local items = r.plan.items[t] or {}
-    local pending = t.pf and t.pf.pending
-    t.review_id = pending and pending.id or nil
-    local todo = {}
-    for _, x in ipairs(items) do
-      local pc = post.state(x.c) == 'unknown' and pending and x.c.forge_post.review_id == pending.id
-        and post.match_lost(x.item, pending, claimed, thread_comments(t, x.c)) or nil
-      if pc then
-        table.insert(t.already, { c = x.c, pc = pc })
-        record(store, x.c.id, pending_fields(t, pending.id, x.item, { comment_id = pc.id, database_id = pc.database_id, url = pc.url }))
-      else
-        todo[#todo + 1] = x
-      end
-    end
-    if #todo > 0 and not t.review_id then
-      -- GitHub allows one pending review per user and PR: only made when there is none
-      local data, err, errors = forge.run_graphql(forge.build_pending_mutation(t.pf.id, t.tip), host_of(t))
-      local rv = data and type(data.r) == 'table' and type(data.r.pullRequestReview) == 'table' and data.r.pullRequestReview
-      local why = forge.alias_error(errors, 'r')
-      if not (rv and type(rv.id) == 'string') and not why then
-        -- no answer: it may have been made; look before trying anything else
-        local again = reread(r, t)
-        if again then
-          rv = { id = again.id }
-          t.pf.pending = again
-        end
-      end
-      if rv and type(rv.id) == 'string' then
-        t.review_id = rv.id
-        t.created = true
-      else
-        why = why or err or 'no review came back'
-        log.write('forge', ('PR #%d: creating the pending review failed: %s'):format(t.pr.number, why))
-        for _, x in ipairs(todo) do
-          table.insert(t.failed, { c = x.c, why = 'GitHub refused to start a review: ' .. why })
-        end
-        todo = {}
-      end
-    end
-    -- in batches (one call each), recorded and saved after every batch; sized by the encoded
-    -- bodies (the whole query is one argument)
-    local i = 1
-    while i <= #todo do
-      local batch, bytes = {}, 0
-      while i <= #todo and #batch < forge.POST_BATCH do
-        local size = #vim.json.encode(todo[i].item.body) + 400
-        if bytes > 0 and bytes + size > forge.POST_BATCH_BYTES then
-          break
-        end
-        bytes = bytes + size
-        batch[#batch + 1] = todo[i]
-        i = i + 1
-      end
-      local mutation, aliases = forge.build_add_mutation(t.review_id, vim.tbl_map(function(x)
-        return x.item
-      end, batch))
-      local data, err, errors = forge.run_graphql(mutation, host_of(t))
-      local lost = {}
-      for alias, it in pairs(aliases) do
-        local x
-        for _, b in ipairs(batch) do
-          if b.item == it then
-            x = b
-          end
-        end
-        local gh = data and forge.added(data[alias])
-        local why = forge.alias_error(errors, alias)
-        if gh then
-          claimed[gh.comment_id or ''] = true
-          table.insert(t.added, { c = x.c, gh = gh })
-          record(store, x.c.id, pending_fields(t, t.review_id, it, gh))
-        elseif why then
-          table.insert(t.failed, { c = x.c, why = 'GitHub refused it: ' .. why })
-          log.write('forge', ('PR #%d: adding %s failed: %s'):format(t.pr.number, comments.location(x.c), why))
-        else
-          lost[#lost + 1] = x -- no answer: maybe added
-        end
-      end
-      if #lost > 0 then
-        log.write('forge', ('PR #%d: no answer for %d comment(s) (%s); reading the pending review again'):format(t.pr.number, #lost, tostring(err)))
-        local again = reread(r, t)
-        for _, x in ipairs(lost) do
-          local pc = again and post.match_lost(x.item, again, claimed, thread_comments(t, x.c))
-          if pc then
-            table.insert(t.added, { c = x.c, gh = { comment_id = pc.id } })
-            record(store, x.c.id, pending_fields(t, t.review_id, x.item, { comment_id = pc.id, database_id = pc.database_id, url = pc.url }))
-          elseif again == nil then
-            table.insert(t.unknown, { c = x.c })
-            record(store, x.c.id, { state = 'unknown', pr = t.pr.number, repo = t.pr.repo, review_id = t.review_id })
-            r.blocked = true
-          else
-            table.insert(t.failed, { c = x.c, why = 'GitHub did not add it (no answer: ' .. tostring(err or 'none') .. ')' })
-          end
-        end
-      end
-      save(store)
-    end
-  end
-end
 
 -- ---------------------------------------------------------------------------
--- 3. Confirm
+-- 2. Confirm
 -- ---------------------------------------------------------------------------
 
----What the review of each PR will publish, and what is left out (for forge_post.summary).
+---What each PR's review will publish, and what is left out (for forge_post.summary). Each PR
+---entry has `go` when it will be submitted.
 function M.result(r)
-  local out = { verdict = r.verdict, body = r.body, prs = {}, left_out = {}, warnings = vim.deepcopy(r.warnings) }
+  local out = { verdict = r.verdict, body = r.body, prs = {}, left_out = {}, warnings = vim.deepcopy(r.warnings or {}) }
   for _, x in ipairs(r.plan.refused) do
     out.left_out[#out.left_out + 1] = x
   end
@@ -632,7 +666,7 @@ function M.result(r)
     end
     local p = t.pf and t.pf.pending
     local mine = {}
-    local x = { target = t, threads = 0, replies = 0, entries = {}, others = {}, pending_total = 0 }
+    local x = { target = t, threads = 0, replies = 0, entries = {}, already = {}, unknown = {}, others = {}, pending_total = 0, mode = t.mode, blocked = t.blocked }
     local function count(c)
       if c.forge_reply then
         x.replies = x.replies + 1
@@ -646,18 +680,17 @@ function M.result(r)
       if post.norm_body(a.c.body) ~= post.norm_body(a.pc.body) then
         -- edited here after it went in: GitHub publishes its own text
         local gh = comments.first_line(a.pc.body)
-        x.entries[#x.entries + 1] = entry(a.c, ('(in your pending review, edited here since: GitHub has "%s")'):format(#gh > 40 and (gh:sub(1, 39) .. '…') or gh))
+        x.already[#x.already + 1] = entry(a.c, ('(in your pending review, edited here since: GitHub has "%s")'):format(#gh > 40 and (gh:sub(1, 39) .. '…') or gh))
       else
-        x.entries[#x.entries + 1] = entry(a.c, '(in your pending review already)')
+        x.already[#x.already + 1] = entry(a.c, '(in your pending review already)')
       end
     end
-    for _, a in ipairs(t.added or {}) do
-      mine[a.gh.comment_id or ''] = true
-      count(a.c)
-      x.entries[#x.entries + 1] = entry(a.c)
+    for _, it in ipairs(r.plan.items[t] or {}) do
+      count(it.c)
+      x.entries[#x.entries + 1] = entry(it.c)
     end
-    for _, a in ipairs(t.unknown or {}) do
-      x.entries[#x.entries + 1] = entry(a.c, '(GitHub did not answer: it may be in your pending review)')
+    for _, c in ipairs(t.unknown or {}) do
+      x.unknown[#x.unknown + 1] = entry(c, '(sent earlier, GitHub did not answer: it may be there)')
     end
     if p then
       for _, pc in ipairs(p.comments) do
@@ -670,25 +703,35 @@ function M.result(r)
         x.commit_note = ('Your pending review is bound to commit %s, not the reviewed head %s; GitHub publishes it there.'):format(post.short(p.commit), post.short(t.tip))
       end
     end
-    local ours = x.threads + x.replies > 0
-    local has = ours or x.pending_total > 0
+    local ours = x.threads + x.replies + #x.unknown > 0
     if t.refused then
       -- nothing goes to this PR; say why once (its comments are listed with the reason)
       local listed = false
       for _, e in ipairs(out.left_out) do
         listed = listed or e.why == t.refused
       end
-      if (has or not r.full) and not listed then
-        out.warnings = out.warnings or {}
+      if (ours or x.pending_total > 0 or not r.full) and not listed then
         table.insert(out.warnings, t.refused)
       end
-    elseif not r.full or ours then
+      if r.full then
+        x.nothing = true
+        out.prs[#out.prs + 1] = x
+      end
+    elseif t.found_review and not ours and x.pending_total == 0 then
+      -- the review sent earlier without an answer was made: never a second one unasked
+      x.nothing = true
       out.prs[#out.prs + 1] = x
-    elseif has then
-      -- full stack: the verdict goes only where revuey's comments go
-      out.warnings = out.warnings or {}
-      table.insert(out.warnings, ('PR #%d: your pending review there (%d comment%s from elsewhere) is not submitted from the full stack; submit it from its layer\'s scope.'):format(
-        t.pr.number, x.pending_total, x.pending_total == 1 and '' or 's'))
+    elseif not r.full or ours then
+      x.go = not x.blocked
+      out.prs[#out.prs + 1] = x
+    else
+      -- full stack: the verdict goes only where revuey's comments go; every PR is named
+      x.nothing = true
+      out.prs[#out.prs + 1] = x
+      if x.pending_total > 0 then
+        table.insert(out.warnings, ('PR #%d: your pending review there (%d comment%s from elsewhere) is not submitted from the full stack; submit it from its layer\'s scope.'):format(
+          t.pr.number, x.pending_total, x.pending_total == 1 and '' or 's'))
+      end
     end
   end
   return out
@@ -700,7 +743,7 @@ local function needs_body(res)
     return false
   end
   for _, x in ipairs(res.prs) do
-    if x.threads + x.replies + x.pending_total == 0 then
+    if x.go and x.threads + x.replies + x.pending_total == 0 then
       return true
     end
   end
@@ -713,40 +756,30 @@ local function release(r)
   end
 end
 
----Say what stays in the pending review after a cancel (nothing is deleted).
-local function left_pending_note(r)
-  local n = 0
-  for _, t in ipairs(r.targets) do
-    n = n + #(t.added or {}) + #(t.already or {})
-  end
-  if n == 0 then
-    return 'nothing submitted'
-  end
-  return ('nothing submitted; %d comment%s stay%s in your pending review on GitHub (only you see %s; revuey will not add %s again)'):format(
-    n, n == 1 and '' or 's', n == 1 and 's' or '', n == 1 and 'it' or 'them', n == 1 and 'it' or 'them')
-end
-
----The confirmation (on the main loop): Submit, write or edit the body, or cancel.
-function M.confirm(r)
+local function confirm(r)
   local s = r.s
   if s.cleaned then
     release(r)
-    return notify('the review closed before the confirmation: ' .. left_pending_note(r), vim.log.levels.WARN)
+    return notify('the review closed before the confirmation: nothing was sent', vim.log.levels.WARN)
   end
   local res = M.result(r)
-  if #res.prs == 0 then
-    release(r)
-    local lines = post.summary(res)
-    table.remove(lines, 1)
-    return notify('nothing to submit.' .. table.concat(lines, '\n'), vim.log.levels.WARN)
+  local go = 0
+  for _, x in ipairs(res.prs) do
+    go = go + (x.go and 1 or 0)
   end
   local text = table.concat(post.summary(res), '\n')
-  if r.blocked then
-    -- some adds got no answer and GitHub could not be read again: submitting now could
-    -- publish them or not; a later submit checks them first
-    M.ask(text .. '\n\nGitHub did not answer for some comments, so whether they are in your pending review is unknown: nothing can be submitted now. Submit again later; revuey checks them first.', '&Cancel', 1)
+  if go == 0 then
+    if #res.prs == 0 or not vim.iter(res.prs):any(function(x)
+      return x.blocked ~= nil
+    end) then
+      release(r)
+      local lines = post.summary(res)
+      table.remove(lines, 1)
+      return notify('nothing to submit.' .. table.concat(lines, '\n'), vim.log.levels.WARN)
+    end
+    M.ask(text .. '\n\nNothing can be submitted now (nothing has been sent).', '&Cancel', 1)
     release(r)
-    return notify(left_pending_note(r))
+    return notify('nothing sent')
   end
   local body_label = (r.body and r.body ~= '') and '&Edit body' or '&Write body'
   local nb = needs_body(res)
@@ -754,15 +787,17 @@ function M.confirm(r)
     text = text .. '\n\nA Comment review with no comments needs a body.'
   end
   local choices = nb and (body_label .. '\n&Cancel') or ('&Submit\n' .. body_label .. '\n&Cancel')
-  local default = nb and 1 or (#res.left_out > 0 and 3 or 1)
+  local default = nb and 1 or ((#res.left_out > 0 or go < #vim.tbl_filter(function(x)
+    return not x.nothing
+  end, res.prs)) and 3 or 1)
   local choice = M.ask(text, choices, default)
   if nb then
     choice = choice == 1 and 2 or (choice == 2 and 3 or 0)
   end
   if choice == 1 then
-    M.job.phase = 'submit'
+    M.job.phase = 'send'
     git.async(function()
-      M.submit(r)
+      M.execute(r, res)
     end, function(err)
       release(r)
       log.write('forge', 'submit error: ' .. tostring(err))
@@ -772,16 +807,26 @@ function M.confirm(r)
     M.write_body(r)
   else
     release(r)
-    notify(left_pending_note(r))
+    notify('nothing sent')
   end
 end
 
----Write or edit the review body in the comment editor, then back to the confirmation.
-function M.write_body(r)
+---The confirmation (on the main loop): Submit, write or edit the body, or cancel. An error here
+---releases the submit.
+function M.confirm(r)
+  local ok, err = pcall(confirm, r)
+  if not ok then
+    release(r)
+    log.write('forge', 'confirmation error: ' .. tostring(err))
+    notify('submit stopped: ' .. tostring(err), vim.log.levels.ERROR)
+  end
+end
+
+local function write_body(r)
   local s = r.s
   if s.cleaned or not (s.diff_win and api.nvim_win_is_valid(s.diff_win)) then
     release(r)
-    return notify(left_pending_note(r))
+    return notify('nothing sent')
   end
   local went = false
   local back = function()
@@ -824,63 +869,262 @@ function M.write_body(r)
   })
 end
 
+---Write or edit the review body in the comment editor, then back to the confirmation. An error
+---here releases the submit.
+function M.write_body(r)
+  local ok, err = pcall(write_body, r)
+  if not ok then
+    release(r)
+    log.write('forge', 'body editor error: ' .. tostring(err))
+    notify('submit stopped: ' .. tostring(err), vim.log.levels.ERROR)
+  end
+end
+
 -- ---------------------------------------------------------------------------
--- 4. Submit
+-- 3. Execute (after the confirmation)
 -- ---------------------------------------------------------------------------
 
----Publish the review of each PR (`submitPullRequestReview`, or for a verdict alone
----`addPullRequestReview` with the event); its comments become `posted`. Call inside git.async.
-function M.submit(r)
-  local res = M.result(r)
+local function payload_of(item)
+  return {
+    kind = item.kind, path = item.path, line = item.line, start_line = item.start_line, side = item.side,
+    start_side = item.start_side, subject = item.subject, thread_id = item.thread_id, body = item.body,
+  }
+end
+
+---A review created and submitted in one step: written ahead (the ledger entry and every
+---comment's record), then one `addPullRequestReview` with the event and the threads.
+---@return string status ok|failed|lost, string? why
+local function run_atomic(r, t, items, event)
   local store = r.store
-  local done, failed = {}, {}
-  local event = forge.EVENTS[r.verdict]
-  for _, x in ipairs(res.prs) do
-    local t = x.target
-    local m = forge.build_submit_mutation({ review_id = t.review_id, pr_id = t.pf.id, commit = t.tip, event = event, body = r.body })
-    local data, err, errors = forge.run_graphql(m, host_of(t))
-    local rv = data and type(data.s) == 'table' and type(data.s.pullRequestReview) == 'table' and data.s.pullRequestReview
+  local lid = comments.new_id()
+  local entry_ = { id = lid, pr = t.pr.number, repo = t.pr.repo, commit = t.tip, event = event, body = r.body or '', started_at = os.time() }
+  local ok, err = ledger_set(store, lid, entry_)
+  if not ok then
+    return 'failed', 'could not write the local record first: ' .. tostring(err)
+  end
+  local now = comments.now_ms()
+  for _, x in ipairs(items) do
+    set_record(store, x.c.id, { state = 'sending', pr = t.pr.number, repo = t.pr.repo, ledger = lid, payload = payload_of(x.item), sent_at = now })
+  end
+  local dok, derr = durable_save(store)
+  if not dok then
+    return 'failed', 'could not save the local records first: ' .. tostring(derr)
+  end
+  local m = forge.build_atomic_mutation({ pr_id = t.pf.id, commit = t.tip, event = event, body = r.body,
+    threads = vim.tbl_map(function(x)
+      return x.item
+    end, items) })
+  local data, gerr, errors = forge.run_graphql(m, host_of(t))
+  local rv = data and type(data.s) == 'table' and forge.normalize_review(data.s.pullRequestReview)
+  local why = forge.alias_error(errors, 's')
+  if rv then
+    local entries = {}
+    for _, x in ipairs(items) do
+      entries[#entries + 1] = { key = x, payload = payload_of(x.item), pool = rv.comments, complete = rv.cursor == nil }
+    end
+    local res = post.reconcile(entries)
+    for _, x in ipairs(items) do
+      local cur = comments.get(store, x.c.id)
+      if cur then
+        set_record(store, x.c.id, posted_fields(cur.forge_post or {}, rv, res[x].found))
+      end
+    end
+    local data_ = M.ledger_read(store)
+    data_.reviews[lid] = nil
+    M.ledger_write(store, data_)
+    save(store)
+    return 'ok'
+  elseif why then
+    -- refused: nothing was made
+    for _, x in ipairs(items) do
+      set_record(store, x.c.id, nil)
+    end
+    local data_ = M.ledger_read(store)
+    data_.reviews[lid] = nil
+    M.ledger_write(store, data_)
+    save(store)
+    return 'failed', why
+  end
+  return 'lost', gerr or 'no answer'
+end
+
+---The pending flow: the user's pending review (or a new one), the threads and replies in
+---batches, each written ahead, then the submit only when every add was answered.
+---@return string status ok|failed|lost, string? why
+local function run_pending(r, t, items, event)
+  local store = r.store
+  local review_id = t.pf.pending and t.pf.pending.id or nil
+  if not review_id and #items > 0 then
+    -- GitHub allows one pending review per user and PR: a lost answer here is found (and
+    -- reused) by the next prepare, never made twice
+    local data, err, errors = forge.run_graphql(forge.build_pending_mutation(t.pf.id, t.tip), host_of(t))
+    local rv = data and type(data.r) == 'table' and type(data.r.pullRequestReview) == 'table' and data.r.pullRequestReview
     if rv and type(rv.id) == 'string' then
-      done[#done + 1] = t
-      local now = comments.now_ms()
-      for _, c in pairs(store.comments) do
-        if not c.deleted and post.state(c) == 'pending' and c.forge_post.review_id == (t.review_id or rv.id) then
-          record(store, c.id, { state = 'posted', posted_at = now, review_url = type(rv.url) == 'string' and rv.url or nil })
+      review_id = rv.id
+    else
+      local why = forge.alias_error(errors, 'r')
+      if why then
+        return 'failed', 'GitHub refused to start a review: ' .. why
+      end
+      return 'lost', 'GitHub did not answer when the pending review was started (' .. tostring(err or 'no answer')
+        .. '); nothing was added to it. The next submit finds it if it was made'
+    end
+  end
+  local failed, lost = 0, nil
+  local added_bodies = {}
+  local i = 1
+  while i <= #items and not lost do
+    local batch, bytes = {}, 0
+    while i <= #items and #batch < forge.POST_BATCH do
+      local size = #vim.json.encode(items[i].item.body) + 400
+      if bytes > 0 and bytes + size > forge.POST_BATCH_BYTES then
+        break
+      end
+      bytes = bytes + size
+      batch[#batch + 1] = items[i]
+      i = i + 1
+    end
+    -- written ahead: what is sent, where, and which same-text comments were there before
+    local now = comments.now_ms()
+    for _, x in ipairs(batch) do
+      local before = vim.deepcopy(x.before or {})
+      vim.list_extend(before, added_bodies[post.norm_body(x.item.body)] or {})
+      set_record(store, x.c.id, { state = 'sending', pr = t.pr.number, repo = t.pr.repo, review_id = review_id, payload = payload_of(x.item), before = before, sent_at = now })
+    end
+    local dok, derr = durable_save(store)
+    if not dok then
+      for _, x in ipairs(batch) do
+        set_record(store, x.c.id, nil)
+      end
+      return 'failed', 'could not save the local records first: ' .. tostring(derr)
+    end
+    local mutation, aliases = forge.build_add_mutation(review_id, vim.tbl_map(function(x)
+      return x.item
+    end, batch))
+    local data, err, errors = forge.run_graphql(mutation, host_of(t))
+    for alias, it in pairs(aliases) do
+      local x
+      for _, b in ipairs(batch) do
+        if b.item == it then
+          x = b
         end
       end
-    else
-      local why = forge.alias_error(errors, 's') or err or 'no review came back'
-      failed[#failed + 1] = ('PR #%d: %s'):format(t.pr.number, why)
-      log.write('forge', ('PR #%d: submit failed: %s'):format(t.pr.number, why))
+      local gh = data and forge.added(data[alias])
+      local why = forge.alias_error(errors, alias)
+      if gh then
+        update_record(store, x.c.id, { state = 'pending', thread_id = gh.thread_id or it.thread_id, comment_id = gh.comment_id, database_id = gh.database_id, url = gh.url })
+        local k = post.norm_body(it.body)
+        added_bodies[k] = added_bodies[k] or {}
+        table.insert(added_bodies[k], gh.comment_id)
+      elseif why then
+        set_record(store, x.c.id, nil)
+        failed = failed + 1
+        t.failed = t.failed or {}
+        table.insert(t.failed, { c = x.c, why = 'GitHub refused it: ' .. why })
+        log.write('forge', ('PR #%d: adding %s failed: %s'):format(t.pr.number, comments.location(x.c), why))
+      else
+        lost = err or 'no answer' -- stays `sending`: the next prepare reconciles it
+      end
+    end
+    save(store)
+  end
+  if lost then
+    return 'lost', 'GitHub did not answer while adding comments (' .. lost .. '); not submitted. The next submit checks what went in'
+  end
+  if failed > 0 then
+    return 'failed', ('%d comment%s refused by GitHub; not submitted (what went in stays in your pending review)'):format(failed, failed == 1 and ' was' or 's were')
+  end
+  local m = forge.build_submit_mutation({ review_id = review_id, pr_id = t.pf.id, commit = t.tip, event = event, body = r.body })
+  local data, err, errors = forge.run_graphql(m, host_of(t))
+  local rv = data and type(data.s) == 'table' and type(data.s.pullRequestReview) == 'table' and data.s.pullRequestReview
+  if not (rv and type(rv.id) == 'string') then
+    local why = forge.alias_error(errors, 's')
+    return why and 'failed' or 'lost', why or ('no answer to the submit (' .. tostring(err) .. '); the next submit checks it')
+  end
+  local now = comments.now_ms()
+  for _, c in pairs(store.comments) do
+    if not c.deleted and post.state(c) == 'pending' and c.forge_post.review_id == rv.id then
+      update_record(store, c.id, { state = 'posted', posted_at = now, review_url = type(rv.url) == 'string' and rv.url or nil })
     end
   end
   save(store)
+  return 'ok'
+end
+
+---Send what the confirmation showed, PR by PR (`res`: M.result). Call inside git.async.
+function M.execute(r, res)
+  local event = forge.EVENTS[r.verdict]
+  local done, bad = {}, {}
+  for _, x in ipairs(res.prs) do
+    if x.go then
+      local t = x.target
+      local items = r.plan.items[t] or {}
+      local status, why
+      if t.mode == 'atomic' then
+        status, why = run_atomic(r, t, items, event)
+      else
+        status, why = run_pending(r, t, items, event)
+      end
+      if status == 'ok' then
+        done[#done + 1] = '#' .. t.pr.number
+      else
+        bad[#bad + 1] = ('PR #%d: %s'):format(t.pr.number, why or status)
+        log.write('forge', bad[#bad])
+      end
+    end
+  end
   release(r)
-  local s = r.s
   if #done > 0 then
-    local nums = vim.tbl_map(function(t)
-      return '#' .. t.pr.number
-    end, done)
-    notify(('%s review submitted to %s'):format(post.VERDICT_TEXT[r.verdict], table.concat(nums, ', ')))
+    notify(('%s review submitted to %s'):format(post.VERDICT_TEXT[r.verdict], table.concat(done, ', ')))
   end
-  if #failed > 0 then
-    notify('submit failed (the pending review stays on GitHub as it is): ' .. table.concat(failed, '; '), vim.log.levels.ERROR)
+  if #bad > 0 then
+    notify('not submitted: ' .. table.concat(bad, '; '), vim.log.levels.ERROR)
   end
+  local s = r.s
   if not s.cleaned then
     require('revuey.comments_view').refresh(s)
     -- the posted comments come back as GitHub threads
     require('revuey.forge_view').update(s, true)
   end
-  return done, failed
+  return done, bad
 end
 
 -- ---------------------------------------------------------------------------
--- Entry point
+-- Entry points
 -- ---------------------------------------------------------------------------
 
----`:RevueySubmit [verdict]` / the forge_submit key: prepare, add, confirm, submit.
----@param verdict? string approve|comment|request_changes (asked when nil)
+---`:RevueySubmit forget`: drop revuey's record of the comment on this line when GitHub never
+---answered for it (`sending`, `unknown`), so its PR is no longer blocked. It may exist on
+---GitHub: a later submit can post it a second time.
+function M.forget(s)
+  if not s then
+    return notify('no review open', vim.log.levels.WARN)
+  end
+  if M.job then
+    return notify('a review is being submitted; wait for it to finish', vim.log.levels.WARN)
+  end
+  require('revuey.comments_view').with_comment(s, function(c)
+    local st = post.state(c)
+    if c.forge then
+      return notify('this is a GitHub thread, not a comment revuey sent')
+    elseif st ~= 'sending' and st ~= 'unknown' then
+      return notify(st == 'pending' and 'this comment is in your pending review on GitHub; delete it there' or 'revuey has no unanswered record of this comment')
+    end
+    local store = require('revuey.comments_view').sync_store(s)
+    set_record(store, c.id, nil)
+    save(store)
+    notify(('forgot revuey\'s record of %s: it may exist on GitHub (check PR #%s); a later submit may post it again'):format(
+      comments.location(c), tostring(c.forge_post.pr)), vim.log.levels.WARN)
+    require('revuey.comments_view').refresh(s)
+  end, nil, true)
+end
+
+---`:RevueySubmit [verdict]` / the forge_submit key: prepare (reads), confirm, then send.
+---@param verdict? string approve|comment|request_changes (asked when nil), or `forget`
 function M.start(s, verdict)
+  if verdict == 'forget' then
+    return M.forget(s)
+  end
   if not s then
     return notify('no review open', vim.log.levels.WARN)
   end
@@ -899,11 +1143,11 @@ function M.start(s, verdict)
   end
   local v = post.norm_verdict(verdict)
   if not v then
-    return notify('unknown verdict ' .. tostring(verdict) .. ' (approve, comment or request-changes)', vim.log.levels.ERROR)
+    return notify('unknown verdict ' .. tostring(verdict) .. ' (approve, comment or request-changes; or forget)', vim.log.levels.ERROR)
   end
   local r = { s = s }
   M.job = { r = r, phase = 'prepare' }
-  notify('preparing the review on GitHub…')
+  notify('reading the pull request on GitHub…')
   git.async(function()
     local p, err = M.prepare(s, v)
     if not p then
@@ -913,8 +1157,7 @@ function M.start(s, verdict)
     for k, val in pairs(p) do
       r[k] = val
     end
-    M.job.phase = 'add'
-    M.add_to_pending(r)
+    M.job.phase = 'confirm'
     vim.schedule(function()
       M.confirm(r)
     end)
