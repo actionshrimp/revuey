@@ -54,6 +54,322 @@ elseif scenario == 'errors' then
   os.exit(1)
 end
 
+-- ---------------------------------------------------------------------------
+-- Posting reviews (forge_post_view.lua): `REVUEY_FAKE_GH_POST` is a JSON file that is both the
+-- canned GitHub side and its state, rewritten by every mutation:
+--   viewer = "login"
+--   prs = { ["owner/name#N"] = { id, headRefOid, state?, author?, baseRefOid?,
+--           pending? = { id, commit, comments = [{id, databaseId, path, line, body, replyTo?}] } } }
+--   files = { ["owner/name#N"] = [ REST file objects: filename, status, sha, patch, ... ] }
+--   reviews = { [review id] = state }   (node(id:) answers: PENDING, COMMENTED, ...; absent: null)
+--   fail = { add = ["body substring", ...] (those threads/replies are refused),
+--            create = true (addPullRequestReview without an event fails),
+--            submit = ["owner/name#N", ...], files = true, preflight = true }
+-- Every mutation alias is appended to `REVUEY_FAKE_GH_MUTATIONS` as {op, alias, input} (the
+-- input object parsed), so tests can assert on exactly what would be posted. Threads added go
+-- into the REVUEY_FAKE_GH_THREADS file as PENDING (SUBMITTED once their review is submitted), so
+-- a refetch shows them.
+local post_file = os.getenv('REVUEY_FAKE_GH_POST')
+local function read_json(path)
+  local fd = path and path ~= '' and io.open(path, 'r')
+  if not fd then
+    return nil
+  end
+  local t = vim.json.decode(fd:read('*a'))
+  fd:close()
+  return t
+end
+local function write_json(path, t)
+  local fd = assert(io.open(path .. '.tmp', 'w'))
+  fd:write(vim.json.encode(t))
+  fd:close()
+  assert(os.rename(path .. '.tmp', path))
+end
+local P = read_json(post_file)
+
+-- REST: GET repos/<o>/<n>/pulls/<N>/files?per_page=&page=
+local rest = argv[3] == '--hostname' and argv[5] or argv[3]
+if argv[2] == 'api' and rest and rest:match('^repos/') then
+  for i = 3, #argv do
+    if argv[i] == '-f' or argv[i] == '-F' or argv[i] == '-X' or argv[i] == '--method' then
+      io.stderr:write('fake gh: REST writes are not allowed\n')
+      os.exit(3)
+    end
+  end
+  local o, n, num, q = rest:match('^repos/([^/]+)/([^/]+)/pulls/(%d+)/files%??(.*)$')
+  if not o then
+    io.stderr:write('fake gh: unsupported REST path ' .. rest .. '\n')
+    os.exit(2)
+  end
+  if P and P.fail and P.fail.files then
+    io.stdout:write(vim.json.encode({ message = 'Server Error' }), '\n')
+    io.stderr:write('gh: Server Error (HTTP 500)\n')
+    os.exit(1)
+  end
+  local list = P and P.files and P.files[o .. '/' .. n .. '#' .. num]
+  if not list then
+    io.stdout:write(vim.json.encode({ message = 'Not Found' }), '\n')
+    io.stderr:write('gh: Not Found (HTTP 404)\n')
+    os.exit(1)
+  end
+  local per = tonumber(q:match('per_page=(%d+)') or '30')
+  local page = tonumber(('&' .. q):match('&page=(%d+)') or '1')
+  local out = {}
+  for i = (page - 1) * per + 1, math.min(#list, page * per) do
+    out[#out + 1] = list[i]
+  end
+  io.stdout:write(vim.json.encode(out), '\n')
+  os.exit(0)
+end
+
+local function query_arg()
+  for i = 4, #argv do
+    local q = argv[i]:match('^query=(.*)$')
+    if q then
+      return q
+    end
+  end
+end
+
+---A GraphQL input object `{a: "x", b: 3, c: ENUM}` -> table (strings as JSON literals).
+local function parse_input(text)
+  local out, i = {}, 1
+  text = text:match('^%s*{(.*)}%s*$') or ''
+  while i <= #text do
+    local key, after = text:match('^%s*([%w_]+)%s*:%s*()', i)
+    if not key then
+      break
+    end
+    i = after
+    local v
+    if text:sub(i, i) == '"' then
+      local j = i + 1
+      while j <= #text do
+        local ch = text:sub(j, j)
+        if ch == '\\' then
+          j = j + 2
+        elseif ch == '"' then
+          break
+        else
+          j = j + 1
+        end
+      end
+      v = vim.json.decode(text:sub(i, j))
+      i = j + 1
+    else
+      local tok, nxt = text:match('^([%w_%-%.]+)()', i)
+      v = tonumber(tok) or tok
+      i = nxt
+    end
+    out[key] = v
+    i = (text:match('^%s*,?()', i))
+  end
+  return out
+end
+
+local query0 = query_arg()
+if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:match('^mutation') then
+  local mlog = os.getenv('REVUEY_FAKE_GH_MUTATIONS')
+  local threads_file = os.getenv('REVUEY_FAKE_GH_THREADS')
+  local T = read_json(threads_file) or {}
+  P = P or {}
+  P.prs = P.prs or {}
+  P.reviews = P.reviews or {}
+  P.seq = (P.seq or 0)
+  local fail = P.fail or {}
+  local data, errors = {}, {}
+  local function key_of_pr(id)
+    for k, pr in pairs(P.prs) do
+      if pr.id == id then
+        return k, pr
+      end
+    end
+  end
+  local function key_of_review(id)
+    for k, pr in pairs(P.prs) do
+      if pr.pending and pr.pending.id == id then
+        return k, pr
+      end
+    end
+  end
+  local function next_id(prefix)
+    P.seq = P.seq + 1
+    return prefix .. P.seq
+  end
+  local function err(alias, msg)
+    data[alias] = vim.NIL
+    errors[#errors + 1] = { type = 'UNPROCESSABLE', path = { alias }, message = msg }
+  end
+  for line in query0:gmatch('[^\n]+') do
+    local alias, op, input = line:match('^%s*(%w+): (%w+)%(input: ({.-})%) {')
+    if alias then
+      local inp = parse_input(input)
+      if mlog and mlog ~= '' then
+        local fd = assert(io.open(mlog, 'a'))
+        fd:write(vim.json.encode({ op = op, alias = alias, input = inp }), '\n')
+        fd:close()
+      end
+      local refused = false
+      for _, sub in ipairs(fail.add or {}) do
+        if type(inp.body) == 'string' and inp.body:find(sub, 1, true) then
+          refused = true
+        end
+      end
+      if op == 'addPullRequestReview' then
+        local k, pr = key_of_pr(inp.pullRequestId)
+        if not pr then
+          err(alias, 'Could not resolve to a node with the global id of ' .. tostring(inp.pullRequestId))
+        elseif inp.event then
+          if vim.tbl_contains(fail.submit or {}, k) then
+            err(alias, 'Review cannot be submitted')
+          else
+            local id = next_id('PRR_')
+            P.reviews[id] = ({ APPROVE = 'APPROVED', COMMENT = 'COMMENTED', REQUEST_CHANGES = 'CHANGES_REQUESTED' })[inp.event]
+            data[alias] = { pullRequestReview = { id = id, state = P.reviews[id], url = 'https://github.com/' .. k:gsub('#', '/pull/') .. '#pullrequestreview-' .. P.seq } }
+          end
+        elseif fail.create then
+          err(alias, 'Something went wrong while executing your query.')
+        elseif pr.pending then
+          err(alias, 'User can only have one pending review per pull request')
+        else
+          local id = next_id('PRR_')
+          pr.pending = { id = id, commit = inp.commitOID, comments = {} }
+          P.reviews[id] = 'PENDING'
+          data[alias] = { pullRequestReview = { id = id, commit = { oid = inp.commitOID } } }
+        end
+      elseif op == 'addPullRequestReviewThread' or op == 'addPullRequestReviewThreadReply' then
+        local k, pr = key_of_review(inp.pullRequestReviewId)
+        if not pr then
+          err(alias, 'Could not resolve to a node with the global id of ' .. tostring(inp.pullRequestReviewId))
+        elseif refused then
+          err(alias, 'pull_request_review_thread.line must be part of the diff')
+        else
+          local cid = next_id('PRRC_')
+          local dbid = 5000 + P.seq
+          local url = 'https://github.com/' .. k:gsub('#', '/pull/') .. '#discussion_r' .. dbid
+          local cnode = { id = cid, databaseId = dbid, url = url, body = inp.body, createdAt = '2026-02-01T00:00:00Z',
+            lastEditedAt = vim.NIL, state = 'PENDING', diffHunk = vim.NIL, author = { login = P.viewer or 'me' }, replyTo = vim.NIL }
+          if op == 'addPullRequestReviewThread' then
+            local tid = next_id('PRRT_')
+            table.insert(pr.pending.comments, { id = cid, databaseId = dbid, url = url, path = inp.path, line = inp.line,
+              startLine = inp.startLine, subjectType = inp.subjectType or 'LINE', body = inp.body })
+            T[k] = T[k] or {}
+            table.insert(T[k], { id = tid, isResolved = false, isOutdated = false, path = inp.path, line = inp.line or vim.NIL,
+              startLine = inp.startLine or vim.NIL, originalLine = inp.line or vim.NIL, originalStartLine = inp.startLine or vim.NIL,
+              diffSide = inp.side or 'RIGHT', startDiffSide = inp.startSide or vim.NIL, subjectType = inp.subjectType or 'LINE',
+              resolvedBy = vim.NIL, comments = { cnode } })
+            data[alias] = { thread = { id = tid, comments = { nodes = { { id = cid, databaseId = dbid, url = url } } } } }
+          else
+            local found
+            for _, list in pairs(T) do
+              if type(list) == 'table' and vim.islist(list) then
+                for _, t in ipairs(list) do
+                  if t.id == inp.pullRequestReviewThreadId then
+                    found = t
+                  end
+                end
+              end
+            end
+            if not found then
+              err(alias, 'Could not resolve to a node with the global id of ' .. tostring(inp.pullRequestReviewThreadId))
+            else
+              cnode.replyTo = { id = found.comments[1].id }
+              table.insert(found.comments, cnode)
+              table.insert(pr.pending.comments, { id = cid, databaseId = dbid, url = url, path = found.path, line = found.line,
+                body = inp.body, replyTo = { id = found.comments[1].id } })
+              data[alias] = { comment = { id = cid, databaseId = dbid, url = url } }
+            end
+          end
+        end
+      elseif op == 'submitPullRequestReview' then
+        local k, pr = key_of_review(inp.pullRequestReviewId)
+        if not pr then
+          err(alias, 'Could not resolve to a node with the global id of ' .. tostring(inp.pullRequestReviewId))
+        elseif vim.tbl_contains(fail.submit or {}, k) then
+          err(alias, 'Review cannot be submitted')
+        else
+          local id = pr.pending.id
+          P.reviews[id] = ({ APPROVE = 'APPROVED', COMMENT = 'COMMENTED', REQUEST_CHANGES = 'CHANGES_REQUESTED' })[inp.event]
+          local ids = {}
+          for _, pc in ipairs(pr.pending.comments) do
+            ids[pc.id] = true
+          end
+          for _, t in ipairs(T[k] or {}) do
+            for _, c in ipairs(t.comments or {}) do
+              if ids[c.id] then
+                c.state = 'SUBMITTED'
+              end
+            end
+          end
+          pr.pending = nil
+          data[alias] = { pullRequestReview = { id = id, state = P.reviews[id], url = 'https://github.com/' .. k:gsub('#', '/pull/') .. '#pullrequestreview-1' } }
+        end
+      else
+        err(alias, 'fake gh: unsupported mutation ' .. op)
+      end
+    end
+  end
+  write_json(post_file, P)
+  if threads_file and threads_file ~= '' then
+    write_json(threads_file, next(T) and T or vim.empty_dict())
+  end
+  io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
+  if #errors > 0 then
+    io.stderr:write('gh: ' .. errors[1].message .. '\n')
+    os.exit(1)
+  end
+  os.exit(0)
+end
+
+-- the posting preflight (forge.build_preflight_query)
+if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('viewer { login }', 1, true) then
+  P = P or {}
+  if P.fail and P.fail.preflight then
+    io.stderr:write('error connecting to api.github.com\n')
+    os.exit(1)
+  end
+  local data, errors = { viewer = { login = P.viewer or 'me' } }, {}
+  for alias, id in query0:gmatch('(r%d+): node%(id: (%b"")%)') do
+    id = vim.json.decode(id)
+    local st = (P.reviews or {})[id]
+    data[alias] = st and { id = id, state = st } or vim.NIL
+    if not st then
+      errors[#errors + 1] = { type = 'NOT_FOUND', path = { alias }, message = 'Could not resolve to a node with the global id of \'' .. id .. '\'' }
+    end
+  end
+  for alias, owner, name, number in query0:gmatch('(p%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%)') do
+    local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
+    local pr = (P.prs or {})[key]
+    if not pr then
+      data[alias] = { pullRequest = vim.NIL }
+      errors[#errors + 1] = { type = 'NOT_FOUND', path = { alias, 'pullRequest' }, message = 'Could not resolve to a PullRequest with the number of ' .. number .. '.' }
+    else
+      local reviews = {}
+      if pr.pending then
+        local cs = {}
+        for _, c in ipairs(pr.pending.comments or {}) do
+          cs[#cs + 1] = { id = c.id, databaseId = c.databaseId or vim.NIL, url = c.url or vim.NIL, path = c.path or vim.NIL,
+            line = c.line or vim.NIL, startLine = c.startLine or vim.NIL, originalLine = c.line or vim.NIL,
+            subjectType = c.subjectType or 'LINE', body = c.body, replyTo = c.replyTo or vim.NIL }
+        end
+        reviews[1] = { id = pr.pending.id, viewerDidAuthor = true, commit = { oid = pr.pending.commit },
+          comments = { totalCount = #cs, nodes = cs } }
+      end
+      data[alias] = { pullRequest = {
+        id = pr.id, number = tonumber(number), url = 'https://github.com/' .. key:gsub('#', '/pull/'), state = pr.state or 'OPEN',
+        isDraft = false, headRefOid = pr.headRefOid or vim.NIL, author = { login = pr.author or 'alice' },
+        reviews = { nodes = reviews },
+      } }
+    end
+  end
+  io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
+  if #errors > 0 then
+    io.stderr:write('gh: ' .. errors[1].message .. '\n')
+    os.exit(1)
+  end
+  os.exit(0)
+end
+
 if argv[2] ~= 'api' or argv[3] ~= 'graphql' then
   io.stderr:write('fake gh: unsupported command\n')
   os.exit(2)

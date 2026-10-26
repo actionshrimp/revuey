@@ -342,6 +342,10 @@ local function thread_lines(s, c, p, width)
   if c.forge_reply then
     chip('local reply to GitHub #' .. tostring(c.forge_reply.pr) .. ' thread', 'RevueyForgeNumber')
   end
+  local post = not g and M.post_label(c)
+  if post then
+    chip(post.text, post.hl)
+  end
   if c.ai and c.status ~= 'accepted' then
     chip(c.ai.severity or 'minor', M.SEVERITY_HL[c.ai.severity] or 'RevueyAiMinor')
   end
@@ -440,6 +444,20 @@ local function thread_lines(s, c, p, width)
   return lines
 end
 
+---Marker of a comment's way to GitHub: added to the review, in the pending review, or posted.
+---@return {text:string, hl:string}?
+function M.post_label(c)
+  local fp = type(c.forge_post) == 'table' and c.forge_post or nil
+  local st = fp and fp.state
+  if st == 'posted' then
+    return { text = 'posted to GitHub #' .. tostring(fp.pr), hl = 'RevueyForgeNumber' }
+  elseif st == 'pending' then
+    return { text = 'in your pending review on GitHub #' .. tostring(fp.pr), hl = 'RevueyCommentInReview' }
+  elseif c.in_review then
+    return { text = 'in review', hl = 'RevueyCommentInReview' }
+  end
+end
+
 ---Marker of a comment sent to an agent: {text, hl}, or nil when it was never sent. It follows the
 ---message's delivery, not who is connected now: once a watch printed it, it stays "sent".
 function M.delivery_label(s, c)
@@ -463,6 +481,39 @@ local SIGN_HL = { draft = 'RevueyCommentDraft', resolved = 'RevueyCommentResolve
 ---Highlight of an AI finding's severity.
 M.SEVERITY_HL = { critical = 'RevueyAiCritical', major = 'RevueyAiMajor', minor = 'RevueyAiMinor', nit = 'RevueyAiNit' }
 
+---GitHub comment and thread ids the scope draws now (the forge items place_forge will show), so a
+---local comment posted (or added to the pending review) is not drawn twice: once its GitHub
+---thread is shown, that thread stands for it.
+local function forge_shown_ids(s)
+  local ids = {}
+  local show = forge_show(s)
+  if show == 'none' then
+    return ids
+  end
+  for _, x in ipairs(require('revuey.forge_view').thread_items(s)) do
+    if not (show == 'open' and x.thread.resolved) then
+      ids[x.thread.id] = true
+      for _, gc in ipairs(x.thread.comments) do
+        ids[gc.id] = true
+      end
+    end
+  end
+  return ids
+end
+
+---Is local comment `cmt` on GitHub (posted, or in the viewer's pending review) and its GitHub
+---comment among the threads drawn (`ids`: forge_shown_ids)? Then only the GitHub thread is shown.
+function M.superseded(cmt, ids)
+  local fp = type(cmt.forge_post) == 'table' and cmt.forge_post or nil
+  if not fp or not fp.state then
+    return false
+  end
+  if fp.comment_id and ids[fp.comment_id] then
+    return true
+  end
+  return not cmt.forge_reply and fp.thread_id ~= nil and ids[fp.thread_id] == true
+end
+
 ---Place every comment in the current review and draw threads and signs. `persist`: save
 ---changed "last known" anchors (renders after the review changed; never on live reloads).
 ---@param o? {persist?:boolean}
@@ -479,6 +530,8 @@ function M.render(s, o)
   local attach = {} -- row -> list of {c, p, group}
   local changed = false
   local all = comments.list(store, { include_resolved = true, include_drafts = true })
+  local gh_ids = forge_shown_ids(s)
+  c.superseded = {}
   for _, cmt in ipairs(all) do
     local p = comments.place(cmt, ctx)
     c.place[cmt.id] = p
@@ -491,11 +544,16 @@ function M.render(s, o)
     end
     local path = p.path or cmt.anchor.path
     local open = cmt.status ~= 'resolved' and cmt.status ~= 'dismissed'
-    if open then
+    local row, group, first
+    if M.superseded(cmt, gh_ids) then
+      -- its GitHub thread is drawn: that stands for it
+      c.superseded[cmt.id] = true
+      open, row = false, 0
+    elseif open then
       c.counts[path] = (c.counts[path] or 0) + 1
     end
-    local row, group, first
-    if cmt.file_level then
+    if row then -- superseded: nothing to draw
+    elseif cmt.file_level then
       row = idx.file_row[path]
       first = row
     elseif not p.outdated then
@@ -519,7 +577,7 @@ function M.render(s, o)
         first = row
       end
     end
-    if not row then
+    if not row and not c.superseded[cmt.id] then
       -- the file is not shown (it left the review): a group at the end of the buffer, so the
       -- comment stays visible, navigable and listed
       row = #s.layout.lines
@@ -1192,6 +1250,42 @@ function M.dismiss(s)
   end)
 end
 
+---`ci`: add the comment on this line to the review to post on GitHub, or take it out again
+---(a local flag until the review is submitted: `:RevueySubmit`). Only your own saved comments
+---(an AI finding once accepted) and local replies to GitHub threads.
+function M.toggle_include(s)
+  M.with_comment(s, function(cmt)
+    local post = require('revuey.forge_post')
+    if cmt.forge then
+      local _, why = post.includable(cmt)
+      return vim.notify('revuey: cannot add this to the review: ' .. why, vim.log.levels.INFO)
+    end
+    local store = cm(s).store
+    local cur = still_there(store, cmt.id)
+    if not cur then
+      return M.refresh(s)
+    end
+    if not cur.in_review then
+      local ok, why = post.includable(cur)
+      if not ok then
+        return vim.notify('revuey: cannot add this comment to the review: ' .. why, vim.log.levels.INFO)
+      end
+    end
+    local copy = vim.deepcopy(cur)
+    copy.in_review = not cur.in_review
+    comments.put(store, copy)
+    save_and_emit(s, nil, copy, nil, store)
+    local n = require('revuey.forge_post_view').count(store)
+    local msg = copy.in_review and 'added to the review' or 'taken out of the review'
+    if not copy.in_review and post.state(copy) == 'pending' then
+      msg = msg .. ' (it is in your pending review on GitHub already: a submit publishes it; delete it there to drop it)'
+    end
+    local k = config.options.keymaps.forge_submit
+    k = type(k) == 'table' and k[1] or k
+    vim.notify(('revuey: %s (%d in review%s)'):format(msg, n, k and ('; ' .. k .. ' submits') or ''), vim.log.levels.INFO)
+  end, nil, true)
+end
+
 -- ---------------------------------------------------------------------------
 -- Sending to the coding-agent session
 -- ---------------------------------------------------------------------------
@@ -1419,6 +1513,9 @@ function M.list_lines(s)
   local list = comments.list(store, { include_resolved = true, include_drafts = true })
   local out = {}
   local path
+  list = vim.tbl_filter(function(x)
+    return not (c.superseded and c.superseded[x.id])
+  end, list)
   for _, cmt in ipairs(list) do
     if cmt.anchor.path ~= path then
       path = cmt.anchor.path
@@ -1450,6 +1547,10 @@ function M.list_lines(s)
     end
     if cmt.forge_reply then
       tags[#tags + 1] = 'local reply to GitHub #' .. tostring(cmt.forge_reply.pr)
+    end
+    local pl = M.post_label(cmt)
+    if pl then
+      tags[#tags + 1] = pl.text
     end
     if p.how == 'missing' then
       tags[#tags + 1] = 'not in this review'

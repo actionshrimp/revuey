@@ -40,6 +40,15 @@ is available.
   answers review-thread queries (thread nodes per `owner/name#N`, cut into pages by the query's
   `first`/`after`, PRs that resolve to null) with a failure scenario of their own
   (`REVUEY_FAKE_GH_THREADS_SCENARIO`), so a working PR lookup can be combined with failing threads.
+  For posting reviews it reads a post file (`REVUEY_FAKE_GH_POST`, the fifth argument of
+  `h.use_fake_gh`: the viewer, PRs with node ids, heads and pending reviews, the PRs' files for
+  the REST `pulls/N/files` pages, review states, and failures: refused threads by body, a
+  failing review creation, submit, files read or preflight) that is also its state: review
+  mutations rewrite it, and threads they add go into the threads file (pending until
+  submitted), so a refetch shows them. Every mutation is recorded as `{op, alias, input}` (the
+  input object parsed) in `REVUEY_FAKE_GH_MUTATIONS`, which tests read to assert exactly what
+  would be posted; REST calls with `-f`/`-F`/`-X` are refused. Posting is only ever tested
+  against this fake: no spec or manual check sends a mutation to GitHub.
 - **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
   threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the
   file at the PR head (the thread's lines ±110, enough for placement's ±100-line search and the

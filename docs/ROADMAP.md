@@ -71,6 +71,18 @@ sequence; later items build on earlier ones.
   their lines in the guide view only (a violet `▼ guide` band), `]n`/`[n` between them, `gN` collapses
   them to markers. Not comments: never triaged, exported or posted. Guide records are version 2;
   version 1 guides load without notes.
+- Post reviews to the forge: `ci` adds a comment to the review (opt-in, local until submit; your
+  own comments, accepted AI findings and `cr` replies only); `gP` / `:RevueySubmit [verdict]`
+  checks every comment against the PR's diff as GitHub has it (REST files: head blob and hunks;
+  the file must be the head's, the lines inside one hunk, never moved), adds them to your pending
+  review (yours reused, e.g. from Graphite, never replaced; else a new one on the reviewed head),
+  replies in their threads, then confirms (verdict, per PR what revuey added and what your
+  pending review already had, the commit it is bound to, what was left out and why, an optional
+  body) and submits. Full stack: each comment to the PR whose diff adds its lines, one review per
+  PR. A moved head, unpushed or uncommitted changes, your own PR with approve: refused with the
+  reason. Added comments are recorded as pending at once (a cancel or failed submit leaves them
+  there, never added twice), posted ones keep their GitHub ids and are shown as the GitHub thread
+  after the refetch.
 
 
 ## Next
@@ -107,12 +119,11 @@ sequence; later items build on earlier ones.
    `revuey.log`, then restart the worktree's LSP clients so tsserver picks up the new `.d.ts` files. Incremental
    builds (`tsc -b`, turbo) keep this cheap. The build-free alternative for repos that can change (a `source`
    export condition plus `customConditions`, or project references with `declarationMap`) is documented (done).
-2. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
-   posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
-   Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
-   to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
-   Local replies to GitHub threads (`cr` on one; `forge_reply` on the comment) are posted as replies in
-   their threads.
+2. **Post reviews to the forge: what is left.** (Posting is done; see Done.) Optional sync of
+   GitHub's per-file "viewed" state (`PullRequestChangedFile.viewerViewedState`,
+   `markFileAsViewed`/`unmarkFileAsViewed`) with revuey's reviewed marks: left out because
+   revuey's marks are per hunk and per scope, GitHub's per file and PR, so a mapping needs its own
+   design. Also not done: updating GitHub when a pending or posted comment is edited locally.
 3. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
    sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
    (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still

@@ -126,6 +126,13 @@ function M.comments()
   return require('revuey.view').comments_list()
 end
 
+---`:RevueySubmit [approve|comment|request-changes]`: post the comments added to the review
+---(`ci`) to GitHub as one review with that verdict (asked when not given), after a confirmation.
+---@param verdict? string
+function M.submit(verdict)
+  return require('revuey.view').submit(verdict)
+end
+
 ---`:RevueyCommentsExport [markdown|json] [--all] [register|file]`: export the review's comments
 ---(default: Markdown for an AI session, to the `+` register). Returns the text.
 ---@param args? string[]

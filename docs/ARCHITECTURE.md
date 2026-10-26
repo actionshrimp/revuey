@@ -817,9 +817,9 @@ are in `reports/Terminal code review tool landscape.md`.
       wider than a line by display width); `<Tab>` on its heading toggles
       `s.forge.collapsed`; `gx` (`keymaps.forge_open`) opens a row's PR (layer rows, detail rows,
       else the viewed layer) with `vim.ui.open`. Highlights `RevueyForge*`.
-    - **Later**: posting reviews reuses `remote_info`, `targets`, `parse_remote_url` and
-      `run_graphql`; the PR found here gives the number and repo. Review threads (decision 17)
-      already do.
+    - Review threads (decision 17) and posting reviews (decision 18) reuse `targets` and
+      `run_graphql`; the PR found here gives the number, the repo and the layer tip a post is
+      checked against.
     - **Tests** use `tests/bin/gh` (fake, records argv, answers queries from canned PR nodes per
       `owner/name:branch`); `tests/helpers.lua` blocks the real `gh` on PATH for every spec.
 
@@ -966,8 +966,8 @@ are in `reports/Terminal code review tool landscape.md`.
       again (the record has none), and the full scope gets the branch tags (`attribution.load`); `import-review [--name] [--session] <file|->` (`--schema` prints the schema)
       imports into the session's comments file, printing imported, dropped, skipped and
       replaced counts.
-    - Not done: posting to the forge (roadmap: "add to review" and the verdict become a
-      pending GitHub review).
+    - Posting: an accepted finding is the user's comment and can be added to a review posted to
+      GitHub (decision 18); an untriaged or dismissed one cannot.
 
 16. **Remote PR review via worktrunk** (`pr.lua` argument, command line, result and error
     parsing plus the background run; `pr_view.lua` progress, cancel, approval terminal and
@@ -1145,7 +1145,7 @@ are in `reports/Terminal code review tool landscape.md`.
       (replies), status, created_at, updated_at, file_level}`, so `thread_lines` draws them with
       the comment code. They live in `s.cm.forge_items` only: never in the comments store, the
       export, the event feed, agent messages or the panel's `✎` counts. Ids and GitHub ids are
-      kept for posting later.
+      kept for replies posted with a review (decision 18).
     - **Drawing.** Same virtual lines and gutter bar as comments (`RevueyForgeSign`; a local
       comment's bar wins on a shared row), border `RevueyForgeBorder`, a `GitHub #N` chip, then
       `pending` (the viewer's own unsubmitted review), `resolved by x`, `outdated`, `GitHub line
@@ -1161,9 +1161,9 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Read-only; local replies.** `ce`/`cx`/`cd`/`cs` on a thread refuse with a message. `cr`
       makes a new local comment anchored on the thread's rows (`anchor_from_rows`, so it
       re-anchors like any comment) with `forge_reply = {thread_id, pr, repo, url, comment_id,
-      database_id}`, labelled in the thread box, the list and the Markdown export. Nothing is
-      posted; posting reviews (roadmap) can send these as thread replies. A thread not on shown
-      lines refuses (nowhere to anchor).
+      database_id}`, labelled in the thread box, the list and the Markdown export. A review
+      submit (decision 18) posts it as a reply in its thread. A thread not on shown lines
+      refuses (nowhere to anchor).
     - **Failures.** As decision 13: no `gh`, non-zero exit, GraphQL errors, a PR that does not
       resolve (partial data: no threads for it) are logged, never shown; the review and the PR
       section are unaffected.
@@ -1172,9 +1172,121 @@ are in `reports/Terminal code review tool landscape.md`.
       thread queries only). `forge_spec.lua` turns threads off so its call counts stay PR
       lookups.
 
+18. **Posting reviews to the forge** (`forge.lua` queries and mutations; `forge_post.lua` pure
+    anchor mapping, routing, plan and confirmation text; `forge_post_view.lua` the steps;
+    `comments_view.lua` the toggle, chips and de-duplication). Local comments go to GitHub as one
+    review per PR with a verdict, through the same `gh` (`run_graphql`, plus `rest_get` for the
+    one REST read). Opt-in per comment, local until submit.
+    - **Add to review.** `ci` (`keymaps.comment_include`) toggles the comment model's
+      `in_review` (merged like any change, no event). `forge_post.includable`: the user's own
+      comments only (`author.kind = 'user'`, so an AI finding after `ca`, and `cr` replies), not
+      drafts, resolved or dismissed ones, GitHub threads or posted comments. Chips `in review`,
+      `in your pending review on GitHub #N`, `posted to GitHub #N` (thread header and list); the
+      panel's key help shows `gP submit review (N in review)`. The submit takes the store of the
+      scope shown (comments of other scopes stay where they are).
+    - **Where a comment goes** (`forge_post.locate`, against the PR's files from REST `GET
+      repos/o/n/pulls/N/files`, paged by 100 up to GitHub's 3,000: `filename`, `status`,
+      `sha` = the blob at the PR head, checked against a real PR, and `patch` = GitHub's own
+      hunks). GitHub numbers RIGHT lines in the head's file and LEFT lines in the base's, and
+      takes only lines inside the patch's hunks. New side: the review's file must be the head's
+      blob (`new_blob == sha`: the same bytes, so every number is the same line; any
+      uncommitted or unpushed change to the file refuses all its comments, not only changed
+      lines, because mapping through a diff can pair a `}` with another `}`), every line inside
+      one hunk (a range across hunks is refused: GitHub wants one), and its text equal to the
+      patch's. Old side: inside one hunk, and every old-side line of that hunk equal to the
+      review's old text at the same number (the base blob is not in the REST answer). A line the
+      review shows as added (deleted) must be `+` (`-`) in the patch, else it was changed by an
+      earlier layer: refused with a hint to post from that layer's scope. File comments
+      (`subjectType: FILE`): the file in the patch list with the head's blob (a deleted file:
+      `removed`). Payload: `path`, `line` = last line, `side` RIGHT|LEFT, `startLine`/`startSide`
+      for ranges. Outdated, empty, over-long (60,000 bytes) comments and those on files not in
+      the review are refused with the reason.
+    - **Routing.** Targets are the scope's open PRs (`forge_view.current_key`/the stack layers,
+      like `scope_prs`), each with the commit the review shows for it (`ForgeTarget.tip`: the
+      layer tip, HEAD for a plain review). Layer scope: the one PR. Full stack: every target is
+      tried and exactly one must accept the comment (none: the best reason, else "no open PR has
+      this version of the file"; several: refused as ambiguous). No attribution labels are
+      needed: blob identity plus the `+`/`-` rule pick the layer that introduced the lines, and
+      a later layer that changed the file makes the earlier one's blob differ. Replies go to
+      their `forge_reply.pr` when it is an open PR of the scope.
+    - **Whole-PR refusals** (`target_refusal`): the PR did not resolve, is not OPEN, its
+      `headRefOid` is not the reviewed tip (moved on GitHub, or unpushed commits), or the
+      verdict is approve/request changes on the viewer's own PR (GitHub refuses those), or the
+      viewer somehow has several pending reviews there.
+    - **Sequence.** `prepare` (async): files per PR (concurrent), then one preflight query per
+      host: `viewer { login }`, per PR `pullRequest { id number url state isDraft headRefOid
+      author { login } reviews(states: [PENDING], first: 5) { nodes { id viewerDidAuthor commit
+      { oid } comments(first: 100) { totalCount nodes { id databaseId url path line startLine
+      originalLine subjectType body replyTo { id } } } } } }`, and `node(id)` of each review
+      revuey added comments to earlier (`... on PullRequestReview { id state }`). Then
+      `forge_post.plan`. `add_to_pending`: per PR, the viewer's pending review is reused (GitHub
+      allows one per user and PR; it may come from GitHub's UI or Graphite and is never
+      replaced, emptied or deleted), else `addPullRequestReview(input: {pullRequestId,
+      commitOID: <reviewed tip>})` (no event: PENDING), only when there is something to add;
+      then `addPullRequestReviewThread(input: {pullRequestReviewId, path, body, line, side,
+      startLine?, startSide?} | {..., subjectType: FILE})` and
+      `addPullRequestReviewThreadReply(input: {pullRequestReviewId, pullRequestReviewThreadId,
+      body})`, aliased `m1..` in batches of 10 (and under 60KB of query text, argv limits) per
+      `gh` call; GraphQL runs a mutation document's fields one after another and reports a
+      failed one with `path: [alias]` (`forge.alias_error`), so one bad comment fails alone.
+      Each added comment is recorded at once (`forge_post = {state = 'pending', pr, repo,
+      review_id, thread_id, comment_id, database_id, url}`) and saved after every batch, so a
+      later submit never adds it twice. Then the **confirmation** (`forge_post.summary`, on the
+      main loop; `forge_post_view.ask` is `vim.fn.confirm`, replaced in tests), then `submit`:
+      `submitPullRequestReview(input: {pullRequestReviewId, event, body?})`, or for a verdict
+      with nothing pending `addPullRequestReview(input: {pullRequestId, commitOID, event,
+      body?})`. All documents were validated against GitHub's published schema
+      (`schema.docs.graphql`) offline; the preflight was also run read-only against a public PR.
+      The user decided "local until submit": the toggle never talks to GitHub; add and submit
+      are separate functions so the toggle could sync later.
+    - **Already there.** `forge_post.in_pending`: an item is in the pending review when its
+      recorded `comment_id` is among the review's comments, or a comment there has the same
+      body and path (a thread) or the same body and is a reply: an answer lost to a timeout
+      after GitHub applied the mutation is then not added twice. A recorded review whose
+      `node` state is no longer PENDING was submitted elsewhere (e.g. from Graphite): its
+      comments are marked posted, never re-added; one that no longer resolves was discarded:
+      the mark is cleared and toggled comments are added again.
+    - **The user's pending review.** Its comments that revuey did not add are listed in the
+      confirmation by `path:line` ("submitted too"), with the count. When it is bound to another
+      commit than the reviewed tip (`commit.oid`), GitHub numbers its threads in that commit:
+      the confirmation says so, replies still go in, new-side line and file comments only when
+      `git cat-file --batch-check <commit>:<path>` is the review's blob (same file, same
+      numbers), old-side ones never (the base may differ).
+    - **Partial failure, cancel, failed submit.** Nothing is ever deleted or rolled back on
+      GitHub: deleting would need more mutations that can fail too, and a reused pending review
+      holds the user's own comments. What failed to attach is listed with GitHub's message in
+      the confirmation, which then defaults to Cancel; submitting anyway is the user's explicit
+      choice, never silent. Cancel (or a failed submit) leaves the comments in the pending
+      review, invisible to others, recorded as pending; the next submit only submits. A review
+      with a whole-PR refusal gets nothing added.
+    - **Commit binding.** A new pending review gets `commitOID` = the reviewed tip, after the
+      preflight showed `headRefOid` equal to it. A push between the preflight and the add binds
+      the review to the older commit, whose lines are the ones checked.
+    - **Posted.** After a successful submit, the PR's pending comments become `posted`
+      (`in_review = false`, ids kept, `posted_at`), and `forge_view.update(s, true)` refetches
+      the threads. **Not drawn twice:** a local comment with `forge_post` whose GitHub comment
+      (`comment_id`, or for a new thread its `thread_id`) is among the threads drawn in the scope
+      (`gH` mode respected) is not drawn, counted or listed (`comments_view.superseded`): the
+      GitHub thread is the live one (replies from others, resolution), and a pending one
+      already shows `pending (your unsubmitted review)`. With threads hidden, not fetched or
+      failed, the local comment shows with its `posted`/`pending` chip.
+    - **Concurrency.** One submit at a time (`forge_post_view.job`, across reviews). It is not
+      tied to the review's kill-on-close: closing mid-submit lets the current `gh` call finish
+      and the results be recorded in the comments file (the store outlives the UI); the
+      confirmation is not shown for a closed review (what was added stays pending, said in a
+      message). The submit step itself runs to the end.
+    - **Not done:** GitHub's per-file "viewed" state (roadmap); editing a pending or posted
+      comment does not update GitHub; local replies in a comment's own thread are not posted
+      (only its body).
+    - **Tests**: the fake `gh` takes a post file (`REVUEY_FAKE_GH_POST`: viewer, PRs with node
+      ids, heads and pending reviews, REST files, review states, failures) that it also keeps as
+      its state, records every mutation alias as `{op, alias, input}` (the input object parsed)
+      and adds created threads to the threads file (PENDING, then SUBMITTED), so a refetch
+      shows them. It refuses REST writes.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

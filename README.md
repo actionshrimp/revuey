@@ -59,6 +59,7 @@ Requirements:
 | `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
 | `:RevueyAIReview cancel` | Stop a running AI review. |
 | `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
+| `:RevueySubmit [approve\|comment\|request-changes]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
@@ -469,12 +470,14 @@ for authors.
   The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
   when the list was cut and `(stale)` when the last fetch failed and these are the threads from
   before).
-- **Read-only.** revuey never writes to GitHub. `gx` on a thread opens it in the browser (elsewhere
+- **Read-only.** Threads are never changed from revuey (posting a review, below, only adds to
+  them). `gx` on a thread opens it in the browser (elsewhere
   in the diff the key does what it does outside revuey: Neovim's `gx`, or your own mapping when
   `keymaps.forge_open` is another key). `ce`, `cx`, `cd` and `cs` say the thread is read-only.
   `cr` writes a **local reply**: a comment of yours on the thread's lines, labelled `local reply to
-  GitHub #42 thread` and linked to the thread (its ids are kept for posting reviews later). It
-  lives in your comments file like any comment; the threads themselves are never stored.
+  GitHub #42 thread` and linked to the thread; [posting a review](#posting-a-review-to-github)
+  sends it as a reply in that thread. It lives in your comments file like any comment; the
+  threads themselves are never stored.
 - **When.** After the PR lookup, in the background (opening a review never waits for GitHub): one
   `gh api graphql` call for the scope's open PRs, more only for long lists (50 threads per page,
   each thread's first 20 comments, then 100 at a time; at most 10 rounds, after which a thread
@@ -488,6 +491,68 @@ require('revuey').setup({
   keymaps = { forge_threads = 'gH' },
 })
 ```
+
+### Posting a review to GitHub
+
+Your comments stay local until you post them. `ci` on a comment adds it to the review ("add to
+review", marked `in review`; again takes it out); `gP` or `:RevueySubmit [approve|comment|request-changes]`
+posts every comment added in the scope you are viewing as **one GitHub review** with a verdict,
+through your `gh`. Nothing is added unless you pick it. Only your own saved comments can be
+added: an AI review finding once you accept it (`ca`), and the local replies `cr` makes on
+GitHub threads (posted as replies in their threads); not agent comments, drafts or resolved
+comments.
+
+What happens, in order:
+
+1. **Checks.** revuey reads the PR's files as GitHub has them and the PR itself (its head commit,
+   your pending review). Each comment is checked against GitHub's diff (below); what can't be
+   posted is left out with the reason.
+2. **Your pending review.** The comments go into your *pending* review on the PR: the one you
+   already have (GitHub allows one per PR; one started in GitHub's UI or another tool such as
+   Graphite is reused, never replaced or emptied), else a new one on the commit you reviewed. A
+   pending review is visible only to you. A comment already in it (added by an earlier submit)
+   is not added again.
+3. **Confirmation.** The verdict, and per PR the comments and replies revuey added, the comments
+   your pending review already had from elsewhere (submitted too), the commit it is bound to when
+   that is not the one you reviewed, and everything left out with the reason. `Write body` adds a
+   review body (a Comment review with nothing in it needs one). When something was left out,
+   Cancel is the default.
+4. **Submit.** The review is published with the verdict. Posted comments are marked `posted to
+   GitHub #42` and the threads are fetched again: from then on the GitHub thread stands for the
+   comment (your local copy is not drawn twice; with GitHub threads hidden, `gH`, it shows with the
+   `posted` mark).
+
+If you cancel at the confirmation, or the submit fails, the comments stay in your pending review
+on GitHub (`in your pending review on GitHub #42`; you can see them there and in other tools), and
+the next submit publishes them without adding them again. One submit runs at a time; closing the
+review before the confirmation stops there.
+
+**Which line on GitHub.** GitHub numbers a comment's lines in the file at the PR's head (the old
+side: in its base), and only takes lines inside the PR diff's hunks. A comment is posted on the
+line you wrote it on, or not at all:
+
+- New-side lines: your copy of the file must be exactly the file at the PR head (so a file with
+  uncommitted or unpushed changes is refused, whichever lines you commented), and the lines must
+  be inside one hunk of the PR's diff. A range goes as GitHub's `startLine`..`line`.
+- Old-side lines (deleted code): inside one hunk, and that hunk's old lines read the same as
+  yours.
+- The PR head must be the commit the review shows for that layer: when it moved on GitHub, or you
+  have unpushed commits, nothing goes to that PR (fetch or push, then `R`).
+- In the full-stack scope each comment goes to the open PR whose diff adds (or deletes) the
+  lines: a line added by `stack/cart` but in a file `stack/ui` changed again is refused, with a
+  hint to post it from `stack/cart`'s scope. Each PR gets its own review with the verdict;
+  PRs without comments get none.
+- File comments go to the PR that has the file as you see it.
+- GitHub does not let a PR's author approve it or request changes; that is refused before
+  anything is added.
+
+```lua
+require('revuey').setup({
+  keymaps = { comment_include = 'ci', forge_submit = 'gP' },
+})
+```
+
+GitHub's per-file "viewed" checkboxes are not synced.
 
 ## Reviewing a pull request (worktrunk)
 
@@ -756,7 +821,8 @@ list of findings, each with a severity (critical, major, minor, nit), a title, a
 and optionally a suggested change.
 
 **Nothing is posted anywhere.** Each finding becomes a local [comment](#comments) by `claude
-(ai)`, on the lines it is about, for you to triage:
+(ai)`, on the lines it is about, for you to triage (only once you accept one can you add it to a
+[review you post](#posting-a-review-to-github)):
 
 ```
 ╭─ claude (ai) · just now · major · ca accept · cn dismiss ─────────
@@ -1126,6 +1192,8 @@ Diff buffer:
 | `cl` | List all comments (`<CR>` jumps) |
 | `gH` | [GitHub review threads](#review-threads-from-github): all / open only / hidden |
 | `gx` | On a GitHub thread: open it in the browser (elsewhere: Neovim's `gx`) |
+| `ci` | Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out |
+| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict, then a confirmation |
 | `ca` / `cn` | [AI review](#ai-review) finding on this line: accept it as your comment / dismiss it (again: restore) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
@@ -1133,7 +1201,7 @@ Diff buffer:
 File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
-- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gP`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - `gS` on a layer row checks that layer out (elsewhere: the viewed layer). While the panel has focus, a dim
   line under the layer row the cursor is on says what `gS` would do there (`gS creates local branch
   stack/cart` on a remote-only layer).

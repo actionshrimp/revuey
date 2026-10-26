@@ -156,6 +156,7 @@ function M.setup()
   set('RevueyForgeBorder', { link = 'Comment' })
   set('RevueyForgeAuthor', { link = 'Special' })
   set('RevueyForgeSign', { link = 'Special' })
+  set('RevueyCommentInReview', { link = 'DiagnosticHint' }) -- added to the review to post on GitHub
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

@@ -5,9 +5,10 @@
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
 -- Also the review threads of open PRs (`fetch_threads`: paginated, cached per PR like the PR
--- lookup; placement and display are in forge_threads.lua). Reusable for later forge work
--- (posting reviews): `remote_info`, `parse_remote_url`, `base_remote`, `targets` and
--- `run_graphql` know nothing about the panel.
+-- lookup; placement and display are in forge_threads.lua), and the queries and mutations of
+-- posting a review (the pending-review flow; forge_post.lua plans, forge_post_view.lua runs it).
+-- `remote_info`, `parse_remote_url`, `base_remote`, `targets`, `run_graphql` and `rest_get`
+-- know nothing about the panel.
 local git = require('revuey.git')
 local stack_mod = require('revuey.stack')
 local log = require('revuey.log')
@@ -454,20 +455,22 @@ function M.pick(prs, head_owner, accept)
 end
 
 ---Decode `gh api graphql` output. Returns data (may be partial) and a list of error messages.
----@return table? data, string[] errors
+---@return table? data, string[] errors, table[] raw error objects
 function M.decode(stdout)
   local ok, obj = pcall(vim.json.decode, stdout or '', { luanil = { object = true, array = true } })
   if not ok or type(obj) ~= 'table' then
     return nil, { 'unparsable output: ' .. tostring(stdout or ''):sub(1, 200) }
   end
-  local errs = {}
+  local errs, raw = {}, {}
   for _, e in ipairs(type(obj.errors) == 'table' and obj.errors or {}) do
     errs[#errs + 1] = type(e) == 'table' and tostring(e.message or e.type) or tostring(e)
+    raw[#raw + 1] = type(e) == 'table' and e or { message = tostring(e) }
   end
   if type(obj.message) == 'string' then -- REST-style error body (e.g. rate limit)
     errs[#errs + 1] = obj.message
+    raw[#raw + 1] = { message = obj.message }
   end
-  return type(obj.data) == 'table' and obj.data or nil, errs
+  return type(obj.data) == 'table' and obj.data or nil, errs, raw
 end
 
 -- ---------------------------------------------------------------------------
@@ -602,16 +605,17 @@ function M.check_heads(root, targets)
   end
 end
 
----Run one `gh api graphql` call (async inside git.async), with `forge.timeout`. `on_job` gets
----the vim.SystemObj (to kill it when the review closes). Returns data, or nil and a reason.
----@return table? data, string? err
-function M.run_graphql(query, host, on_job)
+---Run `gh api <args>` (async inside git.async), with `forge.timeout`. `on_job` gets the
+---vim.SystemObj (to kill it when the review closes). Returns the completed result, or nil and a
+---reason when gh could not run or timed out.
+---@return vim.SystemCompleted? res, string? err
+local function run_gh(args, host, on_job)
   local o = opts()
-  local cmd = { o.cmd, 'api', 'graphql' }
+  local cmd = { o.cmd, 'api' }
   if host and host ~= 'github.com' then
     vim.list_extend(cmd, { '--hostname', host })
   end
-  vim.list_extend(cmd, { '-f', 'query=' .. query })
+  vim.list_extend(cmd, args)
   local sysopts = { text = true, timeout = o.timeout, env = { GH_PROMPT_DISABLED = '1', GH_NO_UPDATE_NOTIFIER = '1' } }
   local co = coroutine.running()
   local res
@@ -638,23 +642,59 @@ function M.run_graphql(query, host, on_job)
   if res.code == 124 then
     return nil, ('%s timed out after %gs'):format(o.cmd, o.timeout / 1000)
   end
-  local data, errs = M.decode(res.stdout)
+  return res
+end
+
+---Run one `gh api graphql` call (async inside git.async), with `forge.timeout`. `on_job` gets
+---the vim.SystemObj (to kill it when the review closes). Returns data, or nil and a reason; the
+---third value is GraphQL's error objects as returned (with their `path`: which alias of a batched
+---mutation failed).
+---@return table? data, string? err, table[]? errors
+function M.run_graphql(query, host, on_job)
+  local res, rerr = run_gh({ 'graphql', '-f', 'query=' .. query }, host, on_job)
+  if not res then
+    return nil, rerr, {}
+  end
+  local o = opts()
+  local data, errs, raw = M.decode(res.stdout)
   if res.code ~= 0 then
     local why = vim.trim(res.stderr or '')
     if why == '' then
       why = table.concat(errs, '; ')
     end
     if not data then
-      return nil, ('%s exited %d: %s'):format(o.cmd, res.code, why)
+      return nil, ('%s exited %d: %s'):format(o.cmd, res.code, why), raw
     end
     log.write('forge', ('%s exited %d with partial data: %s'):format(o.cmd, res.code, why))
   elseif #errs > 0 then
     log.write('forge', 'graphql errors: ' .. table.concat(errs, '; '))
   end
   if not data then
-    return nil, table.concat(errs, '; ')
+    return nil, table.concat(errs, '; '), raw
   end
-  return data
+  return data, nil, raw
+end
+
+---One REST GET through `gh api <path>` (no `-f`/`-F`: those would make it a POST). Returns the
+---decoded JSON, or nil and a reason.
+---@return any? body, string? err
+function M.rest_get(path, host, on_job)
+  local res, rerr = run_gh({ path }, host, on_job)
+  if not res then
+    return nil, rerr
+  end
+  local ok, body = pcall(vim.json.decode, res.stdout or '', { luanil = { object = true, array = true } })
+  if res.code ~= 0 then
+    local why = vim.trim(res.stderr or '')
+    if why == '' and ok and type(body) == 'table' and type(body.message) == 'string' then
+      why = body.message
+    end
+    return nil, ('%s exited %d: %s'):format(opts().cmd, res.code, why)
+  end
+  if not ok then
+    return nil, 'unparsable output: ' .. tostring(res.stdout or ''):sub(1, 200)
+  end
+  return body
 end
 
 ---Fetch PRs for targets unless the cache answers all of them (or `o.force`): one `gh api
@@ -1070,6 +1110,253 @@ function M.fetch_threads(prs, o)
     end
   end
   return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Posting reviews (forge_post.lua plans; forge_post_view.lua runs the steps)
+-- ---------------------------------------------------------------------------
+-- GitHub's pending-review flow: a pending review (`addPullRequestReview` without an event, or
+-- the user's own pending review, which GitHub allows only one of per PR) collects threads
+-- (`addPullRequestReviewThread`) and replies (`addPullRequestReviewThreadReply`), invisible to
+-- others until `submitPullRequestReview` publishes all of it with the verdict.
+
+M.FILES_PAGE = 100 -- PR files per REST page
+M.FILES_PAGES = 30 -- GitHub lists at most 3,000 files
+M.POST_BATCH = 10 -- threads and replies per mutation call
+M.POST_BATCH_BYTES = 60000 -- and at most this much query text (argv limits)
+M.PENDING_COMMENTS = 100 -- comments of a pending review read by the preflight
+
+---@class revuey.ForgePending  the viewer's pending review on a PR
+---@field id string
+---@field commit? string       commit it is bound to
+---@field comments {id:string, database_id?:integer, url?:string, path?:string, line?:integer, start_line?:integer, original_line?:integer, body:string, reply_to?:string, subject?:string}[]
+---@field total integer        comments it has (more than `comments` when cut)
+
+---@class revuey.ForgePreflight  a PR as GitHub has it right before posting
+---@field id string            node id
+---@field number integer
+---@field url string
+---@field state string
+---@field draft boolean
+---@field head_oid? string
+---@field author? string
+---@field pending? revuey.ForgePending
+---@field pending_other? integer pending reviews of the viewer beyond the first (never expected)
+
+local PENDING_FIELDS = [[
+fragment pending on PullRequestReview {
+  id viewerDidAuthor commit { oid }
+  comments(first: %d) { totalCount nodes { id databaseId url path line startLine originalLine subjectType body replyTo { id } } }
+}]]
+
+---The preflight for posting: the viewer's login, then per PR (`{owner, name, number}`) its node
+---id, state, head commit, author and the viewer's pending review(s) with their comments; and
+---the state of reviews revuey added comments to earlier (`review_ids`: still PENDING, or
+---submitted meanwhile, e.g. from another tool, or gone).
+---@param review_ids? string[]
+---@return string query, table<string, table> aliases
+function M.build_preflight_query(prs, review_ids)
+  local parts, aliases = { 'query {', '  viewer { login }' }, {}
+  for i, id in ipairs(review_ids or {}) do
+    local alias = 'r' .. i
+    aliases[alias] = { review = id }
+    parts[#parts + 1] = ('  %s: node(id: %s) { ... on PullRequestReview { id state } }'):format(alias, lit(id))
+  end
+  for i, p in ipairs(prs) do
+    local alias = 'p' .. i
+    aliases[alias] = p
+    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { id number url state isDraft headRefOid author { login } reviews(states: [PENDING], first: 5) { nodes { ...pending } } } }')
+      :format(alias, lit(p.owner), lit(p.name), p.number)
+  end
+  parts[#parts + 1] = '}'
+  parts[#parts + 1] = PENDING_FIELDS:format(M.PENDING_COMMENTS)
+  return table.concat(parts, '\n'), aliases
+end
+
+---Map a preflight answer: viewer login, alias -> revuey.ForgePreflight (nil: the PR did not
+---resolve), and review id -> its state (`false`: gone) for the `review_ids` asked.
+---@return string? viewer, table<string, revuey.ForgePreflight?>, table<string, string|false>
+function M.normalize_preflight(data, aliases)
+  local viewer = type(data) == 'table' and type(data.viewer) == 'table' and str(data.viewer.login) or nil
+  local out, reviews = {}, {}
+  for alias, a in pairs(aliases) do
+    local v = type(data) == 'table' and data[alias]
+    local n = type(v) == 'table' and v.pullRequest
+    if a.review then
+      reviews[a.review] = type(v) == 'table' and str(v.state) or false
+    end
+    if type(n) == 'table' and type(n.id) == 'string' then
+      local pf = {
+        id = n.id,
+        number = int(n.number),
+        url = str(n.url) or '',
+        state = str(n.state) or 'OPEN',
+        draft = n.isDraft == true,
+        head_oid = str(n.headRefOid),
+        author = type(n.author) == 'table' and str(n.author.login) or nil,
+      }
+      local mine = {}
+      for _, r in ipairs(nodes(n.reviews)) do
+        -- pending reviews are only visible to their author; viewerDidAuthor makes sure
+        if type(r) == 'table' and type(r.id) == 'string' and r.viewerDidAuthor ~= false then
+          mine[#mine + 1] = r
+        end
+      end
+      local r = mine[1]
+      if r then
+        local p = { id = r.id, commit = type(r.commit) == 'table' and str(r.commit.oid) or nil, comments = {} }
+        for _, c in ipairs(nodes(r.comments)) do
+          if type(c) == 'table' and type(c.id) == 'string' then
+            p.comments[#p.comments + 1] = {
+              id = c.id,
+              database_id = int(c.databaseId),
+              url = str(c.url),
+              path = str(c.path),
+              line = int(c.line),
+              start_line = int(c.startLine),
+              original_line = int(c.originalLine),
+              subject = str(c.subjectType),
+              body = str(c.body) or '',
+              reply_to = type(c.replyTo) == 'table' and str(c.replyTo.id) or nil,
+            }
+          end
+        end
+        p.total = type(r.comments) == 'table' and int(r.comments.totalCount) or #p.comments
+        pf.pending = p
+        pf.pending_other = #mine > 1 and (#mine - 1) or nil
+      end
+      out[alias] = pf
+    end
+  end
+  return viewer, out, reviews
+end
+
+---@class revuey.ForgeFile  one file of a PR's diff as GitHub has it (REST `pulls/N/files`)
+---@field path string
+---@field status string        added|removed|modified|renamed|copied|changed|unchanged
+---@field sha? string          blob of the file at the PR head
+---@field previous? string     the old path of a renamed file
+---@field patch? string        the unified diff hunks (nil for binary or very large diffs)
+
+---The files of a PR's diff, page by page (`gh api repos/o/n/pulls/N/files?per_page&page`), up
+---to GitHub's 3,000. Call inside git.async. Returns the files, or nil and a reason.
+---@param pr {repo:string, number:integer}
+---@return revuey.ForgeFile[]? files, string? err
+function M.fetch_pr_files(pr, on_job)
+  local host, owner, name = split_repo(pr.repo)
+  if not host then
+    return nil, 'unknown repository ' .. tostring(pr.repo)
+  end
+  local out = {}
+  for page_no = 1, M.FILES_PAGES do
+    local path = ('repos/%s/%s/pulls/%d/files?per_page=%d&page=%d'):format(owner, name, pr.number, M.FILES_PAGE, page_no)
+    local body, err = M.rest_get(path, host, on_job)
+    if not body then
+      return nil, err
+    end
+    if type(body) ~= 'table' or not vim.islist(body) then
+      return nil, 'unexpected answer for the PR files'
+    end
+    for _, f in ipairs(body) do
+      if type(f) == 'table' and type(f.filename) == 'string' then
+        out[#out + 1] = {
+          path = f.filename,
+          status = str(f.status) or 'modified',
+          sha = str(f.sha),
+          previous = str(f.previous_filename),
+          patch = str(f.patch),
+        }
+      end
+    end
+    if #body < M.FILES_PAGE then
+      return out
+    end
+  end
+  return out
+end
+
+---`addPullRequestReview` without an event: a new pending review bound to `commit`.
+function M.build_pending_mutation(pr_id, commit)
+  return ('mutation {\n  r: addPullRequestReview(input: {pullRequestId: %s, commitOID: %s}) { pullRequestReview { id commit { oid } } }\n}')
+    :format(lit(pr_id), lit(commit))
+end
+
+---Add threads and replies to a pending review, one alias each (`m1`...): items are
+---`{kind = 'thread', path, body, line?, side?, start_line?, start_side?, subject?}` or `{kind =
+---'reply', thread_id, body}`. Returns the mutation and alias -> item.
+---@return string mutation, table<string, table> aliases
+function M.build_add_mutation(review_id, items)
+  local parts, aliases = { 'mutation {' }, {}
+  for i, it in ipairs(items) do
+    local alias = 'm' .. i
+    aliases[alias] = it
+    if it.kind == 'reply' then
+      parts[#parts + 1] = ('  %s: addPullRequestReviewThreadReply(input: {pullRequestReviewId: %s, pullRequestReviewThreadId: %s, body: %s}) { comment { id databaseId url } }')
+        :format(alias, lit(review_id), lit(it.thread_id), lit(it.body))
+    else
+      local f = { ('pullRequestReviewId: %s'):format(lit(review_id)), ('path: %s'):format(lit(it.path)), ('body: %s'):format(lit(it.body)) }
+      if it.subject == 'FILE' then
+        f[#f + 1] = 'subjectType: FILE'
+      else
+        f[#f + 1] = ('line: %d'):format(it.line)
+        f[#f + 1] = 'side: ' .. it.side
+        if it.start_line and it.start_line ~= it.line then
+          f[#f + 1] = ('startLine: %d'):format(it.start_line)
+          f[#f + 1] = 'startSide: ' .. (it.start_side or it.side)
+        end
+      end
+      parts[#parts + 1] = ('  %s: addPullRequestReviewThread(input: {%s}) { thread { id comments(first: 1) { nodes { id databaseId url } } } }')
+        :format(alias, table.concat(f, ', '))
+    end
+  end
+  parts[#parts + 1] = '}'
+  return table.concat(parts, '\n'), aliases
+end
+
+---The answer to one alias of an add mutation: `{thread_id?, comment_id, database_id?, url?}`, or
+---nil.
+function M.added(v)
+  if type(v) ~= 'table' then
+    return nil
+  end
+  if type(v.thread) == 'table' and type(v.thread.id) == 'string' then
+    local c = nodes(v.thread.comments)[1]
+    return {
+      thread_id = v.thread.id,
+      comment_id = type(c) == 'table' and str(c.id) or nil,
+      database_id = type(c) == 'table' and int(c.databaseId) or nil,
+      url = type(c) == 'table' and str(c.url) or nil,
+    }
+  end
+  if type(v.comment) == 'table' and type(v.comment.id) == 'string' then
+    return { comment_id = v.comment.id, database_id = int(v.comment.databaseId), url = str(v.comment.url) }
+  end
+end
+
+M.EVENTS = { approve = 'APPROVE', comment = 'COMMENT', request_changes = 'REQUEST_CHANGES' }
+
+---Publish a review: `submitPullRequestReview` of the pending review, or, with no pending review
+---(a verdict with nothing else), `addPullRequestReview` with the event (bound to `commit`).
+---@param o {review_id?:string, pr_id?:string, commit?:string, event:string, body?:string}
+function M.build_submit_mutation(o)
+  local body = (o.body and o.body ~= '') and (', body: ' .. lit(o.body)) or ''
+  if o.review_id then
+    return ('mutation {\n  s: submitPullRequestReview(input: {pullRequestReviewId: %s, event: %s%s}) { pullRequestReview { id state url } }\n}')
+      :format(lit(o.review_id), o.event, body)
+  end
+  return ('mutation {\n  s: addPullRequestReview(input: {pullRequestId: %s, commitOID: %s, event: %s%s}) { pullRequestReview { id state url } }\n}')
+    :format(lit(o.pr_id), lit(o.commit), o.event, body)
+end
+
+---Errors of a GraphQL answer that belong to `alias` (by `path[1]`), as one message.
+function M.alias_error(errors, alias)
+  local out = {}
+  for _, e in ipairs(errors or {}) do
+    if type(e) == 'table' and type(e.path) == 'table' and e.path[1] == alias then
+      out[#out + 1] = tostring(e.message or e.type)
+    end
+  end
+  return #out > 0 and table.concat(out, '; ') or nil
 end
 
 -- ---------------------------------------------------------------------------
