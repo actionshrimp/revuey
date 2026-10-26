@@ -340,6 +340,78 @@ h.test('stack with pull requests: PR rows and the detail section', function()
   screenshot('forge-stack')
 end)
 
+-- GitHub review threads of the viewed layer's PR (fake `gh`), inline next to a local comment: an
+-- open thread with a reply, a resolved one collapsed, a file-level one; the panel's counts.
+h.test('stack with pull requests: GitHub review threads inline', function()
+  local d = h.tmpdir('screen-forge-threads')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  local cart = vim.split(h.git(d, 'show', 'stack/cart:src/cart.ts'), '\n')
+  local function hunk(n)
+    local out = { '@@ -0,0 +1,20 @@' }
+    for i = 1, n do
+      out[#out + 1] = '+' .. cart[i]
+    end
+    return table.concat(out, '\n')
+  end
+  local function comment(id, who, body, at, diff_hunk)
+    return {
+      id = id, databaseId = 1, url = 'https://github.com/acme/shop/pull/42#discussion_r1', body = body,
+      createdAt = at, lastEditedAt = vim.NIL, state = 'SUBMITTED', diffHunk = diff_hunk or vim.NIL,
+      author = { login = who }, replyTo = vim.NIL,
+    }
+  end
+  local function thread(o)
+    return {
+      id = o.id, isResolved = o.resolved or false, isOutdated = false, path = 'src/cart.ts', line = o.line or vim.NIL,
+      startLine = o.start_line or vim.NIL, originalLine = o.line or vim.NIL, originalStartLine = o.start_line or vim.NIL,
+      diffSide = 'RIGHT', startDiffSide = o.start_line and 'RIGHT' or vim.NIL, subjectType = o.file and 'FILE' or 'LINE',
+      resolvedBy = o.resolved and { login = 'alice' } or vim.NIL, comments = o.comments,
+    }
+  end
+  h.use_fake_gh(h.tmpdir('screen-forge-threads-gh') .. '/calls.ndjson', {
+    ['acme/shop:stack/cart'] = { {
+      number = 42, title = 'Cart totals', url = 'https://github.com/acme/shop/pull/42', state = 'OPEN', isDraft = false,
+      author = { login = 'alice' }, latestReviews = { nodes = {} }, reviewRequests = { nodes = {} }, mergeable = 'MERGEABLE',
+      baseRefName = 'stack/math', headRefName = 'stack/cart', headRepositoryOwner = { login = 'acme' }, commits = { nodes = {} },
+      updatedAt = '2026-01-01T00:00:00Z',
+    } },
+  }, nil, {
+    ['acme/shop#42'] = {
+      thread({ id = 'T1', file = true, comments = { comment('C1', 'erin', 'Needs a test for an empty cart.', '2026-01-01T00:00:00Z') } }),
+      thread({ id = 'T2', line = 13, start_line = 12, resolved = true, comments = {
+        comment('C2', 'dan', 'Return a copy instead?', '2026-01-02T00:00:00Z', hunk(13)),
+        comment('C3', 'alice', 'Chaining is the point here.', '2026-01-02T01:00:00Z'),
+      } }),
+      thread({ id = 'T3', line = 18, comments = {
+        comment('C4', 'carol', 'Should the **total** be rounded to cents?', '2026-01-03T00:00:00Z', hunk(18)),
+        comment('C5', 'alice', 'Good point, will do.', '2026-01-03T01:00:00Z'),
+      } }),
+    },
+  })
+  start(d, '', 44, 120)
+  h.ok(child.lua([[
+    local s = require('revuey.view').session
+    local ok = vim.wait(10000, function()
+      return s and not s.refreshing and s.review.stack and s.review.stack.full_stats ~= nil
+        and s.forge and s.forge.ready and not s.forge.busy and s.cm and s.cm.forge_items and next(s.cm.forge_items) ~= nil
+    end, 10)
+    -- a local comment on the same file, for contrast
+    local comments = require('revuey.comments')
+    local store = require('revuey.comments_view').sync_store(s)
+    local cv = require('revuey.comments_view')
+    local anchor = comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+      { path = 'src/cart.ts', side = 'new', start_line = 10, end_line = 10 }, cv.context(s).get_line)
+    local c = comments.new(anchor, 'Readonly array?')
+    comments.put(store, c)
+    require('revuey.comments_view').refresh(s)
+    vim.cmd('redraw')
+    return ok
+  ]]), 'threads did not load')
+  screenshot('forge-threads')
+end)
+
 -- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
 -- panel, and `!` opens the details float.
 h.test('stack notes: panel summary line and the details float', function()

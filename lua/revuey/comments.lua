@@ -75,6 +75,8 @@ M.EVENT_KINDS = {
 ---@field delivered_at? integer     a `watch` printed it to an agent (not printed again on catch-up)
 ---@field acked_at? integer         the agent acknowledged it (`bin/revuey ack`, or a reply)
 ---@field answered_at? integer      the agent replied (`bin/revuey reply`)
+---@field forge_reply? table        a local reply to a GitHub review thread (`cr` on one):
+---                                 {thread_id, pr, repo, url, comment_id, database_id}; never posted
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
 ---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
 ---                                 accepted_at?, dismissed_at?}

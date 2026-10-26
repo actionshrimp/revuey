@@ -1808,6 +1808,24 @@ function M.comment_keymaps(s)
   map(buf, k.comment_list, with(comments_view.open_list), 'list all comments')
   map(buf, k.comment_accept, with(comments_view.accept), 'accept the AI review finding on this line')
   map(buf, k.comment_dismiss, with(comments_view.dismiss), 'dismiss / restore the AI review finding on this line')
+  map(buf, k.forge_threads, with(comments_view.toggle_forge), 'GitHub threads: all / open only / hidden')
+  -- `gx` on a GitHub thread opens it; elsewhere the usual `gx` (open the URL under the cursor)
+  map(buf, k.forge_open, function()
+    if M.session == s and require('revuey.forge_view').open_thread(s, api.nvim_win_get_cursor(0)[1]) then
+      return
+    end
+    -- the global `gx` (Neovim's default opens the URL or path under the cursor)
+    for _, m in ipairs(api.nvim_get_keymap('n')) do
+      if m.lhs == 'gx' then
+        if m.callback then
+          m.callback()
+        elseif m.rhs and m.rhs ~= '' then
+          api.nvim_feedkeys(vim.keycode(m.rhs), m.noremap == 1 and 'n' or 'm', false)
+        end
+        return
+      end
+    end
+  end, 'open the GitHub thread on this line in the browser (else the URL under the cursor)')
   map(buf, k.comment_next, function()
     comments_view.next(M.session, 1)
   end, 'next comment')
@@ -2505,7 +2523,7 @@ function M.show(review, opts)
       end
       if s.view_mode ~= 'guide' then
         -- comment threads are wrapped to the window
-        if s.cm and s.cm.store and next(s.cm.store.comments) then
+        if s.cm and ((s.cm.store and next(s.cm.store.comments)) or (s.cm.forge_items and next(s.cm.forge_items))) then
           comments_view.render(s)
         end
         return

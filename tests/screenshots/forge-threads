@@ -1,0 +1,91 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//s/c/math                                                                                              X
+02| Files                       ○ no agent │ A src/cart.ts +20 −0                                                      1/2 
+03| Stack: 3 layers on main                │  A     ▾▍src/cart.ts   +20 −0  added                                          
+04|    stack/math                1c 1f ✓0/1│          ╭─ erin · 2026-01-01 · GitHub #42 · file ─────────────────────────── 
+05| ▶@ stack/cart          #42 ○ 2c 2f ✓0/2│          │ Needs a test for an empty cart.                                    
+06|    stack/ui                  1c 2f ✓0/2│          ╰─                                                                   
+07|    full stack                4c 4f ✓0/4│          @@ -0,0 +1,20 @@                                                     
+08|                                        │      1 + import { multiply, sum } from "./math";                              
+09| ▾ PR #42                              ○│      2 +                                                                      
+10|   Cart totals                          │      3 + export interface LineItem {                                          
+11|   by alice · open                      │      4 +   name: string;                                                      
+12|   ○ no review decision                 │      5 +   price: number;                                                     
+13|   checks: none                         │      6 +   quantity: number;                                                  
+14|   threads: 2 open, 1 resolved          │      7 + }                                                                    
+15|   mergeable                            │      8 +                                                                      
+16|   base: stack/math                     │      9 + export class Cart {                                                  
+17|                                        │     10▍+   private items: LineItem[] = [];                                    
+18| stack/cart → stack/math                │          ╭─ You · just now ────────────────────────────────────────────────── 
+19| 2 files  +23 −2  ✓ 0/2                 │          │ Readonly array?                                                    
+20| base 41f287d7  head d0242a9d           │          ╰─                                                                   
+21| layer 2/3                              │     11 +                                                                      
+22| working tree  ● uncommitted            │     12▍+   addItem(item: LineItem): this {                                    
+23|                                        │     13▍+     this.items.push(item);                                           
+24|   A  cart.ts  src             ✎1 +20 −0│          ╭─ dan · 2026-01-02 · GitHub #42 · resolved by alice ─────────────── 
+25|   M  index.ts  src                +3 −2│          │ Return a copy instead?                                             
+26|                                        │          │ … 2 more lines (cz expands)                                        
+27| <CR> show  mr reviewed  gp diff        │          ╰─                                                                   
+28| ]c [c hunk  ]f [f file  <Tab> fold     │     14 +     return this;                                                     
+29| gd def  K hover  go open  R refresh    │     15 +   }                                                                  
+30| gu committed/working tree  q close     │     16 +                                                                      
+31| gG AI guide                            │     17 +   total(): number {                                                  
+32| ]s [s layer  gs full stack             │     18▍+     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+33| gS check out layer                     │          ╭─ carol · 2026-01-03 · GitHub #42 ───────────────────────────────── 
+34| gx PR in browser  <Tab> PR details     │          │ Should the total be rounded to cents?                              
+35| gH GitHub threads (all/open/none)      │          │ ↳ alice · 2026-01-03                                               
+36|~                                       │          │   Good point, will do.                                             
+37|~                                       │          ╰─                                                                   
+38|~                                       │     19 +   }                                                                  
+39|~                                       │     20 + }                                                                    
+40|~                                       │                                                                               
+41|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
+42|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
+43|revuey://files [-]    22,1           All revuey://stack/cart..stack/math [-]                          1,1            Top
+44|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777776666885555555555555555555555555555555555555555555555555555555555
+03|22222222222222222222222299999999999999994:::::::::;<<<<<<<<<<<===>>>???>>>>>>>==========================================
+04|9@A944444444449999999999999999BBBBBBBBBB4CCCCCCCCCCBBB@@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9
+05|9@A922222222229999999999@@@BB4BBBBBBBBBB4CCCCCCCCCCBB4444444444444444444444444444444999999999999999999999999999999999999
+06|9@A944444444999999999999999999BBBBBBBBBB4CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+07|9@99BBBBBBBBBB9999999999999999BBBBBBBBBB4CCCCCCCCCCDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+08|99999999999999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+09|9B2222222999999999999999999999999999999B4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+10|99944444444444999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+11|999BBBBBBBBBBBBBBB99999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+12|999BBBBBBBBBBBBBBBBBBBB999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+13|999BBBBBBBBBBBB99999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+14|999BBBBBBBBBBBBBBBBBBBBBBBBBBB99999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+15|999BBBBBBBBB99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+16|999BBBBBBBBBBBBBBBB9999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+17|99999999999999999999999999999999999999994FFFFGGG@HHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+18|22222222222222222222222299999999999999994CCCCCCCCCCJJJ222BBBBBBBBBBBJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ9
+19|9999999999KKKLLLBBBBBBB999999999999999994CCCCCCCCCCJJ4444444444444449999999999999999999999999999999999999999999999999999
+20|BBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999999994CCCCCCCCCCJJ9999999999999999999999999999999999999999999999999999999999999999999
+21|@@@@@@@@@@9999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+22|@@@@@@@@@@@@@BBBBBBBBBBBBBBB9999999999994FFFFGGGKHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+23|99999999999999999999999999999999999999994FFFFGGGKHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+24|MNMNOMPPPPPPPQQQQQMMMMMMMMMMMMM@@@KKKLLL4CCCCCCCCCCBBB@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBKKKKKKKKKKKKKKKKKBBBBBBBBBBBBBBBB9
+25|9K9@A944444444BBBBB9999999999999999KKLLL4CCCCCCCCCCBB4444444444444444444444999999999999999999999999999999999999999999999
+26|99999999999999999999999999999999999999994CCCCCCCCCCBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999999999999999999999999999999999999999
+27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+29|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+30|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+31|BBBBBBBBBBBB99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+32|BBBBBBBBBBBBBBBBBBBBBBBBBBB99999999999994FFFFGGG@HHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+33|BBBBBBBBBBBBBBBBBBB9999999999999999999994CCCCCCCCCCBBB@@@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9
+34|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCBB44444444444RRRRR444444444444444444444999999999999999999999999999999
+35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999994CCCCCCCCCCBBBB@@@@@BBBBBBBBBBBBB99999999999999999999999999999999999999999999999
+36|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCBBBB44444444444444444444999999999999999999999999999999999999999999999
+37|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+38|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+39|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+40|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCC999999999999999999999999999999999999999999999999999999999999999999999
+41|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4@@@@@@@@@@SSSSSSSSSSSS===>>???=================================================
+42|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDEEEEEEEEEE
+43|00000000000000000000000000000000000000000TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+44|UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

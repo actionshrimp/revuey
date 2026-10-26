@@ -424,6 +424,55 @@ require('revuey').setup({
 })
 ```
 
+### Review threads from GitHub
+
+The review threads of an open PR are drawn inline next to your own [comments](#comments), in the
+diff and the guide: the PR of the layer you are viewing (or of a plain review's branch), and in
+full-stack scope every layer's open PR. Each thread is marked `GitHub #42`; GitHub logins stand in
+for authors.
+
+```
+     18▍+     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+          ╭─ carol · 2026-01-03 · GitHub #42 ─────────────────────────────────
+          │ Should the total be rounded to cents?
+          │ ↳ alice · 2026-01-03
+          │   Good point, will do.
+          ╰─
+```
+
+- **Where.** A thread goes on the lines GitHub gives it (`line`/`startLine` on the new side, or
+  the old side for comments on deleted lines; file threads under the file header), but only when
+  the text there is what the thread's diff hunk shows. The review is often not exactly the PR's
+  diff (uncommitted edits, local commits not pushed yet, commits pushed since, or the full-stack
+  scope, where a lower PR's lines have moved): then the same lines are looked for within 100 lines
+  (one copy only; the header then says `GitHub line 18`). A thread that can't be placed (outdated
+  on GitHub, its line edited locally, outside this diff's hunks) is listed under "GitHub threads
+  on lines not shown here" at the end of its file, never on a guessed line; one on a file not in
+  the view goes to the end of the review.
+- **State.** Resolved threads (`resolved by alice`) and threads GitHub marks `outdated` are
+  collapsed to their first line, like resolved comments; `cz` expands one. The viewer's own
+  unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
+  ones only, none. `]m`/`[m` and the comments list (`cl`, a "GitHub threads" part) include them.
+  The PR section in the panel counts them (`threads: 2 open, 1 resolved`).
+- **Read-only.** revuey never writes to GitHub. `gx` on a thread opens it in the browser (elsewhere
+  in the diff `gx` is Neovim's usual one). `ce`, `cx`, `cd` and `cs` say the thread is read-only.
+  `cr` writes a **local reply**: a comment of yours on the thread's lines, labelled `local reply to
+  GitHub #42 thread` and linked to the thread (its ids are kept for posting reviews later). It
+  lives in your comments file like any comment; the threads themselves are never stored.
+- **When.** After the PR lookup, in the background (opening a review never waits for GitHub): one
+  `gh api graphql` call for the scope's open PRs, more only for long lists (50 threads per page,
+  each thread's first 20 comments, then 100 at a time; at most 10 rounds, after which a thread
+  says `… N more on GitHub`). Cached per PR for `forge.ttl` like the PR lookup; scope switches and
+  refreshes reuse the cache, `R` fetches again. Failures are quiet as above: threads already
+  shown stay, nothing else changes, and the reason is in the log file.
+
+```lua
+require('revuey').setup({
+  forge = { threads = { enabled = true, show = 'all' } }, -- show: 'all' | 'open' | 'none'
+  keymaps = { forge_threads = 'gH' },
+})
+```
+
 ## Reviewing a pull request (worktrunk)
 
 `:Revuey pr 123` (or a PR URL) from inside a clone of the repo reviews that pull request in its
@@ -783,6 +832,9 @@ Comment while you review, in the diff or the guide view:
   `stdpath('data')/revuey/*.comments.json`, and never pruned. Several Neovims can comment on the
   same review: saves merge per comment (the latest change wins; a delete wins over older edits;
   replies are merged), and each instance picks up the others' changes live.
+- When the branch has an open pull request, its GitHub review threads are drawn next to your
+  comments, read-only (see [Review threads from GitHub](#review-threads-from-github)). They are
+  not in your comments file, the export or the agent feed; a local reply (`cr` on a thread) is.
 
 `gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
 where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn` shadow `c{motion}` and
@@ -1024,6 +1076,8 @@ Diff buffer:
 | `]m` / `[m` | Next / previous comment (takes a count) |
 | `gC` | Hide / show comment threads |
 | `cl` | List all comments (`<CR>` jumps) |
+| `gH` | [GitHub review threads](#review-threads-from-github): all / open only / hidden |
+| `gx` | On a GitHub thread: open it in the browser (elsewhere: Neovim's `gx`) |
 | `ca` / `cn` | [AI review](#ai-review) finding on this line: accept it as your comment / dismiss it (again: restore) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
@@ -1067,7 +1121,8 @@ stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `Revuey
 `RevueyAiMinor`, `RevueyAiNit` (severities), `RevueyAiApprove`, `RevueyAiComment`, `RevueyAiChanges`
 (verdicts) and `RevueyAiTriage`, the pull requests' `RevueyForgeApproved`,
 `RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeNone`, `RevueyForgeDraft`, `RevueyForgeMerged`,
-`RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, and others (see
+`RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, GitHub review threads'
+`RevueyForgeBorder`, `RevueyForgeAuthor` and `RevueyForgeSign`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it

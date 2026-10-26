@@ -144,6 +144,10 @@ function M.setup()
   set('RevueyForgeDim', { link = 'Comment' })
   set('RevueyForgeTitle', { link = 'Normal' })
   set('RevueyForgeWarn', { link = 'DiagnosticWarn' })
+  -- GitHub review threads in the diff (border, author, gutter bar)
+  set('RevueyForgeBorder', { link = 'Comment' })
+  set('RevueyForgeAuthor', { link = 'Special' })
+  set('RevueyForgeSign', { link = 'Special' })
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

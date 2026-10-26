@@ -111,6 +111,27 @@ function M.update(s, force)
     elseif s.review ~= review then
       f.again = true
     end
+    -- then the review threads of the scope's open PRs (their own TTL cache)
+    local prs = M.threads_enabled() and s.review == review and M.scope_prs(s) or {}
+    if #prs > 0 then
+      forge.fetch_threads(prs, {
+        force = force,
+        alive = alive,
+        on_job = function(obj)
+          f.job = obj
+        end,
+      })
+      f.job = nil
+      if not alive() then
+        return done()
+      end
+      if s.review == review and s.layout and vim.api.nvim_buf_is_valid(s.diff_buf)
+        and M.threads_signature(s) ~= (f.threads_drawn or '') then
+        -- threads are virtual lines of the diff buffer: redraw them (and the panel's counts)
+        require('revuey.comments_view').render(s)
+        require('revuey.panel').render(s, { keep_view = true })
+      end
+    end
     done()
   end, function(err)
     log.write('forge', 'lookup error: ' .. tostring(err))
@@ -141,7 +162,7 @@ function M.lazy(s)
   if not f or f.busy or not f.targets or not next(f.targets) or not M.enabled() then
     return
   end
-  if not f.scheduled and not forge.is_fresh(f.targets) then
+  if not f.scheduled and not (forge.is_fresh(f.targets) and (not M.threads_enabled() or forge.threads_fresh(M.scope_prs(s)))) then
     f.scheduled = true
     vim.schedule(function()
       f.scheduled = false
@@ -161,6 +182,68 @@ function M.pr(s, key)
     return nil
   end
   return forge.get(f.targets[key])
+end
+
+---Are review threads shown (forge and `forge.threads` enabled)?
+function M.threads_enabled()
+  local o = forge.options()
+  return o.enabled and o.threads
+end
+
+---The open PRs of the scope shown: the viewed layer's (or the plain review's), every layer's in
+---full-stack scope (bottom first). Closed and merged PRs have no threads to show here.
+---@return revuey.PR[]
+function M.scope_prs(s)
+  local f = s and s.forge
+  if not f or not f.targets then
+    return {}
+  end
+  local keys = {}
+  local key = M.current_key(s)
+  if key then
+    keys[1] = key
+  elseif s.review.stack then
+    for _, l in ipairs(s.review.stack.layers) do
+      keys[#keys + 1] = l.name
+    end
+  end
+  local out, seen = {}, {}
+  for _, k in ipairs(keys) do
+    local pr = forge.get(f.targets[k])
+    if pr and pr.state == 'OPEN' and not seen[pr.url] then
+      seen[pr.url] = true
+      out[#out + 1] = pr
+    end
+  end
+  return out
+end
+
+---Review threads to draw in the scope shown: `{item, thread, pr}` (forge_threads.item), PR by
+---PR, each in GitHub's order. Empty when disabled or nothing was fetched.
+function M.thread_items(s)
+  if not M.threads_enabled() then
+    return {}
+  end
+  local out = {}
+  for _, pr in ipairs(M.scope_prs(s)) do
+    for _, t in ipairs(forge.threads_for(pr) or {}) do
+      out[#out + 1] = { item = require('revuey.forge_threads').item(t, pr), thread = t, pr = pr }
+    end
+  end
+  return out
+end
+
+---Signature of the threads the scope would show now (comments_view records what it drew).
+function M.threads_signature(s)
+  if not M.threads_enabled() then
+    return ''
+  end
+  local parts = {}
+  for _, pr in ipairs(M.scope_prs(s)) do
+    local e = forge.threads_cache[forge.thread_key(pr)]
+    parts[#parts + 1] = forge.thread_key(pr) .. '=' .. (e and e.sig or '-')
+  end
+  return table.concat(parts, '\n')
 end
 
 ---Key of the layer being viewed: its name, '' for a plain review, nil in full-stack scope.
@@ -262,7 +345,10 @@ function M.render_detail(s, add, add_virt, width)
     add('')
     return
   end
-  for _, item in ipairs(forge.detail(pr, parent_branch(s))) do
+  local threads = M.threads_enabled() and pr.state == 'OPEN' and forge.threads_for(pr) or nil
+  local counts = threads and require('revuey.forge_threads').summary(threads) or nil
+  pf.threads = counts and (counts.open + counts.resolved) > 0 or false
+  for _, item in ipairs(forge.detail(pr, parent_branch(s), counts)) do
     local indent = (item.kind == 'review' or item.kind == 'requested') and '     ' or '   '
     local text = item.glyph and (item.glyph .. ' ' .. item.text) or item.text
     local lines = panel.wrap(text, width, indent)
@@ -318,6 +404,23 @@ function M.open(s, row)
     log.write('forge', 'open failed: ' .. tostring(err))
   end
   return pr
+end
+
+---`gx` in the diff: the GitHub thread on this row in the browser. Returns false when no thread
+---covers the row (the caller falls back to the usual `gx`).
+function M.open_thread(s, row)
+  local c = s and s.cm
+  for _, id in ipairs(c and c.cover and c.cover[row] or {}) do
+    local it = c.forge_items and c.forge_items[id]
+    if it then
+      local ok, err = pcall(vim.ui.open, it.forge.url)
+      if not ok then
+        log.write('forge', 'open failed: ' .. tostring(err))
+      end
+      return true
+    end
+  end
+  return false
 end
 
 return M

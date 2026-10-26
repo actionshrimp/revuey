@@ -11,6 +11,10 @@
 #                        answering the `gh api graphql` queries built by lua/revuey/forge.lua;
 #                        `_parents` = { "me/shop": "acme/shop" } makes forks, `_null` = repos
 #                        that resolve to null (partial data, exit 1)
+#   REVUEY_FAKE_GH_THREADS JSON file: { "owner/name#N": [PullRequestReviewThread nodes, each with
+#                        `comments` a plain list] } answering forge.lua's review-thread queries
+#                        page by page (`first`/`after`); `_null` = PRs that resolve to null
+#   REVUEY_FAKE_GH_THREADS_SCENARIO  fail | errors for thread queries only
 #   REVUEY_FAKE_NVIM     nvim binary that runs the Lua half (default: nvim)
 dir=$(cd "$(dirname "$0")" && pwd)
 if [ "${REVUEY_FAKE_GH:-}" = hang ]; then

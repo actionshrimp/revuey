@@ -4,8 +4,10 @@
 -- never reads credentials). Failures (gh missing, non-zero exit, bad JSON, offline, rate
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
--- Reusable for later forge work (showing review threads, posting reviews): `remote_info`,
--- `parse_remote_url`, `base_remote`, `targets` and `run_graphql` know nothing about the panel.
+-- Also the review threads of open PRs (`fetch_threads`: paginated, cached per PR like the PR
+-- lookup; placement and display are in forge_threads.lua). Reusable for later forge work
+-- (posting reviews): `remote_info`, `parse_remote_url`, `base_remote`, `targets` and
+-- `run_graphql` know nothing about the panel.
 local git = require('revuey.git')
 local stack_mod = require('revuey.stack')
 local log = require('revuey.log')
@@ -493,6 +495,8 @@ local function opts()
     timeout = (o.timeout or 15) * 1000,
     cmd = o.cmd or 'gh',
     hosts = o.hosts or {},
+    -- review threads of open PRs, shown inline (`forge.threads = false` or `{enabled = false}`)
+    threads = o.enabled ~= false and o.threads ~= false and not (type(o.threads) == 'table' and o.threads.enabled == false),
   }
 end
 M.options = opts
@@ -722,6 +726,297 @@ function M.fetch(targets, o)
 end
 
 -- ---------------------------------------------------------------------------
+-- Review threads of open PRs
+-- ---------------------------------------------------------------------------
+
+---@class revuey.ForgeComment  one comment of a review thread
+---@field id string            GraphQL node id (PullRequestReviewComment)
+---@field database_id? integer REST id (replies through the REST API need it)
+---@field url string
+---@field body string
+---@field author string        login ('ghost' for a deleted account)
+---@field created_at string    ISO time
+---@field edited_at? string
+---@field state string         SUBMITTED, or PENDING (the viewer's own unsubmitted review)
+---@field diff_hunk? string    the PR diff's hunk up to the commented line
+---@field reply_to? string
+
+---@class revuey.ForgeThread
+---@field id string            GraphQL node id (PullRequestReviewThread)
+---@field resolved boolean
+---@field outdated boolean     GitHub: the commented lines changed since (line is then nil)
+---@field resolved_by? string
+---@field path string
+---@field line? integer        end line on `side` in the PR's current diff (nil when outdated)
+---@field start_line? integer  first line of a multi-line thread
+---@field original_line? integer       the same in the commit it was made on
+---@field original_start_line? integer
+---@field side 'RIGHT'|'LEFT'
+---@field start_side? 'RIGHT'|'LEFT'
+---@field subject 'LINE'|'FILE'
+---@field comments revuey.ForgeComment[]  oldest first
+---@field total integer        comments GitHub has (more than `comments` only when truncated)
+
+M.THREAD_PAGE = 50 -- threads per page
+M.COMMENT_PAGE = 20 -- comments per thread in the first page (most threads are short)
+M.COMMENT_MORE_PAGE = 100 -- comments per page when a thread has more
+M.THREAD_ROUNDS = 10 -- pagination rounds per fetch (one gh call each) before giving up
+
+local THREAD_FIELDS = [[
+fragment thread on PullRequestReviewThread {
+  id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType
+  resolvedBy { login }
+  comments(first: %d) { totalCount pageInfo { hasNextPage endCursor } nodes { ...comment } }
+}]]
+local COMMENT_FIELDS = [[
+fragment comment on PullRequestReviewComment {
+  id databaseId url body createdAt lastEditedAt state diffHunk
+  author { login }
+  replyTo { id }
+}]]
+
+---"host/owner/name" (a PR's `repo`) -> host, owner, name.
+local function split_repo(key)
+  local host, owner, name = (key or ''):match('^(.-)/([^/]+)/([^/]+)$')
+  return host, owner, name
+end
+
+---Cache key of a PR's threads.
+function M.thread_key(pr)
+  return pr.repo .. '#' .. pr.number
+end
+
+---One query for several pages: `{kind = 'threads', repo, number, after?}` asks a PR's review
+---threads (each with its first comments), `{kind = 'comments', thread, after}` the next comments
+---of one thread (by node id). Returns the query and alias -> request.
+---@return string query, table<string, table> aliases
+function M.build_threads_query(reqs)
+  local parts, aliases, threads = { 'query {' }, {}, false
+  local function after(c)
+    return c and (', after: ' .. lit(c)) or ''
+  end
+  for i, r in ipairs(reqs) do
+    if r.kind == 'threads' then
+      threads = true
+      local alias = 't' .. i
+      aliases[alias] = r
+      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } } } }')
+        :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after))
+    else
+      local alias = 'c' .. i
+      aliases[alias] = r
+      parts[#parts + 1] = ('  %s: node(id: %s) { ... on PullRequestReviewThread { comments(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...comment } } } }')
+        :format(alias, lit(r.thread), M.COMMENT_MORE_PAGE, after(r.after))
+    end
+  end
+  parts[#parts + 1] = '}'
+  -- GraphQL refuses unused fragments: the thread fragment only when threads are asked
+  if threads then
+    parts[#parts + 1] = THREAD_FIELDS:format(M.COMMENT_PAGE)
+  end
+  parts[#parts + 1] = COMMENT_FIELDS
+  return table.concat(parts, '\n'), aliases
+end
+
+local function int(v)
+  return type(v) == 'number' and math.floor(v) or nil
+end
+
+local function page(conn)
+  local p = type(conn) == 'table' and type(conn.pageInfo) == 'table' and conn.pageInfo
+  if p and p.hasNextPage == true and type(p.endCursor) == 'string' then
+    return p.endCursor
+  end
+end
+
+---Map a PullRequestReviewComment node.
+---@return revuey.ForgeComment?
+function M.normalize_comment(n)
+  if type(n) ~= 'table' or type(n.id) ~= 'string' then
+    return nil
+  end
+  return {
+    id = n.id,
+    database_id = int(n.databaseId),
+    url = str(n.url) or '',
+    body = str(n.body) or '',
+    author = type(n.author) == 'table' and str(n.author.login) or 'ghost',
+    created_at = str(n.createdAt) or '',
+    edited_at = str(n.lastEditedAt),
+    state = str(n.state) or 'SUBMITTED',
+    diff_hunk = str(n.diffHunk),
+    reply_to = type(n.replyTo) == 'table' and str(n.replyTo.id) or nil,
+  }
+end
+
+---Map a PullRequestReviewThread node (with its first page of comments). The second value is the
+---cursor of the thread's next comments, when it has more.
+---@return revuey.ForgeThread?, string?
+function M.normalize_thread(n)
+  if type(n) ~= 'table' or type(n.id) ~= 'string' or type(n.path) ~= 'string' then
+    return nil
+  end
+  local t = {
+    id = n.id,
+    resolved = n.isResolved == true,
+    outdated = n.isOutdated == true,
+    resolved_by = type(n.resolvedBy) == 'table' and str(n.resolvedBy.login) or nil,
+    path = n.path,
+    line = int(n.line),
+    start_line = int(n.startLine),
+    original_line = int(n.originalLine),
+    original_start_line = int(n.originalStartLine),
+    side = n.diffSide == 'LEFT' and 'LEFT' or 'RIGHT',
+    start_side = (n.startDiffSide == 'LEFT' or n.startDiffSide == 'RIGHT') and n.startDiffSide or nil,
+    subject = n.subjectType == 'FILE' and 'FILE' or 'LINE',
+    comments = {},
+    total = 0,
+  }
+  for _, c in ipairs(nodes(n.comments)) do
+    t.comments[#t.comments + 1] = M.normalize_comment(c)
+  end
+  t.total = type(n.comments) == 'table' and int(n.comments.totalCount) or #t.comments
+  return t, page(n.comments)
+end
+
+---Threads of a PR per cache key: { at = ms, threads? = revuey.ForgeThread[], sig?, failed? =
+---reason, truncated? }. A failure keeps the last good threads (shown as they were).
+M.threads_cache = {}
+
+---Are the threads of every PR in `prs` cached (or failed) within the TTL?
+function M.threads_fresh(prs)
+  local ttl = opts().ttl
+  for _, pr in ipairs(prs) do
+    local e = M.threads_cache[M.thread_key(pr)]
+    if not e or (M.now() - e.at) >= ttl then
+      return false
+    end
+  end
+  return true
+end
+
+---Cached threads of a PR (oldest first, as GitHub lists them), or nil when never fetched; the
+---second value is true when a later fetch failed (stale).
+---@return revuey.ForgeThread[]?, boolean?
+function M.threads_for(pr)
+  local e = pr and M.threads_cache[M.thread_key(pr)]
+  if not e then
+    return nil
+  end
+  return e.threads, e.failed ~= nil
+end
+
+---Fetch the review threads of `prs` unless cached within the TTL (or `o.force`): one `gh api
+---graphql` call per host per round, a round asking every PR's next page of threads and every
+---long thread's next page of comments, until no page is left (at most THREAD_ROUNDS rounds;
+---what was read is kept and the truncation logged). Call inside git.async. A failed round
+---keeps each PR's last good threads; `o.alive()` false after a call drops everything. Returns
+---true when it ran gh.
+---@param prs revuey.PR[]
+---@param o? {force?:boolean, alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+function M.fetch_threads(prs, o)
+  o = o or {}
+  local by_host, seen = {}, {}
+  for _, pr in ipairs(prs) do
+    local key = M.thread_key(pr)
+    local e = M.threads_cache[key]
+    local stale = not e or (M.now() - e.at) >= opts().ttl
+    local host, owner, name = split_repo(pr.repo)
+    if host and not seen[key] and (o.force or stale) then
+      seen[key] = true
+      by_host[host] = by_host[host] or {}
+      table.insert(by_host[host], { key = key, owner = owner, name = name, number = pr.number, threads = {}, done = false })
+    end
+  end
+  if not next(by_host) then
+    return false
+  end
+  for host, list in pairs(by_host) do
+    table.sort(list, function(a, b)
+      return a.key < b.key
+    end)
+    local more = {} -- {thread, after}: threads with further comments
+    local err, truncated
+    for round = 1, M.THREAD_ROUNDS + 1 do
+      local reqs = {}
+      for _, p in ipairs(list) do
+        if not p.done then
+          reqs[#reqs + 1] = { kind = 'threads', owner = p.owner, name = p.name, number = p.number, after = p.after, p = p }
+        end
+      end
+      for _, m in ipairs(more) do
+        reqs[#reqs + 1] = { kind = 'comments', thread = m.thread.id, after = m.after, t = m.thread }
+      end
+      if #reqs == 0 then
+        break
+      end
+      if round > M.THREAD_ROUNDS then
+        truncated = true
+        log.write('forge', ('review threads: stopped after %d pages; %d requests left'):format(M.THREAD_ROUNDS, #reqs))
+        break
+      end
+      local query, aliases = M.build_threads_query(reqs)
+      local data, e = M.run_graphql(query, host, o.on_job)
+      if o.alive and not o.alive() then
+        return true
+      end
+      if not data then
+        err = e or 'failed'
+        log.write('forge', 'review threads lookup failed: ' .. tostring(err))
+        break
+      end
+      more = {}
+      for alias, r in pairs(aliases) do
+        local v = data[alias]
+        if r.kind == 'threads' then
+          local p = r.p
+          local conn = type(v) == 'table' and type(v.pullRequest) == 'table' and v.pullRequest.reviewThreads
+          for _, n in ipairs(nodes(conn)) do
+            local t, cursor = M.normalize_thread(n)
+            if t then
+              p.threads[#p.threads + 1] = t
+              if cursor then
+                more[#more + 1] = { thread = t, after = cursor }
+              end
+            end
+          end
+          p.after = page(conn)
+          p.done = p.after == nil -- also a PR that does not resolve (logged by run_graphql)
+        else
+          local conn = type(v) == 'table' and v.comments
+          for _, n in ipairs(nodes(conn)) do
+            r.t.comments[#r.t.comments + 1] = M.normalize_comment(n)
+          end
+          local cursor = page(conn)
+          if cursor then
+            more[#more + 1] = { thread = r.t, after = cursor }
+          end
+        end
+      end
+      -- pairs() order is not stable: keep the threads' own order for the next round
+      table.sort(more, function(a, b)
+        return a.thread.id < b.thread.id
+      end)
+    end
+    local now = M.now()
+    for _, p in ipairs(list) do
+      local old = M.threads_cache[p.key]
+      if err then
+        M.threads_cache[p.key] = { at = now, failed = err, threads = old and old.threads, sig = old and old.sig }
+      else
+        M.threads_cache[p.key] = {
+          at = now,
+          threads = p.threads,
+          truncated = truncated or nil,
+          sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
+        }
+      end
+    end
+  end
+  return true
+end
+
+-- ---------------------------------------------------------------------------
 -- Display models (pure; panel.lua / forge_view.lua draw them)
 -- ---------------------------------------------------------------------------
 
@@ -784,10 +1079,12 @@ end
 ---Detail model for the panel section: a list of `{label?, text, hl}` items, in display order.
 ---`parent` is the layer's parent in revuey's stack (a branch name as GitHub sees it), when
 ---there is a stack: a PR whose base differs gets a warning.
+---`threads`: counts of the PR's review threads ({open, resolved, outdated}), when fetched.
 ---@param pr revuey.PR
 ---@param parent? string
+---@param threads? {open:integer, resolved:integer, outdated:integer}
 ---@return {kind:string, text:string, hl:string, glyph?:string}[]
-function M.detail(pr, parent)
+function M.detail(pr, parent, threads)
   local out = {}
   local function add(kind, text, hl, glyph)
     out[#out + 1] = { kind = kind, text = text, hl = hl, glyph = glyph }
@@ -815,6 +1112,16 @@ function M.detail(pr, parent)
     add('checks', 'checks: ' .. checks, hl)
   else
     add('checks', 'checks: none', 'RevueyForgeDim')
+  end
+  if threads and threads.open + threads.resolved > 0 then
+    local parts = { threads.open .. ' open' }
+    if threads.resolved > 0 then
+      parts[#parts + 1] = threads.resolved .. ' resolved'
+    end
+    if threads.outdated > 0 then
+      parts[#parts + 1] = threads.outdated .. ' outdated'
+    end
+    add('threads', 'threads: ' .. table.concat(parts, ', '), threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
   end
   if pr.state == 'OPEN' then
     local mg = pr.mergeable == 'MERGEABLE' and { 'mergeable', 'RevueyForgeDim' }
