@@ -77,6 +77,30 @@ function M.weak(lines)
   return comments.distinctive_words(lines) < comments.MIN_WORDS
 end
 
+---The thread's lines on its side: `line`/`startLine`, or for an outdated thread (no `line`)
+---`originalLine`/`originalStartLine`. A range across both sides is anchored on its last line
+---(the start is a line number on the other side). GitHub can report a `startLine` past `line`
+---(seen on real PRs once the range moved): the start is then `line` minus the original span.
+---@return integer first, integer last
+function M.range(t)
+  local last = t.line or t.original_line
+  local first
+  if t.line then
+    first = t.start_line
+  else
+    first = t.original_start_line
+  end
+  first = first or last
+  if t.start_side and t.start_side ~= t.side then
+    first = last
+  end
+  if first > last then
+    local span = (t.original_line and t.original_start_line) and (t.original_line - t.original_start_line) or 0
+    first = math.max(1, last - math.max(0, span))
+  end
+  return first, last
+end
+
 ---Is the thread on the whole file (no line on either commit)?
 function M.file_level(t)
   return t.subject == 'FILE' or (t.line == nil and t.original_line == nil)
@@ -88,9 +112,14 @@ end
 ---so a line is only used when the text there is what the thread's diff hunk shows. Otherwise the
 ---same lines are looked for nearby (unique copy only); when in doubt the thread is `outside`,
 ---never misplaced. Outdated threads (no current line) are looked for by their original line.
+---`o.head_blob`: the blob of the thread's file at the PR's head commit (forge_view looks it up).
+---When the review's new side of the file is that blob, the review shows exactly the text GitHub
+---numbers the thread against, so a text match at GitHub's line is trusted as is (weak or
+---repeated lines too; the hunk's context may be from an older push).
 ---@param t revuey.ForgeThread
+---@param o? {head_blob?:string}
 ---@return revuey.ForgeThreadPlacement
-function M.place(t, ctx)
+function M.place(t, ctx, o)
   local U = ctx.U
   local path = t.path
   if not U.by_path[path] then
@@ -108,15 +137,10 @@ function M.place(t, ctx)
     return { path = path, how = 'file' }
   end
   local side = t.side == 'LEFT' and 'old' or 'new'
-  local last = t.line or t.original_line
-  local first = (t.line and t.start_line) or (not t.line and t.original_start_line) or last
-  if t.start_side and t.start_side ~= t.side then
-    first = last -- a range across both sides: anchored on its last line only
-  end
-  if first > last then
-    first, last = last, first
-  end
+  local first, last = M.range(t)
   local n = last - first
+  local file = ctx.files[U.by_path[path]]
+  local at_head = side == 'new' and o and o.head_blob ~= nil and file and file.new_blob == o.head_blob
   local first_comment = t.comments[1]
   local want, before = M.expected(first_comment and first_comment.diff_hunk, side, n + 1)
   local weak = M.weak(want)
@@ -159,7 +183,20 @@ function M.place(t, ctx)
     end
     return weak or not any or ok
   end
-  if t.line and shown(first) and matches(first) and context_ok(first) then
+  ---Is `p` the only window within RADIUS with these lines (copies off the diff counted)?
+  local function unique_near(p)
+    for q = math.max(1, p - M.RADIUS), p + M.RADIUS do
+      if q ~= p and matches(q) then
+        return false
+      end
+    end
+    return true
+  end
+  -- at GitHub's line: the text matches, and the review is the PR's head for this file, or the
+  -- hunk's context matches, or the text is strong and has no other copy nearby (the context is
+  -- from the push the comment was made on; a later push may have edited the lines above)
+  if t.line and shown(first) and matches(first)
+    and (at_head or context_ok(first) or (not weak and #want > 0 and unique_near(first))) then
     out.how = 'line'
     return out
   end
@@ -206,8 +243,10 @@ function M.item(t, pr)
   end
   local file_level = M.file_level(t)
   local side = t.side == 'LEFT' and 'old' or 'new'
-  local last_line = t.line or t.original_line
-  local first_line = (t.line and t.start_line) or (not t.line and t.original_start_line) or last_line
+  local first_line, last_line
+  if not file_level then
+    first_line, last_line = M.range(t)
+  end
   return {
     id = M.ID_PREFIX .. t.id,
     forge = {
@@ -227,8 +266,8 @@ function M.item(t, pr)
     anchor = {
       path = t.path,
       side = side,
-      start_line = not file_level and math.min(first_line, last_line) or nil,
-      end_line = not file_level and math.max(first_line, last_line) or nil,
+      start_line = first_line,
+      end_line = last_line,
     },
     author = { kind = 'forge', name = c1.author },
     body = c1.body,

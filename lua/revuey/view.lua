@@ -1821,7 +1821,15 @@ function M.comment_keymaps(s)
       local want = vim.keycode(lhs)
       for _, m in ipairs(api.nvim_get_keymap('n')) do
         if vim.keycode(m.lhs) == want then
-          if m.callback then
+          if m.expr == 1 then
+            -- an expr mapping: run it and feed the keys it returns
+            local ok, keys = pcall(function()
+              return m.callback and m.callback() or api.nvim_eval(m.rhs)
+            end)
+            if ok and type(keys) == 'string' and keys ~= '' then
+              api.nvim_feedkeys(m.replace_keycodes == 1 and vim.keycode(keys) or keys, m.noremap == 1 and 'n' or 'm', false)
+            end
+          elseif m.callback then
             m.callback()
           elseif m.rhs and m.rhs ~= '' then
             api.nvim_feedkeys(vim.keycode(m.rhs), m.noremap == 1 and 'n' or 'm', false)
