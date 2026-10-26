@@ -1,0 +1,29 @@
+Forge-thread placement corpus: third-party excerpts
+====================================================
+
+The files under files/ are excerpts (about 220 lines each) of source files as they were at the
+head of public pull requests, used only as test fixtures for revuey's placement of GitHub review
+threads (tests/forge_corpus_spec.lua, tests/forge_corpus_e2e_spec.lua). cases.json holds, for
+each excerpt, the review thread's position (path, line numbers renumbered to the excerpt, the
+diff hunk GitHub stores with the thread) and the expected placement. No authors, logins or
+comment bodies are included. The excerpts are unmodified apart from being cut; each case names
+its source repository, pull request, path and the offset of the excerpt in the original file.
+
+The excerpts remain under the licences of their projects:
+
+- microsoft/TypeScript (cases from PRs 64798-64915): Apache License 2.0.
+  https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt
+- astral-sh/ruff (cases from PRs 29637-29664): MIT License.
+  https://github.com/astral-sh/ruff/blob/main/LICENSE
+- microsoft/vscode (cases from PRs 344133-344248): MIT License. Each vscode file carries the
+  header "Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT
+  License."
+  https://github.com/microsoft/vscode/blob/main/LICENSE.txt
+- denoland/deno (PR 37046, Cargo.lock, a generated file): MIT License.
+  https://github.com/denoland/deno/blob/main/LICENSE.md
+- neovim/neovim (PR 42488, runtime/lua/vim/lsp.lua): Apache License 2.0; parts of Neovim derived from
+  Vim are under the Vim licence (this excerpt is Neovim's own Lua code).
+  https://github.com/neovim/neovim/blob/master/LICENSE.txt
+
+No source file in the excerpts carries another licence header. See scripts/trim-forge-corpus.lua
+for how the corpus was made and how to extend it.
