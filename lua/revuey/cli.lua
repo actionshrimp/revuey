@@ -1257,11 +1257,9 @@ function M.pr_target(_, pos)
     die(perr .. '\nusage: revuey pr <number|url>', 2)
   end
   if p.repo then
-    local forge = require('revuey.forge')
     local root = git.root(vim.uv.cwd()) or die('not inside a git repository')
-    local hosts = (require('revuey.config').options.forge or {}).hosts
-    local _, repo = pr.wt_remote(forge.remote_info(root, hosts))
-    local e = pr.check_repo(p, repo, hosts)
+    local fcfg = require('revuey.config').options.forge or {}
+    local e = pr.check_repo(p, pr.wt_repo(root, fcfg.cmd or 'gh', fcfg.hosts), fcfg.hosts)
     if e then
       die(e, 2)
     end
