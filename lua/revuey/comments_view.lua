@@ -858,8 +858,10 @@ local function still_there(store, id, text)
 end
 
 ---Comments covering the cursor row (sign range or thread). Calls fn with one comment, asking
----which when several cover the row.
-function M.with_comment(s, fn, row)
+---which when several cover the row. `local_first`: GitHub threads are left out when a local
+---comment covers the row too (actions that only work on local comments; on a file's last row
+---the "not shown here" group's threads would otherwise get in the way).
+function M.with_comment(s, fn, row, local_first)
   if not s then
     return
   end
@@ -871,6 +873,14 @@ function M.with_comment(s, fn, row)
     local cmt = comments.get(c.store, id) or (c.forge_items and c.forge_items[id])
     if cmt then
       list[#list + 1] = cmt
+    end
+  end
+  if local_first then
+    local own = vim.tbl_filter(function(x)
+      return not x.forge
+    end, list)
+    if #own > 0 then
+      list = own
     end
   end
   if #list == 0 then
@@ -983,7 +993,7 @@ function M.edit(s)
       end,
       on_send = send_hook(s, 'comment', cmt.anchor, cmt, store),
     })
-  end)
+  end, nil, true)
 end
 
 ---`cr`: reply to a comment's thread.
@@ -1113,7 +1123,7 @@ function M.resolve(s)
     copy.status = cur.status == 'resolved' and reopened or 'resolved'
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
-  end)
+  end, nil, true)
 end
 
 ---Comments covering the cursor row that are AI findings (with_comment, but only those: a user
@@ -1280,7 +1290,7 @@ function M.send_existing(s)
     if save_and_emit(s, kind, sent, nil, store, sent) then
       notify_sent(s, sent)
     end
-  end)
+  end, nil, true)
 end
 
 ---`ga`: ask the agent about rows first..last (a line, a selection, a file header).
@@ -1304,7 +1314,7 @@ function M.delete(s)
     end
     comments.delete(cm(s).store, cmt.id)
     save_and_emit(s, 'deleted', cmt)
-  end)
+  end, nil, true)
 end
 
 ---`cz`: expand or collapse a long (or resolved) comment.

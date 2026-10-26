@@ -110,13 +110,16 @@ end
 local function thread(o)
   local prefix = o.side == 'LEFT' and '-' or '+'
   local body = {}
+  for _, l in ipairs(o.before or {}) do
+    body[#body + 1] = ' ' .. l -- context lines above, as in GitHub's diffHunk
+  end
   for _, l in ipairs(o.text or {}) do
     body[#body + 1] = prefix .. l
   end
   return {
     id = o.id or 'T', path = o.path or 'f.txt', line = o.line, start_line = o.start_line,
     original_line = o.original_line, original_start_line = o.original_start_line,
-    side = o.side or 'RIGHT', subject = o.subject or 'LINE', outdated = o.outdated or false, resolved = false,
+    side = o.side or 'RIGHT', start_side = o.start_side, subject = o.subject or 'LINE', outdated = o.outdated or false, resolved = false,
     comments = { { id = 'C', author = 'bob', body = 'b', created_at = '2026-01-01T00:00:00Z', state = 'SUBMITTED', url = 'u',
       diff_hunk = o.text and ('@@ -1 +1 @@\n' .. table.concat(body, '\n')) or nil } },
     total = 1,
@@ -153,20 +156,91 @@ h.test('place: at GitHub\'s line when its text matches; moved (unique copy); out
   h.eq('missing', ft.place(thread({ path = 'other.txt', line = 1 }), ctx).how)
 end)
 
-h.test('place: repeated or trivial lines are never guessed', function()
+h.test('place: repeated or trivial lines are never guessed; the hunk\'s context lines decide', function()
   local a = numbered(40)
   local b = numbered(40, { [10] = '}', [12] = 'dup line', [16] = 'dup line', [18] = 'x' })
   local ctx = ctx_for(a, b)
-  -- two copies within reach: not moved
+  -- two copies within reach and no context: not moved
   h.eq('outside', ft.place(thread({ line = 30, text = { 'dup line' } }), ctx).how)
-  -- at GitHub's own line the text decides, copies or not
-  h.eq({ 'line', 16 }, (function()
-    local p = ft.place(thread({ line = 16, text = { 'dup line' } }), ctx)
+  local function where(o)
+    local p = ft.place(thread(o), ctx)
     return { p.how, p.start_line }
-  end)())
+  end
+  -- at GitHub's own line, with its context: there
+  h.eq({ 'line', 16 }, where({ line = 16, before = { 'line 13', 'line 14', 'line 15' }, text = { 'dup line' } }))
+  -- GitHub's line is the other copy (its context says so): the copy whose context matches
+  h.eq({ 'moved', 12 }, where({ line = 16, before = { 'line 9', '}', 'line 11' }, text = { 'dup line' } }))
+  -- context nowhere: outside
+  h.eq({ 'outside', 16 }, where({ line = 16, before = { 'other', 'lines', 'here' }, text = { 'dup line' } }))
   -- too little text to search for
   h.eq('outside', ft.place(thread({ line = 11, text = { '}' } }), ctx).how)
   h.eq('outside', ft.place(thread({ line = 17, text = { 'x' } }), ctx).how)
+  -- a copy on a line the diff does not show counts too: two copies, not moved
+  local b2 = numbered(40, { [14] = 'line 35' })
+  ctx = ctx_for(a, b2)
+  h.eq('outside', ft.place(thread({ line = 20, text = { 'line 35' } }), ctx).how)
+end)
+
+h.test('place: a weak line (`end`) where the review inserted the same text above is not misplaced', function()
+  -- the lower layer's PR: a thread on line 13 `  end`, closing `if ok then`
+  local base = {}
+  for i = 1, 30 do
+    base[i] = 'filler ' .. i
+  end
+  base[10], base[11], base[12], base[13], base[14] = 'function f()', '  if ok then', '    g()', '  end', 'end'
+  local a = table.concat(base, '\n') .. '\n'
+  -- the full stack: the upper layer inserted `if y then / z() / end` above it
+  local top = vim.deepcopy(base)
+  table.insert(top, 11, '  if y then')
+  table.insert(top, 12, '    z()')
+  table.insert(top, 13, '  end')
+  local b = table.concat(top, '\n') .. '\n'
+  local ctx = ctx_for(a, b)
+  local t = thread({ line = 13, before = { 'function f()', '  if ok then', '    g()' }, text = { '  end' } })
+  local p = ft.place(t, ctx)
+  -- its context is no longer intact (the insertion is inside it): listed apart, never on the
+  -- inserted `end` at 13
+  h.eq({ 'outside', 13 }, { p.how, p.start_line }, 'not the inserted `end`')
+  -- inserted above the function instead: the real `end` (now 16) is found by its context
+  local top2 = vim.deepcopy(base)
+  table.insert(top2, 10, '  if y then')
+  table.insert(top2, 11, '    z()')
+  table.insert(top2, 12, '  end')
+  top2[17] = 'end -- f' -- a change below, so line 16 is a shown row
+  p = ft.place(t, ctx_for(a, table.concat(top2, '\n') .. '\n'))
+  h.eq({ 'moved', 16 }, { p.how, p.start_line })
+  -- without context the weak line is never placed by search
+  t = thread({ line = 13, text = { '  end' } })
+  h.eq('line', ft.place(t, ctx).how, 'no hunk context at all: GitHub\'s line is all there is')
+  t = thread({ line = 20, text = { '  end' } })
+  h.eq('outside', ft.place(t, ctx).how)
+end)
+
+h.test('place: an edited `return err` does not jump to another `return err` nearby', function()
+  local base = {}
+  for i = 1, 40 do
+    base[i] = 'filler ' .. i
+  end
+  base[18], base[19], base[20] = '  v, err := load()', '  if err != nil {', '    return err'
+  base[28], base[29], base[30] = '  w, err := save()', '  if err != nil {', '    return err'
+  local a = table.concat(base, '\n') .. '\n'
+  local edited = vim.deepcopy(base)
+  edited[20] = '    return fmt.Errorf("load: %w", err)'
+  edited[30] = '    return err // keep' -- a change near it so its copy is a shown row
+  edited[30] = '    return err'
+  edited[31] = 'changed 31'
+  local b = table.concat(edited, '\n') .. '\n'
+  local ctx = ctx_for(a, b)
+  local p = ft.place(thread({ line = 20, before = { 'filler 17', '  v, err := load()', '  if err != nil {' }, text = { '    return err' } }), ctx)
+  h.eq('outside', p.how)
+end)
+
+h.test('place: a range across both sides is anchored on its last line', function()
+  local a = numbered(40)
+  local b = numbered(40, { [20] = 'twenty changed', [21] = 'twenty-one changed' })
+  local ctx = ctx_for(a, b)
+  local p = ft.place(thread({ line = 21, start_line = 20, start_side = 'LEFT', text = { 'twenty-one changed' } }), ctx)
+  h.eq({ 'line', 'new', 21, 21 }, { p.how, p.side, p.start_line, p.end_line })
 end)
 
 h.test('item: a comment-like record with GitHub ids, authors, replies, pending and hidden counts', function()
@@ -562,6 +636,8 @@ h.test('full stack: every layer\'s open PR, moved lines found by text; layer sco
   h.ok(v:find('Should the total be', 1, true) and v:find('GitHub line 18', 1, true), v)
   v = vlines(s, row_of(s, 'src/cart.ts', 'add', 23))
   h.ok(v:find('frank', 1, true) and v:find('GitHub #13', 1, true), v)
+  -- no PR section in full scope, but the key hint is there
+  h.ok(panel_text(s):find('gH GitHub threads', 1, true), panel_text(s))
   -- layer scope stack/ui: #13's only
   view.set_scope({ kind = 'layer', index = 3 })
   idle(s)
@@ -649,8 +725,89 @@ h.test('pagination: every page of threads and of long threads\' comments, in ord
   s.cm.expanded['gh:TP2'] = true
   cv.render(s)
   h.ok(all_vlines(s):find('│ … 6 more on GitHub', 1, true), all_vlines(s))
+  -- the panel says the list was cut
+  h.ok(panel_text(s):gsub('\n   ', ' '):find('threads: 2 open, more on GitHub', 1, true), panel_text(s))
   view.close()
   reset()
+end)
+
+h.test('a later page that comes back null keeps the PR\'s last threads (never a cut list)', function()
+  reset()
+  forge.THREAD_PAGE = 2
+  local list = {}
+  for i = 1, 5 do
+    list[i] = t({ id = 'TN' .. i, line = 18, comments = { c('u' .. i, 'thread ' .. i, { hunk = cart_hunk(18) }) } })
+  end
+  local calls = h.tmpdir('ft-gh-nullpage') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, { ['acme/shop#12'] = list })
+  local d = stack_fixture('ft-nullpage')
+  local s = open(d)
+  idle(s)
+  local pr12 = forge.get(s.forge.targets['stack/cart'])
+  h.eq(5, #forge.threads_for(pr12))
+  h.use_fake_gh(calls, PRS, nil, { ['acme/shop#12'] = list, _null_after = { 'acme/shop#12' } })
+  local _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore()
+  local threads, stale = forge.threads_for(pr12)
+  h.eq({ 5, true }, { #threads, stale })
+  local found = false
+  for _, e in ipairs(log.entries) do
+    found = found or tostring(e.msg):find('a page came back empty', 1, true) ~= nil
+  end
+  h.ok(found, vim.inspect(log.entries))
+  view.close()
+  reset()
+end)
+
+h.test('a remapped forge_open key: threads open, elsewhere the key\'s own global mapping', function()
+  reset()
+  setup({ keymaps = { forge_open = 'gz' } })
+  local global = 0
+  vim.keymap.set('n', 'gz', function()
+    global = global + 1
+  end)
+  local calls = h.tmpdir('ft-gh-gz') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, THREADS)
+  local d = stack_fixture('ft-gz')
+  local s = open(d)
+  idle(s)
+  local opened = {}
+  local orig = vim.ui.open
+  vim.ui.open = function(url)
+    opened[#opened + 1] = url
+  end
+  keys(s, 'gz', row_of(s, 'src/cart.ts', 'add', 18))
+  keys(s, 'gz', row_of(s, 'src/cart.ts', 'add', 3))
+  vim.ui.open = orig
+  h.eq({ 1, 1 }, { #opened, global })
+  view.close()
+  vim.keymap.del('n', 'gz')
+  setup()
+end)
+
+h.test('ce on a file\'s last row edits the local comment there, not a grouped thread below it', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-lastrow') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, THREADS)
+  local d = stack_fixture('ft-lastrow')
+  local s = open(d)
+  idle(s)
+  local last = s.cm.forge_rows['gh:T_old'].last -- the "not shown here" group of cart.ts
+  local e = s.layout.map[last]
+  h.eq({ 'src/cart.ts', 20 }, { e.path, e.new_lnum })
+  local store = cv.sync_store(s)
+  local anchor = comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+    { path = 'src/cart.ts', side = 'new', start_line = 20, end_line = 20 }, cv.context(s).get_line)
+  comments.put(store, comments.new(anchor, 'Closing brace comment'))
+  cv.render(s)
+  keys(s, 'ce', last)
+  local ed = require('revuey.comment_editor').current
+  h.ok(ed and not ed.done, 'the editor opened without asking which comment')
+  h.eq({ 'Closing brace comment' }, vim.api.nvim_buf_get_lines(ed.buf, 0, -1, false))
+  pcall(vim.api.nvim_win_close, ed.win, true)
+  view.close()
 end)
 
 h.test('failures never break the review: no gh, gh failing, GraphQL errors, a PR that does not resolve', function()

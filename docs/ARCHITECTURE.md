@@ -999,19 +999,35 @@ are in `reports/Terminal code review tool landscape.md`.
       lastEditedAt state diffHunk author{login} replyTo{id}`. Fragments are only included when
       used (GraphQL rejects unused ones). Each round asks every PR's next thread page and every
       long thread's next comment page together; at most `THREAD_ROUNDS` (10) rounds, then what
-      was read is kept (`… N more on GitHub` from `totalCount`) and the cut logged. A page call
+      was read is kept (`… N more on GitHub` from `totalCount`, `more on GitHub` on the panel's
+      threads line for a cut thread list) and the cut logged. `run_graphql` passes partial
+      data on: a null *first* page means the PR does not resolve (no threads), but a null later
+      page (or a null comments page) marks that PR failed, so it keeps its last cached threads
+      instead of caching a cut list as complete. A page call
       asks for at most 1,050 nodes (50 threads with 20 comments each), about one GraphQL
       rate-limit point.
     - **Placement** (`forge_threads.place`, every render, against `comments.context`). Side from
       `diffSide` (LEFT = old), lines from `line`/`startLine` (outdated threads:
       `originalLine`/`originalStartLine`; a range across sides is anchored on its last line),
       the expected text from the first comment's `diffHunk` (its last lines on that side end at
-      the thread's line). Tiers: `line` (GitHub's lines are shown rows and their text matches,
-      or there is no hunk text), `moved` (the text found at exactly one shown window within 100
-      lines, and it has at least three word characters), else `outside` (file in the review:
+      the thread's line) and up to 3 hunk lines on that side above them as context. Checked
+      against the real API (about 50 threads on neovim/neovim and microsoft/TypeScript): the
+      last line of `diffHunk` on the thread's side is always the `originalLine` text, LEFT and
+      multi-line threads included; file threads have `line = 1` and an empty hunk (so
+      `subjectType` is checked first); outdated RIGHT threads have `line = null` while outdated
+      LEFT threads keep a `line`; bodies and hunks may contain `\r\n` (stripped). Context:
+      a match needs at least one context line with text to match too, and all of them when
+      the commented lines are weak (fewer than two distinctive words, `comments.distinctive_words`:
+      `end`, `}`, `return err`), like local comments' `context_matches` guard. Tiers: `line`
+      (GitHub's lines are shown rows, their text and context match, or there is no hunk text),
+      `moved` (the text and context found at exactly one place of the side's full text within
+      100 lines, copies on lines the diff does not show counted, that place shown; at least
+      three word characters; weak text needs hunk context), else `outside` (file in the review:
       a group "GitHub threads on lines not shown here" at the file's last row), `missing` (file
       not shown: the end of the review), `file` (`subjectType FILE`: under the file header);
-      renamed files are followed by `old_path`. The text check is what makes GitHub's numbers
+      renamed files (`status = 'R'`) are followed by `old_path`. A bare text match at GitHub's
+      line is not trusted on its own even when the review shows the PR's head commit: the
+      context check costs nothing and covers that case too. The text check is what makes GitHub's numbers
       safe on a review that is not the PR's diff (working tree, unpushed commits, a full-stack
       scope where lower PRs' lines moved, a PR updated since the fetch): a thread is never put
       on other code, at worst listed apart. Placement is never stored.
@@ -1029,7 +1045,10 @@ are in `reports/Terminal code review tool landscape.md`.
       resolved comments (`cz` expands); at a shared row local comments come first, threads in
       creation order. `gH` (`keymaps.forge_threads`) cycles `all` / `open` / `none` per review,
       starting from `forge.threads.show`. `]m`/`[m` and `cl` (a "GitHub threads" part) include
-      them; `gx` in the diff on a thread opens its URL (elsewhere the global `gx` mapping). The
+      them; `keymaps.forge_open` (`gx`) in the diff on a thread opens its URL; elsewhere that key's
+      global mapping runs (else the built-in command). Grouped threads cover the file's last row
+      (the only way to reach them with `cz`/`gx`), so actions that only work on local comments
+      (`ce`, `cx`, `cd`, `cs`) leave threads out when a local comment covers the row too. The
       panel's PR section counts them (`threads: 2 open, 1 resolved, 1 outdated`).
     - **Read-only; local replies.** `ce`/`cx`/`cd`/`cs` on a thread refuse with a message. `cr`
       makes a new local comment anchored on the thread's rows (`anchor_from_rows`, so it

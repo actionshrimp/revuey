@@ -442,20 +442,26 @@ for authors.
 
 - **Where.** A thread goes on the lines GitHub gives it (`line`/`startLine` on the new side, or
   the old side for comments on deleted lines; file threads under the file header), but only when
-  the text there is what the thread's diff hunk shows. The review is often not exactly the PR's
-  diff (uncommitted edits, local commits not pushed yet, commits pushed since, or the full-stack
-  scope, where a lower PR's lines have moved): then the same lines are looked for within 100 lines
-  (one copy only; the header then says `GitHub line 18`). A thread that can't be placed (outdated
-  on GitHub, its line edited locally, outside this diff's hunks) is listed under "GitHub threads
-  on lines not shown here" at the end of its file, never on a guessed line; one on a file not in
-  the view goes to the end of the review.
+  the text there is what the thread's diff hunk shows, and so are the lines just above it (at
+  least one of them; all of them for lines with little text, such as `end`, `}` or `return
+  err`). The review is often not exactly the PR's diff (uncommitted edits, local commits not
+  pushed yet, commits pushed since, or the full-stack scope, where a lower PR's lines have
+  moved): then the same lines with the same context are looked for within 100 lines of the
+  file, and used only when there is exactly one such copy and the diff shows it (the header
+  then says `GitHub line 18`). A thread GitHub marks outdated is looked for the same way by the
+  text it was made on, so it stays on its code while that code is still there. A thread that
+  can't be placed (its code changed locally or on GitHub, outside this diff's hunks, or the
+  match is ambiguous) is listed under "GitHub threads on lines not shown here" at the end of its
+  file, never on a guessed line; one on a file not in the view goes to the end of the review.
 - **State.** Resolved threads (`resolved by alice`) and threads GitHub marks `outdated` are
   collapsed to their first line, like resolved comments; `cz` expands one. The viewer's own
   unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
   ones only, none. `]m`/`[m` and the comments list (`cl`, a "GitHub threads" part) include them.
-  The PR section in the panel counts them (`threads: 2 open, 1 resolved`).
+  The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
+  when the list was cut).
 - **Read-only.** revuey never writes to GitHub. `gx` on a thread opens it in the browser (elsewhere
-  in the diff `gx` is Neovim's usual one). `ce`, `cx`, `cd` and `cs` say the thread is read-only.
+  in the diff the key does what it does outside revuey: Neovim's `gx`, or your own mapping when
+  `keymaps.forge_open` is another key). `ce`, `cx`, `cd` and `cs` say the thread is read-only.
   `cr` writes a **local reply**: a comment of yours on the thread's lines, labelled `local reply to
   GitHub #42 thread` and linked to the thread (its ids are kept for posting reviews later). It
   lives in your comments file like any comment; the threads themselves are never stored.
