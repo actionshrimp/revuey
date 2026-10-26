@@ -520,12 +520,17 @@ What happens, in order:
 4. **Submit.** The review is published with the verdict. Posted comments are marked `posted to
    GitHub #42` and the threads are fetched again: from then on the GitHub thread stands for the
    comment (your local copy is not drawn twice; with GitHub threads hidden, `gH`, it shows with the
-   `posted` mark).
+   `posted` mark; one with local replies, which are not posted, stays shown, collapsed).
 
 If you cancel at the confirmation, or the submit fails, the comments stay in your pending review
 on GitHub (`in your pending review on GitHub #42`; you can see them there and in other tools), and
-the next submit publishes them without adding them again. One submit runs at a time; closing the
-review before the confirmation stops there.
+the next submit publishes them without adding them again (revuey knows them by their GitHub ids,
+never by their text). One you take out with `ci` stays in the pending review until you delete it
+there; then revuey forgets it. If GitHub does not answer an add, revuey reads your pending review
+again to see whether it went in; when it cannot tell, nothing can be submitted until a later
+submit has checked. One submit runs at a time; closing the review before the confirmation stops
+there. In the full-stack scope only PRs with comments from revuey get the verdict; a pending
+review of yours on another PR of the stack is mentioned, not submitted.
 
 **Which line on GitHub.** GitHub numbers a comment's lines in the file at the PR's head (the old
 side: in its base), and only takes lines inside the PR diff's hunks. A comment is posted on the

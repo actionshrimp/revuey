@@ -64,7 +64,10 @@ end
 --   reviews = { [review id] = state }   (node(id:) answers: PENDING, COMMENTED, ...; absent: null)
 --   fail = { add = ["body substring", ...] (those threads/replies are refused),
 --            create = true (addPullRequestReview without an event fails),
---            submit = ["owner/name#N", ...], files = true, preflight = true }
+--            submit = ["owner/name#N", ...], files = true, preflight = true,
+--            lost = ["body substring", ...], lost_create = true (applied, then no answer),
+--            down_after_lost = true (every later read fails), review_null = [review ids]
+--            (a null that is not NOT_FOUND) }
 -- Every mutation alias is appended to `REVUEY_FAKE_GH_MUTATIONS` as {op, alias, input} (the
 -- input object parsed), so tests can assert on exactly what would be posted. Threads added go
 -- into the REVUEY_FAKE_GH_THREADS file as PENDING (SUBMITTED once their review is submitted), so
@@ -258,7 +261,7 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:match('^mutat
               startLine = inp.startLine or vim.NIL, originalLine = inp.line or vim.NIL, originalStartLine = inp.startLine or vim.NIL,
               diffSide = inp.side or 'RIGHT', startDiffSide = inp.startSide or vim.NIL, subjectType = inp.subjectType or 'LINE',
               resolvedBy = vim.NIL, comments = { cnode } })
-            data[alias] = { thread = { id = tid, comments = { nodes = { { id = cid, databaseId = dbid, url = url } } } } }
+            data[alias] = { thread = { id = tid, comments = { nodes = { { id = cid, fullDatabaseId = tostring(dbid), url = url } } } } }
           else
             local found
             for _, list in pairs(T) do
@@ -277,7 +280,7 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:match('^mutat
               table.insert(found.comments, cnode)
               table.insert(pr.pending.comments, { id = cid, databaseId = dbid, url = url, path = found.path, line = found.line,
                 body = inp.body, replyTo = { id = found.comments[1].id } })
-              data[alias] = { comment = { id = cid, databaseId = dbid, url = url } }
+              data[alias] = { comment = { id = cid, fullDatabaseId = tostring(dbid), url = url } }
             end
           end
         end
@@ -309,9 +312,25 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:match('^mutat
       end
     end
   end
+  -- `fail.lost`: a mutation whose body contains one of these (or `fail.lost_create` for
+  -- addPullRequestReview) is applied, then the call answers nothing, as when gh is stopped by
+  -- revuey's timeout after GitHub did the work; `fail.down_after_lost` then makes every later
+  -- preflight fail too (GitHub unreachable)
+  local lost = false
+  for _, sub in ipairs(fail.lost or {}) do
+    lost = lost or query0:find(sub, 1, true) ~= nil
+  end
+  lost = lost or (fail.lost_create and query0:find('addPullRequestReview(input: {pullRequestId', 1, true) ~= nil and not query0:find('event:', 1, true))
+  if lost and fail.down_after_lost then
+    P.down = true
+  end
   write_json(post_file, P)
   if threads_file and threads_file ~= '' then
     write_json(threads_file, next(T) and T or vim.empty_dict())
+  end
+  if lost then
+    io.stderr:write('gh timed out\n')
+    os.exit(124)
   end
   io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
   if #errors > 0 then
@@ -321,10 +340,44 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:match('^mutat
   os.exit(0)
 end
 
+---A page of a pending review's comments (`first`, `after` = index cursor), as GraphQL has it.
+local function pending_page(pending, first, after)
+  local list = pending.comments or {}
+  local from = (tonumber(after) or 0) + 1
+  local cs = {}
+  for i = from, math.min(#list, from + first - 1) do
+    local c = list[i]
+    cs[#cs + 1] = { id = c.id, fullDatabaseId = c.databaseId and tostring(c.databaseId) or vim.NIL, url = c.url or vim.NIL,
+      path = c.path or vim.NIL, line = c.line or vim.NIL, startLine = c.startLine or vim.NIL, originalLine = c.line or vim.NIL,
+      subjectType = c.subjectType or 'LINE', body = c.body, replyTo = c.replyTo or vim.NIL }
+  end
+  local last = from + #cs - 1
+  return { totalCount = #list, pageInfo = { hasNextPage = last < #list, endCursor = #cs > 0 and tostring(last) or vim.NIL }, nodes = cs }
+end
+
+-- the next comments of a pending review (forge.build_pending_page_query)
+if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('... on PullRequestReview { comments(', 1, true) then
+  P = P or {}
+  if P.down then
+    io.stderr:write('error connecting to api.github.com\n')
+    os.exit(1)
+  end
+  local id, first, after = query0:match('q: node%(id: (%b"")%) { %.%.%. on PullRequestReview { comments%(first: (%d+), after: (%b"")')
+  id, after = vim.json.decode(id), vim.json.decode(after)
+  local found
+  for _, pr in pairs(P.prs or {}) do
+    if pr.pending and pr.pending.id == id then
+      found = pr.pending
+    end
+  end
+  io.stdout:write(vim.json.encode({ data = { q = found and { comments = pending_page(found, tonumber(first), after) } or vim.NIL } }), '\n')
+  os.exit(0)
+end
+
 -- the posting preflight (forge.build_preflight_query)
 if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('viewer { login }', 1, true) then
   P = P or {}
-  if P.fail and P.fail.preflight then
+  if (P.fail and P.fail.preflight) or P.down then
     io.stderr:write('error connecting to api.github.com\n')
     os.exit(1)
   end
@@ -333,10 +386,15 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('viewer 
     id = vim.json.decode(id)
     local st = (P.reviews or {})[id]
     data[alias] = st and { id = id, state = st } or vim.NIL
-    if not st then
+    if vim.tbl_contains((P.fail or {}).review_null or {}, id) then
+      -- null for another reason than NOT_FOUND (a timeout, a permission)
+      data[alias] = vim.NIL
+      errors[#errors + 1] = { type = 'FORBIDDEN', path = { alias }, message = 'Resource not accessible' }
+    elseif not st then
       errors[#errors + 1] = { type = 'NOT_FOUND', path = { alias }, message = 'Could not resolve to a node with the global id of \'' .. id .. '\'' }
     end
   end
+  local pfirst = tonumber(query0:match('fragment pending on PullRequestReview {.-comments%(first: (%d+)%)') or '100')
   for alias, owner, name, number in query0:gmatch('(p%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%)') do
     local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
     local pr = (P.prs or {})[key]
@@ -346,14 +404,8 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('viewer 
     else
       local reviews = {}
       if pr.pending then
-        local cs = {}
-        for _, c in ipairs(pr.pending.comments or {}) do
-          cs[#cs + 1] = { id = c.id, databaseId = c.databaseId or vim.NIL, url = c.url or vim.NIL, path = c.path or vim.NIL,
-            line = c.line or vim.NIL, startLine = c.startLine or vim.NIL, originalLine = c.line or vim.NIL,
-            subjectType = c.subjectType or 'LINE', body = c.body, replyTo = c.replyTo or vim.NIL }
-        end
         reviews[1] = { id = pr.pending.id, viewerDidAuthor = true, commit = { oid = pr.pending.commit },
-          comments = { totalCount = #cs, nodes = cs } }
+          comments = pending_page(pr.pending, pfirst, nil) }
       end
       data[alias] = { pullRequest = {
         id = pr.id, number = tonumber(number), url = 'https://github.com/' .. key:gsub('#', '/pull/'), state = pr.state or 'OPEN',

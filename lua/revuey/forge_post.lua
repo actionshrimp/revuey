@@ -40,7 +40,8 @@ end
 M.short = short
 
 ---Where a comment is with GitHub: nil, 'pending' (in the viewer's pending review, not yet
----submitted) or 'posted'.
+---submitted), 'unknown' (an add whose answer was lost: maybe in the pending review) or
+---'posted'.
 function M.state(c)
   return c and type(c.forge_post) == 'table' and c.forge_post.state or nil
 end
@@ -126,6 +127,7 @@ end
 ---@field file revuey.FileDiff  the review's file
 ---@field line fun(side:string, l:integer):string?   the review's text of a line
 ---@field kind fun(side:string, l:integer):string?   the review's row kind there (add|del|ctx)
+---@field full? boolean        a full-stack scope (earlier layers' changes are in the diff)
 
 ---Where `want` goes in PR `n`'s diff (`pf`: the PR's file, nil when the PR does not change it;
 ---`parsed`: cache for parsed patches). Returns the thread item `{kind = 'thread', path, line,
@@ -171,8 +173,17 @@ function M.locate(want, pf, n, parsed)
     if not x then
       local k = want.kind(want.side, l)
       if k == 'add' or k == 'del' then
-        -- changed in this review but not by this PR: an earlier layer did it
-        return nil, ('%s was %s by an earlier layer, not by PR #%d: post it from that layer\'s scope'):format(loc, k == 'add' and 'added' or 'deleted', n), true
+        -- changed in this review but not by this PR: uncommitted work, or (full stack) an
+        -- earlier layer
+        local verb = k == 'add' and 'added' or 'deleted'
+        if want.full and f.uncommitted then
+          return nil, ('%s was %s by an earlier layer or by uncommitted work, not by PR #%d'):format(loc, verb, n), true
+        elseif want.full then
+          return nil, ('%s was %s by an earlier layer, not by PR #%d: post it from that layer\'s scope'):format(loc, verb, n), true
+        elseif f.uncommitted then
+          return nil, ('%s was %s by uncommitted work, which is not part of PR #%d'):format(loc, verb, n), true
+        end
+        return nil, ('%s was %s here but not in PR #%d\'s diff (GitHub\'s base differs from this review\'s)'):format(loc, verb, n), true
       end
       return nil, ('%s (%s) is not in PR #%d\'s diff (GitHub only takes lines inside its hunks)'):format(loc, want.side, n), true
     end
@@ -186,6 +197,7 @@ function M.locate(want, pf, n, parsed)
     end
     local k = want.kind(want.side, l)
     if (k == 'add' and x.kind ~= '+') or (k == 'del' and x.kind ~= '-') then
+      -- (the new side here is the head's file, so this is never uncommitted work)
       return nil, ('%s was %s by an earlier layer, not by PR #%d: post it from that layer\'s scope'):format(loc, k == 'add' and 'added' or 'deleted', n), true
     end
   end
@@ -283,8 +295,8 @@ function M.plan(o)
   for _, c in ipairs(o.comments) do
     local ok, why = M.includable(c)
     local body = body_of(c)
-    -- one already in the pending review is published by the submit whatever its state now
-    if not ok and M.state(c) ~= 'pending' then
+    -- one whose add answer was lost may be in the pending review: matched whatever its state now
+    if not ok and M.state(c) ~= 'unknown' then
       refuse(c, why)
     elseif body == '' then
       refuse(c, 'the comment is empty')
@@ -316,6 +328,7 @@ function M.plan(o)
         refuse(c, 'outdated: the lines it was written on changed since')
       else
         local want = {
+          full = o.full,
           path = path,
           side = a.side or 'new',
           first = (not c.file_level) and (p.start_line or a.start_line) or nil,
@@ -380,27 +393,47 @@ function M.plan(o)
   return plan
 end
 
----The comment of a pending review that is this item already (added by an earlier submit whose
----answer was recorded, or lost: same body and path), or nil.
+local function norm_body(t)
+  return vim.trim((t or ''):gsub('\r\n', '\n'))
+end
+M.norm_body = norm_body
+
+---A comment of the pending review recorded by id (`forge_post.comment_id`), or nil.
 ---@param pending revuey.ForgePending
-function M.in_pending(c, item, pending)
-  if not pending then
-    return nil
-  end
-  local fp = type(c.forge_post) == 'table' and c.forge_post or nil
-  if fp and fp.comment_id then
-    for _, pc in ipairs(pending.comments) do
-      if pc.id == fp.comment_id then
-        return pc
-      end
+function M.by_id(pending, id)
+  for _, pc in ipairs(pending and id and pending.comments or {}) do
+    if pc.id == id then
+      return pc
     end
   end
-  local body = (item.body or ''):gsub('\r\n', '\n')
-  for _, pc in ipairs(pending.comments) do
-    if vim.trim((pc.body or ''):gsub('\r\n', '\n')) == body then
-      if item.kind == 'reply' and pc.reply_to then
-        return pc
-      elseif item.kind == 'thread' and not pc.reply_to and pc.path == item.path then
+end
+
+---After an add whose answer was lost (a timeout: GitHub may have applied it), the comment of
+---the pending review that is this item, matched strictly: the same body and, for a thread, the
+---same path, line and start line (a file comment: FILE), not a reply; for a reply, a reply to
+---one of `thread_comments` (the ids of the thread's comments). A comment of the pending review
+---is given to at most one local comment (`claimed`, updated). GitHub's review comments do not
+---say which side they are on, so a LEFT and a RIGHT comment with the same text on the same line
+---number would be taken for each other.
+---@param pending revuey.ForgePending
+---@param claimed table<string, true>
+---@param thread_comments? table<string, true>
+function M.match_lost(item, pending, claimed, thread_comments)
+  local body = norm_body(item.body)
+  for _, pc in ipairs(pending and pending.comments or {}) do
+    if not claimed[pc.id] and norm_body(pc.body) == body then
+      local ok
+      if item.kind == 'reply' then
+        ok = pc.reply_to ~= nil and (thread_comments or {})[pc.reply_to] == true
+      elseif pc.reply_to == nil and pc.path == item.path then
+        if item.subject == 'FILE' then
+          ok = pc.subject == 'FILE'
+        else
+          ok = pc.subject ~= 'FILE' and pc.line == item.line and (pc.start_line or pc.line) == (item.start_line or item.line)
+        end
+      end
+      if ok then
+        claimed[pc.id] = true
         return pc
       end
     end

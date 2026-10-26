@@ -64,7 +64,8 @@ local function want(o)
     side = o.side or 'new',
     first = o.first,
     last = o.last or o.first,
-    file = { path = o.path or 'src/cart.ts', status = o.status or 'M', new_blob = o.blob or 'B1' },
+    full = o.full,
+    file = { path = o.path or 'src/cart.ts', status = o.status or 'M', new_blob = o.blob or 'B1', uncommitted = o.uncommitted },
     line = function(side, l)
       return (side == 'new' and o.new or o.old or {})[l]
     end,
@@ -101,13 +102,24 @@ h.test('locate: refuses another file version, lines outside the diff, two hunks,
   h.ok(why(want({ blob = 'OTHER' })):find('not the file at PR #12', 1, true), 'file comments too')
   h.ok(why(want({ first = 2 }), false):find('src/cart.ts is not changed in PR #12', 1, true))
   h.ok(why(want({ first = 10, new = NEW })):find("src/cart.ts:10 (new) is not in PR #12's diff", 1, true))
-  h.ok(why(want({ first = 5, last = 18, new = NEW })):find('spans two hunks', 1, true) or why(want({ first = 5, last = 18, new = NEW })):find('not in', 1, true))
+  h.ok(why(want({ first = 5, last = 18, new = NEW })):find("src/cart.ts:5-18 (new) is not in PR #12's diff", 1, true), 'a gap between hunks')
+  -- two hunks that touch (no gap): GitHub still wants a range inside one
+  local touching = '@@ -1,2 +1,2 @@\n a\n b\n@@ -3,2 +3,2 @@\n c\n d'
+  h.ok(why(want({ first = 2, last = 3, new = { 'a', 'b', 'c', 'd' } }), { path = 'src/cart.ts', status = 'modified', sha = 'B1', patch = touching })
+    :find('src/cart.ts:2-3 spans two hunks of PR #12\'s diff', 1, true))
   local new2 = vim.deepcopy(NEW)
   new2[19] = '    return sum(this.items)  ;'
   h.ok(why(want({ first = 19, new = new2 })):find('does not have the text', 1, true))
   -- shown as added in this (full-stack) review, but a context line of this PR: an earlier layer
   h.ok(why(want({ first = 18, new = NEW, kinds = { new18 = 'add' } })):find('was added by an earlier layer, not by PR #12', 1, true))
-  h.ok(why(want({ first = 10, new = NEW, kinds = { new10 = 'add' } })):find('was added by an earlier layer', 1, true))
+  h.ok(why(want({ full = true, first = 10, new = NEW, kinds = { new10 = 'add' } })):find('was added by an earlier layer, not by PR #12', 1, true))
+  -- not in the PR's diff at all: uncommitted work in a layer scope, else GitHub's base differs
+  h.ok(why(want({ side = 'old', first = 10, old = OLD, kinds = { old10 = 'del' }, uncommitted = true }))
+    :find('src/cart.ts:10 was deleted by uncommitted work, which is not part of PR #12', 1, true))
+  h.ok(why(want({ side = 'old', first = 10, old = OLD, kinds = { old10 = 'del' } }))
+    :find("was deleted here but not in PR #12's diff (GitHub's base differs", 1, true))
+  h.ok(why(want({ full = true, side = 'old', first = 10, old = OLD, kinds = { old10 = 'del' }, uncommitted = true }))
+    :find('was deleted by an earlier layer or by uncommitted work, not by PR #12', 1, true))
   -- LEFT: the PR's base must read as the review's old side over the whole hunk
   local old2 = vim.deepcopy(OLD)
   old2[20] = '} // changed'
@@ -263,17 +275,30 @@ h.test('plan: full stack routes each line to the PR whose diff adds it, never to
   h.ok(p3.refused[1].why:find('fits several PRs of the stack (#13, #14)', 1, true), p3.refused[1].why)
 end)
 
-h.test('in_pending: by the recorded comment id, else the same body (and path, or a reply)', function()
+h.test('by_id and match_lost: a recorded id, else (a lost answer only) the same body, path, line, start line or thread; never twice', function()
   local pending = { id = 'R1', comments = {
-    { id = 'C1', path = 'src/cart.ts', body = 'Hello\r\nthere' },
-    { id = 'C2', path = 'src/cart.ts', body = 'A reply', reply_to = 'X' },
+    { id = 'G1', path = 'src/cart.ts', line = 3, body = 'nit' }, -- someone else's, on another line
+    { id = 'C1', path = 'src/cart.ts', line = 12, body = 'nit\r\n' },
+    { id = 'C2', path = 'src/cart.ts', line = 12, start_line = 10, body = 'range' },
+    { id = 'C3', path = 'src/cart.ts', body = 'file', subject = 'FILE' },
+    { id = 'R9', path = 'src/cart.ts', line = 18, body = 'Done', reply_to = 'X_other' },
+    { id = 'R1c', path = 'src/cart.ts', line = 18, body = 'Done', reply_to = 'X1' },
   } }
-  h.eq('C1', post.in_pending({ forge_post = { comment_id = 'C1' } }, { kind = 'thread', body = 'zzz', path = 'a' }, pending).id)
-  h.eq('C1', post.in_pending({}, { kind = 'thread', body = 'Hello\nthere', path = 'src/cart.ts' }, pending).id)
-  h.eq(nil, post.in_pending({}, { kind = 'thread', body = 'Hello\nthere', path = 'src/other.ts' }, pending))
-  h.eq('C2', post.in_pending({}, { kind = 'reply', body = 'A reply', thread_id = 'T' }, pending).id)
-  h.eq(nil, post.in_pending({}, { kind = 'thread', body = 'A reply', path = 'src/cart.ts' }, pending), 'a reply is no thread')
-  h.eq(nil, post.in_pending({}, { kind = 'thread', body = 'x' }, nil))
+  h.eq('C1', post.by_id(pending, 'C1').id)
+  h.eq(nil, post.by_id(pending, 'nope'))
+  local claimed = {}
+  h.eq('C1', post.match_lost({ kind = 'thread', body = 'nit', path = 'src/cart.ts', line = 12 }, pending, claimed).id)
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'nit', path = 'src/cart.ts', line = 12 }, pending, claimed), 'never given twice')
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'nit', path = 'src/cart.ts', line = 40 }, pending, {}), 'not on another line')
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'nit', path = 'src/cart.ts', line = 3, start_line = 2 }, pending, {}), 'not another start')
+  h.eq('C2', post.match_lost({ kind = 'thread', body = 'range', path = 'src/cart.ts', line = 12, start_line = 10 }, pending, {}).id)
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'range', path = 'src/cart.ts', line = 12 }, pending, {}))
+  h.eq('C3', post.match_lost({ kind = 'thread', body = 'file', path = 'src/cart.ts', subject = 'FILE' }, pending, {}).id)
+  -- replies: only a reply in the same thread
+  h.eq('R1c', post.match_lost({ kind = 'reply', body = 'Done', thread_id = 'T1' }, pending, {}, { X1 = true }).id)
+  h.eq(nil, post.match_lost({ kind = 'reply', body = 'Done', thread_id = 'T1' }, pending, {}, { X2 = true }), 'another thread')
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'Done', path = 'src/cart.ts', line = 18 }, pending, {}), 'a reply is no thread')
+  h.eq(nil, post.match_lost({ kind = 'thread', body = 'x' }, nil, {}))
   h.eq('src/cart.ts:3-5', post.pending_location({ path = 'src/cart.ts', line = 5, start_line = 3 }))
   h.eq('src/cart.ts:5 (reply)', post.pending_location({ path = 'src/cart.ts', line = 5, reply_to = 'X' }))
   h.eq('src/cart.ts (file)', post.pending_location({ path = 'src/cart.ts', subject = 'FILE' }))
@@ -290,15 +315,21 @@ h.test('queries and mutations: preflight, pending review, threads, replies, subm
     r1 = { id = 'PRR_1', state = 'COMMENTED' },
     p1 = { pullRequest = { id = 'PR_12', number = 12, url = 'u', state = 'OPEN', isDraft = false, headRefOid = 'abc', author = { login = 'alice' },
       reviews = { nodes = { { id = 'PRR_9', viewerDidAuthor = true, commit = { oid = 'old' }, comments = { totalCount = 3, nodes = {
-        { id = 'C1', databaseId = 7, path = 'a.ts', line = 4, startLine = vim.NIL, body = 'hi', replyTo = vim.NIL, subjectType = 'LINE' },
-      } } } } } } },
+        { id = 'C1', fullDatabaseId = '7', path = 'a.ts', line = 4, startLine = vim.NIL, body = 'hi', replyTo = vim.NIL, subjectType = 'LINE' },
+      }, pageInfo = { hasNextPage = true, endCursor = 'K1' } } } } } } },
   }, aliases)
   h.eq('me', viewer)
   h.eq({ 'PR_12', 'abc', 'alice', 'PRR_9', 'old', 3, 'C1', 4 }, { pfs.p1.id, pfs.p1.head_oid, pfs.p1.author, pfs.p1.pending.id, pfs.p1.pending.commit,
     pfs.p1.pending.total, pfs.p1.pending.comments[1].id, pfs.p1.pending.comments[1].line })
   h.eq({ PRR_1 = 'COMMENTED' }, reviews)
-  local _, gone, rv = forge.normalize_preflight({ viewer = { login = 'me' }, r1 = vim.NIL, p1 = { pullRequest = vim.NIL } }, aliases)
+  h.eq({ '7', 'K1' }, { pfs.p1.pending.comments[1].database_id, pfs.p1.pending.cursor })
+  -- a review that is gone: only a NOT_FOUND error says so; any other null is unknown
+  local _, gone, rv = forge.normalize_preflight({ viewer = { login = 'me' }, r1 = vim.NIL, p1 = { pullRequest = vim.NIL } }, aliases,
+    { { type = 'NOT_FOUND', path = { 'r1' }, message = 'Could not resolve' } })
   h.eq({ {}, { PRR_1 = false } }, { gone, rv })
+  local _, _, rv2 = forge.normalize_preflight({ viewer = { login = 'me' }, r1 = vim.NIL }, aliases, { { type = 'FORBIDDEN', path = { 'r1' } } })
+  h.eq({}, rv2)
+  h.ok(forge.build_pending_page_query('PRR_9', 'K1'):find('q: node(id: "PRR_9") { ... on PullRequestReview { comments(first: 100, after: "K1") {', 1, true))
   -- the pending review: no event, bound to a commit
   h.eq('mutation {\n  r: addPullRequestReview(input: {pullRequestId: "PR_12", commitOID: "abc"}) { pullRequestReview { id commit { oid } } }\n}',
     forge.build_pending_mutation('PR_12', 'abc'))
@@ -311,10 +342,10 @@ h.test('queries and mutations: preflight, pending review, threads, replies, subm
   h.ok(m:find('m1: addPullRequestReviewThread(input: {pullRequestReviewId: "PRR_1", path: "src/a.ts", body: "Say \\"hi\\"\\nok", line: 9, side: RIGHT, startLine: 7, startSide: RIGHT})', 1, true), m)
   h.ok(m:find('m2: addPullRequestReviewThread(input: {pullRequestReviewId: "PRR_1", path: "src/a.ts", body: "one", line: 3, side: LEFT})', 1, true), m)
   h.ok(m:find('m3: addPullRequestReviewThread(input: {pullRequestReviewId: "PRR_1", path: "src/b.ts", body: "file", subjectType: FILE})', 1, true), m)
-  h.ok(m:find('m4: addPullRequestReviewThreadReply(input: {pullRequestReviewId: "PRR_1", pullRequestReviewThreadId: "PRRT_5", body: "reply"}) { comment { id databaseId url } }', 1, true), m)
+  h.ok(m:find('m4: addPullRequestReviewThreadReply(input: {pullRequestReviewId: "PRR_1", pullRequestReviewThreadId: "PRRT_5", body: "reply"}) { comment { id fullDatabaseId url } }', 1, true), m)
   h.eq('PRRT_5', al.m4.thread_id)
-  h.eq({ thread_id = 'T', comment_id = 'C', database_id = 3, url = 'u' }, forge.added({ thread = { id = 'T', comments = { nodes = { { id = 'C', databaseId = 3, url = 'u' } } } } }))
-  h.eq({ comment_id = 'C', database_id = 4, url = nil }, forge.added({ comment = { id = 'C', databaseId = 4 } }))
+  h.eq({ thread_id = 'T', comment_id = 'C', database_id = '3', url = 'u' }, forge.added({ thread = { id = 'T', comments = { nodes = { { id = 'C', fullDatabaseId = '3', url = 'u' } } } } }))
+  h.eq({ comment_id = 'C', database_id = '4', url = nil }, forge.added({ comment = { id = 'C', fullDatabaseId = '4' } }))
   h.eq(nil, forge.added(vim.NIL))
   h.eq('bad line; again', forge.alias_error({ { path = { 'm2' }, message = 'bad line' }, { path = { 'm1' }, message = 'x' }, { path = { 'm2', 'thread' }, message = 'again' } }, 'm2'))
   h.eq(nil, forge.alias_error({ { message = 'no path' } }, 'm1'))
@@ -525,7 +556,7 @@ end
 local function wait_job()
   assert(vim.wait(20000, function()
     return fpv.job == nil
-  end, 10), 'submit did not finish')
+  end, 10), 'submit did not finish: ' .. vim.inspect(fpv.job and fpv.job.phase) .. vim.inspect(log.entries))
   vim.wait(50)
 end
 
@@ -752,19 +783,303 @@ h.test('cancel after the add step: comments stay in the pending review, recorded
   view.close()
 end)
 
-h.test('a lost answer: a comment already in the pending review (same body and path) is not added twice', function()
-  local s, calls = setup_review('lost', { edit = function(p, d)
-    p.prs['acme/shop#12'].pending = { id = 'PRR_7', commit = rev(d, 'stack/cart'), comments = {
-      { id = 'PRRC_7', databaseId = 70, path = 'src/cart.ts', line = 12, body = 'Return a copy?' } } }
-    p.reviews.PRR_7 = 'PENDING'
+local function write_state(calls, P)
+  vim.fn.writefile({ vim.json.encode(P) }, calls .. '.post.json')
+end
+
+local function gh_thread(id, line, cs)
+  return {
+    id = id, isResolved = false, isOutdated = false, path = 'src/cart.ts', line = line, startLine = vim.NIL, originalLine = line,
+    originalStartLine = vim.NIL, diffSide = 'RIGHT', startDiffSide = vim.NIL, subjectType = 'LINE', resolvedBy = vim.NIL,
+    comments = cs,
+  }
+end
+
+local function gh_comment(id, body, who)
+  return { id = id, databaseId = 1, url = 'https://github.com/acme/shop/pull/12#discussion_r1', body = body,
+    createdAt = '2026-01-01T00:00:00Z', lastEditedAt = vim.NIL, state = 'SUBMITTED', diffHunk = vim.NIL, author = { login = who or 'carol' }, replyTo = vim.NIL }
+end
+
+h.test('the same text elsewhere in the pending review is not this comment: a nit on another line is added', function()
+  local s, calls = setup_review('samebody', { edit = function(p, d)
+    p.prs['acme/shop#12'].pending = { id = 'PRR_g', commit = rev(d, 'stack/cart'), comments = {
+      { id = 'PRRC_g', databaseId = 70, path = 'src/cart.ts', line = 3, body = 'nit' } } }
+    p.reviews.PRR_g = 'PENDING'
   end })
-  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'nit', { in_review = true })
   local asked = answer({ 1 })
   view.submit('comment')
   wait_job()
+  local text = asked[1].msg
+  h.ok(text:find('+ src/cart.ts:12  nit', 1, true) and not text:find('in your pending review already', 1, true), text)
+  h.ok(text:find('already has 1 comment from elsewhere', 1, true) and text:find('    src/cart.ts:3', 1, true), text)
+  h.eq({ 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq({ line = 12, body = 'nit' }, { line = mutations(calls)[1].input.line, body = mutations(calls)[1].input.body })
+  h.ok(get(s, a.id).forge_post.comment_id ~= 'PRRC_g', 'not given Graphite\'s comment')
+  view.close()
+end)
+
+h.test('two comments with the same text: the second is added after the first was added and cancelled', function()
+  local s, calls = setup_review('twins')
+  local a = add_comment(s, 'src/cart.ts', 'add', 5, 5, 'nit: typo', { in_review = true })
+  answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  local b = add_comment(s, 'src/cart.ts', 'add', 14, 14, 'nit: typo', { in_review = true })
+  local asked = answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('src/cart.ts:5  nit: typo (in your pending review already)', 1, true), asked[1].msg)
+  h.ok(asked[1].msg:find('+ src/cart.ts:14  nit: typo\n', 1, true) or asked[1].msg:find('+ src/cart.ts:14  nit: typo$'), asked[1].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq(14, mutations(calls)[3].input.line)
+  h.ok(get(s, a.id).forge_post.comment_id ~= get(s, b.id).forge_post.comment_id, 'two GitHub comments')
+  h.eq({ 'posted', 'posted' }, { get(s, a.id).forge_post.state, get(s, b.id).forge_post.state })
+  view.close()
+end)
+
+h.test('a reply with the same text in another thread of the pending review is not this reply', function()
+  local threads = { ['acme/shop#12'] = {
+    gh_thread('T_a', 18, { gh_comment('PRRC_a', 'Rounded?') }),
+    gh_thread('T_b', 13, { gh_comment('PRRC_b', 'Copy?') }),
+  } }
+  local s, calls = setup_review('replies', { threads = threads, edit = function(p, d)
+    p.prs['acme/shop#12'].pending = { id = 'PRR_g', commit = rev(d, 'stack/cart'), comments = {
+      { id = 'PRRC_gr', databaseId = 71, path = 'src/cart.ts', line = 13, body = 'Done', replyTo = { id = 'PRRC_b' } } } }
+    p.reviews.PRR_g = 'PENDING'
+  end })
+  add_comment(s, 'src/cart.ts', 'add', 18, 18, 'Done', {
+    in_review = true, forge_reply = { thread_id = 'T_a', pr = 12, repo = 'github.com/acme/shop', comment_id = 'PRRC_a' } })
+  local asked = answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('1 reply from revuey', 1, true) and asked[1].msg:find('src/cart.ts:13 (reply)', 1, true), asked[1].msg)
+  h.eq({ 'addPullRequestReviewThreadReply', 'submitPullRequestReview' }, ops(calls))
+  h.eq('T_a', mutations(calls)[1].input.pullRequestReviewThreadId)
+  view.close()
+end)
+
+h.test('a lost answer: GitHub applied the add but did not answer; the pending review is read again and it is recorded once', function()
+  local s, calls = setup_review('lost', { fail = { lost = { 'Return a copy' } } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  local text = asked[1].msg
+  h.ok(text:find('PR #12 (acme/shop): 1 comment from revuey', 1, true) and text:find('+ src/cart.ts:12  Return a copy?', 1, true), text)
+  h.ok(not text:find('Not posted', 1, true) and not text:find('from elsewhere', 1, true), text)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq({ 'posted', false }, { get(s, a.id).forge_post.state, get(s, a.id).in_review })
+  h.ok(get(s, a.id).forge_post.comment_id, 'recorded with its GitHub id')
+  view.close()
+end)
+
+h.test('a lost answer GitHub cannot be asked about: recorded unknown, no Submit; the next submit finds it and adds nothing', function()
+  local s, calls = setup_review('unknown', { fail = { lost = { 'Return a copy' }, down_after_lost = true } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.eq('&Cancel', asked[1].choices)
+  h.ok(asked[1].msg:find('(GitHub did not answer: it may be in your pending review)', 1, true), asked[1].msg)
+  h.ok(asked[1].msg:find('nothing can be submitted now', 1, true), asked[1].msg)
+  h.eq({ 'unknown', 'PRR_1' }, { get(s, a.id).forge_post.state, get(s, a.id).forge_post.review_id })
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread' }, ops(calls))
+  -- GitHub is back
+  local P = fake_state(calls)
+  P.down, P.fail = nil, nil
+  write_state(calls, P)
+  asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.ok(asked[1].msg:find('Return a copy? (in your pending review already)', 1, true), asked[1].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq('posted', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('a lost answer when starting the review: the review GitHub made is found and used, never a second one', function()
+  local s, calls = setup_review('lostcreate', { fail = { lost_create = true } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq('PRR_1', mutations(calls)[2].input.pullRequestReviewId)
+  h.eq('posted', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('taken out of the review and deleted on GitHub: forgotten, not added again', function()
+  local s, calls = setup_review('untoggle')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  local c = get(s, a.id) -- `ci` off
+  c.in_review = false
+  comments.put(s.cm.store, c)
+  comments.save(s.cm.store)
+  -- deleted from the pending review on GitHub
+  local P = fake_state(calls)
+  P.prs['acme/shop#12'].pending.comments = {}
+  write_state(calls, P)
+  answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  -- only the (now empty) pending review is submitted with the verdict: nothing added again
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq({ nil, false }, { get(s, a.id).forge_post, get(s, a.id).in_review })
+  view.close()
+end)
+
+h.test('closing the body editor without changes (:q) goes back to the confirmation; the submit is never held', function()
+  local s = setup_review('bodyq')
+  local asked = answer({ 1 }) -- Write body
+  view.submit('comment')
+  assert(vim.wait(10000, function()
+    return require('revuey.comment_editor').current ~= nil
+  end, 10), 'editor opened')
+  answer({ 2 }) -- then Cancel
+  vim.api.nvim_win_close(require('revuey.comment_editor').current.win, true)
+  wait_job()
+  h.eq(nil, fpv.job)
+  h.eq(1, #asked)
+  view.close()
+end)
+
+h.test('a pending comment edited here shows GitHub\'s text; one now refused is still listed as in the pending review', function()
+  local s, calls, d = setup_review('edited')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local b = add_comment(s, 'src/index.ts', 'add', 5, 5, 'Cart import.', { in_review = true })
+  answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  local c = get(s, a.id)
+  c.body = 'Return a frozen copy?'
+  comments.put(s.cm.store, c)
+  comments.save(s.cm.store)
+  -- index.ts now has an uncommitted change: its comment could not be added now
+  h.write(d, 'src/index.ts', table.concat(vim.fn.readfile(d .. '/src/index.ts'), '\n') .. '\n// local\n')
+  view.refresh({ force = true })
+  idle(s)
+  local asked = answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  local text = asked[1].msg
+  h.ok(text:find('src/cart.ts:12  Return a frozen copy? (in your pending review, edited here since: GitHub has "Return a copy?")', 1, true), text)
+  h.ok(text:find('src/index.ts:5  Cart import. (in your pending review already)', 1, true), text)
+  h.ok(not text:find('Not posted', 1, true) and not text:find('from elsewhere', 1, true), text)
+  h.eq('pending', get(s, b.id).forge_post.state)
+  view.close()
+end)
+
+h.test('a long pending review is read page by page: a recorded comment past the first page is found, not added again', function()
+  local saved = forge.PENDING_COMMENTS
+  forge.PENDING_COMMENTS = 2
+  local s, calls = setup_review('paged', { edit = function(p, d)
+    p.prs['acme/shop#12'].pending = { id = 'PRR_g', commit = rev(d, 'stack/cart'), comments = {
+      { id = 'G1', databaseId = 1, path = 'src/cart.ts', line = 3, body = 'one' },
+      { id = 'G2', databaseId = 2, path = 'src/cart.ts', line = 4, body = 'two' },
+      { id = 'G3', databaseId = 3, path = 'src/cart.ts', line = 5, body = 'three' },
+      { id = 'MINE', databaseId = 4, path = 'src/cart.ts', line = 12, body = 'Return a copy?' },
+    } }
+    p.reviews.PRR_g = 'PENDING'
+  end })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true,
+    forge_post = { state = 'pending', pr = 12, repo = 'github.com/acme/shop', review_id = 'PRR_g', comment_id = 'MINE' } })
+  local asked = answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  forge.PENDING_COMMENTS = saved
   h.ok(asked[1].msg:find('(in your pending review already)', 1, true), asked[1].msg)
+  h.ok(asked[1].msg:find('already has 3 comments from elsewhere', 1, true) and asked[1].msg:find('src/cart.ts:5', 1, true), asked[1].msg)
   h.eq({ 'submitPullRequestReview' }, ops(calls))
-  h.eq({ 'posted', 'PRRC_7' }, { get(s, a.id).forge_post.state, get(s, a.id).forge_post.comment_id })
+  h.eq('posted', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('full stack: a PR with only other pending comments gets no verdict; it is mentioned', function()
+  local s, calls = setup_review('fullother', { edit = function(p, d)
+    p.prs['acme/shop#13'].pending = { id = 'PRR_ui', commit = rev(d, 'stack/ui'), comments = {
+      { id = 'G13', databaseId = 9, path = 'src/cart.ts', line = 2, body = 'From Graphite.' } } }
+    p.reviews.PRR_ui = 'PENDING'
+  end })
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  add_comment(s, 'src/index.ts', 'add', 8, 8, 'One item only?', { in_review = true })
+  local asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.ok(asked[1].msg:find('PR #13: your pending review there (1 comment from elsewhere) is not submitted from the full stack', 1, true), asked[1].msg)
+  h.ok(not asked[1].msg:find('PR #13 (acme/shop)', 1, true), asked[1].msg)
+  local subs = vim.tbl_filter(function(x)
+    return x.op == 'submitPullRequestReview'
+  end, mutations(calls))
+  h.eq(1, #subs)
+  h.eq('PENDING', fake_state(calls).reviews.PRR_ui)
+  view.close()
+end)
+
+h.test('an earlier review GitHub does not answer about (not NOT_FOUND) is not taken as gone: left out, not added again', function()
+  local s, calls = setup_review('transient', { edit = function(p)
+    p.fail = { review_null = { 'PRR_x' } }
+    p.reviews.PRR_x = 'PENDING'
+  end })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true,
+    forge_post = { state = 'pending', pr = 12, repo = 'github.com/acme/shop', review_id = 'PRR_x', comment_id = 'PRRC_x' } })
+  local asked = answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('src/cart.ts:12: could not check your earlier pending review on GitHub; try again', 1, true), asked[1].msg)
+  h.eq({}, ops(calls))
+  h.eq('pending', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('batches: by count and by the encoded size of the bodies; PR files read page by page', function()
+  local saved = { forge.POST_BATCH, forge.POST_BATCH_BYTES, forge.FILES_PAGE }
+  forge.POST_BATCH, forge.POST_BATCH_BYTES, forge.FILES_PAGE = 2, 1000, 1
+  local s, calls = setup_review('batches')
+  -- quotes double when encoded: 300 raw bytes each, over 600 encoded
+  add_comment(s, 'src/cart.ts', 'add', 3, 3, string.rep('"', 300), { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 4, 4, string.rep('"', 300), { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 5, 5, 'a', { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 6, 6, 'b', { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 7, 7, 'c', { in_review = true })
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  forge.POST_BATCH, forge.POST_BATCH_BYTES, forge.FILES_PAGE = saved[1], saved[2], saved[3]
+  local adds = 0
+  local pages = 0
+  for _, x in ipairs(h.read_calls(calls)) do
+    local q = x.argv[5] or ''
+    if q:find('addPullRequestReviewThread(', 1, true) then
+      adds = adds + 1
+    end
+    if (x.argv[3] or ''):find('/files?per_page=1&page=', 1, true) then
+      pages = pages + 1
+    end
+  end
+  h.eq(4, adds, 'one, one, two, one')
+  h.eq(3, pages, 'two files, then an empty page')
+  h.eq(7, #ops(calls))
+  view.close()
+end)
+
+h.test('a posted comment with local replies stays visible (collapsed) next to its GitHub thread', function()
+  local s, calls = setup_review('replies2')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  comments.reply(s.cm.store, a.id, 'Agent: done in abc123.', { kind = 'agent', name = 'claude' })
+  comments.save(s.cm.store)
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  idle(s)
+  local all = all_vlines(s)
+  h.ok(all:find('posted to GitHub #12', 1, true), all)
+  h.ok(all:find('GitHub #12', 1, true) and all:find('more line', 1, true), all)
   view.close()
 end)
 
