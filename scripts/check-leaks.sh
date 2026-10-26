@@ -19,7 +19,8 @@ done
 find_pids() {
   if [ -r /proc/self/environ ]; then
     for d in /proc/[0-9]*; do
-      if tr '\0' '\n' <"$d/environ" 2>/dev/null | grep -qxF "$marker"; then
+      # (the redirect's own error, e.g. another user's process, is silenced too)
+      if { tr '\0' '\n' <"$d/environ"; } 2>/dev/null | grep -qxF "$marker"; then
         echo "${d#/proc/}"
       fi
     done

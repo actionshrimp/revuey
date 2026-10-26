@@ -47,7 +47,11 @@ is available.
   mutations rewrite it, and threads they add go into the threads file (pending until
   submitted), so a refetch shows them. Every mutation is recorded as `{op, alias, input}` (the
   input object parsed) in `REVUEY_FAKE_GH_MUTATIONS`, which tests read to assert exactly what
-  would be posted; REST calls with `-f`/`-F`/`-X` are refused. Posting is only ever tested
+  would be posted; REST calls with `-f`/`-F`/`-X` are refused. It pages pending reviews' comments
+  by the query's `first`/`after`, can apply a mutation and then answer nothing (`fail.lost`,
+  `fail.lost_create`: a timeout after GitHub did the work; `fail.down_after_lost`: GitHub
+  unreachable afterwards) and answer a review `node` with a null that is not NOT_FOUND
+  (`fail.review_null`). Posting is only ever tested
   against this fake: no spec or manual check sends a mutation to GitHub.
 - **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
   threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the

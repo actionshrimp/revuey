@@ -1130,7 +1130,8 @@ M.PENDING_COMMENTS = 100 -- comments of a pending review read by the preflight
 ---@field id string
 ---@field commit? string       commit it is bound to
 ---@field comments {id:string, database_id?:integer, url?:string, path?:string, line?:integer, start_line?:integer, original_line?:integer, body:string, reply_to?:string, subject?:string}[]
----@field total integer        comments it has (more than `comments` when cut)
+---@field total integer        comments it has
+---@field cursor? string       more comments to read (fetch_pending_comments)
 
 ---@class revuey.ForgePreflight  a PR as GitHub has it right before posting
 ---@field id string            node id
@@ -1146,12 +1147,16 @@ M.PENDING_COMMENTS = 100 -- comments of a pending review read by the preflight
 local PENDING_FIELDS = [[
 fragment pending on PullRequestReview {
   id viewerDidAuthor commit { oid }
-  comments(first: %d) { totalCount nodes { id databaseId url path line startLine originalLine subjectType body replyTo { id } } }
+  comments(first: %d) { totalCount pageInfo { hasNextPage endCursor } nodes { ...pcomment } }
+}]]
+local PCOMMENT_FIELDS = [[
+fragment pcomment on PullRequestReviewComment {
+  id fullDatabaseId url path line startLine originalLine subjectType body replyTo { id }
 }]]
 
 ---The preflight for posting: the viewer's login, then per PR (`{owner, name, number}`) its node
----id, state, head commit, author and the viewer's pending review(s) with their comments; and
----the state of reviews revuey added comments to earlier (`review_ids`: still PENDING, or
+---id, state, head commit, author and the viewer's pending review(s) with their first comments;
+---and the state of reviews revuey added comments to earlier (`review_ids`: still PENDING, or
 ---submitted meanwhile, e.g. from another tool, or gone).
 ---@param review_ids? string[]
 ---@return string query, table<string, table> aliases
@@ -1169,21 +1174,68 @@ function M.build_preflight_query(prs, review_ids)
       :format(alias, lit(p.owner), lit(p.name), p.number)
   end
   parts[#parts + 1] = '}'
-  parts[#parts + 1] = PENDING_FIELDS:format(M.PENDING_COMMENTS)
+  if #prs > 0 then
+    parts[#parts + 1] = PENDING_FIELDS:format(M.PENDING_COMMENTS)
+    parts[#parts + 1] = PCOMMENT_FIELDS
+  end
   return table.concat(parts, '\n'), aliases
 end
 
+---The next comments of a pending review (`q: node(id) { ... on PullRequestReview { comments(first,
+---after) } }`).
+function M.build_pending_page_query(review_id, after)
+  return ('query {\n  q: node(id: %s) { ... on PullRequestReview { comments(first: %d, after: %s) { pageInfo { hasNextPage endCursor } nodes { ...pcomment } } } }\n}\n%s')
+    :format(lit(review_id), M.PENDING_COMMENTS, lit(after), PCOMMENT_FIELDS)
+end
+
+---A comment of a pending review.
+function M.normalize_pending_comment(c)
+  if type(c) ~= 'table' or type(c.id) ~= 'string' then
+    return nil
+  end
+  local dbid = c.fullDatabaseId
+  return {
+    id = c.id,
+    database_id = (type(dbid) == 'string' or type(dbid) == 'number') and dbid or nil,
+    url = str(c.url),
+    path = str(c.path),
+    line = int(c.line),
+    start_line = int(c.startLine),
+    original_line = int(c.originalLine),
+    subject = str(c.subjectType),
+    body = str(c.body) or '',
+    reply_to = type(c.replyTo) == 'table' and str(c.replyTo.id) or nil,
+  }
+end
+
+---Did GraphQL report `alias` as not found (a NOT_FOUND error at that path)? Only that means a
+---node is gone; a null for any other reason (timeouts, permissions) is unknown.
+local function not_found(errors, alias)
+  for _, e in ipairs(errors or {}) do
+    if type(e) == 'table' and e.type == 'NOT_FOUND' and type(e.path) == 'table' and e.path[1] == alias then
+      return true
+    end
+  end
+  return false
+end
+
 ---Map a preflight answer: viewer login, alias -> revuey.ForgePreflight (nil: the PR did not
----resolve), and review id -> its state (`false`: gone) for the `review_ids` asked.
+---resolve), and review id -> its state for the `review_ids` asked: a state, `false` when GitHub
+---says it does not exist (NOT_FOUND in `errors`), nil when unknown. A pending review whose
+---comments go on has `cursor` set (forge_post_view pages them with build_pending_page_query).
 ---@return string? viewer, table<string, revuey.ForgePreflight?>, table<string, string|false>
-function M.normalize_preflight(data, aliases)
+function M.normalize_preflight(data, aliases, errors)
   local viewer = type(data) == 'table' and type(data.viewer) == 'table' and str(data.viewer.login) or nil
   local out, reviews = {}, {}
   for alias, a in pairs(aliases) do
     local v = type(data) == 'table' and data[alias]
     local n = type(v) == 'table' and v.pullRequest
     if a.review then
-      reviews[a.review] = type(v) == 'table' and str(v.state) or false
+      if type(v) == 'table' and str(v.state) then
+        reviews[a.review] = str(v.state)
+      elseif not_found(errors, alias) then
+        reviews[a.review] = false
+      end
     end
     if type(n) == 'table' and type(n.id) == 'string' then
       local pf = {
@@ -1206,22 +1258,10 @@ function M.normalize_preflight(data, aliases)
       if r then
         local p = { id = r.id, commit = type(r.commit) == 'table' and str(r.commit.oid) or nil, comments = {} }
         for _, c in ipairs(nodes(r.comments)) do
-          if type(c) == 'table' and type(c.id) == 'string' then
-            p.comments[#p.comments + 1] = {
-              id = c.id,
-              database_id = int(c.databaseId),
-              url = str(c.url),
-              path = str(c.path),
-              line = int(c.line),
-              start_line = int(c.startLine),
-              original_line = int(c.originalLine),
-              subject = str(c.subjectType),
-              body = str(c.body) or '',
-              reply_to = type(c.replyTo) == 'table' and str(c.replyTo.id) or nil,
-            }
-          end
+          p.comments[#p.comments + 1] = M.normalize_pending_comment(c)
         end
         p.total = type(r.comments) == 'table' and int(r.comments.totalCount) or #p.comments
+        p.cursor = page(r.comments)
         pf.pending = p
         pf.pending_other = #mine > 1 and (#mine - 1) or nil
       end
@@ -1229,6 +1269,27 @@ function M.normalize_preflight(data, aliases)
     end
   end
   return viewer, out, reviews
+end
+
+---Read the rest of a pending review's comments (after the preflight's first page). Call inside
+---git.async. Returns true, or false and a reason (`p.cursor` stays set: incomplete).
+---@param p revuey.ForgePending
+function M.fetch_pending_comments(p, host)
+  for _ = 1, 50 do
+    if not p.cursor then
+      return true
+    end
+    local data, err = M.run_graphql(M.build_pending_page_query(p.id, p.cursor), host)
+    local conn = data and type(data.q) == 'table' and type(data.q.comments) == 'table' and data.q.comments
+    if not conn then
+      return false, err or 'the pending review\'s comments came back empty'
+    end
+    for _, c in ipairs(nodes(conn)) do
+      p.comments[#p.comments + 1] = M.normalize_pending_comment(c)
+    end
+    p.cursor = page(conn)
+  end
+  return p.cursor == nil, 'too many pages'
 end
 
 ---@class revuey.ForgeFile  one file of a PR's diff as GitHub has it (REST `pulls/N/files`)
@@ -1291,7 +1352,7 @@ function M.build_add_mutation(review_id, items)
     local alias = 'm' .. i
     aliases[alias] = it
     if it.kind == 'reply' then
-      parts[#parts + 1] = ('  %s: addPullRequestReviewThreadReply(input: {pullRequestReviewId: %s, pullRequestReviewThreadId: %s, body: %s}) { comment { id databaseId url } }')
+      parts[#parts + 1] = ('  %s: addPullRequestReviewThreadReply(input: {pullRequestReviewId: %s, pullRequestReviewThreadId: %s, body: %s}) { comment { id fullDatabaseId url } }')
         :format(alias, lit(review_id), lit(it.thread_id), lit(it.body))
     else
       local f = { ('pullRequestReviewId: %s'):format(lit(review_id)), ('path: %s'):format(lit(it.path)), ('body: %s'):format(lit(it.body)) }
@@ -1305,7 +1366,7 @@ function M.build_add_mutation(review_id, items)
           f[#f + 1] = 'startSide: ' .. (it.start_side or it.side)
         end
       end
-      parts[#parts + 1] = ('  %s: addPullRequestReviewThread(input: {%s}) { thread { id comments(first: 1) { nodes { id databaseId url } } } }')
+      parts[#parts + 1] = ('  %s: addPullRequestReviewThread(input: {%s}) { thread { id comments(first: 1) { nodes { id fullDatabaseId url } } } }')
         :format(alias, table.concat(f, ', '))
     end
   end
@@ -1324,12 +1385,12 @@ function M.added(v)
     return {
       thread_id = v.thread.id,
       comment_id = type(c) == 'table' and str(c.id) or nil,
-      database_id = type(c) == 'table' and int(c.databaseId) or nil,
+      database_id = type(c) == 'table' and (str(c.fullDatabaseId) or int(c.fullDatabaseId)) or nil,
       url = type(c) == 'table' and str(c.url) or nil,
     }
   end
   if type(v.comment) == 'table' and type(v.comment.id) == 'string' then
-    return { comment_id = v.comment.id, database_id = int(v.comment.databaseId), url = str(v.comment.url) }
+    return { comment_id = v.comment.id, database_id = str(v.comment.fullDatabaseId) or int(v.comment.fullDatabaseId), url = str(v.comment.url) }
   end
 end
 

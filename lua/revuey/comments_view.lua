@@ -397,7 +397,9 @@ local function thread_lines(s, c, p, width)
     end
   end
   -- resolved, dismissed and (GitHub) outdated threads are collapsed to their first line
-  local resolved = (c.status == 'resolved' or c.status == 'dismissed' or (g and g.outdated)) and not expanded
+  -- (a posted comment kept for its local replies too: its GitHub thread has the body)
+  local posted = not g and type(c.forge_post) == 'table' and c.forge_post.state == 'posted'
+  local resolved = (c.status == 'resolved' or c.status == 'dismissed' or (g and g.outdated) or posted) and not expanded
   add_text(c.body, '│ ', '│ ')
   for _, r in ipairs(c.thread or {}) do
     if not r.deleted then
@@ -507,6 +509,12 @@ function M.superseded(cmt, ids)
   local fp = type(cmt.forge_post) == 'table' and cmt.forge_post or nil
   if not fp or not fp.state then
     return false
+  end
+  for _, r in ipairs(cmt.thread or {}) do
+    if not r.deleted then
+      -- local replies (an agent's, your own) were never posted: keep the local copy, collapsed
+      return false
+    end
   end
   if fp.comment_id and ids[fp.comment_id] then
     return true

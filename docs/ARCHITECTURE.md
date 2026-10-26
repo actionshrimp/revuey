@@ -1217,9 +1217,13 @@ are in `reports/Terminal code review tool landscape.md`.
       host: `viewer { login }`, per PR `pullRequest { id number url state isDraft headRefOid
       author { login } reviews(states: [PENDING], first: 5) { nodes { id viewerDidAuthor commit
       { oid } comments(first: 100) { totalCount nodes { id databaseId url path line startLine
-      originalLine subjectType body replyTo { id } } } } } }`, and `node(id)` of each review
-      revuey added comments to earlier (`... on PullRequestReview { id state }`). Then
-      `forge_post.plan`. `add_to_pending`: per PR, the viewer's pending review is reused (GitHub
+      originalLine subjectType body replyTo { id } } } } } }` (`fullDatabaseId`, not the
+      deprecated `databaseId`; further pages through `node(id) { ... on PullRequestReview {
+      comments(first: 100, after) } }`, so a long pending review is read whole), and `node(id)`
+      of each review revuey added comments to earlier (`... on PullRequestReview { id state }`):
+      gone only on a NOT_FOUND error at that alias (checked read-only against GitHub); any
+      other null is unknown, and those comments are left out ("try again"), never re-added.
+      Then `classify` (below) and `forge_post.plan`. `add_to_pending`: per PR, the viewer's pending review is reused (GitHub
       allows one per user and PR; it may come from GitHub's UI or Graphite and is never
       replaced, emptied or deleted), else `addPullRequestReview(input: {pullRequestId,
       commitOID: <reviewed tip>})` (no event: PENDING), only when there is something to add;
@@ -1227,7 +1231,7 @@ are in `reports/Terminal code review tool landscape.md`.
       startLine?, startSide?} | {..., subjectType: FILE})` and
       `addPullRequestReviewThreadReply(input: {pullRequestReviewId, pullRequestReviewThreadId,
       body})`, aliased `m1..` in batches of 10 (and under 60KB of query text, argv limits) per
-      `gh` call; GraphQL runs a mutation document's fields one after another and reports a
+      `gh` call, sized by the JSON-encoded bodies (the query is one argument); GraphQL runs a mutation document's fields one after another and reports a
       failed one with `path: [alias]` (`forge.alias_error`), so one bad comment fails alone.
       Each added comment is recorded at once (`forge_post = {state = 'pending', pr, repo,
       review_id, thread_id, comment_id, database_id, url}`) and saved after every batch, so a
@@ -1239,13 +1243,29 @@ are in `reports/Terminal code review tool landscape.md`.
       (`schema.docs.graphql`) offline; the preflight was also run read-only against a public PR.
       The user decided "local until submit": the toggle never talks to GitHub; add and submit
       are separate functions so the toggle could sync later.
-    - **Already there.** `forge_post.in_pending`: an item is in the pending review when its
-      recorded `comment_id` is among the review's comments, or a comment there has the same
-      body and path (a thread) or the same body and is a reply: an answer lost to a timeout
-      after GitHub applied the mutation is then not added twice. A recorded review whose
-      `node` state is no longer PENDING was submitted elsewhere (e.g. from Graphite): its
-      comments are marked posted, never re-added; one that no longer resolves was discarded:
-      the mark is cleared and toggled comments are added again.
+    - **Already there** (`forge_post_view.classify`, after the preflight). A comment revuey
+      recorded as pending is in the pending review only when its recorded `comment_id` is
+      there (`forge_post.by_id`; recorded review still PENDING): then it is never planned
+      again (so a comment now outdated or on a file changed since is still listed as in the
+      pending review, which publishes it), and the confirmation shows GitHub's text when it was
+      edited here since. Text alone never decides: the same `nit` on another line, or "Done"
+      in another thread, is someone else's. A recorded comment not found there (deleted on
+      GitHub, or the review discarded: NOT_FOUND) is forgotten and added again only while it
+      is still added to the review (`ci` off and deleted on GitHub: gone for good). A recorded
+      review whose state is no longer PENDING was submitted elsewhere (e.g. Graphite): marked
+      posted, never re-added. A pending review whose comments could not all be read leaves its
+      recorded comments out. **Lost answers:** an add or create call that returns no data (a
+      timeout: GitHub may have applied it) makes revuey read the pending review again
+      (`reread`) and match the batch strictly (`forge_post.match_lost`): same body and, for a
+      thread, path, line, start line (or FILE) and not a reply; for a reply, a reply to a
+      comment of the same thread (ids from the fetched threads); one pending comment is never
+      given to two local comments (`claimed`). GitHub's review comments do not say their
+      side, so a LEFT and a RIGHT comment with the same text on the same number would be taken
+      for each other (this needs a lost answer too). A lost create looks for the review GitHub
+      made before anything else. What still cannot be told (GitHub unreachable) is recorded
+      `unknown` with the review id, the confirmation offers only Cancel, and the next prepare
+      matches it strictly before adding anything; an `unknown` one whose review was published
+      meanwhile is untoggled and left out with a note to check GitHub.
     - **The user's pending review.** Its comments that revuey did not add are listed in the
       confirmation by `path:line` ("submitted too"), with the count. When it is bound to another
       commit than the reviewed tip (`commit.oid`), GitHub numbers its threads in that commit:
@@ -1262,13 +1282,18 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Commit binding.** A new pending review gets `commitOID` = the reviewed tip, after the
       preflight showed `headRefOid` equal to it. A push between the preflight and the add binds
       the review to the older commit, whose lines are the ones checked.
+    - **Full stack.** Only PRs with revuey's comments get the verdict; a PR with only a
+      pending review of the user's from elsewhere is named in the confirmation and not
+      submitted. The body editor (`Write body`) returns to the confirmation however it is
+      closed (`WinClosed`), so a submit is never held.
     - **Posted.** After a successful submit, the PR's pending comments become `posted`
       (`in_review = false`, ids kept, `posted_at`), and `forge_view.update(s, true)` refetches
       the threads. **Not drawn twice:** a local comment with `forge_post` whose GitHub comment
       (`comment_id`, or for a new thread its `thread_id`) is among the threads drawn in the scope
       (`gH` mode respected) is not drawn, counted or listed (`comments_view.superseded`): the
       GitHub thread is the live one (replies from others, resolution), and a pending one
-      already shows `pending (your unsubmitted review)`. With threads hidden, not fetched or
+      already shows `pending (your unsubmitted review)`. A posted comment with local replies
+      (never posted) stays drawn, collapsed to its first line (`cz` expands). With threads hidden, not fetched or
       failed, the local comment shows with its `posted`/`pending` chip.
     - **Concurrency.** One submit at a time (`forge_post_view.job`, across reviews). It is not
       tied to the review's kill-on-close: closing mid-submit lets the current `gh` call finish
