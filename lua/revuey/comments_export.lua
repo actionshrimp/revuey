@@ -47,6 +47,9 @@ local function status_note(c)
     notes[#notes + 1] = 'by ' .. author_name(c.author) .. (c.author.kind == 'agent' and c.author.name and c.author.name:lower() ~= 'agent' and ' (agent)' or '')
       .. (c.author.kind == 'ai' and c.author.name and ' (AI review)' or '')
   end
+  if type(c.forge_reply) == 'table' then
+    notes[#notes + 1] = ('a reply to GitHub #%s thread %s'):format(tostring(c.forge_reply.pr), tostring(c.forge_reply.url or ''))
+  end
   if c.outdated then
     notes[#notes + 1] = 'outdated: the code changed since this comment was made'
   end

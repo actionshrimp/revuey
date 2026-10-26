@@ -38,6 +38,20 @@ local function cm(s)
   return s.cm
 end
 
+---Which GitHub review threads are drawn: 'all' (resolved and outdated ones collapsed), 'open'
+---(resolved ones left out), 'none'. `forge.threads.show` is the start; the forge_threads key
+---cycles it per review.
+local FORGE_SHOW = { 'all', 'open', 'none' }
+local function forge_show(s)
+  local c = cm(s)
+  if not c.forge_show then
+    local t = (config.options.forge or {}).threads
+    local v = type(t) == 'table' and t.show or nil
+    c.forge_show = vim.tbl_contains(FORGE_SHOW, v) and v or 'all'
+  end
+  return c.forge_show
+end
+
 -- ---------------------------------------------------------------------------
 -- Review info, store, watcher
 -- ---------------------------------------------------------------------------
@@ -266,6 +280,9 @@ local function author_label(a)
   if a.kind == 'user' or not a.kind then
     return a.name or 'You'
   end
+  if a.kind == 'forge' then
+    return a.name or 'ghost' -- a GitHub login (the thread header says GitHub)
+  end
   local kind = ({ ai = 'AI', agent = 'Agent' })[a.kind] or a.kind
   if a.name and a.name ~= '' and a.name:lower() ~= a.kind then
     return a.name .. ' (' .. kind:lower() .. ')' -- "claude (agent)": never mistaken for the user
@@ -275,6 +292,9 @@ end
 
 ---Highlight of an author: agents and AI stand out from the user.
 local function author_hl(a)
+  if a and a.kind == 'forge' then
+    return 'RevueyForgeAuthor'
+  end
   return a and (a.kind == 'agent' or a.kind == 'ai') and 'RevueyCommentAgent' or 'RevueyCommentAuthor'
 end
 
@@ -292,13 +312,40 @@ local function thread_lines(s, c, p, width)
     head[#head + 1] = { text, hl }
     used = used + 3 + api.nvim_strwidth(text)
   end
+  local g = c.forge
+  if g then
+    -- a GitHub review thread (read-only): its PR first, then its state there
+    head[1] = { '╭─ ', 'RevueyForgeBorder' }
+    head[#head + 1] = { ' · ', 'RevueyCommentMeta' }
+    head[#head + 1] = { 'GitHub #' .. g.pr, 'RevueyForgeNumber' }
+    used = used + 3 + api.nvim_strwidth('GitHub #' .. g.pr)
+  end
   if c.file_level then
     chip('file', 'RevueyCommentMeta')
+  end
+  if g then
+    if g.pending then
+      chip('pending (your unsubmitted review)', 'RevueyCommentDraft')
+    end
+    if g.resolved then
+      chip(g.resolved_by and ('resolved by ' .. g.resolved_by) or 'resolved', 'RevueyCommentResolved')
+    end
+    if g.outdated then
+      chip('outdated', 'RevueyCommentOutdated')
+    end
+    if p.how == 'moved' then
+      chip('GitHub line ' .. tostring(c.anchor.start_line), 'RevueyCommentMeta')
+    end
+  end
+  if c.forge_reply then
+    chip('local reply to GitHub #' .. tostring(c.forge_reply.pr) .. ' thread', 'RevueyForgeNumber')
   end
   if c.ai and c.status ~= 'accepted' then
     chip(c.ai.severity or 'minor', M.SEVERITY_HL[c.ai.severity] or 'RevueyAiMinor')
   end
-  if c.status == 'draft' then
+  if g then
+    -- a GitHub thread's state is in its own chips above
+  elseif c.status == 'draft' then
     chip('draft', 'RevueyCommentDraft')
   elseif c.status == 'resolved' then
     chip('resolved', 'RevueyCommentResolved')
@@ -343,17 +390,25 @@ local function thread_lines(s, c, p, width)
       body[#body + 1] = ch
     end
   end
-  local resolved = (c.status == 'resolved' or c.status == 'dismissed') and not expanded
+  -- resolved, dismissed and (GitHub) outdated threads are collapsed to their first line
+  local resolved = (c.status == 'resolved' or c.status == 'dismissed' or (g and g.outdated)) and not expanded
   add_text(c.body, '│ ', '│ ')
   for _, r in ipairs(c.thread or {}) do
     if not r.deleted then
-      body[#body + 1] = {
+      local rh = {
         { '│ ↳ ', B },
         { author_label(r.author), author_hl(r.author) },
         { ' · ' .. ago(r.created_at), 'RevueyCommentMeta' },
       }
+      if r.pending then
+        rh[#rh + 1] = { ' · pending', 'RevueyCommentDraft' }
+      end
+      body[#body + 1] = rh
       add_text(r.body, '│   ', '│   ')
     end
+  end
+  if g and g.hidden > 0 then
+    body[#body + 1] = { { '│ ', B }, { ('… %d more on GitHub'):format(g.hidden), 'RevueyCommentMeta' } }
   end
   local limit = resolved and 1 or max
   if not expanded and #body > limit then
@@ -370,6 +425,16 @@ local function thread_lines(s, c, p, width)
     vim.list_extend(lines, body)
   end
   lines[#lines + 1] = { { '╰─', B } }
+  if g then
+    -- the GitHub thread's border, so it never reads as a local comment
+    for _, l in ipairs(lines) do
+      for _, ch in ipairs(l) do
+        if ch[2] == B then
+          ch[2] = 'RevueyForgeBorder'
+        end
+      end
+    end
+  end
   return lines
 end
 
@@ -479,17 +544,25 @@ function M.render(s, o)
   if changed then
     pcall(comments.save, store, M.review_info(s))
   end
+  M.place_forge(s, ctx, idx, attach)
   local width = thread_width(s)
   if not c.hidden then
     for row, items in pairs(attach) do
       local vl = {}
       local headed = {}
-      -- in-file items first, then outdated, then the end-of-review groups
-      local rank = { outdated = 1, missing = 2, hidden = 3 }
+      -- in-file items first, then outdated, then the end-of-review groups; GitHub threads after
+      -- local comments, in the order they were started
+      local rank = { outdated = 1, gh_outside = 2, missing = 3, hidden = 4, gh_missing = 5 }
       table.sort(items, function(x, y)
         local rx, ry = rank[x.group] or 0, rank[y.group] or 0
         if rx ~= ry then
           return rx < ry
+        end
+        local fx, fy = x.c.forge ~= nil, y.c.forge ~= nil
+        if fx ~= fy then
+          return fy
+        elseif fx and x.c.created_at ~= y.c.created_at then
+          return x.c.created_at < y.c.created_at
         end
         return x.c.id < y.c.id
       end)
@@ -497,6 +570,8 @@ function M.render(s, o)
         outdated = 'Outdated comments',
         missing = 'Comments on files no longer in this review',
         hidden = 'Comments on files not shown in this view',
+        gh_outside = 'GitHub threads on lines not shown here',
+        gh_missing = 'GitHub threads on files not shown here',
       }
       for _, it in ipairs(items) do
         if it.group and not headed[it.group] then
@@ -504,7 +579,7 @@ function M.render(s, o)
           vl[#vl + 1] = { { '' } }
           vl[#vl + 1] = { { titles[it.group], 'RevueyCommentOutdated' } }
         end
-        if it.group == 'missing' or it.group == 'hidden' then
+        if it.group == 'missing' or it.group == 'hidden' or it.group == 'gh_missing' then
           vl[#vl + 1] = { { comments.location(it.c) .. ' (' .. (it.c.file_level and 'file' or it.c.anchor.side) .. ')', 'RevueyFilePath' } }
         end
         vim.list_extend(vl, thread_lines(s, it.c, it.p, width))
@@ -517,6 +592,88 @@ function M.render(s, o)
   if #api.nvim_list_uis() > 0 and s.diff_win and api.nvim_win_is_valid(s.diff_win) then
     pcall(api.nvim__redraw, { win = s.diff_win, statuscolumn = true, valid = false })
   end
+end
+
+---Place the GitHub review threads of the scope's open PRs (forge_view.thread_items) and add them
+---to `attach` like comments: on their lines, else in a group at the end of their file ("not
+---shown here": outdated, changed locally, outside the hunks), else at the end of the review.
+---Gutter bars, `cover` (so `cz`, `cr` and `gx` find them) and `jump` (`]m`, the list) as for
+---comments; the items live in `c.forge_items` only, never in the comments store.
+function M.place_forge(s, ctx, idx, attach)
+  local c = cm(s)
+  c.forge_items, c.forge_place, c.forge_rows = {}, {}, {}
+  local fv = require('revuey.forge_view')
+  local items = fv.thread_items(s)
+  if s.forge then
+    s.forge.threads_drawn = fv.threads_signature(s)
+  end
+  local show = forge_show(s)
+  if show == 'none' then
+    return
+  end
+  local ft = require('revuey.forge_threads')
+  for _, x in ipairs(items) do
+    local it = x.item
+    if not (show == 'open' and it.status == 'resolved') then
+      local p = ft.place(x.thread, ctx)
+      c.forge_items[it.id] = it
+      c.forge_place[it.id] = p
+      local path = p.path
+      local row, first, group
+      if p.how == 'file' then
+        row = idx.file_row[path]
+        first = row
+      elseif p.how == 'line' or p.how == 'moved' then
+        local L = idx.lines[path] and idx.lines[path][p.side]
+        first, row = L and L[p.start_line], L and L[p.end_line]
+        if first and row and row < first then
+          first, row = row, first
+        end
+        first = first or row
+      end
+      if not row and p.how ~= 'missing' then
+        row = idx.file_last[path]
+        first = row
+        group = row and 'gh_outside' or nil
+      end
+      if not row then
+        row = #s.layout.lines
+        first = row
+        group = 'gh_missing'
+      end
+      if row > 0 then
+        local hl = (it.forge.resolved or it.forge.outdated) and 'RevueyCommentResolved' or 'RevueyForgeSign'
+        for r = first, row do
+          if not group and not c.signs[r] then
+            c.signs[r] = hl -- a local comment's bar wins on a shared row
+          end
+          c.cover[r] = c.cover[r] or {}
+          table.insert(c.cover[r], it.id)
+        end
+        c.jump[it.id] = first
+        c.forge_rows[it.id] = { first = first, last = row, group = group }
+        attach[row] = attach[row] or {}
+        table.insert(attach[row], { c = it, p = p, group = group })
+      end
+    end
+  end
+end
+
+---`gH`: cycle the GitHub threads shown: all (resolved and outdated collapsed), open only, none.
+function M.toggle_forge(s)
+  if not s then
+    return
+  end
+  local c = cm(s)
+  local cur = forge_show(s)
+  for i, v in ipairs(FORGE_SHOW) do
+    if v == cur then
+      c.forge_show = FORGE_SHOW[i % #FORGE_SHOW + 1]
+    end
+  end
+  M.render(s)
+  local text = { all = 'all (resolved and outdated collapsed)', open = 'open only (resolved hidden)', none = 'hidden' }
+  vim.notify('revuey: GitHub threads: ' .. text[c.forge_show], vim.log.levels.INFO)
 end
 
 ---Redraw comments (and the panel's counts) without re-rendering the review.
@@ -711,7 +868,7 @@ function M.with_comment(s, fn, row)
   local ids = c.cover and c.cover[row] or {}
   local list = {}
   for _, id in ipairs(ids) do
-    local cmt = comments.get(c.store, id)
+    local cmt = comments.get(c.store, id) or (c.forge_items and c.forge_items[id])
     if cmt then
       list[#list + 1] = cmt
     end
@@ -724,13 +881,34 @@ function M.with_comment(s, fn, row)
   vim.ui.select(list, {
     prompt = 'Comment',
     format_item = function(x)
-      return comments.location(x) .. '  ' .. comments.first_line(x.body)
+      return comments.location(x) .. '  ' .. (x.forge and ('[GitHub #' .. x.forge.pr .. '] ') or '') .. comments.first_line(x.body)
     end,
   }, function(choice)
     if choice then
       fn(choice)
     end
   end)
+end
+
+---A GitHub thread under the cursor for an action that only works on local comments: says so
+---(and how to act on it) and returns true.
+local function forge_refused(cmt, what)
+  if not cmt.forge then
+    return false
+  end
+  local k = config.options.keymaps
+  local key = function(x)
+    return type(x) == 'table' and x[1] or x
+  end
+  vim.notify(
+    ('revuey: GitHub threads are read-only here: %s it on GitHub (%s opens it)%s'):format(
+      what,
+      key(k.forge_open) or 'gx',
+      key(k.comment_reply) and ('; ' .. key(k.comment_reply) .. ' adds a local reply') or ''
+    ),
+    vim.log.levels.INFO
+  )
+  return true
 end
 
 local function attach_row(s, cmt)
@@ -749,6 +927,9 @@ end
 ---`ce`: edit a comment (a draft continues where it was left).
 function M.edit(s)
   M.with_comment(s, function(cmt)
+    if forge_refused(cmt, 'edit') then
+      return
+    end
     local store = cm(s).store
     local was_draft = cmt.status == 'draft'
     local function update(fn, text)
@@ -808,6 +989,9 @@ end
 ---`cr`: reply to a comment's thread.
 function M.reply(s)
   M.with_comment(s, function(cmt)
+    if cmt.forge then
+      return M.reply_forge(s, cmt)
+    end
     local store = cm(s).store
     editor.open({
       session = s,
@@ -847,9 +1031,75 @@ function M.reply(s)
   end)
 end
 
+---`cr` on a GitHub thread: a reply that stays local. It is a new local comment on the thread's
+---rows (anchored like a selection of them, so it re-anchors as any comment) carrying
+---`forge_reply` (the thread, its PR and the last comment's ids), so a later "post review" can send
+---it as a reply in that thread. Nothing goes to GitHub. Refused for a thread not on shown lines.
+function M.reply_forge(s, item)
+  local c = cm(s)
+  local p = c.forge_place and c.forge_place[item.id]
+  local rows = c.forge_rows and c.forge_rows[item.id]
+  if not p or not rows or rows.group then
+    return vim.notify(
+      'revuey: this GitHub thread is not on a line shown here, so a local reply has nowhere to go; '
+        .. 'gx opens it on GitHub',
+      vim.log.levels.INFO
+    )
+  end
+  local store = M.sync_store(s)
+  local anchor, file_level
+  if p.how == 'file' then
+    anchor, file_level = comments.file_anchor(p.path), true
+  else
+    local entries = {}
+    for r = rows.first, rows.last do
+      entries[#entries + 1] = s.layout.map[r]
+    end
+    anchor = comments.anchor_from_rows(s.review.files, review_mod.units(s.review), entries, context(s).get_line)
+    if not anchor then
+      return vim.notify('revuey: no diff line to anchor a reply to', vim.log.levels.INFO)
+    end
+  end
+  local g = item.forge
+  local link = {
+    thread_id = g.thread_id,
+    pr = g.pr,
+    repo = g.repo,
+    url = g.url,
+    comment_id = g.comment_id,
+    database_id = g.database_id,
+  }
+  local function new(text, status)
+    local cmt = comments.new(anchor, text, { status = status })
+    cmt.forge_reply = link
+    comments.put(store, cmt)
+    return cmt
+  end
+  editor.open({
+    session = s,
+    title = ('Local reply · GitHub #%d · %s'):format(g.pr, title(anchor, file_level)),
+    win = s.diff_win,
+    return_win = s.diff_win,
+    row = rows.last,
+    col = editor_col(s),
+    startinsert = true,
+    on_save = function(text)
+      local cmt = new(text, 'saved')
+      save_and_emit(s, 'created', cmt, { forge_reply = link }, store)
+    end,
+    on_draft = function(text)
+      new(text, 'draft')
+      save_and_emit(s, nil, nil, nil, store)
+    end,
+  })
+end
+
 ---`cx`: resolve, or reopen a resolved comment.
 function M.resolve(s)
   M.with_comment(s, function(cmt)
+    if forge_refused(cmt, 'resolve') then
+      return
+    end
     if cmt.status == 'draft' then
       return vim.notify('revuey: save the draft first', vim.log.levels.INFO)
     end
@@ -1011,6 +1261,9 @@ end
 ---`cs`: send the comment under the cursor to the agent session (again, when it was sent before).
 function M.send_existing(s)
   M.with_comment(s, function(cmt)
+    if forge_refused(cmt, 'answer') then
+      return
+    end
     local store = cm(s).store
     local cur = still_there(store, cmt.id)
     if not cur then
@@ -1043,6 +1296,9 @@ end
 ---`cd`: delete a comment (asks first).
 function M.delete(s)
   M.with_comment(s, function(cmt)
+    if forge_refused(cmt, 'delete') then
+      return
+    end
     if not M.confirm_delete('revuey: delete the comment on ' .. comments.location(cmt) .. '?') then
       return
     end
@@ -1180,6 +1436,9 @@ function M.list_lines(s)
     if cmt.author and cmt.author.kind and cmt.author.kind ~= 'user' then
       tags[#tags + 1] = 'by ' .. author_label(cmt.author)
     end
+    if cmt.forge_reply then
+      tags[#tags + 1] = 'local reply to GitHub #' .. tostring(cmt.forge_reply.pr)
+    end
     if p.how == 'missing' then
       tags[#tags + 1] = 'not in this review'
     elseif p.outdated then
@@ -1202,6 +1461,66 @@ function M.list_lines(s)
     out[#out + 1] = {
       text = text,
       id = cmt.id,
+      hls = { { 0, #where, 'RevueyCommentMeta' }, { #text - #tag, #text, 'RevueyCommentOutdated' } },
+    }
+  end
+  -- GitHub review threads drawn in this view (read-only), after the local comments
+  local gh = {}
+  for id, it in pairs(c.forge_items or {}) do
+    gh[#gh + 1] = { it = it, p = c.forge_place[id] }
+  end
+  table.sort(gh, function(x, y)
+    local px, py = x.p.path or x.it.anchor.path, y.p.path or y.it.anchor.path
+    if px ~= py then
+      return px < py
+    end
+    local lx, ly = x.it.anchor.start_line or 0, y.it.anchor.start_line or 0
+    if lx ~= ly then
+      return lx < ly
+    end
+    return x.it.created_at < y.it.created_at
+  end)
+  path = nil
+  for i, x in ipairs(gh) do
+    local it, p = x.it, x.p
+    if i == 1 then
+      if #out > 0 then
+        out[#out + 1] = { text = '' }
+      end
+      out[#out + 1] = { text = 'GitHub threads', hls = { { 0, 14, 'RevueyCommentTitle' } } }
+    end
+    local fp = p.path or it.anchor.path
+    if fp ~= path then
+      path = fp
+      out[#out + 1] = { text = path, hls = { { 0, #path, 'RevueyFilePath' } } }
+    end
+    local where = it.file_level and 'file' or ((p.start_line and p.how ~= 'outside') and p.start_line or it.anchor.start_line)
+    if not it.file_level and p.how ~= 'outside' and p.end_line and p.end_line ~= p.start_line then
+      where = where .. '-' .. p.end_line
+    end
+    where = '  ' .. tostring(where) .. ' (' .. (it.file_level and 'file' or it.anchor.side) .. ')'
+    local tags = { 'GitHub #' .. it.forge.pr, 'by ' .. author_label(it.author) }
+    if it.forge.resolved then
+      tags[#tags + 1] = '✓ resolved'
+    end
+    if it.forge.outdated then
+      tags[#tags + 1] = 'outdated'
+    end
+    if it.forge.pending then
+      tags[#tags + 1] = 'pending'
+    end
+    if p.how == 'outside' or p.how == 'missing' then
+      tags[#tags + 1] = 'not on a shown line'
+    end
+    local n = #it.thread + it.forge.hidden
+    if n > 0 then
+      tags[#tags + 1] = n .. (n == 1 and ' reply' or ' replies')
+    end
+    local tag = '  [' .. table.concat(tags, ', ') .. ']'
+    local text = where .. '  ' .. comments.first_line(it.body) .. tag
+    out[#out + 1] = {
+      text = text,
+      id = it.id,
       hls = { { 0, #where, 'RevueyCommentMeta' }, { #text - #tag, #text, 'RevueyCommentOutdated' } },
     }
   end

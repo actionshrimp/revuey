@@ -6,8 +6,10 @@ local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h')
 vim.cmd('runtime plugin/revuey.lua')
 local state_dir = h.tmpdir('forge-state')
 local log_file = h.tmpdir('forge-log') .. '/revuey.log'
+-- review threads (a second gh call per open PR) are off here, so the call counts below are PR
+-- lookups only; forge_threads_spec.lua covers them, including alongside the PR lookup
 local function setup(extra)
-  require('revuey').setup(vim.tbl_deep_extend('force', { state_dir = state_dir, lsp_warmup = false, log_file = log_file }, extra or {}))
+  require('revuey').setup(vim.tbl_deep_extend('force', { state_dir = state_dir, lsp_warmup = false, log_file = log_file, forge = { threads = { enabled = false } } }, extra or {}))
 end
 setup()
 local forge = require('revuey.forge')

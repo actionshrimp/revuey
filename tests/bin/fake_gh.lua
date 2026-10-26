@@ -65,6 +65,90 @@ for i = 4, #argv do
     query = q
   end
 end
+-- review threads (forge.fetch_threads): `REVUEY_FAKE_GH_THREADS` is a JSON file
+-- { ["owner/name#N"] = { PullRequestReviewThread nodes, with `comments` a plain list of
+-- PullRequestReviewComment nodes } }, `_null` = PRs that resolve to null; pages are cut by the
+-- query's `first`/`after` (cursors are indices). `REVUEY_FAKE_GH_THREADS_SCENARIO` = fail |
+-- errors applies to thread queries only (the PR lookup still answers).
+if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ', 1, true)) then
+  local tscen = os.getenv('REVUEY_FAKE_GH_THREADS_SCENARIO') or ''
+  if tscen == 'fail' then
+    io.stderr:write('error connecting to api.github.com\n')
+    os.exit(1)
+  elseif tscen == 'errors' then
+    io.stdout:write(vim.json.encode({ data = vim.NIL, errors = { { message = 'Something went wrong' } } }), '\n')
+    os.exit(1)
+  end
+  local all = {}
+  local tfile = os.getenv('REVUEY_FAKE_GH_THREADS')
+  if tfile and tfile ~= '' then
+    local fd = assert(io.open(tfile, 'r'))
+    all = vim.json.decode(fd:read('*a'))
+    fd:close()
+  end
+  local tnull = {}
+  for _, k in ipairs(all._null or {}) do
+    tnull[k] = true
+  end
+  local first_comments = tonumber(query:match('fragment thread on PullRequestReviewThread {.-comments%(first: (%d+)%)') or '100')
+  local function cut(list, first, after)
+    local from = (tonumber(after) or 0) + 1
+    local out = {}
+    for i = from, math.min(#list, from + first - 1) do
+      out[#out + 1] = list[i]
+    end
+    local last = from + #out - 1
+    return out, { hasNextPage = last < #list, endCursor = #out > 0 and tostring(last) or vim.NIL }
+  end
+  local function comments_conn(t, first, after)
+    local list, info = cut(t.comments or {}, first, after)
+    return { totalCount = #(t.comments or {}), pageInfo = info, nodes = list }
+  end
+  local data, errors = {}, {}
+  local tpat = '(t%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%) { reviewThreads%(first: (%d+)([^)]*)%)'
+  for alias, owner, name, number, first, rest in query:gmatch(tpat) do
+    local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
+    local after = rest:match('after: (%b"")')
+    after = after and vim.json.decode(after)
+    if tnull[key] then
+      data[alias] = { pullRequest = vim.NIL }
+      errors[#errors + 1] = { type = 'NOT_FOUND', message = 'Could not resolve to a PullRequest with the number of ' .. number .. '.' }
+    else
+      local list, info = cut(all[key] or {}, tonumber(first), after)
+      local out = {}
+      for _, t in ipairs(list) do
+        local n = vim.deepcopy(t)
+        n.comments = comments_conn(t, first_comments)
+        out[#out + 1] = n
+      end
+      data[alias] = { pullRequest = { reviewThreads = { pageInfo = info, nodes = out } } }
+    end
+  end
+  local cpat = '(c%d+): node%(id: (%b"")%) { %.%.%. on PullRequestReviewThread { comments%(first: (%d+)([^)]*)%)'
+  for alias, id, first, rest in query:gmatch(cpat) do
+    id = vim.json.decode(id)
+    local after = rest:match('after: (%b"")')
+    after = after and vim.json.decode(after)
+    local found = vim.NIL
+    for k, list in pairs(all) do
+      if k:sub(1, 1) ~= '_' then
+        for _, t in ipairs(list) do
+          if t.id == id then
+            found = { comments = comments_conn(t, tonumber(first), after) }
+          end
+        end
+      end
+    end
+    data[alias] = found
+  end
+  io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
+  if #errors > 0 then
+    io.stderr:write('gh: ' .. errors[1].message .. '\n')
+    os.exit(1)
+  end
+  os.exit(0)
+end
+
 local prs = {}
 local file = os.getenv('REVUEY_FAKE_GH_PRS')
 if file and file ~= '' then

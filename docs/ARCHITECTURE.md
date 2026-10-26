@@ -739,9 +739,9 @@ are in `reports/Terminal code review tool landscape.md`.
       wider than a line by display width); `<Tab>` on its heading toggles
       `s.forge.collapsed`; `gx` (`keymaps.forge_open`) opens a row's PR (layer rows, detail rows,
       else the viewed layer) with `vim.ui.open`. Highlights `RevueyForge*`.
-    - **Later** (roadmap 5, 6): forge review threads and posting reviews reuse `remote_info`,
-      `targets`, `parse_remote_url` and `run_graphql`; the PR found here gives the number and
-      repo.
+    - **Later**: posting reviews reuses `remote_info`, `targets`, `parse_remote_url` and
+      `run_graphql`; the PR found here gives the number and repo. Review threads (decision 17)
+      already do.
     - **Tests** use `tests/bin/gh` (fake, records argv, answers queries from canned PR nodes per
       `owner/name:branch`); `tests/helpers.lua` blocks the real `gh` on PATH for every spec.
 
@@ -973,9 +973,81 @@ are in `reports/Terminal code review tool landscape.md`.
       without one, and wt's error texts); unit tests parse stderr captured from the real wt
       0.81. `tests/helpers.lua` blocks the real `wt` on PATH.
 
+17. **Review threads from the forge** (`forge.lua` query, pagination, mapping and cache;
+    `forge_threads.lua` pure placement and display items; `forge_view.lua` scope and fetch;
+    `comments_view.lua` drawing, keys and the list). The review threads of open PRs are drawn
+    inline next to local comments, read-only. No second GitHub client: the same `gh api graphql`
+    through `forge.run_graphql`, the same failure handling, log and kill-on-close.
+    - **Which PRs.** `forge_view.scope_prs`: the viewed layer's PR (a plain review's), or every
+      layer's in full-stack scope, OPEN only (draft included; merged and closed PRs show none),
+      from the PR lookup of decision 13, so a review without a PR makes no thread call.
+    - **When.** In `forge_view.update`, after the PR lookup has drawn the panel, inside the same
+      `git.async` run and generation (so `R`, close and `alive()` cover it): opening and
+      re-rendering never wait for GitHub; threads appear when they arrive (comments re-render,
+      panel redraw with `keep_view`), only when their signature changed. Cached per PR
+      (`forge.threads_cache[host/owner/name#N] = {at, threads, sig, failed?, truncated?}`) for
+      `forge.ttl`, like PRs; scope switches and refreshes reuse it, `R` forces it, the panel's
+      `lazy` also refetches stale threads. A failed fetch keeps the last threads (no stale marker
+      on threads: what was shown stays).
+    - **Query** (`build_threads_query`, aliased requests in one call per host): `tN:
+      repository(owner, name) { pullRequest(number) { reviewThreads(first: 50, after?) {
+      pageInfo nodes { ...thread } } } }` and, for a thread with more comments, `cN: node(id) {
+      ... on PullRequestReviewThread { comments(first: 100, after) { pageInfo nodes { ...comment
+      } } } }`. Thread fields: `id isResolved isOutdated path line startLine originalLine
+      originalStartLine diffSide startDiffSide subjectType resolvedBy{login}` and `comments(first:
+      20) { totalCount pageInfo nodes }`; comment fields: `id databaseId url body createdAt
+      lastEditedAt state diffHunk author{login} replyTo{id}`. Fragments are only included when
+      used (GraphQL rejects unused ones). Each round asks every PR's next thread page and every
+      long thread's next comment page together; at most `THREAD_ROUNDS` (10) rounds, then what
+      was read is kept (`… N more on GitHub` from `totalCount`) and the cut logged. A page call
+      asks for at most 1,050 nodes (50 threads with 20 comments each), about one GraphQL
+      rate-limit point.
+    - **Placement** (`forge_threads.place`, every render, against `comments.context`). Side from
+      `diffSide` (LEFT = old), lines from `line`/`startLine` (outdated threads:
+      `originalLine`/`originalStartLine`; a range across sides is anchored on its last line),
+      the expected text from the first comment's `diffHunk` (its last lines on that side end at
+      the thread's line). Tiers: `line` (GitHub's lines are shown rows and their text matches,
+      or there is no hunk text), `moved` (the text found at exactly one shown window within 100
+      lines, and it has at least three word characters), else `outside` (file in the review:
+      a group "GitHub threads on lines not shown here" at the file's last row), `missing` (file
+      not shown: the end of the review), `file` (`subjectType FILE`: under the file header);
+      renamed files are followed by `old_path`. The text check is what makes GitHub's numbers
+      safe on a review that is not the PR's diff (working tree, unpushed commits, a full-stack
+      scope where lower PRs' lines moved, a PR updated since the fetch): a thread is never put
+      on other code, at worst listed apart. Placement is never stored.
+    - **Items** (`forge_threads.item`): comment-like records `{id = 'gh:<thread id>', forge =
+      {thread_id, pr, pr_url, repo, url, resolved, resolved_by, outdated, pending, hidden,
+      comment_id, database_id}, anchor, author = {kind = 'forge', name = login}, body, thread
+      (replies), status, created_at, updated_at, file_level}`, so `thread_lines` draws them with
+      the comment code. They live in `s.cm.forge_items` only: never in the comments store, the
+      export, the event feed, agent messages or the panel's `✎` counts. Ids and GitHub ids are
+      kept for posting later.
+    - **Drawing.** Same virtual lines and gutter bar as comments (`RevueyForgeSign`; a local
+      comment's bar wins on a shared row), border `RevueyForgeBorder`, a `GitHub #N` chip, then
+      `pending` (the viewer's own unsubmitted review), `resolved by x`, `outdated`, `GitHub line
+      N` when moved. Resolved and outdated threads are collapsed to their first line like
+      resolved comments (`cz` expands); at a shared row local comments come first, threads in
+      creation order. `gH` (`keymaps.forge_threads`) cycles `all` / `open` / `none` per review,
+      starting from `forge.threads.show`. `]m`/`[m` and `cl` (a "GitHub threads" part) include
+      them; `gx` in the diff on a thread opens its URL (elsewhere the global `gx` mapping). The
+      panel's PR section counts them (`threads: 2 open, 1 resolved, 1 outdated`).
+    - **Read-only; local replies.** `ce`/`cx`/`cd`/`cs` on a thread refuse with a message. `cr`
+      makes a new local comment anchored on the thread's rows (`anchor_from_rows`, so it
+      re-anchors like any comment) with `forge_reply = {thread_id, pr, repo, url, comment_id,
+      database_id}`, labelled in the thread box, the list and the Markdown export. Nothing is
+      posted; posting reviews (roadmap) can send these as thread replies. A thread not on shown
+      lines refuses (nowhere to anchor).
+    - **Failures.** As decision 13: no `gh`, non-zero exit, GraphQL errors, a PR that does not
+      resolve (partial data: no threads for it) are logged, never shown; the review and the PR
+      section are unaffected.
+    - **Tests** extend the fake `gh` (`REVUEY_FAKE_GH_THREADS`: thread nodes per `owner/name#N`,
+      paged by the query's `first`/`after`; `REVUEY_FAKE_GH_THREADS_SCENARIO` fail/errors for
+      thread queries only). `forge_spec.lua` turns threads off so its call counts stay PR
+      lookups.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

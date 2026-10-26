@@ -484,6 +484,11 @@ function M.render(s, o)
     if ok then
       help[#help + 1] = ' ' .. ok .. ' PR in browser' .. (s.panel_forge and s.panel_forge.heading and '  <Tab> PR details' or '')
     end
+    local tk = require('revuey.config').options.keymaps.forge_threads
+    tk = type(tk) == 'table' and tk[1] or tk
+    if tk and s.panel_forge and s.panel_forge.threads then
+      help[#help + 1] = ' ' .. tk .. ' GitHub threads (all/open/none)'
+    end
   end
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })

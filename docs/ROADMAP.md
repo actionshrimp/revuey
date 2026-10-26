@@ -57,6 +57,14 @@ sequence; later items build on earlier ones.
   are dropped and counted; findings become AI comments to accept (`ca`), dismiss (`cn`) or follow
   up via the agent link; re-runs replace untouched findings only; a skill's `SKILL.md` as guidance;
   `bin/revuey hunks|import-review` for outside agents and tools. Nothing is posted.
+- Show existing forge comments: the review threads of the scope's open PRs (the viewed layer's, every
+  layer's in full-stack scope) are fetched in the background after the PR lookup (`gh api graphql`,
+  threads and long threads' comments paginated together, cached per PR for `forge.ttl`, `R` refetches)
+  and drawn inline next to local comments, marked `GitHub #N`. A thread goes on GitHub's lines only when
+  the text there matches its diff hunk, else on the same text nearby (unique copy), else in a "not shown
+  here" group of its file. Resolved and outdated threads are collapsed (`cz` expands), `gH` cycles all /
+  open / none, `]m`, `cl` and the panel's PR section include them, `gx` opens one. Read-only: `cr` makes a
+  local reply (a normal comment linked to the thread's ids, for posting later). Failures are logged only.
 
 
 ## Next
@@ -93,19 +101,19 @@ sequence; later items build on earlier ones.
    `revuey.log`, then restart the worktree's LSP clients so tsserver picks up the new `.d.ts` files. Incremental
    builds (`tsc -b`, turbo) keep this cheap. The build-free alternative for repos that can change (a `source`
    export condition plus `customConditions`, or project references with `declarationMap`) is documented (done).
-2. **Show existing forge comments.** For a review backed by an open PR, fetch its review threads (`gh api graphql`)
-   and render them inline alongside local comments, including resolved and outdated state.
-3. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
+2. **Post reviews to the forge.** Each local comment has an "add to review" toggle (Graphite style). Submitting
    posts all included comments together as one GitHub review with a verdict: approve, comment or request changes.
    Uses GitHub's pending-review flow so nothing is visible until submit. In full-stack scope each comment is routed
    to the PR of the layer that introduced the line. Optional sync of GitHub's per-file "viewed" state.
-4. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
+   Local replies to GitHub threads (`cr` on one; `forge_reply` on the comment) are posted as replies in
+   their threads.
+3. **Finer-grained guide sections.** Guides already reference individual hunks, so one file can be split across
    sections. Go further by splitting large hunks before the model sees them, at tree-sitter top-level boundaries
    (functions, classes, exports) or blank-line gaps, each piece getting its own ID (`h7a`, `h7b`). The model still
    only picks IDs, so validation stays simple; adjacent pieces in the same section render as one block.
    Reviewed marks already go through review units with parent hunk keys (`units.lua`), so this only changes how
    units are cut.
-5. **Edit from the review: what is left.** (The `gS` layer switch and the edit float are done; see Done.)
+4. **Edit from the review: what is left.** (The `gS` layer switch and the edit float are done; see Done.)
    Fixup commits for lower layers (an edit made while viewing a lower layer becoming a `fixup!` commit
    on it) are not done. After committing on a lower layer the existing "not restacked" warning flags
    the layers above; revuey never restacks and never asks for a restack automatically: a later "send

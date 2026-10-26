@@ -95,6 +95,10 @@ M.defaults = {
     -- panel: open the pull request of the layer under the cursor (else the one being viewed) in
     -- the browser. `go` already opens files in the diff, so this uses `gx` ("open URL").
     forge_open = 'gx',
+    -- GitHub review threads in the diff: all (resolved and outdated collapsed), open only, hidden.
+    -- `gH` (select-line mode) means nothing in a read-only review buffer. In the diff, `gx` on a
+    -- thread opens it on GitHub.
+    forge_threads = 'gH',
     -- edit the real file at this line in a float (working-tree mode, checked-out layer only).
     -- `ge` (backward to the end of a word) means little in a read-only review buffer.
     edit = 'ge',
@@ -114,6 +118,14 @@ M.defaults = {
     cmd = 'gh',
     -- GitHub Enterprise hosts (github.com and hosts with "github" in their name are known)
     hosts = {},
+    -- Review threads of the open PR(s) of the scope shown, inline next to your comments
+    -- (read-only; `cr` adds a local reply). Fetched in the background after the PR lookup, cached
+    -- for `ttl` like it; `R` fetches again. show: 'all' (resolved and outdated threads
+    -- collapsed), 'open' (resolved ones hidden) or 'none'; the forge_threads key cycles it.
+    threads = {
+      enabled = true,
+      show = 'all',
+    },
   },
   -- `:Revuey pr <N|url>` sets the PR's worktree up with worktrunk (`wt switch pr:<N>`), so your
   -- worktrunk hooks install and build it before the review (and its LSP) starts.
