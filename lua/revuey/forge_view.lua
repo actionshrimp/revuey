@@ -233,6 +233,19 @@ function M.thread_items(s)
   return out
 end
 
+---Has the scope shown any review threads (for the panel's key hint)?
+function M.has_threads(s)
+  if not M.threads_enabled() then
+    return false
+  end
+  for _, pr in ipairs(M.scope_prs(s)) do
+    if next(forge.threads_for(pr) or {}) then
+      return true
+    end
+  end
+  return false
+end
+
 ---Signature of the threads the scope would show now (comments_view records what it drew).
 function M.threads_signature(s)
   if not M.threads_enabled() then
@@ -345,9 +358,14 @@ function M.render_detail(s, add, add_virt, width)
     add('')
     return
   end
-  local threads = M.threads_enabled() and pr.state == 'OPEN' and forge.threads_for(pr) or nil
+  local threads, _, truncated
+  if M.threads_enabled() and pr.state == 'OPEN' then
+    threads, _, truncated = forge.threads_for(pr)
+  end
   local counts = threads and require('revuey.forge_threads').summary(threads) or nil
-  pf.threads = counts and (counts.open + counts.resolved) > 0 or false
+  if counts then
+    counts.truncated = truncated
+  end
   for _, item in ipairs(forge.detail(pr, parent_branch(s), counts)) do
     local indent = (item.kind == 'review' or item.kind == 'requested') and '     ' or '   '
     local text = item.glyph and (item.glyph .. ' ' .. item.text) or item.text

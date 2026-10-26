@@ -896,14 +896,15 @@ function M.threads_fresh(prs)
 end
 
 ---Cached threads of a PR (oldest first, as GitHub lists them), or nil when never fetched; the
----second value is true when a later fetch failed (stale).
----@return revuey.ForgeThread[]?, boolean?
+---second value is true when a later fetch failed (stale), the third when the pages were cut
+---(THREAD_ROUNDS).
+---@return revuey.ForgeThread[]?, boolean?, boolean?
 function M.threads_for(pr)
   local e = pr and M.threads_cache[M.thread_key(pr)]
   if not e then
     return nil
   end
-  return e.threads, e.failed ~= nil
+  return e.threads, e.failed ~= nil, e.truncated == true
 end
 
 ---Fetch the review threads of `prs` unless cached within the TTL (or `o.force`): one `gh api
@@ -936,7 +937,7 @@ function M.fetch_threads(prs, o)
       return a.key < b.key
     end)
     local more = {} -- {thread, after}: threads with further comments
-    local err, truncated
+    local err
     for round = 1, M.THREAD_ROUNDS + 1 do
       local reqs = {}
       for _, p in ipairs(list) do
@@ -945,13 +946,17 @@ function M.fetch_threads(prs, o)
         end
       end
       for _, m in ipairs(more) do
-        reqs[#reqs + 1] = { kind = 'comments', thread = m.thread.id, after = m.after, t = m.thread }
+        if not m.p.failed then
+          reqs[#reqs + 1] = { kind = 'comments', thread = m.thread.id, after = m.after, t = m.thread, p = m.p }
+        end
       end
       if #reqs == 0 then
         break
       end
       if round > M.THREAD_ROUNDS then
-        truncated = true
+        for _, r in ipairs(reqs) do
+          r.p.truncated = true
+        end
         log.write('forge', ('review threads: stopped after %d pages; %d requests left'):format(M.THREAD_ROUNDS, #reqs))
         break
       end
@@ -968,28 +973,40 @@ function M.fetch_threads(prs, o)
       more = {}
       for alias, r in pairs(aliases) do
         local v = data[alias]
+        local p = r.p
         if r.kind == 'threads' then
-          local p = r.p
-          local conn = type(v) == 'table' and type(v.pullRequest) == 'table' and v.pullRequest.reviewThreads
-          for _, n in ipairs(nodes(conn)) do
-            local t, cursor = M.normalize_thread(n)
-            if t then
-              p.threads[#p.threads + 1] = t
-              if cursor then
-                more[#more + 1] = { thread = t, after = cursor }
+          local conn = type(v) == 'table' and type(v.pullRequest) == 'table' and type(v.pullRequest.reviewThreads) == 'table'
+            and v.pullRequest.reviewThreads
+          if not conn and r.after then
+            -- a later page came back null (partial data: a timeout or resource limit): the
+            -- threads read so far are not the PR's threads, so this PR keeps its old ones
+            p.failed, p.done = true, true
+          else
+            for _, n in ipairs(nodes(conn)) do
+              local t, cursor = M.normalize_thread(n)
+              if t then
+                p.threads[#p.threads + 1] = t
+                if cursor then
+                  more[#more + 1] = { thread = t, after = cursor, p = p }
+                end
               end
             end
+            p.after = page(conn)
+            -- a null first page: the PR does not resolve (logged by run_graphql), no threads
+            p.done = p.after == nil
           end
-          p.after = page(conn)
-          p.done = p.after == nil -- also a PR that does not resolve (logged by run_graphql)
         else
-          local conn = type(v) == 'table' and v.comments
-          for _, n in ipairs(nodes(conn)) do
-            r.t.comments[#r.t.comments + 1] = M.normalize_comment(n)
-          end
-          local cursor = page(conn)
-          if cursor then
-            more[#more + 1] = { thread = r.t, after = cursor }
+          local conn = type(v) == 'table' and type(v.comments) == 'table' and v.comments
+          if not conn then
+            p.failed, p.done = true, true -- a thread's further comments came back null: as above
+          else
+            for _, n in ipairs(nodes(conn)) do
+              r.t.comments[#r.t.comments + 1] = M.normalize_comment(n)
+            end
+            local cursor = page(conn)
+            if cursor then
+              more[#more + 1] = { thread = r.t, after = cursor, p = p }
+            end
           end
         end
       end
@@ -1001,13 +1018,22 @@ function M.fetch_threads(prs, o)
     local now = M.now()
     for _, p in ipairs(list) do
       local old = M.threads_cache[p.key]
-      if err then
-        M.threads_cache[p.key] = { at = now, failed = err, threads = old and old.threads, sig = old and old.sig }
+      if err or p.failed then
+        if p.failed then
+          log.write('forge', ('review threads of %s: a page came back empty; keeping the last threads'):format(p.key))
+        end
+        M.threads_cache[p.key] = {
+          at = now,
+          failed = err or 'incomplete pages',
+          threads = old and old.threads,
+          sig = old and old.sig,
+          truncated = old and old.truncated,
+        }
       else
         M.threads_cache[p.key] = {
           at = now,
           threads = p.threads,
-          truncated = truncated or nil,
+          truncated = p.truncated,
           sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
         }
       end
@@ -1082,7 +1108,7 @@ end
 ---`threads`: counts of the PR's review threads ({open, resolved, outdated}), when fetched.
 ---@param pr revuey.PR
 ---@param parent? string
----@param threads? {open:integer, resolved:integer, outdated:integer}
+---@param threads? {open:integer, resolved:integer, outdated:integer, truncated?:boolean}
 ---@return {kind:string, text:string, hl:string, glyph?:string}[]
 function M.detail(pr, parent, threads)
   local out = {}
@@ -1120,6 +1146,9 @@ function M.detail(pr, parent, threads)
     end
     if threads.outdated > 0 then
       parts[#parts + 1] = threads.outdated .. ' outdated'
+    end
+    if threads.truncated then
+      parts[#parts + 1] = 'more on GitHub'
     end
     add('threads', 'threads: ' .. table.concat(parts, ', '), threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
   end

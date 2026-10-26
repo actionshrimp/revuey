@@ -48,11 +48,14 @@ function M.iso_ms(s)
 end
 
 ---The commented lines as the thread's diff hunk shows them: the last `n` lines of `side` (the
----hunk ends at the thread's last line). Fewer when the hunk is shorter; {} without a hunk.
----@return string[]
+---hunk ends at the thread's last line: on GitHub the hunk's last line on the thread's side is
+---always `originalLine`). Fewer when the hunk is shorter; {} without a hunk. The second value is
+---up to CONTEXT lines of that side just above them (the hunk's own context), for checking that
+---a match is the thread's code and not another copy.
+---@return string[] lines, string[] before
 function M.expected(diff_hunk, side, n)
   if type(diff_hunk) ~= 'string' or diff_hunk == '' then
-    return {}
+    return {}, {}
   end
   local keep = side == 'old' and '-' or '+'
   local lines = {}
@@ -63,7 +66,15 @@ function M.expected(diff_hunk, side, n)
       lines[#lines + 1] = (l:sub(2):gsub('\r$', ''))
     end
   end
-  return vim.list_slice(lines, math.max(1, #lines - n + 1), #lines)
+  local from = math.max(1, #lines - n + 1)
+  return vim.list_slice(lines, from, #lines), vim.list_slice(lines, math.max(1, from - M.CONTEXT), from - 1)
+end
+
+M.CONTEXT = 3 -- hunk lines above the thread compared with the review's text
+
+---Too little text to identify a place by itself (`end`, `}`, `return err`, blank lines)?
+function M.weak(lines)
+  return comments.distinctive_words(lines) < comments.MIN_WORDS
 end
 
 ---Is the thread on the whole file (no line on either commit)?
@@ -84,7 +95,7 @@ function M.place(t, ctx)
   local path = t.path
   if not U.by_path[path] then
     for _, f in ipairs(ctx.files) do
-      if f.old_path == path and f.path ~= path then
+      if f.old_path == path and f.path ~= path and f.status == 'R' then
         path = f.path
         break
       end
@@ -107,9 +118,14 @@ function M.place(t, ctx)
   end
   local n = last - first
   local first_comment = t.comments[1]
-  local want = M.expected(first_comment and first_comment.diff_hunk, side, n + 1)
+  local want, before = M.expected(first_comment and first_comment.diff_hunk, side, n + 1)
+  local weak = M.weak(want)
   local rows = ctx.rows(path, side)
   local out = { path = path, side = side, start_line = first, end_line = last, how = 'outside' }
+  local function get(l)
+    local x = ctx.get_line(path, side, l)
+    return x and (x:gsub('\r$', ''))
+  end
   local function shown(p)
     for l = p, p + n do
       if not rows.by_lnum[l] then
@@ -121,26 +137,42 @@ function M.place(t, ctx)
   local function matches(p)
     local off = (n + 1) - #want
     for i, w in ipairs(want) do
-      local got = ctx.get_line(path, side, p + off + i - 1)
-      if got == nil or (got:gsub('\r$', '')) ~= w then
+      if get(p + off + i - 1) ~= w then
         return false
       end
     end
     return true
   end
-  if t.line and shown(first) and matches(first) then
+  ---The hunk's lines above the range against the review's: all of them for weak text, else at
+  ---least one with some text (when the hunk has any).
+  local function context_ok(p)
+    local any, ok = false, false
+    for i, b in ipairs(before) do
+      local same = get(p - #before + i - 1) == b
+      if weak and not same then
+        return false
+      end
+      if b:find('%w') then
+        any = true
+        ok = ok or same
+      end
+    end
+    return weak or not any or ok
+  end
+  if t.line and shown(first) and matches(first) and context_ok(first) then
     out.how = 'line'
     return out
   end
-  -- moved: the same lines (with enough text to mean something), one copy within RADIUS
-  if #want > 0 and table.concat(want, ' '):find('%w.-%w.-%w') then
+  -- moved: the same lines and context, one copy in the side's text within RADIUS (copies on
+  -- lines the diff does not show count too), shown. Weak text needs context to go on.
+  if #want > 0 and table.concat(want, ' '):find('%w.-%w.-%w') and not (weak and #before == 0) then
     local hits = {}
-    for _, p in ipairs(rows.sorted) do
-      if math.abs(p - first) <= M.RADIUS and shown(p) and matches(p) then
+    for p = math.max(1, first - M.RADIUS), first + M.RADIUS do
+      if matches(p) and context_ok(p) then
         hits[#hits + 1] = p
       end
     end
-    if #hits == 1 then
+    if #hits == 1 and shown(hits[1]) then
       out.start_line, out.end_line, out.how = hits[1], hits[1] + n, 'moved'
       return out
     end

@@ -61,8 +61,8 @@ sequence; later items build on earlier ones.
   layer's in full-stack scope) are fetched in the background after the PR lookup (`gh api graphql`,
   threads and long threads' comments paginated together, cached per PR for `forge.ttl`, `R` refetches)
   and drawn inline next to local comments, marked `GitHub #N`. A thread goes on GitHub's lines only when
-  the text there matches its diff hunk, else on the same text nearby (unique copy), else in a "not shown
-  here" group of its file. Resolved and outdated threads are collapsed (`cz` expands), `gH` cycles all /
+  the text and the hunk's context lines above it match, else on the same text and context nearby (one
+  copy in the file's text), else in a "not shown here" group of its file. Resolved and outdated threads are collapsed (`cz` expands), `gH` cycles all /
   open / none, `]m`, `cl` and the panel's PR section include them, `gx` opens one. Read-only: `cr` makes a
   local reply (a normal comment linked to the thread's ids, for posting later). Failures are logged only.
 

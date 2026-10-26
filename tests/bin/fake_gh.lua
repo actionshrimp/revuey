@@ -86,9 +86,14 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
     all = vim.json.decode(fd:read('*a'))
     fd:close()
   end
-  local tnull = {}
+  local tnull, tnull_after = {}, {}
   for _, k in ipairs(all._null or {}) do
     tnull[k] = true
+  end
+  -- `_null_after`: PRs whose pages after the first come back null (a timeout or resource
+  -- limit on GitHub's side: partial data, exit 1)
+  for _, k in ipairs(all._null_after or {}) do
+    tnull_after[k] = true
   end
   local first_comments = tonumber(query:match('fragment thread on PullRequestReviewThread {.-comments%(first: (%d+)%)') or '100')
   local function cut(list, first, after)
@@ -110,7 +115,10 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
     local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
     local after = rest:match('after: (%b"")')
     after = after and vim.json.decode(after)
-    if tnull[key] then
+    if tnull_after[key] and after then
+      data[alias] = vim.NIL
+      errors[#errors + 1] = { type = 'TIMEOUT', message = 'Timeout on validation of query' }
+    elseif tnull[key] then
       data[alias] = { pullRequest = vim.NIL }
       errors[#errors + 1] = { type = 'NOT_FOUND', message = 'Could not resolve to a PullRequest with the number of ' .. number .. '.' }
     else
