@@ -615,7 +615,7 @@ function M.place_forge(s, ctx, idx, attach)
   for _, x in ipairs(items) do
     local it = x.item
     if not (show == 'open' and it.status == 'resolved') then
-      local p = ft.place(x.thread, ctx)
+      local p = ft.place(x.thread, ctx, { head_blob = fv.head_blob(s, x.pr, x.thread.path) })
       c.forge_items[it.id] = it
       c.forge_place[it.id] = p
       local path = p.path

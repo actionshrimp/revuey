@@ -243,6 +243,47 @@ h.test('place: a range across both sides is anchored on its last line', function
   h.eq({ 'line', 'new', 21, 21 }, { p.how, p.side, p.start_line, p.end_line })
 end)
 
+h.test('place: context edited by a later push (GitHub keeps the thread on its line)', function()
+  local a = numbered(40)
+  local b = numbered(40, { [17] = 'reworded above', [18] = 'also reworded', [19] = 'and this',
+    [20] = 'function withScanner(callback)', [24] = '  end', [26] = 'dup line', [30] = 'dup line' })
+  local files
+  local ctx
+  ctx, files = ctx_for(a, b)
+  local stale = { 'line 17', 'line 18', 'line 19' } -- the context when the comment was made
+  local function where(o, opts)
+    local p = ft.place(thread(o), ctx, opts)
+    return { p.how, p.start_line }
+  end
+  -- a strong line, the only copy around: at GitHub's line though its old context is gone
+  h.eq({ 'line', 20 }, where({ line = 20, before = stale, text = { 'function withScanner(callback)' } }))
+  -- a weak line and a repeated line: not on their own...
+  h.eq({ 'outside', 24 }, where({ line = 24, before = { 'old', 'context', 'lines' }, text = { '  end' } }))
+  h.eq({ 'outside', 30 }, where({ line = 30, before = { 'old', 'context', 'lines' }, text = { 'dup line' } }))
+  -- ...but trusted when the review's new side of the file is the PR's head blob
+  files[1].new_blob = 'b10b'
+  h.eq({ 'line', 24 }, where({ line = 24, before = { 'old', 'context', 'lines' }, text = { '  end' } }, { head_blob = 'b10b' }))
+  h.eq({ 'line', 30 }, where({ line = 30, before = { 'old', 'context', 'lines' }, text = { 'dup line' } }, { head_blob = 'b10b' }))
+  -- another blob (local edits, another commit): no trust; the old side never
+  h.eq({ 'outside', 24 }, where({ line = 24, before = { 'old', 'context', 'lines' }, text = { '  end' } }, { head_blob = 'other' }))
+  h.eq('outside', ft.place(thread({ line = 24, side = 'LEFT', before = { 'x', 'y', 'z' }, text = { 'line 24' } }), ctx, { head_blob = 'b10b' }).how)
+  -- and the text must still match at the line
+  h.eq({ 'outside', 25 }, where({ line = 25, text = { '  end' } }, { head_blob = 'b10b' }))
+end)
+
+h.test('range: startLine past line keeps the original span; a cross-side start is not a line here', function()
+  h.eq({ 20, 21 }, { ft.range({ line = 21, start_line = 24, original_line = 10, original_start_line = 9 }) })
+  h.eq({ 21, 21 }, { ft.range({ line = 21, start_line = 24 }) })
+  h.eq({ 9, 10 }, { ft.range({ original_line = 10, original_start_line = 9 }) })
+  local a = numbered(40)
+  local b = numbered(40, { [20] = 'twenty changed', [21] = 'twenty-one changed' })
+  local p = ft.place(thread({ line = 21, start_line = 24, original_line = 10, original_start_line = 9,
+    text = { 'twenty changed', 'twenty-one changed' } }), (ctx_for(a, b)))
+  h.eq({ 'line', 20, 21 }, { p.how, p.start_line, p.end_line })
+  local it = ft.item(thread({ line = 21, start_line = 5, start_side = 'LEFT', text = { 'x' } }), { number = 1, url = 'u', repo = 'r' })
+  h.eq({ 21, 21 }, { it.anchor.start_line, it.anchor.end_line })
+end)
+
 h.test('item: a comment-like record with GitHub ids, authors, replies, pending and hidden counts', function()
   local t = thread({ line = 3, start_line = 2, text = { 'a', 'b' } })
   t.resolved, t.resolved_by, t.total = true, 'carol', 5
@@ -752,6 +793,15 @@ h.test('a later page that comes back null keeps the PR\'s last threads (never a 
   restore()
   local threads, stale = forge.threads_for(pr12)
   h.eq({ 5, true }, { #threads, stale })
+  h.ok(panel_text(s):gsub('\n   ', ' '):find('threads: 5 open (stale)', 1, true), panel_text(s))
+  -- a null first page too (the PR was just found open: a transient failure)
+  h.use_fake_gh(calls, PRS, nil, { ['acme/shop#12'] = list, _null = { 'acme/shop#12' } })
+  local _, restore2 = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore2()
+  threads, stale = forge.threads_for(pr12)
+  h.eq({ 5, true }, { #threads, stale })
   local found = false
   for _, e in ipairs(log.entries) do
     found = found or tostring(e.msg):find('a page came back empty', 1, true) ~= nil
@@ -761,13 +811,14 @@ h.test('a later page that comes back null keeps the PR\'s last threads (never a 
   reset()
 end)
 
-h.test('a remapped forge_open key: threads open, elsewhere the key\'s own global mapping', function()
+h.test('a remapped forge_open key: threads open, elsewhere the key\'s own global mapping (expr too)', function()
   reset()
   setup({ keymaps = { forge_open = 'gz' } })
   local global = 0
   vim.keymap.set('n', 'gz', function()
     global = global + 1
-  end)
+    return '<Cmd>let g:revuey_gz = 1<CR>'
+  end, { expr = true })
   local calls = h.tmpdir('ft-gh-gz') .. '/calls.ndjson'
   h.use_fake_gh(calls, PRS, nil, THREADS)
   local d = stack_fixture('ft-gz')
@@ -782,6 +833,7 @@ h.test('a remapped forge_open key: threads open, elsewhere the key\'s own global
   keys(s, 'gz', row_of(s, 'src/cart.ts', 'add', 3))
   vim.ui.open = orig
   h.eq({ 1, 1 }, { #opened, global })
+  h.eq(1, vim.g.revuey_gz, 'the keys the expr mapping returned ran')
   view.close()
   vim.keymap.del('n', 'gz')
   setup()
@@ -808,6 +860,60 @@ h.test('ce on a file\'s last row edits the local comment there, not a grouped th
   h.eq({ 'Closing brace comment' }, vim.api.nvim_buf_get_lines(ed.buf, 0, -1, false))
   pcall(vim.api.nvim_win_close, ed.win, true)
   view.close()
+end)
+
+h.test('a failure in a later round keeps PRs already complete; a first fetch keeps its pages, marked cut', function()
+  reset()
+  forge.THREAD_PAGE = 2
+  local list = {}
+  for i = 1, 5 do
+    list[i] = t({ id = 'TL' .. i, line = 18, comments = { c('u' .. i, 'thread ' .. i, { hunk = cart_hunk(18) }) } })
+  end
+  local calls = h.tmpdir('ft-gh-later') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, {
+    ['acme/shop#12'] = list,
+    ['acme/shop#13'] = { t({ id = 'TU', line = 3, comments = { c('frank', 'ui thread', { pr = 13 }) } }) },
+  })
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = 'fail_after'
+  local d = stack_fixture('ft-later')
+  local s = open(d)
+  idle(s)
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
+  local pr12 = forge.get(s.forge.targets['stack/cart'])
+  local pr13 = forge.get(s.forge.targets['stack/ui'])
+  -- #12 was fetched alone on open (round 2 failed): its first page, cut and stale
+  local th, stale, cut = forge.threads_for(pr12)
+  h.eq({ 2, true, true }, { #th, stale, cut })
+  -- #13 (one page) answered in the full-scope fetch's first round: complete, not stale
+  th, stale, cut = forge.threads_for(pr13)
+  h.eq({ 1, false, false }, { #th, stale, cut })
+  view.close()
+  reset()
+end)
+
+h.test('at the PR head, a weak line whose context a later push edited stays on its line', function()
+  reset()
+  local d = stack_fixture('ft-head')
+  local head = vim.trim(h.git(d, 'rev-parse', 'stack/cart'))
+  -- `    return this;` at line 14; the hunk's context is from an earlier push
+  local stale_hunk = '@@ -0,0 +1,14 @@\n+  addItem(item: Item): this {\n+    this.list.push(item);\n+    // added\n+    return this;'
+  local threads = { ['acme/shop#12'] = { t({ id = 'TH', line = 14, comments = { c('gina', 'Fluent API?', { hunk = stale_hunk }) } }) } }
+  for _, case in ipairs({ { oid = head, how = 'line' }, { oid = nil, how = 'outside' } }) do
+    reset()
+    local calls = h.tmpdir('ft-gh-head-' .. case.how) .. '/calls.ndjson'
+    h.use_fake_gh(calls, {
+      ['acme/shop:stack/cart'] = { pr({ number = 12, head = 'stack/cart', base = 'stack/math', oid = case.oid }) },
+    }, nil, threads)
+    local s = open(d)
+    idle(s)
+    h.eq(case.how, s.cm.forge_place['gh:TH'].how, 'head ' .. tostring(case.oid))
+    if case.oid then
+      h.ok(vlines(s, row_of(s, 'src/cart.ts', 'add', 14)):find('Fluent API?', 1, true), 'drawn on line 14')
+    end
+    view.close()
+  end
 end)
 
 h.test('failures never break the review: no gh, gh failing, GraphQL errors, a PR that does not resolve', function()

@@ -125,8 +125,12 @@ function M.update(s, force)
       if not alive() then
         return done()
       end
+      local blobs = M.load_head_blobs(s, prs, review.root)
+      if not alive() then
+        return done()
+      end
       if s.review == review and s.layout and vim.api.nvim_buf_is_valid(s.diff_buf)
-        and M.threads_signature(s) ~= (f.threads_drawn or '') then
+        and (blobs or M.threads_signature(s) ~= (f.threads_drawn or '')) then
         -- threads are virtual lines of the diff buffer: redraw them (and the panel's counts)
         require('revuey.comments_view').render(s)
         require('revuey.panel').render(s, { keep_view = true })
@@ -233,6 +237,42 @@ function M.thread_items(s)
   return out
 end
 
+---Blobs of the threads' files at their PRs' head commits (`<head oid>:<path>` -> blob, false
+---when the commit or path is not in this clone), looked up with one `git cat-file
+-----batch-check` for the keys not known yet (immutable facts, kept for the review). Placement
+---trusts GitHub's line numbers when the review's new side of a file is that blob. Call inside
+---git.async. Returns true when it learned anything.
+function M.load_head_blobs(s, prs, root)
+  local f = state(s)
+  f.head_blobs = f.head_blobs or {}
+  local keys, seen = {}, {}
+  for _, pr in ipairs(prs) do
+    for _, t in ipairs(pr.head_oid and forge.threads_for(pr) or {}) do
+      local k = pr.head_oid .. ':' .. t.path
+      if f.head_blobs[k] == nil and not seen[k] and not k:find('\n', 1, true) then
+        seen[k] = true
+        keys[#keys + 1] = k
+      end
+    end
+  end
+  if #keys == 0 then
+    return false
+  end
+  local res = git.system({ 'git', 'cat-file', '--batch-check' }, { cwd = root, stdin = table.concat(keys, '\n') .. '\n' })
+  local out = vim.split(res.stdout or '', '\n', { plain = true })
+  for i, k in ipairs(keys) do
+    local oid, kind = (out[i] or ''):match('^(%x+) (%a+)')
+    f.head_blobs[k] = (res.code == 0 and kind == 'blob') and oid or false
+  end
+  return true
+end
+
+---Blob of `path` at the PR's head commit, when known (see load_head_blobs).
+function M.head_blob(s, pr, path)
+  local b = s.forge and s.forge.head_blobs and pr.head_oid and s.forge.head_blobs[pr.head_oid .. ':' .. path]
+  return b or nil
+end
+
 ---Has the scope shown any review threads (for the panel's key hint)?
 function M.has_threads(s)
   if not M.threads_enabled() then
@@ -254,7 +294,8 @@ function M.threads_signature(s)
   local parts = {}
   for _, pr in ipairs(M.scope_prs(s)) do
     local e = forge.threads_cache[forge.thread_key(pr)]
-    parts[#parts + 1] = forge.thread_key(pr) .. '=' .. (e and e.sig or '-')
+    -- stale and cut lists change the panel's threads line
+    parts[#parts + 1] = forge.thread_key(pr) .. '=' .. (e and e.sig or '-') .. (e and e.failed and '?' or '') .. (e and e.truncated and '+' or '')
   end
   return table.concat(parts, '\n')
 end
@@ -358,13 +399,13 @@ function M.render_detail(s, add, add_virt, width)
     add('')
     return
   end
-  local threads, _, truncated
+  local threads, tstale, truncated
   if M.threads_enabled() and pr.state == 'OPEN' then
-    threads, _, truncated = forge.threads_for(pr)
+    threads, tstale, truncated = forge.threads_for(pr)
   end
   local counts = threads and require('revuey.forge_threads').summary(threads) or nil
   if counts then
-    counts.truncated = truncated
+    counts.truncated, counts.stale = truncated, tstale
   end
   for _, item in ipairs(forge.detail(pr, parent_branch(s), counts)) do
     local indent = (item.kind == 'review' or item.kind == 'requested') and '     ' or '   '

@@ -1001,14 +1001,20 @@ are in `reports/Terminal code review tool landscape.md`.
       long thread's next comment page together; at most `THREAD_ROUNDS` (10) rounds, then what
       was read is kept (`… N more on GitHub` from `totalCount`, `more on GitHub` on the panel's
       threads line for a cut thread list) and the cut logged. `run_graphql` passes partial
-      data on: a null *first* page means the PR does not resolve (no threads), but a null later
-      page (or a null comments page) marks that PR failed, so it keeps its last cached threads
-      instead of caching a cut list as complete. A page call
+      data on: any null threads or comments page marks that PR failed (a null first page too:
+      `scope_prs` only holds PRs the lookup just found open, so it is almost always transient),
+      and it keeps its last cached threads, marked stale (`(stale)` on the panel's threads
+      line); on a first-ever fetch the pages read so far are kept, marked cut and stale. A
+      transport error in a later round fails only the PRs not yet complete: PRs whose thread
+      pages are all read with no comment pages pending are cached as usual. A page call
       asks for at most 1,050 nodes (50 threads with 20 comments each), about one GraphQL
       rate-limit point.
     - **Placement** (`forge_threads.place`, every render, against `comments.context`). Side from
       `diffSide` (LEFT = old), lines from `line`/`startLine` (outdated threads:
-      `originalLine`/`originalStartLine`; a range across sides is anchored on its last line),
+      `originalLine`/`originalStartLine`; `forge_threads.range`: a range across sides is
+      anchored on its last line, and a `startLine` past `line`, which GitHub returns once a range
+      moved (TypeScript#64818: 44 and 41), starts at `line` minus the original span; the
+      display item uses the same range),
       the expected text from the first comment's `diffHunk` (its last lines on that side end at
       the thread's line) and up to 3 hunk lines on that side above them as context. Checked
       against the real API (about 50 threads on neovim/neovim and microsoft/TypeScript): the
@@ -1019,15 +1025,26 @@ are in `reports/Terminal code review tool landscape.md`.
       a match needs at least one context line with text to match too, and all of them when
       the commented lines are weak (fewer than two distinctive words, `comments.distinctive_words`:
       `end`, `}`, `return err`), like local comments' `context_matches` guard. Tiers: `line`
-      (GitHub's lines are shown rows, their text and context match, or there is no hunk text),
+      (GitHub's lines are shown rows, their text matches, and one of: the review's new side of
+      the file is the PR's head blob, the context matches, or the text is strong and the only
+      copy within 100 lines; or there is no hunk text),
       `moved` (the text and context found at exactly one place of the side's full text within
       100 lines, copies on lines the diff does not show counted, that place shown; at least
       three word characters; weak text needs hunk context), else `outside` (file in the review:
       a group "GitHub threads on lines not shown here" at the file's last row), `missing` (file
       not shown: the end of the review), `file` (`subjectType FILE`: under the file header);
-      renamed files (`status = 'R'`) are followed by `old_path`. A bare text match at GitHub's
-      line is not trusted on its own even when the review shows the PR's head commit: the
-      context check costs nothing and covers that case too. The text check is what makes GitHub's numbers
+      renamed files (`status = 'R'`) are followed by `old_path`. The context is from the push
+      the comment was made on: a later push that edits the lines above keeps the thread on its
+      line (not outdated), so the context check alone wrongly moved 4 of 37 real current threads
+      (TypeScript, ruff, deno, vscode, neovim) out of place. Hence the two other ways to accept
+      GitHub's line: a strong unique line, and the **PR head**: `forge_view.load_head_blobs`
+      asks `git cat-file --batch-check` for `<pr.headRefOid>:<path>` of each thread's file
+      (once per key, kept; false when the commit is not in the clone), and `place` gets that
+      blob; when it equals the review file's `new_blob` (the hashed working-tree file or the
+      committed blob, so uncommitted edits and other commits never qualify), GitHub numbers the
+      thread against exactly this text and a plain text match is trusted, weak or repeated
+      lines included. Per PR, so in full-stack scope a lower PR qualifies for files the layers
+      above left alone. New side only. The text check is what makes GitHub's numbers
       safe on a review that is not the PR's diff (working tree, unpushed commits, a full-stack
       scope where lower PRs' lines moved, a PR updated since the fetch): a thread is never put
       on other code, at worst listed apart. Placement is never stored.
@@ -1046,7 +1063,7 @@ are in `reports/Terminal code review tool landscape.md`.
       creation order. `gH` (`keymaps.forge_threads`) cycles `all` / `open` / `none` per review,
       starting from `forge.threads.show`. `]m`/`[m` and `cl` (a "GitHub threads" part) include
       them; `keymaps.forge_open` (`gx`) in the diff on a thread opens its URL; elsewhere that key's
-      global mapping runs (else the built-in command). Grouped threads cover the file's last row
+      global mapping runs (an expr mapping's returned keys are fed; else the built-in command). Grouped threads cover the file's last row
       (the only way to reach them with `cz`/`gx`), so actions that only work on local comments
       (`ce`, `cx`, `cd`, `cs`) leave threads out when a local comment covers the row too. The
       panel's PR section counts them (`threads: 2 open, 1 resolved, 1 outdated`).

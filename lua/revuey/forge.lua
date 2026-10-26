@@ -977,11 +977,13 @@ function M.fetch_threads(prs, o)
         if r.kind == 'threads' then
           local conn = type(v) == 'table' and type(v.pullRequest) == 'table' and type(v.pullRequest.reviewThreads) == 'table'
             and v.pullRequest.reviewThreads
-          if not conn and r.after then
-            -- a later page came back null (partial data: a timeout or resource limit): the
-            -- threads read so far are not the PR's threads, so this PR keeps its old ones
+          if not conn then
+            -- a page came back null (partial data: a timeout, a resource limit, a transient
+            -- NOT_FOUND; the PR lookup just found this PR open): not the PR's threads, so the
+            -- PR keeps its last ones (a first-ever fetch keeps what it read, marked cut)
             p.failed, p.done = true, true
           else
+            p.pages = (p.pages or 0) + 1
             for _, n in ipairs(nodes(conn)) do
               local t, cursor = M.normalize_thread(n)
               if t then
@@ -992,7 +994,6 @@ function M.fetch_threads(prs, o)
               end
             end
             p.after = page(conn)
-            -- a null first page: the PR does not resolve (logged by run_graphql), no threads
             p.done = p.after == nil
           end
         else
@@ -1016,18 +1017,27 @@ function M.fetch_threads(prs, o)
       end)
     end
     local now = M.now()
+    -- PRs still waiting for comment pages when a round failed are not complete
+    local pending = {}
+    for _, m in ipairs(more) do
+      pending[m.p] = true
+    end
     for _, p in ipairs(list) do
       local old = M.threads_cache[p.key]
-      if err or p.failed then
+      -- a transport error in a later round spares PRs that were already complete
+      local complete = p.done and not p.failed and not pending[p]
+      if p.failed or (err and not complete) then
         if p.failed then
           log.write('forge', ('review threads of %s: a page came back empty; keeping the last threads'):format(p.key))
         end
+        local keep = old and old.threads
+        local partial = not keep and (p.pages or 0) > 0 and p.threads or nil
         M.threads_cache[p.key] = {
           at = now,
           failed = err or 'incomplete pages',
-          threads = old and old.threads,
-          sig = old and old.sig,
-          truncated = old and old.truncated,
+          threads = keep or partial,
+          sig = keep and old.sig or (partial and vim.fn.sha256(vim.json.encode(partial)):sub(1, 16)) or nil,
+          truncated = (keep and old.truncated) or (partial and true) or nil,
         }
       else
         M.threads_cache[p.key] = {
@@ -1108,7 +1118,7 @@ end
 ---`threads`: counts of the PR's review threads ({open, resolved, outdated}), when fetched.
 ---@param pr revuey.PR
 ---@param parent? string
----@param threads? {open:integer, resolved:integer, outdated:integer, truncated?:boolean}
+---@param threads? {open:integer, resolved:integer, outdated:integer, truncated?:boolean, stale?:boolean}
 ---@return {kind:string, text:string, hl:string, glyph?:string}[]
 function M.detail(pr, parent, threads)
   local out = {}
@@ -1150,7 +1160,7 @@ function M.detail(pr, parent, threads)
     if threads.truncated then
       parts[#parts + 1] = 'more on GitHub'
     end
-    add('threads', 'threads: ' .. table.concat(parts, ', '), threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
+    add('threads', 'threads: ' .. table.concat(parts, ', ') .. (threads.stale and ' (stale)' or ''), threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
   end
   if pr.state == 'OPEN' then
     local mg = pr.mergeable == 'MERGEABLE' and { 'mergeable', 'RevueyForgeDim' }

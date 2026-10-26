@@ -69,10 +69,15 @@ end
 -- { ["owner/name#N"] = { PullRequestReviewThread nodes, with `comments` a plain list of
 -- PullRequestReviewComment nodes } }, `_null` = PRs that resolve to null; pages are cut by the
 -- query's `first`/`after` (cursors are indices). `REVUEY_FAKE_GH_THREADS_SCENARIO` = fail |
--- errors applies to thread queries only (the PR lookup still answers).
+-- errors | fail_after (only queries for later pages fail) applies to thread queries only (the
+-- PR lookup still answers).
 if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ', 1, true)) then
   local tscen = os.getenv('REVUEY_FAKE_GH_THREADS_SCENARIO') or ''
   if tscen == 'fail' then
+    io.stderr:write('error connecting to api.github.com\n')
+    os.exit(1)
+  elseif tscen == 'fail_after' and query:find('after: ', 1, true) then
+    -- the first round answers; any later page fails (a dropped connection mid-pagination)
     io.stderr:write('error connecting to api.github.com\n')
     os.exit(1)
   elseif tscen == 'errors' then

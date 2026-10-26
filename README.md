@@ -442,9 +442,11 @@ for authors.
 
 - **Where.** A thread goes on the lines GitHub gives it (`line`/`startLine` on the new side, or
   the old side for comments on deleted lines; file threads under the file header), but only when
-  the text there is what the thread's diff hunk shows, and so are the lines just above it (at
-  least one of them; all of them for lines with little text, such as `end`, `}` or `return
-  err`). The review is often not exactly the PR's diff (uncommitted edits, local commits not
+  the text there is what the thread's diff hunk shows, and either your copy of the file is the
+  PR's head commit's (no local edits; revuey asks git for the blob), or the lines just above it
+  match the hunk's too (at least one of them; all of them for lines with little text, such as
+  `end`, `}` or `return err`), or the line is distinctive and has no copy within 100 lines (a
+  later push may have edited the lines above). The review is often not exactly the PR's diff (uncommitted edits, local commits not
   pushed yet, commits pushed since, or the full-stack scope, where a lower PR's lines have
   moved): then the same lines with the same context are looked for within 100 lines of the
   file, and used only when there is exactly one such copy and the diff shows it (the header
@@ -458,7 +460,8 @@ for authors.
   unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
   ones only, none. `]m`/`[m` and the comments list (`cl`, a "GitHub threads" part) include them.
   The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
-  when the list was cut).
+  when the list was cut and `(stale)` when the last fetch failed and these are the threads from
+  before).
 - **Read-only.** revuey never writes to GitHub. `gx` on a thread opens it in the browser (elsewhere
   in the diff the key does what it does outside revuey: Neovim's `gx`, or your own mapping when
   `keymaps.forge_open` is another key). `ce`, `cx`, `cd` and `cs` say the thread is read-only.
