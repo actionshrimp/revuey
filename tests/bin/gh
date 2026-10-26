@@ -14,7 +14,8 @@
 #   REVUEY_FAKE_GH_THREADS JSON file: { "owner/name#N": [PullRequestReviewThread nodes, each with
 #                        `comments` a plain list] } answering forge.lua's review-thread queries
 #                        page by page (`first`/`after`); `_null` = PRs that resolve to null,
-#                        `_null_after` = PRs whose later pages come back null
+#                        `_null_after` = PRs whose later pages come back null,
+#                        `_heads` = the headRefOid each PR's thread pages report
 #   REVUEY_FAKE_GH_THREADS_SCENARIO  fail | errors | fail_after (later pages only) for thread
 #                        queries only
 #   REVUEY_FAKE_NVIM     nvim binary that runs the Lua half (default: nvim)

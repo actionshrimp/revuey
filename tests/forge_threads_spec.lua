@@ -32,8 +32,8 @@ h.test('build_threads_query: threads per PR and comments per thread, cursors, fr
     { kind = 'threads', owner = 'acme', name = 'shop', number = 13, after = 'Y3Vy"' },
     { kind = 'comments', thread = 'PRRT_1', after = '20' },
   })
-  h.ok(q:find('t1: repository(owner: "acme", name: "shop") { pullRequest(number: 12) { reviewThreads(first: 50) {', 1, true), q)
-  h.ok(q:find('t2: repository(owner: "acme", name: "shop") { pullRequest(number: 13) { reviewThreads(first: 50, after: "Y3Vy\\"") {', 1, true), q)
+  h.ok(q:find('t1: repository(owner: "acme", name: "shop") { pullRequest(number: 12) { headRefOid reviewThreads(first: 50) {', 1, true), q)
+  h.ok(q:find('t2: repository(owner: "acme", name: "shop") { pullRequest(number: 13) { headRefOid reviewThreads(first: 50, after: "Y3Vy\\"") {', 1, true), q)
   h.ok(q:find('c3: node(id: "PRRT_1") { ... on PullRequestReviewThread { comments(first: 100, after: "20") {', 1, true), q)
   h.eq(13, aliases.t2.number)
   h.eq('PRRT_1', aliases.c3.thread)
@@ -903,9 +903,11 @@ h.test('at the PR head, a weak line whose context a later push edited stays on i
   for _, case in ipairs({ { oid = head, how = 'line' }, { oid = nil, how = 'outside' } }) do
     reset()
     local calls = h.tmpdir('ft-gh-head-' .. case.how) .. '/calls.ndjson'
+    local th = vim.deepcopy(threads)
+    th._heads = { ['acme/shop#12'] = case.oid } -- the head the threads were numbered against
     h.use_fake_gh(calls, {
       ['acme/shop:stack/cart'] = { pr({ number = 12, head = 'stack/cart', base = 'stack/math', oid = case.oid }) },
-    }, nil, threads)
+    }, nil, th)
     local s = open(d)
     idle(s)
     h.eq(case.how, s.cm.forge_place['gh:TH'].how, 'head ' .. tostring(case.oid))
@@ -914,6 +916,113 @@ h.test('at the PR head, a weak line whose context a later push edited stays on i
     end
     view.close()
   end
+end)
+
+h.test('kept threads from an older head are not trusted against the new head\'s text', function()
+  reset()
+  local d = stack_fixture('ft-oldhead')
+  local h1 = vim.trim(h.git(d, 'rev-parse', 'stack/cart'))
+  -- a thread on line 15, `  }` closing addItem, numbered against H1
+  local function on(line, at)
+    return {
+      _heads = { ['acme/shop#12'] = at },
+      ['acme/shop#12'] = { t({ id = 'TB', line = line, comments = { c('hal', 'Brace thread', { hunk = cart_hunk(15) }) } }) },
+    }
+  end
+  local calls = h.tmpdir('ft-gh-oldhead') .. '/calls.ndjson'
+  local function prs(oid)
+    return { ['acme/shop:stack/cart'] = { pr({ number = 12, head = 'stack/cart', base = 'stack/math', oid = oid }) } }
+  end
+  h.use_fake_gh(calls, prs(h1), nil, on(15, h1))
+  local s = open(d)
+  idle(s)
+  h.eq({ 'line', 15 }, { s.cm.forge_place['gh:TB'].how, s.cm.forge_place['gh:TB'].start_line })
+  -- the author pushes H2: a clear() method above addItem; the user has it locally
+  local lines = vim.deepcopy(CART)
+  for i, l in ipairs({ '  clear(): this {', '    this.items = [];', '    return this;', '  }', '' }) do
+    table.insert(lines, 11 + i, l)
+  end
+  h.write(d, 'src/cart.ts', table.concat(lines, '\n') .. '\n')
+  h.git(d, 'commit', '-q', '-am', 'clear')
+  local h2 = vim.trim(h.git(d, 'rev-parse', 'stack/cart'))
+  -- R: the PR lookup returns H2, the threads refetch fails (H1 threads kept, stale)
+  h.use_fake_gh(calls, prs(h2), nil, on(15, h1))
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = 'fail'
+  local _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore()
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
+  local p = s.cm.forge_place['gh:TB']
+  h.eq({ 'moved', 20 }, { p.how, p.start_line }, 'the end of addItem, not clear()\'s brace at 15')
+  -- control: threads renumbered by GitHub against H2 are trusted at their line
+  h.use_fake_gh(calls, prs(h2), nil, on(20, h2))
+  _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore()
+  p = s.cm.forge_place['gh:TB']
+  h.eq({ 'line', 20 }, { p.how, p.start_line })
+  view.close()
+end)
+
+h.test('threads numbered against two heads (a push between pages) trust no head', function()
+  reset()
+  forge.THREAD_PAGE = 1
+  local d = stack_fixture('ft-twoheads')
+  local h1 = vim.trim(h.git(d, 'rev-parse', 'stack/cart'))
+  local calls = h.tmpdir('ft-gh-twoheads') .. '/calls.ndjson'
+  local threads = {
+    _heads = { ['acme/shop#12'] = h1 },
+    ['acme/shop#12'] = {
+      t({ id = 'TA', line = 14, comments = { c('a', 'one', { hunk = cart_hunk(14) }) } }),
+      t({ id = 'TB', line = 18, comments = { c('b', 'two', { hunk = cart_hunk(18) }) } }),
+    },
+  }
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local s = open(d)
+  idle(s)
+  local pr12 = forge.get(s.forge.targets['stack/cart'])
+  h.eq(h1, forge.threads_head(pr12), 'one head: trusted')
+  threads._heads_later = { ['acme/shop#12'] = string.rep('f', 40) }
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore()
+  h.eq({ 2, nil }, { #forge.threads_for(pr12), forge.threads_head(pr12) })
+  view.close()
+  reset()
+end)
+
+h.test('a head commit missing locally is looked up again once the user fetches it', function()
+  reset()
+  local d = stack_fixture('ft-fetchhead')
+  local other = h.tmpdir('ft-fetchhead-other')
+  vim.fn.delete(other, 'rf')
+  h.git(vim.fs.dirname(other), 'clone', '-q', d, other)
+  h.git(other, 'checkout', '-q', 'stack/cart')
+  h.write(other, 'NOTES.md', 'notes\n') -- a later push that leaves cart.ts alone
+  h.git(other, 'add', 'NOTES.md')
+  h.git(other, 'commit', '-q', '-m', 'notes')
+  local h2 = vim.trim(h.git(other, 'rev-parse', 'HEAD'))
+  local stale_hunk = '@@ -0,0 +1,14 @@\n+  addItem(item: Item): this {\n+    this.list.push(item);\n+    // added\n+    return this;'
+  local threads = {
+    _heads = { ['acme/shop#12'] = h2 },
+    ['acme/shop#12'] = { t({ id = 'TH', line = 14, comments = { c('gina', 'Fluent API?', { hunk = stale_hunk }) } }) },
+  }
+  local calls = h.tmpdir('ft-gh-fetchhead') .. '/calls.ndjson'
+  h.use_fake_gh(calls, {
+    ['acme/shop:stack/cart'] = { pr({ number = 12, head = 'stack/cart', base = 'stack/math', oid = h2 }) },
+  }, nil, threads)
+  local s = open(d)
+  idle(s)
+  h.eq('outside', s.cm.forge_place['gh:TH'].how, 'H2 is not in this clone: no head trust')
+  h.git(d, 'fetch', '-q', other, 'stack/cart')
+  view.refresh({ force = true })
+  idle(s)
+  h.eq('line', s.cm.forge_place['gh:TH'].how, 'fetched: H2\'s cart.ts is the review\'s')
+  view.close()
 end)
 
 h.test('failures never break the review: no gh, gh failing, GraphQL errors, a PR that does not resolve', function()

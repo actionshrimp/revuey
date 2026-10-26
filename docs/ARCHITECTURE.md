@@ -1030,17 +1030,24 @@ are in `reports/Terminal code review tool landscape.md`.
       copy within 100 lines; or there is no hunk text),
       `moved` (the text and context found at exactly one place of the side's full text within
       100 lines, copies on lines the diff does not show counted, that place shown; at least
-      three word characters; weak text needs hunk context), else `outside` (file in the review:
+      three word characters, or hunk context with text; weak text such as `}` needs all of its
+      context to match), else `outside` (file in the review:
       a group "GitHub threads on lines not shown here" at the file's last row), `missing` (file
       not shown: the end of the review), `file` (`subjectType FILE`: under the file header);
       renamed files (`status = 'R'`) are followed by `old_path`. The context is from the push
       the comment was made on: a later push that edits the lines above keeps the thread on its
       line (not outdated), so the context check alone wrongly moved 4 of 37 real current threads
       (TypeScript, ruff, deno, vscode, neovim) out of place. Hence the two other ways to accept
-      GitHub's line: a strong unique line, and the **PR head**: `forge_view.load_head_blobs`
-      asks `git cat-file --batch-check` for `<pr.headRefOid>:<path>` of each thread's file
-      (once per key, kept; false when the commit is not in the clone), and `place` gets that
-      blob; when it equals the review file's `new_blob` (the hashed working-tree file or the
+      GitHub's line: a strong unique line, and the **PR head**. The head is the one GitHub
+      numbered the threads against: the threads query asks `pullRequest { headRefOid }` with
+      each page and the cache entry stores it (pages from different heads, a push mid-fetch,
+      store none). Not the PR lookup's `headRefOid`: the two caches are fetched and expire
+      separately, and a failed threads refetch keeps older threads (with their old head)
+      while the lookup already reports the new one, so old line numbers would be trusted
+      against new text. `forge_view.load_head_blobs` asks `git cat-file --batch-check` for
+      `<threads head>:<path>` of each thread's file; found blobs are kept for the review, a
+      missing commit or path is asked again on the next update (the user may fetch it), and
+      `place` gets the blob; when it equals the review file's `new_blob` (the hashed working-tree file or the
       committed blob, so uncommitted edits and other commits never qualify), GitHub numbers the
       thread against exactly this text and a plain text match is trusted, weak or repeated
       lines included. Per PR, so in full-stack scope a lower PR qualifies for files the layers

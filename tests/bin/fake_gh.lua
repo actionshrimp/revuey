@@ -70,7 +70,8 @@ end
 -- PullRequestReviewComment nodes } }, `_null` = PRs that resolve to null; pages are cut by the
 -- query's `first`/`after` (cursors are indices). `REVUEY_FAKE_GH_THREADS_SCENARIO` = fail |
 -- errors | fail_after (only queries for later pages fail) applies to thread queries only (the
--- PR lookup still answers).
+-- PR lookup still answers). `_heads` = { ["owner/name#N"] = oid } is the PR's headRefOid there (`_heads_later`: on
+-- pages after the first, a push mid-fetch).
 if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ', 1, true)) then
   local tscen = os.getenv('REVUEY_FAKE_GH_THREADS_SCENARIO') or ''
   if tscen == 'fail' then
@@ -115,7 +116,7 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
     return { totalCount = #(t.comments or {}), pageInfo = info, nodes = list }
   end
   local data, errors = {}, {}
-  local tpat = '(t%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%) { reviewThreads%(first: (%d+)([^)]*)%)'
+  local tpat = '(t%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%) {[^(]-reviewThreads%(first: (%d+)([^)]*)%)'
   for alias, owner, name, number, first, rest in query:gmatch(tpat) do
     local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
     local after = rest:match('after: (%b"")')
@@ -134,7 +135,8 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
         n.comments = comments_conn(t, first_comments)
         out[#out + 1] = n
       end
-      data[alias] = { pullRequest = { reviewThreads = { pageInfo = info, nodes = out } } }
+      local head = (after and (all._heads_later or {})[key]) or (all._heads or {})[key]
+      data[alias] = { pullRequest = { headRefOid = head or vim.NIL, reviewThreads = { pageInfo = info, nodes = out } } }
     end
   end
   local cpat = '(c%d+): node%(id: (%b"")%) { %.%.%. on PullRequestReviewThread { comments%(first: (%d+)([^)]*)%)'

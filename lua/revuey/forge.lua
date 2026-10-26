@@ -800,7 +800,7 @@ function M.build_threads_query(reqs)
       threads = true
       local alias = 't' .. i
       aliases[alias] = r
-      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } } } }')
+      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { headRefOid reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } } } }')
         :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after))
     else
       local alias = 'c' .. i
@@ -907,6 +907,15 @@ function M.threads_for(pr)
   return e.threads, e.failed ~= nil, e.truncated == true
 end
 
+---The head commit GitHub numbered a PR's cached threads against (`headRefOid` of the threads
+---fetch, not of the PR lookup: the two are fetched and expire separately, and a failed threads
+---refetch keeps older threads). nil when unknown or mixed.
+---@return string?
+function M.threads_head(pr)
+  local e = pr and M.threads_cache[M.thread_key(pr)]
+  return e and e.head_oid or nil
+end
+
 ---Fetch the review threads of `prs` unless cached within the TTL (or `o.force`): one `gh api
 ---graphql` call per host per round, a round asking every PR's next page of threads and every
 ---long thread's next page of comments, until no page is left (at most THREAD_ROUNDS rounds;
@@ -984,6 +993,14 @@ function M.fetch_threads(prs, o)
             p.failed, p.done = true, true
           else
             p.pages = (p.pages or 0) + 1
+            -- the head commit GitHub numbered these pages against; pages from different
+            -- heads (a push mid-fetch) leave the threads with no head to trust
+            local oid = str(v.pullRequest.headRefOid)
+            if p.pages == 1 then
+              p.head_oid = oid or false
+            elseif p.head_oid ~= oid then
+              p.head_oid = false
+            end
             for _, n in ipairs(nodes(conn)) do
               local t, cursor = M.normalize_thread(n)
               if t then
@@ -1038,12 +1055,15 @@ function M.fetch_threads(prs, o)
           threads = keep or partial,
           sig = keep and old.sig or (partial and vim.fn.sha256(vim.json.encode(partial)):sub(1, 16)) or nil,
           truncated = (keep and old.truncated) or (partial and true) or nil,
+          -- kept threads keep the head they were numbered against
+          head_oid = (keep and old.head_oid) or (partial and p.head_oid) or nil,
         }
       else
         M.threads_cache[p.key] = {
           at = now,
           threads = p.threads,
           truncated = p.truncated,
+          head_oid = p.head_oid,
           sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
         }
       end
