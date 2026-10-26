@@ -1031,7 +1031,9 @@ are in `reports/Terminal code review tool landscape.md`.
       `moved` (the text and context found at exactly one place of the side's full text within
       100 lines, copies on lines the diff does not show counted, that place shown; at least
       three word characters, or hunk context with text; weak text such as `}` needs all of its
-      context to match), else `outside` (file in the review:
+      context to match, and is never searched for when it is still at GitHub's line: only its
+      context changed, and another copy of the old block nearby, the same `}` or `return err`
+      in the next function, would be a wrong place), else `outside` (file in the review:
       a group "GitHub threads on lines not shown here" at the file's last row), `missing` (file
       not shown: the end of the review), `file` (`subjectType FILE`: under the file header);
       renamed files (`status = 'R'`) are followed by `old_path`. The context is from the push
@@ -1047,7 +1049,10 @@ are in `reports/Terminal code review tool landscape.md`.
       against new text. `forge_view.load_head_blobs` asks `git cat-file --batch-check` for
       `<threads head>:<path>` of each thread's file; found blobs are kept for the review, a
       missing commit or path is asked again on the next update (the user may fetch it), and
-      `place` gets the blob; when it equals the review file's `new_blob` (the hashed working-tree file or the
+      `place` gets the blob (a missing head is one `cat-file` call per update until found).
+      Limitation: if GitHub recalculates thread lines some time after updating `headRefOid`, a
+      fetch right after a push could pair the new head with old line numbers; a text match at
+      the line is still required, so only weak or repeated lines are at risk; when it equals the review file's `new_blob` (the hashed working-tree file or the
       committed blob, so uncommitted edits and other commits never qualify), GitHub numbers the
       thread against exactly this text and a plain text match is trusted, weak or repeated
       lines included. Per PR, so in full-stack scope a lower PR qualifies for files the layers

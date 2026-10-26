@@ -203,8 +203,13 @@ function M.place(t, ctx, o)
   -- moved: the same lines and context, one copy in the side's text within RADIUS (copies on
   -- lines the diff does not show count too), shown. Weak text needs context to go on.
   -- (a line with hardly any text, such as `}`, only with its whole context matching)
+  -- Weak text still at GitHub's line has not moved: only its context changed (a later push or
+  -- a local edit above it), and another copy of the old block nearby (the same `}` or `return
+  -- err` in the next function) would be a wrong place. Listed apart instead.
+  local unmoved = weak and t.line ~= nil and matches(first)
   local has_context = table.concat(before, ' '):find('%w') ~= nil
-  if #want > 0 and (table.concat(want, ' '):find('%w.-%w.-%w') or has_context) and not (weak and not has_context) then
+  if not unmoved and #want > 0 and (table.concat(want, ' '):find('%w.-%w.-%w') or has_context)
+    and not (weak and not has_context) then
     local hits = {}
     for p = math.max(1, first - M.RADIUS), first + M.RADIUS do
       if matches(p) and context_ok(p) then
