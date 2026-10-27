@@ -1149,6 +1149,7 @@ function M.reply_forge(s, item)
     url = g.url,
     comment_id = g.comment_id,
     database_id = g.database_id,
+    root_id = g.root_id,
   }
   local function new(text, status)
     local cmt = comments.new(anchor, text, { status = status })

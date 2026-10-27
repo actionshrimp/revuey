@@ -1151,7 +1151,7 @@ fragment review on PullRequestReview {
 }]]
 local PCOMMENT_FIELDS = [[
 fragment pcomment on PullRequestReviewComment {
-  id fullDatabaseId url path line startLine originalLine subjectType body replyTo { id }
+  id fullDatabaseId url path line startLine originalLine originalStartLine subjectType body replyTo { id }
 }]]
 
 M.RECENT_REVIEWS = 30 -- the PR's latest reviews read to find one whose answer was lost
@@ -1202,6 +1202,7 @@ function M.normalize_pending_comment(c)
     line = int(c.line),
     start_line = int(c.startLine),
     original_line = int(c.originalLine),
+    original_start_line = int(c.originalStartLine),
     subject = str(c.subjectType),
     body = str(c.body) or '',
     reply_to = type(c.replyTo) == 'table' and str(c.replyTo.id) or nil,
@@ -1473,19 +1474,29 @@ function M.build_atomic_mutation(o)
   end
   local body = (o.body and o.body ~= '') and (', body: ' .. lit(o.body)) or ''
   local threads = #th > 0 and (', threads: [' .. table.concat(th, ', ') .. ']') or ''
-  return ('mutation {\n  s: addPullRequestReview(input: {pullRequestId: %s, commitOID: %s, event: %s%s%s}) { pullRequestReview { id state url createdAt comments(first: 100) { nodes { ...pcomment } } } }\n}\n%s')
+  return ('mutation {\n  s: addPullRequestReview(input: {pullRequestId: %s, commitOID: %s, event: %s%s%s}) { pullRequestReview { id state url createdAt body commit { oid } comments(first: 100) { totalCount pageInfo { hasNextPage endCursor } nodes { ...pcomment } } } }\n}\n%s')
     :format(lit(o.pr_id), lit(o.commit), o.event, body, threads, PCOMMENT_FIELDS)
 end
 
----Errors of a GraphQL answer that belong to `alias` (by `path[1]`), as one message.
+---GitHub's error types that mean "refused, nothing was done" (anything else at an alias, or no
+---type, may hide a change that was made: treated as a lost answer).
+M.REFUSALS = { UNPROCESSABLE = true, FORBIDDEN = true, NOT_FOUND = true, INVALID = true, BAD_REQUEST = true }
+
+---Errors of a GraphQL answer that belong to `alias` (by `path[1]`), as one message, and whether
+---they are all refusals (M.REFUSALS).
+---@return string? message, boolean refused
 function M.alias_error(errors, alias)
-  local out = {}
+  local out, refused = {}, true
   for _, e in ipairs(errors or {}) do
     if type(e) == 'table' and type(e.path) == 'table' and e.path[1] == alias then
       out[#out + 1] = tostring(e.message or e.type)
+      refused = refused and M.REFUSALS[e.type] == true
     end
   end
-  return #out > 0 and table.concat(out, '; ') or nil
+  if #out == 0 then
+    return nil, false
+  end
+  return table.concat(out, '; '), refused
 end
 
 -- ---------------------------------------------------------------------------

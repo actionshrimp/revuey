@@ -328,7 +328,7 @@ h.test('item: a comment-like record with GitHub ids, authors, replies, pending a
   h.eq('resolved', it.status)
   h.eq({ path = 'f.txt', side = 'new', start_line = 2, end_line = 3 }, it.anchor)
   h.eq({ thread_id = 'T', pr = 12, pr_url = 'https://github.com/acme/shop/pull/12', repo = 'github.com/acme/shop', url = 'u',
-    resolved = true, resolved_by = 'carol', outdated = false, pending = true, hidden = 3, comment_id = 'C2', database_id = 9 }, it.forge)
+    resolved = true, resolved_by = 'carol', outdated = false, pending = true, hidden = 3, comment_id = 'C2', database_id = 9, root_id = 'C' }, it.forge)
   h.eq(1, #it.thread)
   h.eq({ 'alice', true }, { it.thread[1].author.name, it.thread[1].pending })
   h.eq({ open = 0, resolved = 1, outdated = 0 }, ft.summary({ t }))

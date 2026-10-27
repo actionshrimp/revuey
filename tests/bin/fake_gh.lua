@@ -218,7 +218,9 @@ local function comments_page(rv, first, after)
   for i = from, math.min(#list, from + first - 1) do
     local c = list[i]
     cs[#cs + 1] = { id = c.id, fullDatabaseId = c.databaseId and tostring(c.databaseId) or vim.NIL, url = c.url or vim.NIL,
-      path = c.path or vim.NIL, line = c.line or vim.NIL, startLine = c.startLine or vim.NIL, originalLine = c.line or vim.NIL,
+      path = c.path or vim.NIL, line = c.line or vim.NIL, startLine = c.startLine or vim.NIL,
+      -- the lines it was made on (`line` follows the head: tests move it, or null it when outdated)
+      originalLine = c.originalLine or c.line or vim.NIL, originalStartLine = c.originalStartLine or c.startLine or vim.NIL,
       subjectType = c.subjectType or 'LINE', body = c.body, replyTo = c.replyTo or vim.NIL }
   end
   local last = from + #cs - 1
@@ -477,6 +479,10 @@ if argv[2] == 'api' and argv[3] == 'graphql' and query0 and query0:find('viewer 
       local pending = {}
       if pr.pending then
         pending[1] = review_node(pr.pending, first)
+      end
+      if pr.pending_extra then
+        -- a second pending review of the viewer's (GitHub should not allow it)
+        pending[#pending + 1] = review_node(pr.pending_extra, first)
       end
       local all = vim.deepcopy(pr.history or {})
       if pr.pending then

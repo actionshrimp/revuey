@@ -1131,7 +1131,7 @@ h.test('R3/R4: a pending review that cannot be read whole blocks its PR: no Subm
   view.submit('comment')
   wait_job()
   forge.PENDING_COMMENTS = saved
-  h.eq('&Cancel', asked[1].choices)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
   h.ok(asked[1].msg:find('BLOCKED, not submitted: your pending review on GitHub could not be read whole', 1, true), asked[1].msg)
   h.ok(asked[1].msg:find('? src/cart.ts:13  Lost one. (sent earlier, GitHub did not answer: it may be there)', 1, true), asked[1].msg)
   h.eq({}, ops(calls))
@@ -1190,7 +1190,7 @@ h.test('R8: LEFT and RIGHT with the same text on one line number, one answer los
   local asked = answer({ 1 })
   view.submit('approve')
   wait_job()
-  h.eq('&Cancel', asked[1].choices)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
   h.ok(asked[1].msg:find('GitHub has comments it cannot be told apart from', 1, true), asked[1].msg)
   h.eq({ 'unknown', 'unknown' }, { get(s, l.id).forge_post.state, get(s, r.id).forge_post.state })
   h.eq({ 'addPullRequestReviewThread', 'addPullRequestReviewThread' }, ops(calls), 'nothing more')
@@ -1221,7 +1221,7 @@ h.test('a Graphite comment with the same text as a lost add is never claimed: un
   local asked = answer({ 1 })
   view.submit('comment')
   wait_job()
-  h.eq('&Cancel', asked[1].choices)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
   h.eq('unknown', get(s, a.id).forge_post.state)
   h.ok(get(s, a.id).forge_post.comment_id == nil, 'Graphite\'s comment is not ours')
   view.close()
@@ -1423,7 +1423,7 @@ h.test('submitted elsewhere, discarded, transient: a pending record is posted, f
   asked = answer({ 1 })
   view.submit('comment')
   wait_job()
-  h.eq('&Cancel', asked[1].choices)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
   h.eq('unknown', get(s2, c.id).forge_post.state)
   h.eq({}, ops(calls2))
   view.close()
@@ -1575,6 +1575,359 @@ h.test('one submit at a time; closing the review before the confirmation sends n
   restore()
   h.eq(nil, fpv.job)
   h.ok(msgs[#msgs].msg:find('submit stopped:', 1, true), vim.inspect(msgs))
+  view.close()
+end)
+
+-- ---------------------------------------------------------------------------
+-- Third review: lost submits, false atomic matches, stuck records, moved lines, late additions
+-- ---------------------------------------------------------------------------
+
+h.test('alias_error: only known refusal types are refusals; anything else may hide a change (lost)', function()
+  local m, refused = forge.alias_error({ { type = 'UNPROCESSABLE', path = { 'm1' }, message = 'bad line' } }, 'm1')
+  h.eq({ 'bad line', true }, { m, refused })
+  m, refused = forge.alias_error({ { type = 'INTERNAL', path = { 'm1' }, message = 'Something went wrong' } }, 'm1')
+  h.eq({ 'Something went wrong', false }, { m, refused })
+  m, refused = forge.alias_error({ { path = { 'm1' }, message = 'no type' } }, 'm1')
+  h.eq(false, refused)
+end)
+
+h.test('payload_matches: the path counts (M23); the original lines count, not where the head moved them', function()
+  local p = { kind = 'thread', path = 'src/cart.ts', line = 12, body = 'nit' }
+  h.ok(not post.payload_matches({ id = 'X', path = 'src/other.ts', line = 12, body = 'nit' }, p), 'another file')
+  h.ok(post.payload_matches({ id = 'X', path = 'src/cart.ts', line = 15, original_line = 12, body = 'nit' }, p), 'moved by a push')
+  h.ok(post.payload_matches({ id = 'X', path = 'src/cart.ts', line = nil, original_line = 12, body = 'nit' }, p), 'outdated')
+  h.ok(not post.payload_matches({ id = 'X', path = 'src/cart.ts', line = 12, original_line = 9, body = 'nit' }, p), 'made on another line')
+  -- a miss is never "absent" while the review has the same text on that file
+  local res = post.reconcile({ { key = 'k', payload = p, pool = { { id = 'Y', path = 'src/cart.ts', original_line = 30, body = 'nit' } }, complete = true } })
+  h.ok(res.k.unknown, vim.inspect(res))
+end)
+
+h.test('find_atomic: with threads, a review is ours only when every thread sent is in it, read whole', function()
+  local t0 = os.time({ year = 2026, month = 2, day = 1, hour = 12 })
+  local threads = { { kind = 'thread', path = 'src/cart.ts', line = 12, body = 'Return a copy?' } }
+  local e = { commit = 'abc', event = 'APPROVE', body = '', started_at = t0, threads = threads }
+  local function rv(o)
+    return vim.tbl_extend('force', { id = 'R', mine = true, commit = 'abc', state = 'APPROVED', body = '', created_at = post.iso(t0 + 5), comments = {} }, o)
+  end
+  h.eq({ absent = true }, post.find_atomic(e, { recent_read = true, recent_all = true, recent = { rv({}) } }), 'an empty Approve made elsewhere is not it')
+  h.eq('R', post.find_atomic(e, { recent_read = true, recent_all = true, recent = { rv({ comments = {
+    { id = 'C', path = 'src/cart.ts', original_line = 12, body = 'Return a copy?' } } }) } }).found.id)
+  h.ok(post.find_atomic(e, { recent_read = true, recent_all = true, recent = { rv({ cursor = 'K' }) } }).unknown, 'not read whole')
+end)
+
+h.test('REPRO1: a submit whose answer was lost is found by the next submit; the verdict is never sent twice', function()
+  local s, calls = setup_review('repro1', { edit = graphite(), fail = { lost = { 'submitPullRequestReview' } } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.eq(1, vim.tbl_count(M_ledger(s)), 'the submit was written ahead')
+  local P = fake_state(calls)
+  P.fail = nil
+  write_state(calls, P)
+  local asked = answer({ 1 })
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq(0, #asked, 'nothing more to submit')
+  h.ok(msgs[#msgs].msg:find('it is not sent again', 1, true), vim.inspect(msgs))
+  h.eq({ 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq(1, #history(calls))
+  h.eq('posted', get(s, a.id).forge_post.state)
+  h.eq({}, M_ledger(s))
+  view.close()
+end)
+
+h.test('REPRO1b: only Graphite\'s comments submitted, answer lost: found, never a second review', function()
+  local s, calls = setup_review('repro1b', { edit = graphite(), fail = { lost = { 'submitPullRequestReview' } } })
+  answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  local P = fake_state(calls)
+  P.fail = nil
+  write_state(calls, P)
+  local asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.eq(0, #asked)
+  h.eq({ 'submitPullRequestReview' }, ops(calls))
+  h.eq(1, #history(calls))
+  view.close()
+end)
+
+h.test('REPRO2: a lost atomic review GitHub never made is not "found" in an empty Approve made elsewhere', function()
+  local s, calls = setup_review('repro2', { fail = { lost_unapplied = { 'Return a copy' } } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  -- meanwhile the user approves in GitHub's UI, with no comment
+  local P = fake_state(calls)
+  P.fail = nil
+  P.prs['acme/shop#12'].history = { { id = 'PRR_ui', state = 'APPROVED', commit = rev(s.review.root, 'stack/cart'), body = '',
+    createdAt = os.date('!%Y-%m-%dT%H:%M:%SZ'), comments = {} } }
+  write_state(calls, P)
+  local asked = answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.ok(asked[1] and asked[1].msg:find('+ src/cart.ts:12  Return a copy?', 1, true), vim.inspect(asked))
+  h.eq('posted', get(s, a.id).forge_post.state)
+  local h2 = history(calls)
+  h.eq(2, #h2)
+  h.eq('Return a copy?', h2[2].comments[1].body, 'really posted this time')
+  view.close()
+end)
+
+h.test('REPRO3: a stuck ledger entry can be forgotten from the blocked confirmation (with a warning)', function()
+  local s, calls = setup_review('repro3', { fail = { lost = { 'APPROVE' } } })
+  answer({ 1 })
+  view.submit('approve')
+  wait_job()
+  h.eq(1, vim.tbl_count(M_ledger(s)))
+  -- two reviews that could be it: GitHub cannot tell which
+  local P = fake_state(calls)
+  P.fail = nil
+  local r1 = vim.deepcopy(P.prs['acme/shop#12'].history[1])
+  r1.id = 'PRR_twin'
+  table.insert(P.prs['acme/shop#12'].history, r1)
+  write_state(calls, P)
+  local asked = answer({ 1, 1 }) -- Forget unconfirmed, then Forget
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
+  h.ok(asked[2].msg:find('They may exist on GitHub', 1, true), asked[2].msg)
+  h.ok(msgs[#msgs].msg:find('forgot 1 unconfirmed record', 1, true) and msgs[#msgs].level == vim.log.levels.WARN, vim.inspect(msgs))
+  h.eq({}, M_ledger(s))
+  view.close()
+end)
+
+h.test('REPRO3b: a write-ahead that cannot be saved sends nothing and leaves no record or ledger entry (M26)', function()
+  local s, calls = setup_review('repro3b')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local lock = require('revuey.lock')
+  local real = lock.pending
+  answer({ 1 })
+  lock.pending = function()
+    return true -- the comments lock deferred the save
+  end
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  lock.pending = real
+  h.ok(msgs[#msgs].msg:find('could not save the local records first', 1, true), vim.inspect(msgs))
+  h.eq({}, ops(calls))
+  h.eq({}, M_ledger(s))
+  h.eq({ nil, true }, { get(s, a.id).forge_post, get(s, a.id).in_review })
+  view.close()
+end)
+
+h.test('REPRO4: a lost add GitHub now shows on another line (the head moved) is found, not added again', function()
+  local s, calls = setup_review('repro4', { edit = graphite(), fail = { lost = { 'Return a copy' } } })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  local P = fake_state(calls)
+  P.fail = nil
+  for _, c in ipairs(P.prs['acme/shop#12'].pending.comments) do
+    if c.body == 'Return a copy?' then
+      c.originalLine, c.line = c.line, 15
+    end
+  end
+  write_state(calls, P)
+  local asked = answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('= src/cart.ts:12  Return a copy?', 1, true), asked[1].msg)
+  h.ok(not asked[1].msg:find('+ src/cart.ts:12', 1, true) and not asked[1].msg:find('src/cart.ts:15', 1, true), asked[1].msg)
+  h.eq({ 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq('posted', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('REPRO5: a lost reply is found by the thread\'s first comment even with no threads fetched', function()
+  local s, calls = setup_review('repro5', { edit = graphite(), fail = { lost = { 'Agreed.' } } })
+  -- a thread of two comments; the local reply recorded its last one and its root
+  local P = fake_state(calls)
+  local T = { ['acme/shop#12'] = { gh_thread('T_long', 18, { gh_comment('ROOT', 'Rounded?'), gh_comment('LAST', 'Yes.') }) } }
+  vim.fn.writefile({ vim.json.encode(T) }, calls .. '.threads.json')
+  write_state(calls, P)
+  local a = add_comment(s, 'src/cart.ts', 'add', 18, 18, 'Agreed.', { in_review = true,
+    forge_reply = { thread_id = 'T_long', pr = 12, repo = 'github.com/acme/shop', comment_id = 'LAST', root_id = 'ROOT' } })
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  forge.threads_cache = {} -- nothing cached
+  P = fake_state(calls)
+  P.fail = nil
+  write_state(calls, P)
+  local asked = answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('(in your pending review already)', 1, true), asked[1].msg)
+  h.eq({ 'addPullRequestReviewThreadReply', 'submitPullRequestReview' }, ops(calls))
+  h.eq('posted', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('REPRO6: comments added to the pending review elsewhere during the confirmation stop the submit', function()
+  local s, calls = setup_review('repro6', { edit = graphite() })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  fpv.ask = function()
+    -- Graphite adds a comment while the confirmation is open
+    local P = fake_state(calls)
+    table.insert(P.prs['acme/shop#12'].pending.comments, { id = 'G_late', databaseId = 99, path = 'src/cart.ts', line = 4, body = 'Late, unseen.' })
+    write_state(calls, P)
+    return 1
+  end
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.ok(msgs[#msgs].msg:find('your pending review changed since the confirmation (1 comment added elsewhere); not submitted', 1, true), vim.inspect(msgs))
+  h.eq({ 'addPullRequestReviewThread' }, ops(calls), 'no submit')
+  h.eq('PENDING', fake_state(calls).reviews.PRR_g)
+  view.close()
+end)
+
+h.test('M7: a pending record whose review comes back null (not NOT_FOUND) is kept and blocks; it can be forgotten', function()
+  local s, calls = setup_review('m7', { edit = function(p)
+    p.fail = { review_null = { 'PRR_x' } }
+  end })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true,
+    forge_post = { state = 'pending', pr = 12, repo = 'github.com/acme/shop', review_id = 'PRR_x', comment_id = 'PRRC_x' } })
+  local asked = answer({ 2 })
+  view.submit('comment')
+  wait_job()
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
+  h.ok(asked[1].msg:find('BLOCKED', 1, true), asked[1].msg)
+  h.eq({ 'pending', 'PRRC_x' }, { get(s, a.id).forge_post.state, get(s, a.id).forge_post.comment_id })
+  h.eq({}, ops(calls))
+  -- the way out
+  answer({ 1, 1 })
+  view.submit('comment')
+  wait_job()
+  h.eq(nil, get(s, a.id).forge_post)
+  view.close()
+end)
+
+h.test('M29: two pending reviews of the viewer\'s on one PR: refused, nothing sent', function()
+  local s, calls = setup_review('m29', { edit = function(p, d)
+    graphite()(p, d)
+    p.prs['acme/shop#12'].pending_extra = { id = 'PRR_g2', commit = rev(d, 'stack/cart'), comments = {} }
+  end })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local asked = answer({ 1 })
+  local msgs, restore = h.capture_notify()
+  view.submit('comment')
+  wait_job()
+  restore()
+  local text = (asked[1] and asked[1].msg or '') .. vim.inspect(msgs)
+  h.ok(text:find('more than one pending review of yours', 1, true), text)
+  h.eq({}, ops(calls))
+  view.close()
+end)
+
+h.test('M33: same-text comments added earlier in the same submit are in a later record\'s `before`', function()
+  local saved = forge.POST_BATCH
+  forge.POST_BATCH = 1
+  local s, calls = setup_review('m33', { edit = graphite(), fail = { lost_unapplied = { '"line": 13' } } })
+  local x = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'nit', { in_review = true })
+  local y = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'nit', { in_review = true })
+  local P = fake_state(calls)
+  P.fail = { lost_unapplied = { 'line: 13' } }
+  write_state(calls, P)
+  answer({ 1 })
+  view.submit('comment')
+  wait_job()
+  forge.POST_BATCH = saved
+  local xf, yf = get(s, x.id).forge_post, get(s, y.id).forge_post
+  h.eq('pending', xf.state)
+  h.eq('sending', yf.state)
+  h.ok(vim.tbl_contains(yf.before, xf.comment_id), vim.inspect(yf.before))
+  view.close()
+end)
+
+h.test('a pending review with no commit: line comments are refused (their lines cannot be checked)', function()
+  local s, calls = setup_review('nocommit', { edit = function(p)
+    p.prs['acme/shop#12'].pending = { id = 'PRR_g', commit = vim.NIL, comments = {} }
+    p.reviews.PRR_g = 'PENDING'
+  end })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local asked = answer({ 3 })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('GitHub did not say which commit, so its lines cannot be checked', 1, true), asked[1].msg)
+  h.eq({}, ops(calls))
+  view.close()
+end)
+
+h.test('the ledger: an unreadable file stops the submit (its entries are never dropped); a short write is not put in place', function()
+  local s, calls = setup_review('ledger')
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  vim.fn.writefile({ '{"reviews": {"x": ' }, fpv.ledger_path(s.cm.store))
+  local asked = answer({ 1 })
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find('cannot be read (fix or remove it', 1, true), vim.inspect(msgs))
+  h.eq({}, ops(calls))
+  h.eq('{"reviews": {"x": ', vim.fn.readfile(fpv.ledger_path(s.cm.store))[1], 'left as it was')
+  vim.fn.delete(fpv.ledger_path(s.cm.store))
+  -- a write that fails is not renamed into place
+  local real = io.open
+  io.open = function(path, mode)
+    local fd, err = real(path, mode)
+    if fd and mode == 'w' and path:find('%.forge%.json%.tmp') then
+      return { write = function()
+        return nil, 'No space left on device'
+      end, close = function()
+        fd:close()
+        return true
+      end }
+    end
+    return fd, err
+  end
+  local ok, err = fpv.ledger_write(s.cm.store, { reviews = { a = { id = 'a' } } })
+  io.open = real
+  h.eq(false, ok)
+  h.ok(err:find('No space left', 1, true), err)
+  h.eq(0, vim.fn.filereadable(fpv.ledger_path(s.cm.store)))
+  view.close()
+end)
+
+h.test('back from the body editor: a comment taken out, edited or deleted meanwhile is not sent', function()
+  local s, calls = setup_review('revalidate')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Keep.', { in_review = true })
+  local asked = answer({ 2 }) -- Write body
+  view.submit('comment')
+  assert(vim.wait(10000, function()
+    return require('revuey.comment_editor').current ~= nil
+  end, 10), 'editor opened')
+  local c = get(s, a.id)
+  c.body = 'Return a frozen copy?'
+  comments.put(s.cm.store, c)
+  comments.save(s.cm.store)
+  local ed = require('revuey.comment_editor').current
+  vim.api.nvim_buf_set_lines(ed.buf, 0, -1, false, { 'Overall fine.' })
+  fpv.ask = function(msg, choices)
+    asked[#asked + 1] = { msg = msg, choices = choices }
+    return 1
+  end
+  require('revuey.comment_editor').save()
+  wait_job()
+  h.ok(asked[#asked].msg:find('src/cart.ts:12: edited while the confirmation was open', 1, true), asked[#asked].msg)
+  h.eq({ 'Keep.' }, vim.tbl_map(function(t)
+    return t.body
+  end, mutations(calls)[1].input.threads))
+  h.eq({ nil, 'posted' }, { get(s, a.id).forge_post, get(s, b.id).forge_post.state })
   view.close()
 end)
 
