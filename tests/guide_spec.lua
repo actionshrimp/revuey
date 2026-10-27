@@ -835,6 +835,25 @@ h.test('line notes on an edited hunk: a deleted line\'s note never moves to anot
   h.eq({ 0, 1 }, { res.notes, res.notes_lost })
 end)
 
+h.test('line notes on an edited hunk: lines and context repeated in two places are no anchor', function()
+  -- the same Go error check twice, with the same lines around it: the note on the first
+  -- `return err` matches both copies after an edit elsewhere in the hunk, so it is lost
+  local block = { '+	v, err := fetch(ctx)', '+	if err != nil {', '+		return err', '+	}', '+	use(v)' }
+  local function hunk(first)
+    local lines = { '@@ -1,2 +1,13 @@ func run(ctx context.Context) error {', ' func run(ctx context.Context) error {', first }
+    vim.list_extend(lines, block)
+    vim.list_extend(lines, block)
+    vim.list_extend(lines, { '+	return nil', ' }' })
+    return { { path = 'run.go', hunks = { lines } } }
+  end
+  local orig, edited = hunk('+	log.Print("run")'), hunk('+	log.Printf("run %v", ctx)')
+  local kept, res = notes_after(orig, { { hunk = 'h1', line = 5, text = 'The first fetch fails fast.' } }, edited)
+  h.eq('+		return err', guide.hunks(diff.parse(difftext(orig)))[1].text[5])
+  h.eq(true, res.sections[1].items[1].edited)
+  h.eq({}, kept)
+  h.eq({ 0, 1 }, { res.notes, res.notes_lost })
+end)
+
 h.test('line notes on an edited hunk: found again by context after lines added elsewhere; old records', function()
   local orig = { { path = 'c.lua', hunks = { {
     '@@ -1,2 +1,6 @@ function M.total(cart)', ' function M.total(cart)', '+  local sum = 0', '+  for _, item in ipairs(cart.items) do',
