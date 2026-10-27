@@ -1,6 +1,7 @@
 -- GitHub pull request lookup for review branches and stack layers. No UI: remote parsing, the
--- batched GraphQL query, response mapping, a per-repo TTL cache, and the row/detail models the
--- panel draws (forge_view.lua). Shells out to the user's own `gh` (assumed authenticated; revuey
+-- batched GraphQL query, response mapping, a per-repo cache, the change check (a small query of
+-- change signals that marks PRs with news on GitHub without replacing what is shown), and the
+-- row/detail models the panel draws (forge_view.lua). Shells out to the user's own `gh` (assumed authenticated; revuey
 -- never reads credentials). Failures (gh missing, non-zero exit, bad JSON, offline, rate
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
@@ -56,6 +57,7 @@ local M = {}
 ---@field updated_at string   ISO time of the last update (sorts as text)
 ---@field repo string         host/owner/name it was found in
 ---@field body string         the description as its author wrote it (Markdown; '' when none)
+---@field signals table<string, string> change signals as of this lookup (M.signals)
 
 -- ---------------------------------------------------------------------------
 -- Remotes
@@ -314,11 +316,12 @@ end
 
 local PR_FIELDS = [[
 fragment pr on PullRequest {
-  number title url state isDraft updatedAt headRefOid body
+  number title url state isDraft updatedAt headRefOid body lastEditedAt
   author { login }
   reviewDecision
   latestReviews(first: 50) { nodes { author { login } state } }
-  reviewRequests(first: 50) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } } }
+  reviews { totalCount }
+  reviewRequests(first: 50) { totalCount nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } } }
   mergeable baseRefName headRefName
   headRepositoryOwner { login }
   commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) {
@@ -368,6 +371,59 @@ local function str(v)
   return type(v) == 'string' and v or nil
 end
 
+-- ---------------------------------------------------------------------------
+-- Change signals: what the change check compares (decision 20)
+-- ---------------------------------------------------------------------------
+
+---Signals of the PR itself (status, description), by name. `title` and `body` are the
+---description's; all of them are the PR's (row chip, detail heading).
+M.SIGNALS_PR = {
+  head = true, state = true, draft = true, title = true, body = true,
+  decision = true, reviews = true, requested = true, checks = true,
+}
+M.SIGNALS_DESC = { title = true, body = true }
+---Signals of its review threads (the first THREAD_SIGNALS threads: resolved ones and comments).
+M.SIGNALS_THREADS = { threads = true, resolved = true, comments = true }
+M.THREAD_SIGNALS = 100
+
+local function count_of(conn)
+  return type(conn) == 'table' and type(conn.totalCount) == 'number' and conn.totalCount or nil
+end
+
+---Change signals of a PullRequest node, from the lookup's fragment or the check's (the same
+---fields in both): head commit, state, draft, title, the description's last edit, the review
+---decision, the number of reviews (every submitted review or reply adds one), of requested
+---reviewers, and the head commit's check rollup state. Values are strings ('' when absent).
+---@return table<string, string>
+function M.signals(n)
+  local commit = nodes(n.commits)[1]
+  local rollup = type(commit) == 'table' and type(commit.commit) == 'table' and commit.commit.statusCheckRollup
+  local rr = n.reviewRequests
+  local requested = count_of(rr) or (type(rr) == 'table' and #nodes(rr)) or nil
+  return {
+    head = str(n.headRefOid) or '',
+    state = str(n.state) or '',
+    draft = tostring(n.isDraft == true),
+    title = str(n.title) or '',
+    body = str(n.lastEditedAt) or '',
+    decision = str(n.reviewDecision) or '',
+    reviews = tostring(count_of(n.reviews) or ''),
+    requested = tostring(requested or ''),
+    checks = type(rollup) == 'table' and str(rollup.state) or '',
+  }
+end
+
+---Thread signals from a list of `{resolved = bool, comments = n}` (the first THREAD_SIGNALS) and
+---the thread count.
+local function thread_signals(total, list)
+  local resolved, comments = 0, 0
+  for i = 1, math.min(#list, M.THREAD_SIGNALS) do
+    resolved = resolved + (list[i].resolved and 1 or 0)
+    comments = comments + list[i].comments
+  end
+  return { threads = tostring(total), resolved = tostring(resolved), comments = tostring(comments) }
+end
+
 ---Map a GraphQL PullRequest node to a revuey.PR.
 ---@return revuey.PR?
 function M.normalize(n, repo_key)
@@ -393,6 +449,7 @@ function M.normalize(n, repo_key)
     updated_at = str(n.updatedAt) or '',
     repo = repo_key,
     body = str(n.body) or '', -- the description as written (Markdown), see forge_description
+    signals = M.signals(n), -- what the change check compares against
   }
   for _, r in ipairs(nodes(n.latestReviews)) do
     if type(r) == 'table' then
@@ -480,14 +537,21 @@ end
 -- ---------------------------------------------------------------------------
 
 ---Cache per queried repo: { at = ms, failed? = reason, branches = { [branch] = revuey.PR[] } }.
----A failure keeps the last good `branches` (shown as stale) until a fetch works.
+---A failure keeps the last good `branches` (shown as stale) until a fetch works. Nothing here
+---expires: what is shown changes only when forge_view fetches (the first time a review needs a
+---PR, `R`, after a submit).
 M.cache = {}
+
+---PRs with news on GitHub (the change check): PR key (`M.thread_key`) -> { [signal] = true }.
+---A signal is cleared when a fetch of its kind works (PR lookup: M.SIGNALS_PR; threads:
+---M.SIGNALS_THREADS).
+M.changed = {}
 
 ---Is a commit an ancestor of (or equal to) a tip? `oid .. ' ' .. tip` -> boolean (immutable
 ---facts, kept for the session).
 M.ancestry = {}
 
----Clock in ms (tests replace it).
+---Clock in ms (tests replace it): the change check's interval.
 function M.now()
   return vim.uv.hrtime() / 1e6
 end
@@ -496,7 +560,9 @@ local function opts()
   local o = require('revuey.config').options.forge or {}
   return {
     enabled = o.enabled ~= false,
-    ttl = (o.ttl or 60) * 1000,
+    -- `ttl` (its old name kept): seconds between change checks while a review is shown
+    interval = (tonumber(o.ttl) or 180) * 1000,
+    check = o.enabled ~= false and o.check ~= false,
     timeout = (o.timeout or 15) * 1000,
     cmd = o.cmd or 'gh',
     hosts = o.hosts or {},
@@ -512,10 +578,6 @@ local function opts()
 end
 M.options = opts
 
-local function fresh(entry, branch, ttl)
-  return entry and (M.now() - entry.at) < ttl and (entry.failed or entry.branches[branch] ~= nil)
-end
-
 local function each_lookup(targets, fn)
   for _, t in pairs(targets) do
     for _, c in ipairs(t.candidates) do
@@ -524,18 +586,6 @@ local function each_lookup(targets, fn)
       end
     end
   end
-end
-
----Is every target answered by the cache (results or a recent failure) within the TTL?
----@param targets table<any, revuey.ForgeTarget>
-function M.is_fresh(targets)
-  local ttl, ok = opts().ttl, true
-  each_lookup(targets, function(repo, branch)
-    if not fresh(M.cache[M.repo_key(repo)], branch, ttl) then
-      ok = false
-    end
-  end)
-  return ok
 end
 
 ---Does a closed/merged PR belong to this branch? Its head commit and the tip must be on one line:
@@ -705,15 +755,16 @@ function M.rest_get(path, host, on_job)
   return body
 end
 
----Fetch PRs for targets unless the cache answers all of them (or `o.force`): one `gh api
----graphql` call per host (in practice one per refresh) for every (repo, branch) pair. Call
----inside git.async. `o.alive()` false after the call (the review closed, a newer lookup)
----drops the result: nothing is written. Returns true when it ran gh.
+---Fetch the PRs of `targets` (whatever the cache holds: forge_view decides when): one `gh api
+---graphql` call per host (in practice one) for every (repo, branch) pair. Call inside
+---git.async. `o.alive()` false after the call (the review closed, a newer lookup) drops the
+---result: nothing is written. Clears the PR change marks of the PRs it read. Returns true when
+---it ran gh.
 ---@param targets table<any, revuey.ForgeTarget>
----@param o? {force?:boolean, alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+---@param o? {alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
 function M.fetch(targets, o)
   o = o or {}
-  if not o.force and M.is_fresh(targets) then
+  if not next(targets) then
     return false
   end
   local by_host, seen = {}, {}
@@ -746,8 +797,8 @@ function M.fetch(targets, o)
       if not touched[key] then
         touched[key] = true
         local old = M.cache[key]
-        -- results of other branches of this repo stay until their own TTL runs out; on failure
-        -- the last good results stay too (shown as stale)
+        -- results of other branches of this repo stay; on failure the last good results stay
+        -- too (shown as stale)
         M.cache[key] = { at = now, failed = not data and (err or 'failed') or nil, branches = old and old.branches or {} }
       end
     end
@@ -768,6 +819,9 @@ function M.fetch(targets, o)
         end
       end
       M.cache[key].branches[p.branch] = prs
+      for _, pr in ipairs(prs) do
+        M.clear_changed(pr, M.SIGNALS_PR)
+      end
     end
   end
   return true
@@ -928,20 +982,8 @@ function M.normalize_thread(n)
 end
 
 ---Threads of a PR per cache key: { at = ms, threads? = revuey.ForgeThread[], sig?, failed? =
----reason, truncated? }. A failure keeps the last good threads (shown as they were).
+---reason, truncated? }. A failure keeps the last good threads (shown as stale).
 M.threads_cache = {}
-
----Are the threads of every PR in `prs` cached (or failed) within the TTL?
-function M.threads_fresh(prs)
-  local ttl = opts().ttl
-  for _, pr in ipairs(prs) do
-    local e = M.threads_cache[M.thread_key(pr)]
-    if not e or (M.now() - e.at) >= ttl then
-      return false
-    end
-  end
-  return true
-end
 
 ---Cached threads of a PR (oldest first, as GitHub lists them), or nil when never fetched; the
 ---second value is true when a later fetch failed (stale), the third when the pages were cut
@@ -964,23 +1006,21 @@ function M.threads_head(pr)
   return e and e.head_oid or nil
 end
 
----Fetch the review threads of `prs` unless cached within the TTL (or `o.force`): one `gh api
----graphql` call per host per round, a round asking every PR's next page of threads and every
+---Fetch the review threads of `prs` (whatever the cache holds: forge_view decides when): one
+---`gh api graphql` call per host per round, a round asking every PR's next page of threads and every
 ---long thread's next page of comments, until no page is left (at most THREAD_ROUNDS rounds;
 ---what was read is kept and the truncation logged). Call inside git.async. A failed round
 ---keeps each PR's last good threads; `o.alive()` false after a call drops everything. Returns
----true when it ran gh.
+---true when it ran gh. A PR whose threads were all read has its thread change marks cleared.
 ---@param prs revuey.PR[]
----@param o? {force?:boolean, alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+---@param o? {alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
 function M.fetch_threads(prs, o)
   o = o or {}
   local by_host, seen = {}, {}
   for _, pr in ipairs(prs) do
     local key = M.thread_key(pr)
-    local e = M.threads_cache[key]
-    local stale = not e or (M.now() - e.at) >= opts().ttl
     local host, owner, name = split_repo(pr.repo)
-    if host and not seen[key] and (o.force or stale) then
+    if host and not seen[key] then
       seen[key] = true
       by_host[host] = by_host[host] or {}
       table.insert(by_host[host], { key = key, owner = owner, name = name, number = pr.number, threads = {}, done = false })
@@ -1114,10 +1154,193 @@ function M.fetch_threads(prs, o)
           head_oid = p.head_oid,
           sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
         }
+        M.clear_changed(p.key, M.SIGNALS_THREADS)
       end
     end
   end
   return true
+end
+
+-- ---------------------------------------------------------------------------
+-- The change check: news on GitHub, without replacing what is shown
+-- ---------------------------------------------------------------------------
+
+local function key_of(x)
+  return type(x) == 'string' and x or M.thread_key(x)
+end
+
+---Forget a PR's change marks of `group` (a set of signal names): a fetch of that kind worked.
+function M.clear_changed(pr, group)
+  local key = key_of(pr)
+  local c = M.changed[key]
+  if not c then
+    return
+  end
+  for name in pairs(group) do
+    c[name] = nil
+  end
+  if not next(c) then
+    M.changed[key] = nil
+  end
+end
+
+---A PR's change marks ({ [signal] = true }), only those in `group` when given; nil when none.
+---@return table<string, true>?
+function M.change(pr, group)
+  local c = pr and M.changed[M.thread_key(pr)]
+  if not c then
+    return nil
+  end
+  local out
+  for name in pairs(c) do
+    if not group or group[name] then
+      out = out or {}
+      out[name] = true
+    end
+  end
+  return out
+end
+
+---Thread signals of the threads shown for a PR (its cached threads), or nil when they were never
+---fetched or the last fetch failed (already marked stale). A cut list has no count to compare.
+function M.cached_thread_signals(pr)
+  local e = M.threads_cache[M.thread_key(pr)]
+  if not e or not e.threads or e.failed then
+    return nil
+  end
+  local list = {}
+  for i = 1, math.min(#e.threads, M.THREAD_SIGNALS) do
+    local t = e.threads[i]
+    list[i] = { resolved = t.resolved, comments = t.total or #t.comments }
+  end
+  local sig = thread_signals(#e.threads, list)
+  if e.truncated then
+    sig.threads = nil
+  end
+  return sig
+end
+
+local CHECK_FIELDS = [[
+fragment check on PullRequest {
+  headRefOid state isDraft title lastEditedAt reviewDecision
+  reviews { totalCount } reviewRequests { totalCount }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }%s
+}]]
+local CHECK_THREADS = '\n  reviewThreads(first: %d) { totalCount nodes { isResolved comments { totalCount } } }'
+
+---The change check's query: per repo one `kN: repository(owner, name)` with a `pM:
+---pullRequest(number)` per PR, each asking only signals (fragment `check`; with `threads`, the
+---first THREAD_SIGNALS threads' `isResolved` and comment counts, never a body). Returns the
+---query and repo alias -> PR alias -> PR.
+---@return string query, table<string, table<string, revuey.PR>> aliases
+function M.build_check_query(prs, threads)
+  local repos, order = {}, {}
+  for _, pr in ipairs(prs) do
+    local host, owner, name = split_repo(pr.repo)
+    if host then
+      if not repos[pr.repo] then
+        repos[pr.repo] = { owner = owner, name = name, prs = {} }
+        order[#order + 1] = pr.repo
+      end
+      table.insert(repos[pr.repo].prs, pr)
+    end
+  end
+  local parts, aliases = { 'query {' }, {}
+  for i, key in ipairs(order) do
+    local r = repos[key]
+    local ralias = 'k' .. i
+    aliases[ralias] = {}
+    local fields = {}
+    for j, pr in ipairs(r.prs) do
+      aliases[ralias]['p' .. j] = pr
+      fields[#fields + 1] = ('p%d: pullRequest(number: %d) { ...check }'):format(j, pr.number)
+    end
+    parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { %s }'):format(ralias, lit(r.owner), lit(r.name), table.concat(fields, ' '))
+  end
+  parts[#parts + 1] = '}'
+  parts[#parts + 1] = CHECK_FIELDS:format(threads and CHECK_THREADS:format(M.THREAD_SIGNALS) or '')
+  return table.concat(parts, '\n'), aliases
+end
+
+---Signals that differ between a PR as shown (its `signals`, its cached threads) and a node of
+---the change check. A set of signal names (empty: nothing new).
+---@return table<string, true>
+function M.compare(pr, n, threads)
+  local out = {}
+  local cur = M.signals(n)
+  for name, v in pairs(pr.signals or {}) do
+    if cur[name] ~= v then
+      out[name] = true
+    end
+  end
+  local base = threads and M.cached_thread_signals(pr)
+  local conn = type(n.reviewThreads) == 'table' and n.reviewThreads
+  if base and conn then
+    local list = {}
+    for i, t in ipairs(nodes(conn)) do
+      list[i] = { resolved = type(t) == 'table' and t.isResolved == true, comments = type(t) == 'table' and count_of(t.comments) or 0 }
+    end
+    local now = thread_signals(count_of(conn) or #list, list)
+    for name, v in pairs(base) do
+      if now[name] ~= v then
+        out[name] = true
+      end
+    end
+  end
+  return out
+end
+
+---The change check for `prs` (PRs as cached: shown): one `gh api graphql` call per host asking
+---only change signals (about one rate-limit point). PRs whose signals differ get change marks
+---(M.changed); the caches, and so what is shown, are never touched. A PR that does not resolve
+---is skipped. Call inside git.async. Returns the set of PR keys marked now (empty: nothing new),
+---or nil and a reason (nothing is marked; `o.alive()` false after a call: nil too).
+---@param prs revuey.PR[]
+---@param o? {threads?:boolean, alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+---@return table<string, true>? marked, string? err
+function M.check(prs, o)
+  o = o or {}
+  local by_host = {}
+  for _, pr in ipairs(prs) do
+    local host = split_repo(pr.repo)
+    if host then
+      by_host[host] = by_host[host] or {}
+      table.insert(by_host[host], pr)
+    end
+  end
+  local found = {}
+  for host, list in pairs(by_host) do
+    local query, aliases = M.build_check_query(list, o.threads)
+    local data, err = M.run_graphql(query, host, o.on_job)
+    if o.alive and not o.alive() then
+      return nil, 'dropped'
+    end
+    if not data then
+      return nil, err or 'failed'
+    end
+    for ralias, map in pairs(aliases) do
+      local repo = data[ralias]
+      for palias, pr in pairs(map) do
+        local n = type(repo) == 'table' and repo[palias] or nil
+        if type(n) == 'table' then
+          found[#found + 1] = { pr = pr, diff = M.compare(pr, n, o.threads) }
+        end
+      end
+    end
+  end
+  -- every host answered: mark
+  local marked = {}
+  for _, f in ipairs(found) do
+    local key = M.thread_key(f.pr)
+    for name in pairs(f.diff) do
+      M.changed[key] = M.changed[key] or {}
+      if not M.changed[key][name] then
+        M.changed[key][name] = true
+        marked[key] = true
+      end
+    end
+  end
+  return marked
 end
 
 -- ---------------------------------------------------------------------------
@@ -1512,6 +1735,8 @@ end
 -- ---------------------------------------------------------------------------
 
 M.GLYPH_APPROVED, M.GLYPH_CHANGES, M.GLYPH_PENDING, M.GLYPH_NONE = '✓', '✗', '●', '○'
+-- news on GitHub (the change check): the row chip's glyph, the words elsewhere
+M.GLYPH_NEW, M.NEW_TEXT = '↻', 'new on GitHub'
 
 ---Compact row model: `#123` plus a review glyph, or a dim state marker.
 ---@param pr revuey.PR
@@ -1573,7 +1798,7 @@ end
 ---`threads`: counts of the PR's review threads ({open, resolved, outdated}), when fetched.
 ---@param pr revuey.PR
 ---@param parent? string
----@param threads? {open:integer, resolved:integer, outdated:integer, truncated?:boolean, stale?:boolean}
+---@param threads? {open:integer, resolved:integer, outdated:integer, truncated?:boolean, stale?:boolean, changed?:boolean}
 ---@return {kind:string, text:string, hl:string, glyph?:string}[]
 function M.detail(pr, parent, threads)
   local out = {}
@@ -1615,7 +1840,20 @@ function M.detail(pr, parent, threads)
     if threads.truncated then
       parts[#parts + 1] = 'more on GitHub'
     end
-    add('threads', 'threads: ' .. table.concat(parts, ', ') .. (threads.stale and ' (stale)' or ''), threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
+    -- marks: news on GitHub since these were fetched (the change check), a failed refetch
+    local text = 'threads: ' .. table.concat(parts, ', ')
+    local marks = {}
+    if threads.changed then
+      -- short: the heading above says "new on GitHub · R" (a 40-cell panel would wrap more)
+      marks[#marks + 1] = { #text + 1, #text + 6, 'RevueyForgeChanged' }
+      text = text .. ' (new)'
+    end
+    if threads.stale then
+      marks[#marks + 1] = { #text + 1, #text + 8, 'RevueyForgeDim' }
+      text = text .. ' (stale)'
+    end
+    add('threads', text, threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')
+    out[#out].marks = #marks > 0 and marks or nil
   end
   if pr.state == 'OPEN' then
     local mg = pr.mergeable == 'MERGEABLE' and { 'mergeable', 'RevueyForgeDim' }

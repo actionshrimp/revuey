@@ -150,6 +150,7 @@ function M.setup()
   set('RevueyForgeMerged', { link = 'Comment' })
   set('RevueyForgeClosed', { link = 'Comment' })
   set('RevueyForgeDim', { link = 'Comment' })
+  set('RevueyForgeChanged', { link = 'DiagnosticInfo' }) -- news on GitHub since the fetch: `R`
   set('RevueyForgeTitle', { link = 'Normal' })
   set('RevueyForgeWarn', { link = 'DiagnosticWarn' })
   -- GitHub review threads in the diff (border, author, gutter bar)

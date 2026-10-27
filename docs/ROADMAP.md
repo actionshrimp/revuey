@@ -19,7 +19,7 @@ sequence; later items build on earlier ones.
   in a tmux or herdr pane, or connected to a review the user started); a per-worktree session registry,
   `bin/revuey sessions|watch --messages|show|reply|ack|inbox|install-skill`, catch-up of unacknowledged
   messages, presence in the panel header, sent/queued/seen/answered markers on threads.
-- Pull request status: one batched `gh api graphql` lookup per refresh (cached per repo, TTL) finds each
+- Pull request status: one batched `gh api graphql` lookup on open and `R` (cached per repo) finds each
   layer's PR by head branch (remote layers without the remote, fork PRs by head owner); `#N` with
   review state on stack rows (or a plain review's title), a foldable detail section for the viewed
   layer (reviewers, checks, mergeable, base, a warning when GitHub's base differs from the stack
@@ -59,7 +59,7 @@ sequence; later items build on earlier ones.
   `bin/revuey hunks|import-review` for outside agents and tools. Nothing is posted.
 - Show existing forge comments: the review threads of the scope's open PRs (the viewed layer's, every
   layer's in full-stack scope) are fetched in the background after the PR lookup (`gh api graphql`,
-  threads and long threads' comments paginated together, cached per PR for `forge.ttl`, `R` refetches)
+  threads and long threads' comments paginated together, fetched once per review, `R` refetches)
   and drawn inline next to local comments, marked `GitHub #N`. A thread goes on GitHub's lines only when
   the text and the hunk's context lines above it match, else on the same text and context nearby (one
   copy in the file's text), else in a "not shown here" group of its file. Resolved and outdated threads are collapsed (`cz` expands), `gH` cycles all /
@@ -85,11 +85,15 @@ sequence; later items build on earlier ones.
   after the refetch.
 - PR description: the open PR's description (the viewed layer's; every layer's in full-stack
   scope) above the first file of the diff view, from the PR lookup (`body` in the same call,
-  cache and TTL; `R` refetches). Rendered as text with the comments' Markdown (template
+  cache; `R` refetches). Rendered as text with the comments' Markdown (template
   comments removed, images and links as text, `<details>` unfolded, nothing fetched), collapsed
   to a few lines (`<Tab>`/`zo` expands; `forge.description.expanded`), inserted when it arrives
   without moving the view or the cursor (a re-render that keeps them on the code), and absent
   without a PR, with an empty or template-only body, or when `gh` fails.
+- GitHub data only on request: PRs, threads and descriptions are fetched when a review first
+  needs them and on `R` (no time-based refetch replacing what is shown); a change check every
+  `forge.ttl` seconds (180, focused and visible only; one query of signals, one rate-limit
+  point) marks PRs with news on GitHub (`↻`, `new on GitHub · R`) until `R`.
 
 
 ## Next

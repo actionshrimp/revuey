@@ -116,6 +116,7 @@ function M.use_fake_gh(log, prs, scenario, threads, post)
   vim.env.REVUEY_FAKE_GH_LOG = log
   vim.env.REVUEY_FAKE_GH = scenario
   vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
+  vim.env.REVUEY_FAKE_GH_CHECK_SCENARIO = nil
   local file = log .. '.prs.json'
   vim.fn.writefile({ vim.json.encode(prs or vim.empty_dict()) }, file)
   vim.env.REVUEY_FAKE_GH_PRS = file

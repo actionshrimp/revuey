@@ -552,8 +552,6 @@ function M.render(s, o)
   end
   -- the notes float follows the review (after an action, a refresh, a branch moved elsewhere)
   require('revuey.notes_float').update(s)
-  -- PR info older than its TTL: look again (no polling: only when the panel is drawn anyway)
-  forge_view.lazy(s)
 end
 
 ---Highlight the guide section the cursor is in (and move the panel cursor to it).

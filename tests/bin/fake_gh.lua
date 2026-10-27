@@ -518,6 +518,64 @@ for i = 4, #argv do
     query = q
   end
 end
+-- the change check (forge.check): `kN: repository { pM: pullRequest(number) { ...check } }`,
+-- answered from the same files as the lookup and the threads, so a test changes a PR's signals
+-- by rewriting them: the PR node as canned (no body) plus `reviewThreads` (totalCount, the first
+-- N threads' isResolved and comment counts). A number not in the PRs file answers null (with a
+-- NOT_FOUND error, exit 1). `REVUEY_FAKE_GH_CHECK_SCENARIO=fail` fails check queries only.
+if query and query:find('fragment check on PullRequest', 1, true) then
+  if (os.getenv('REVUEY_FAKE_GH_CHECK_SCENARIO') or '') == 'fail' then
+    io.stderr:write('error connecting to api.github.com\n')
+    os.exit(1)
+  end
+  local function load(env)
+    local f = os.getenv(env)
+    if not f or f == '' then
+      return {}
+    end
+    local fd = assert(io.open(f, 'r'))
+    local t = vim.json.decode(fd:read('*a'))
+    fd:close()
+    return t
+  end
+  local prs, threads = load('REVUEY_FAKE_GH_PRS'), load('REVUEY_FAKE_GH_THREADS')
+  local first = tonumber(query:match('reviewThreads%(first: (%d+)%)') or '0')
+  local data, errors = {}, {}
+  for ralias, owner, name, body in query:gmatch('(k%d+): repository%(owner: (%b""), name: (%b"")%) (%b{})') do
+    local repo = vim.json.decode(owner) .. '/' .. vim.json.decode(name)
+    data[ralias] = {}
+    for palias, num in body:gmatch('(p%d+): pullRequest%(number: (%d+)%)') do
+      local node
+      for key, list in pairs(prs) do
+        if key:sub(1, #repo + 1) == repo .. ':' and type(list) == 'table' then
+          for _, n in ipairs(list) do
+            if n.number == tonumber(num) then
+              node = vim.deepcopy(n)
+            end
+          end
+        end
+      end
+      if node then
+        node.body = nil
+        if first > 0 then
+          local list = threads[repo .. '#' .. num] or {}
+          local out = {}
+          for i = 1, math.min(#list, first) do
+            out[i] = { isResolved = list[i].isResolved == true, comments = { totalCount = #(list[i].comments or {}) } }
+          end
+          node.reviewThreads = { totalCount = #list, nodes = out }
+        end
+        data[ralias][palias] = node
+      else
+        data[ralias][palias] = vim.NIL
+        errors[#errors + 1] = { type = 'NOT_FOUND', path = { ralias, palias }, message = 'Could not resolve to a PullRequest with the number of ' .. num .. '.' }
+      end
+    end
+  end
+  io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
+  os.exit(#errors > 0 and 1 or 0)
+end
+
 -- review threads (forge.fetch_threads): `REVUEY_FAKE_GH_THREADS` is a JSON file
 -- { ["owner/name#N"] = { PullRequestReviewThread nodes, with `comments` a plain list of
 -- PullRequestReviewComment nodes } }, `_null` = PRs that resolve to null; pages are cut by the

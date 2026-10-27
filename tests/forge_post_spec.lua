@@ -624,6 +624,8 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   local r = add_comment(s, 'src/cart.ts', 'add', 18, 18, 'No, see formatCurrency.', {
     in_review = true, forge_reply = { thread_id = 'T_round', pr = 12, repo = 'github.com/acme/shop', comment_id = 'PRRC_x', database_id = 77 } })
   local skipped = add_comment(s, 'src/cart.ts', 'add', 3, 3, 'Not included.')
+  -- the change check had seen news on the PR's threads: the refetch after the submit clears them
+  forge.changed['github.com/acme/shop#12'] = { comments = true }
   local asked = answer({ 1 })
   local msgs, restore = h.capture_notify()
   view.submit('comment')
@@ -666,6 +668,7 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   h.eq(nil, get(s, skipped.id).forge_post)
   -- the refetch drew them as GitHub threads; the local copies are not drawn twice
   idle(s)
+  h.eq(nil, forge.changed['github.com/acme/shop#12'], 'refetched: no news mark')
   local all = all_vlines(s)
   local _, n = all:gsub('Return a copy%?', '')
   h.eq(1, n, all)

@@ -522,7 +522,9 @@ function M.winbar()
   end
   local te = s.layout.map[top]
   if te and te.role == 'description' and te.desc then
-    return ' %#RevueyForgeNumber#PR #' .. te.desc.number .. ' %#RevueyWinbar#' .. esc(te.desc.title or '') .. '%*%=description '
+    local mark = te.desc.mark == 'new' and '%#RevueyForgeChanged#new on GitHub · R  '
+      or te.desc.mark == 'stale' and '%#RevueyForgeDim#stale  ' or ''
+    return ' %#RevueyForgeNumber#PR #' .. te.desc.number .. ' %#RevueyWinbar#' .. esc(te.desc.title or '') .. '%*%=' .. mark .. '%*description '
   end
   local fi = file_at_row(s, top)
   local f = s.review.files[fi]
@@ -2525,7 +2527,7 @@ local function render(s, saved)
   -- the session registry follows the scope and branch shown
   agent_link.update(s)
   M.load_stats(s)
-  -- pull requests of the layers (one gh call unless the cache is fresh)
+  -- pull requests of the layers (a gh call only for what this review never fetched; `R` forces)
   require('revuey.forge_view').update(s)
 end
 
@@ -2836,6 +2838,8 @@ function M.show(review, opts)
       end
     end,
   })
+  -- the GitHub change check: a timer while the review is shown and focused (stopped on close)
+  require('revuey.forge_view').attach(s)
   -- Auto-refresh. Writes only matter in working-tree mode; focus/enter catch outside changes
   -- (other editors, git commands) in either mode. Unchanged content never re-renders.
   local root_prefix = (vim.uv.fs_realpath(review.root) or review.root) .. '/'

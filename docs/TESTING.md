@@ -41,6 +41,10 @@ is available.
   answers review-thread queries (thread nodes per `owner/name#N`, cut into pages by the query's
   `first`/`after`, PRs that resolve to null) with a failure scenario of their own
   (`REVUEY_FAKE_GH_THREADS_SCENARIO`), so a working PR lookup can be combined with failing threads.
+  It answers the change check's signal query (`fragment check`) from the same PRs and threads
+  files, so a test changes a PR's signals by rewriting them between checks
+  (`REVUEY_FAKE_GH_CHECK_SCENARIO=fail` fails checks only). Code that depends on time takes
+  `forge.now`, which specs replace with a clock they move.
   For posting reviews it reads a post file (`REVUEY_FAKE_GH_POST`, the fifth argument of
   `h.use_fake_gh`: the viewer, PRs with node ids, heads and pending reviews, the PRs' files for
   the REST `pulls/N/files` pages, review states, and failures: refused threads by body, a
