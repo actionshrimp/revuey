@@ -27,6 +27,16 @@ function M.inline(s, base_hl)
     us_from, us_at = from, j or false
     return j
   end
+  -- the first `)` or whitespace at or after a position, remembered for the range it answers
+  local ue_from, ue_at
+  local function url_end(from)
+    if ue_from and from >= ue_from and (ue_at == false or from <= ue_at) then
+      return ue_at or nil
+    end
+    local j = s:find('[)%s]', from)
+    ue_from, ue_at = from, j or false
+    return j
+  end
   local function emit(text, hl)
     if text == '' then
       return
@@ -81,12 +91,14 @@ function M.inline(s, base_hl)
         i = i + 1
       end
     elseif c == '[' then
-      -- the text stops at the next bracket and the URL at the next `[`, so a body full of
-      -- unclosed `[` or `[a](` is scanned once, not once per bracket
-      local text, e = s:match('^%[([^%[%]]+)%]%([^)%s%[]+%)()', i)
-      if text then
+      -- the text stops at the next bracket (so `[[[...` is one pass) and the URL ends at the
+      -- first `)` or space after it, found once for a run of links (url_end), so `[a](` repeated
+      -- is one pass too; URLs may hold `[` (`?filter[status]=open`)
+      local text, p = s:match('^%[([^%[%]]+)%]%(()', i)
+      local e = p and url_end(p)
+      if text and e and e > p and s:sub(e, e) == ')' then
         emit(text, 'RevueyGuideLink')
-        i = e
+        i = e + 1
       else
         emit(c)
         i = i + 1

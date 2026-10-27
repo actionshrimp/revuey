@@ -203,6 +203,15 @@ h.test('hostile bodies clean and render in well under a second; clean is memoise
   h.eq(1, n)
 end)
 
+h.test('links whose URL holds brackets; C1 controls dropped', function()
+  local prose = require('revuey.prose')
+  h.eq('the API and more', (prose.inline('[the API](https://api.example.com/items?filter[status]=open) and more')))
+  h.eq('a and b.', (prose.inline('[a](u) and [b](v[1]).')))
+  h.eq('[a](b c)', (prose.inline('[a](b c)')), 'a space ends the URL: not a link')
+  h.eq('[a]() x', (prose.inline('[a]() x')))
+  h.eq('a[31mbc', fd.clean('a\194\155[31mb&#155;c&#x80;'))
+end)
+
 h.test('the PR lookup asks for the body; normalize keeps it', function()
   local q = forge.build_query({ { repo = { host = 'github.com', owner = 'acme', name = 'shop' }, branch = 'x' } })
   h.ok(q:match('fragment pr on PullRequest {[^}]-%f[%w]body%f[%W]'), q)
@@ -358,6 +367,14 @@ local function consistent(s)
     h.eq('prose', s.layout.map[row].kind)
   end
   h.eq(n + 1, s.layout.files[1].start_row, 'the first file right after the description')
+  -- the description's highlights (prose groups, its title) only on its rows
+  local diff_ns = vim.api.nvim_create_namespace('revuey.diff')
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.diff_buf, diff_ns, 0, -1, { details = true })) do
+    local g = m[4].hl_group or ''
+    if g:match('^RevueyGuide') or g:match('^RevueyForgeDescription') or g == 'RevueyForgeNumber' then
+      h.ok(m[2] + 1 <= n, ('%s left on row %d (description rows: %d)'):format(g, m[2] + 1, n))
+    end
+  end
 end
 
 local function add_comment(s, path, line, text)
@@ -786,8 +803,9 @@ local function plain_repo(name)
   local base, changed = {}, {}
   for i = 1, 80 do
     base[i] = 'line ' .. i
-    changed[i] = (i == 2 or i == 39 or i == 41 or i == 78) and ('changed ' .. i) or base[i]
+    changed[i] = (i == 2 or i == 39 or i == 78) and ('changed ' .. i) or base[i]
   end
+  changed[41] = 'line 41 edited' -- a word-level change: word diff spans
   local d = h.repo(name, { ['a.txt'] = table.concat(base, '\n') .. '\n' }, { ['a.txt'] = table.concat(changed, '\n') .. '\n' })
   h.git(d, 'remote', 'add', 'origin', GH_URL)
   return d
@@ -823,25 +841,38 @@ h.test('arriving late: a closed unchanged-line fold above the cursor stays close
   setup()
 end)
 
-h.test('arriving late: another window on the review keeps its line too', function()
+h.test('arriving late: another window on the review keeps its line and its view', function()
   reset()
+  setup({ context_lines = 30 })
   local d = plain_repo('fd-split')
   h.use_fake_gh(h.tmpdir('fd-gh-split') .. '/calls.ndjson', feat(LONG), 'slow')
   vim.env.REVUEY_FAKE_GH_DELAY = '1'
   local s = open(d, { base = 'main' })
   vim.api.nvim_set_current_win(s.diff_win)
-  vim.cmd('split')
+  vim.cmd('vsplit')
   local w2 = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_cursor(w2, { row_of(s, 'a.txt', 'add', 41), 0 })
-  vim.api.nvim_win_set_cursor(s.diff_win, { row_of(s, 'a.txt', 'add', 39), 0 })
-  vim.api.nvim_set_current_win(s.diff_win)
+  -- the split at the very top, a closed unchanged-line fold between it and its cursor (where
+  -- Neovim's own topline fix-up for lines added above gets it wrong)
+  local r39 = row_of(s, 'a.txt', 'add', 39)
+  vim.api.nvim_win_call(w2, function()
+    vim.fn.winrestview({ lnum = r39, topline = 1 })
+  end)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of(s, 'a.txt', 'add', 2), 0 })
+  local function view_of(win)
+    return vim.api.nvim_win_call(win, function()
+      return { vim.fn.line('w0'), vim.fn.winline() }
+    end)
+  end
+  local v2 = view_of(w2)
   idle(s)
   vim.env.REVUEY_FAKE_GH_DELAY = nil
   h.ok(s.layout.description)
-  h.eq(41, s.layout.map[vim.api.nvim_win_get_cursor(w2)[1]].new_lnum, 'the split follows its line')
-  h.eq(39, s.layout.map[cursor(s)].new_lnum)
+  h.eq(39, s.layout.map[vim.api.nvim_win_get_cursor(w2)[1]].new_lnum, 'the split follows its line')
+  h.eq({ v2[1] + desc_rows(s), v2[2] }, view_of(w2), 'the split\'s view: top shifted by the rows, cursor on the same window line')
+  h.eq(2, s.layout.map[cursor(s)].new_lnum)
   pcall(vim.api.nvim_win_close, w2, true)
   view.close()
+  setup()
 end)
 
 h.test('arriving late: drawn outside the lookup\'s task, with no git call (a committed-mode layer)', function()
@@ -1010,6 +1041,283 @@ h.test('zo/zc as the user left them survive a changed description and R; the mod
     end, 10), 'drawn ' .. i .. ': ' .. lines(s)[2])
   end
   view.close()
+end)
+
+h.test('a full render keeps an unchanged-line fold the user opened; a reviewed file stays folded', function()
+  reset()
+  setup({ context_lines = 30 })
+  local d = plain_repo('fd-ctx')
+  h.use_fake_gh(h.tmpdir('fd-gh-ctx') .. '/calls.ndjson', {})
+  local s = open(d, { base = 'main' })
+  idle(s)
+  local r20 = row_of(s, 'a.txt', 'ctx', 20)
+  h.ok(closed(s, r20) ~= -1, 'folded')
+  keys(s, 'zo', r20)
+  h.eq(-1, closed(s, r20))
+  view.rerender(s)
+  h.eq(r20, cursor(s))
+  h.eq(-1, closed(s, r20), 'still open after a re-render')
+  refresh(s)
+  h.eq(-1, closed(s, row_of(s, 'a.txt', 'ctx', 20)), 'and after R')
+  -- the file reviewed (folded), the cursor on its header: a re-render leaves it folded
+  local fr = file_row(s, 'a.txt')
+  local _, restore = h.capture_notify()
+  keys(s, 'mr', fr)
+  restore()
+  h.eq(fr, closed(s, fr))
+  vim.api.nvim_win_set_cursor(s.diff_win, { fr, 0 })
+  view.rerender(s)
+  h.eq(fr, closed(s, fr), 'the reviewed file stays folded')
+  view.close()
+  setup()
+end)
+
+h.test('arriving late with threads off: comment rows, signs, threads and word diff follow the splice', function()
+  reset()
+  setup({ forge = { threads = { enabled = false } } })
+  local d = plain_repo('fd-nothreads')
+  local calls = h.tmpdir('fd-gh-nothreads') .. '/calls.ndjson'
+  h.use_fake_gh(calls, feat(LONG), 'slow')
+  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local s = open(d, { base = 'main' })
+  local c41 = add_comment(s, 'a.txt', 41, 'Why 41?')
+  local old41 = row_of(s, 'a.txt', 'add', 41)
+  h.ok(vlines(s, old41):find('Why 41?', 1, true))
+  -- the word diff of the pair has been looked at (drawn) before the description arrives
+  h.eq(row_of(s, 'a.txt', 'del', 41), s.pair_of(old41))
+  h.ok(s.word_spans(old41 - 1))
+  idle(s)
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.ok(s.layout.description, 'arrived')
+  h.eq(0, #vim.tbl_filter(function(x)
+    return (x.argv[5] or ''):find('reviewThreads', 1, true) ~= nil
+  end, h.read_calls(calls)), 'no thread call')
+  local n = desc_rows(s)
+  local r41 = row_of(s, 'a.txt', 'add', 41)
+  h.eq(old41 + n, r41)
+  h.eq(r41, s.cm.jump[c41.id])
+  h.ok(s.cm.signs[r41], 'the bar on its new row')
+  h.eq(nil, s.cm.signs[old41], 'not on the old row')
+  h.ok(vlines(s, r41):find('Why 41?', 1, true), 'drawn on its row')
+  h.ok(not vlines(s, old41):find('Why 41?', 1, true))
+  h.eq({ c41.id }, s.cm.cover[r41])
+  -- word diff: the changed pair of line 41, at its new rows
+  local del2, add2 = row_of(s, 'a.txt', 'del', 41), row_of(s, 'a.txt', 'add', 41)
+  h.eq(del2, s.pair_of(add2))
+  h.eq(add2, s.pair_of(del2))
+  local spans = s.word_spans(add2 - 1)
+  h.ok(spans and #spans > 0, vim.inspect(spans))
+  h.eq(nil, s.pair_of(1), 'no pair on a description row')
+  consistent(s)
+  view.close()
+  setup()
+end)
+
+h.test('zo in a split is what the next change keeps', function()
+  reset()
+  local d = plain_repo('fd-split-zo')
+  local calls = h.tmpdir('fd-gh-split-zo') .. '/calls.ndjson'
+  h.use_fake_gh(calls, feat(LONG))
+  local s = open(d, { base = 'main' })
+  idle(s)
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd('split')
+  local w2 = vim.api.nvim_get_current_win()
+  local b = s.layout.description.blocks[1]
+  vim.api.nvim_win_set_cursor(w2, { b.fold[1], 0 })
+  vim.cmd('normal! zo')
+  vim.api.nvim_set_current_win(s.diff_win)
+  reset()
+  h.use_fake_gh(calls, feat(LONG .. '\n\nOne more paragraph.'))
+  fv.update(s, true)
+  idle(s)
+  h.ok(table.concat(lines(s), '\n'):find('One more paragraph.', 1, true))
+  local f1 = s.layout.description.blocks[1].fold[1]
+  h.eq(-1, vim.api.nvim_win_call(w2, function()
+    return vim.fn.foldclosed(f1)
+  end), 'still expanded in the split')
+  h.eq(-1, closed(s, f1), 'and in the review window')
+  pcall(vim.api.nvim_win_close, w2, true)
+  view.close()
+end)
+
+-- The splice (view.replace_description) must leave exactly what a full render of the same
+-- descriptions would: buffer, layout, fold levels and states, every extmark, hunk and header
+-- marks, comment rows, word diff, the cursor's line and window line.
+local function snapshot(s)
+  local api = vim.api
+  local buf, win = s.diff_buf, s.diff_win
+  local out = { lines = api.nvim_buf_get_lines(buf, 0, -1, false) }
+  local L = vim.deepcopy(s.layout)
+  L.comment_index, L.block_keys = nil, nil -- lazy caches
+  out.layout, out.folds = L, vim.deepcopy(s.folds)
+  local n = #out.lines
+  out.fold = {}
+  api.nvim_win_call(win, function()
+    for r = 1, n do
+      out.fold[r] = vim.fn.foldclosed(r) .. ':' .. vim.fn.foldlevel(r) .. ':' .. vim.fn.foldclosedend(r)
+    end
+  end)
+  local names = {}
+  for k, v in pairs(api.nvim_get_namespaces()) do
+    names[v] = k
+  end
+  local marks = {}
+  for _, m in ipairs(api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true })) do
+    local d = m[4]
+    d.ns_id = names[d.ns_id]
+    marks[#marks + 1] = vim.inspect({ m[2], m[3], d })
+  end
+  table.sort(marks)
+  out.marks = marks
+  local diff_ns = api.nvim_create_namespace('revuey.diff')
+  local hm = {}
+  for row, id in pairs(s.hunk_marks or {}) do
+    local p = api.nvim_buf_get_extmark_by_id(buf, diff_ns, id, {})
+    hm[#hm + 1] = row .. '->' .. tostring(p[1] and p[1] + 1)
+  end
+  table.sort(hm)
+  out.hunk_marks = hm
+  out.header_marks = {}
+  for fi, id in pairs(s.header_marks or {}) do
+    local p = api.nvim_buf_get_extmark_by_id(buf, diff_ns, id, {})
+    out.header_marks[fi] = p[1] and p[1] + 1
+  end
+  local c = s.cm or {}
+  out.cm = { signs = vim.deepcopy(c.signs), jump = vim.deepcopy(c.jump), cover = vim.deepcopy(c.cover), counts = vim.deepcopy(c.counts) }
+  out.pairs, out.spans = {}, {}
+  for r = 1, n do
+    out.pairs[r] = s.pair_of(r) or false
+    out.spans[r] = s.word_spans(r - 1) or false
+  end
+  local e = s.layout.map[cursor(s)]
+  out.cursor = e and { e.path, e.kind, e.new_lnum, e.old_lnum, e.meta, e.role } or {}
+  out.winline = api.nvim_win_call(win, vim.fn.winline)
+  return out
+end
+
+local function differences(a, b, prefix, acc)
+  acc = acc or {}
+  if type(a) ~= type(b) then
+    acc[#acc + 1] = prefix .. ': ' .. vim.inspect(a):sub(1, 120) .. ' vs ' .. vim.inspect(b):sub(1, 120)
+  elseif type(a) ~= 'table' then
+    if a ~= b then
+      acc[#acc + 1] = prefix .. ': ' .. tostring(a) .. ' vs ' .. tostring(b)
+    end
+  else
+    local keys = {}
+    for k in pairs(a) do
+      keys[k] = true
+    end
+    for k in pairs(b) do
+      keys[k] = true
+    end
+    for k in pairs(keys) do
+      if #acc < 20 then
+        differences(a[k], b[k], prefix .. '.' .. tostring(k), acc)
+      end
+    end
+  end
+  return acc
+end
+
+local function D(num, nlines, title)
+  local md = {}
+  for i = 1, nlines do
+    md[#md + 1] = 'Line ' .. i .. ' of PR ' .. num .. ' with some words.'
+  end
+  return { pr = { url = 'https://github.com/acme/shop/pull/' .. num, number = num, title = title or ('PR ' .. num), draft = false }, md = table.concat(md, '\n\n') }
+end
+
+h.test('the splice leaves what a full render would (appear, grow, shrink, go; folds, comments, cursor)', function()
+  reset()
+  local orig = fv.descriptions
+  local current = {}
+  fv.descriptions = function()
+    return current
+  end
+  local function scenario(s, name, A, B, prep)
+    local expanded = vim.deepcopy(s.desc_expanded)
+    current = A
+    view.rerender(s)
+    prep(s)
+    current = B
+    vim.api.nvim_set_current_win(s.diff_win)
+    h.ok(view.replace_description(s), name)
+    local spliced = snapshot(s)
+    s.desc_expanded = vim.deepcopy(expanded)
+    current = A
+    view.rerender(s)
+    prep(s)
+    current = B
+    view.rerender(s)
+    local full = snapshot(s)
+    local d = differences(spliced, full, name)
+    h.eq({}, d, name)
+  end
+  local ok, err = pcall(function()
+    h.use_fake_gh(h.tmpdir('fd-gh-equiv') .. '/calls.ndjson', {})
+    local s = open(stack_fixture('fd-equiv'))
+    idle(s)
+    add_comment(s, 'src/cart.ts', 18, 'Round to cents?')
+    add_comment(s, 'src/index.ts', 8, 'index comment')
+    local function on(path, kind, lnum)
+      return function(s2)
+        local r = row_of(s2, path, kind, lnum)
+        vim.api.nvim_win_call(s2.diff_win, function()
+          vim.fn.winrestview({ lnum = r, topline = math.max(1, r - 3), col = 2 })
+        end)
+      end
+    end
+    local cur = on('src/cart.ts', 'add', 13)
+    local function close_cart(s2)
+      local r = file_row(s2, 'src/cart.ts')
+      vim.api.nvim_win_call(s2.diff_win, function()
+        vim.cmd(r .. 'foldclose')
+      end)
+      on('src/index.ts', 'add', 8)(s2)
+    end
+    scenario(s, 'appear short', {}, { D(12, 2) }, cur)
+    scenario(s, 'appear long', {}, { D(12, 12) }, cur)
+    scenario(s, 'grow', { D(12, 2) }, { D(12, 12) }, cur)
+    scenario(s, 'shrink', { D(12, 12) }, { D(12, 2) }, cur)
+    scenario(s, 'go', { D(12, 12) }, {}, cur)
+    scenario(s, 'same length', { D(12, 4, 'a') }, { D(12, 4, 'b') }, cur)
+    scenario(s, 'first file closed', { D(12, 3) }, { D(12, 12) }, close_cart)
+    s.desc_expanded = { ['https://github.com/acme/shop/pull/12'] = true }
+    scenario(s, 'expanded grow', { D(12, 3) }, { D(12, 12) }, cur)
+    scenario(s, 'expanded shrink', { D(12, 12) }, { D(12, 3) }, cur)
+    s.desc_expanded = {}
+    scenario(s, 'several: one changes', { D(11, 12), D(12, 12), D(13, 2) }, { D(11, 12), D(12, 3), D(13, 2) }, cur)
+    scenario(s, 'several: one more', { D(11, 12), D(13, 2) }, { D(11, 12), D(12, 9), D(13, 2) }, cur)
+    scenario(s, 'cursor in it, shrink', { D(12, 12) }, { D(12, 2) }, function(s2)
+      vim.api.nvim_win_call(s2.diff_win, function()
+        vim.fn.winrestview({ lnum = 4, topline = 1 })
+      end)
+    end)
+    view.close()
+    -- a plain review with an opened unchanged-line fold and a closed one
+    setup({ context_lines = 30 })
+    s = open(plain_repo('fd-equiv-plain'), { base = 'main' })
+    idle(s)
+    local function ctx(s2)
+      local r = row_of(s2, 'a.txt', 'ctx', 60)
+      vim.api.nvim_win_call(s2.diff_win, function()
+        pcall(vim.cmd, r .. 'foldopen')
+      end)
+      local r39 = row_of(s2, 'a.txt', 'add', 39)
+      vim.api.nvim_win_call(s2.diff_win, function()
+        vim.fn.winrestview({ lnum = r39, topline = 1 })
+      end)
+    end
+    scenario(s, 'plain appear', {}, { D(5, 12) }, ctx)
+    scenario(s, 'plain grow', { D(5, 1) }, { D(5, 12) }, ctx)
+    scenario(s, 'plain go', { D(5, 12) }, {}, ctx)
+    view.close()
+  end)
+  fv.descriptions = orig
+  setup()
+  assert(ok, err)
 end)
 
 h.test('the guide view has none; back in the diff view it is there', function()

@@ -462,7 +462,8 @@ above the first file of the diff view (not in the guide view), as text:
   across refreshes and scope switches.
 - **It never moves the view.** It comes with the PR lookup, in the background, so it usually
   arrives after the review is drawn: it is inserted above the first file and the view scrolls
-  with it, so the line you are on stays where it is on the screen. With the first file at the
+  with it, so the line you are on stays where it is on the screen (when part of the description is
+  on screen above it, a longer description pushes the code down). With the first file at the
   top, the winbar says `↑ PR description`: `gg` (or `k`) shows it. It waits while you are in
   Visual or Insert mode or writing a comment.
 - **When.** It is part of the PR lookup: the same call, cache and `forge.ttl`; `R` fetches it

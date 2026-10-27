@@ -1368,7 +1368,7 @@ are in `reports/Terminal code review tool landscape.md`.
       `(image: alt)`, GitHub's allowed HTML (`details`/`summary` as a `▸` line, `br`, `p`, `b`,
       `code`, `a`, headings, lists, ...) turned into Markdown or dropped keeping its text, other
       `<...>` left as typed (`Vec<String>`), entities decoded, task boxes `☑`/`☐`, setext headings,
-      `~~~` fences at any indent, blank runs collapsed, control characters (ESC sequences) and
+      `~~~` fences at any indent, blank runs collapsed, C0 and C1 control characters (ESC, CSI) and
       surrogate or NUL character references dropped. Comments are not started inside inline code
       spans or a tag's quoted attribute values; `<!-->` and `<!--->` are whole (empty) comments. Empty once cleaned (no body, whitespace, a template's
       comments only): nothing is shown. Nothing is fetched: links keep their text (prose drops the
@@ -1398,12 +1398,19 @@ are in `reports/Terminal code review tool landscape.md`.
       row-keyed Lua state is shifted by the same delta: `layout.replace_head` (pure, equal to
       composing with the new head), the fold levels, the hunk header marks' keys; word diff
       pairs and comment rows are rebuilt from the new layout. Each window's view is saved and
-      put back shifted (Neovim's own topline correction depends on folds), so nothing on screen
-      moves, in a `:split` too. No git call, no capture/restore by file and line, no `zx`.
+      put back shifted (Neovim's own topline correction depends on folds), so the code under each
+      window's cursor stays on its window line, in a `:split` too. (When the description itself
+      is partly on screen, above the cursor, it growing or shrinking moves the code below it
+      down or up: the rows are on screen.) `forge_description_spec.lua` checks that the splice
+      leaves exactly what a full render would (buffer, layout, folds, every extmark, marks,
+      comment rows, word diff, cursor) in a dozen scenarios. No git call, no capture/restore by file and line, no `zx`.
       Chosen over the full re-render of the first version, which reran git inside the task,
       restored only the diff window, closed opened context folds and let `zx`'s `zv` open a fold
       at the cursor's old row number. (A full render, `R` or a scope switch, still renders
-      everything; it uses `zX` now, for the same reason.) Not in Visual, Insert or any other
+      everything; it uses `zX` now, for the same reason, and `capture_view` records the
+      unchanged-line folds the user opened, by file and line, which render opens again.) The
+      fold state of a description is read from every window on the buffer (a `zo` in a split
+      counts). Not in Visual, Insert or any other
       mode but Normal (it waits for `ModeChanged`, re-armed each time), nor with the comment
       editor open (a float at a buffer row; retried every 500ms), nor in the guide view
       (switching back renders it); a resize goes through the same gate. When the cursor is on
@@ -1413,8 +1420,9 @@ are in `reports/Terminal code review tool landscape.md`.
       still where `show` put it. A hover or other LSP request in flight while rows shift answers
       for the row it was asked on (it may highlight the row above or below); left as is.
     - **Cost.** Every scan in the cleaning and in `prose.inline` is linear: images and tags are
-      scanned by hand, link text stops at the next bracket and link URLs at the next `[`, a
-      `_` closer is found once for all openers, tags are looked at for at most 512 bytes; a
+      scanned by hand, link text stops at the next bracket, a link URL ends at the first `)` or
+      space after it, found once for a run of links (URLs may hold `[`), a `_` closer is found
+      once for all openers, tags are looked at for at most 512 bytes; a
       hostile 65,536-character body (`![![![...`, `[[[...`, ` _a _a ...`) cleans and renders in
       milliseconds (it took 13-26s each before, `prose.render` included, which thread comments
       share). `clean` is memoised per body (64 entries), since every signature check cleans the
