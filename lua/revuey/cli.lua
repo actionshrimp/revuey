@@ -581,6 +581,7 @@ end
 ---Follow the event feeds of the state dirs (new files included), printing matching events, after
 ---catching up on unacknowledged messages. Registers a watcher (presence) while it runs.
 function M.watch(o)
+  local watch_started = comments.now_ms()
   local ctx = here(o)
   local default_dir = state_dir(o)
   vim.fn.mkdir(default_dir, 'p')
@@ -647,12 +648,22 @@ function M.watch(o)
     end
   end
 
+  local lost -- the session that ended (its last events are still its own)
   local function emit(ev, file)
-    -- a switch of the worktree to another layer is for the agent like a message (routed and
-    -- printed once, live only: it is not stored, so there is no catch-up)
-    local is_msg = ev.kind == 'sent' or ev.kind == comments.SWITCHED
+    -- a switch of the worktree to another layer is for the agent like a message (printed once),
+    -- but live only: one from before this watch started (--since, a rotated feed read again) is
+    -- old news, and it goes to its own review's watchers only (never to the next review's)
+    local is_switch = ev.kind == comments.SWITCHED
+    if is_switch then
+      local sid = ev.session and tostring(ev.session)
+      local own = sid and ((attached and sid == attached.id) or (lost and sid == lost.id))
+      if not own or (tonumber(ev.at) or 0) < watch_started then
+        return
+      end
+    end
+    local is_msg = ev.kind == 'sent' or is_switch
     if is_msg then
-      if not M.matches(ev.review, ctx, 'all') or not for_me(ev) then
+      if not M.matches(ev.review, ctx, 'all') or not (is_switch or for_me(ev)) then
         return
       end
       local key = ev.kind == 'sent' and comments.message_key(ev) or ('switched:' .. tostring(ev.id))
@@ -813,7 +824,7 @@ function M.watch(o)
   err(('revuey: watching %s for %s\n'):format(describe(), o.messages and 'messages sent to the agent' or ('comment events (' .. (o.scope or ('branch ' .. ctx.branch)) .. ')')))
   local last_beat, last_check = vim.uv.now(), vim.uv.now()
   local several_noted = false
-  local lost, waiting_noted -- the session that ended, and whether we said we are waiting
+  local waiting_noted -- whether we said we are waiting for a new review
   while running do
     vim.wait(250, function()
       return not running

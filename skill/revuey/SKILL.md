@@ -52,12 +52,17 @@ revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.co
 
 It is a notice, not a message: there is nothing to `reply` to or `ack`. The files on disk are now
 the new branch's (`from` is what was checked out before, `to` what is now; the PR is shown when
-revuey knows it). Re-read from disk any file you read before using it again, and treat the new
-layer as what the user is reviewing from now on: later messages come from it. If you were in the
-middle of a change for a message from the old branch, stop and reply to that message that the
-branch changed under you (the `[branch]` rule below applies). Do not switch branches yourself. Several quick switches arrive as one line
-(from where you last heard to where the user stopped). `inbox` does not list these, and a watch
-started later does not print earlier ones (`REVUEY sessions` shows what is checked out).
+revuey knows it). Re-read from disk any file you read before using it again; never write a file
+from contents you read on the old branch. Treat the new layer as what the user is reviewing from
+now on: later messages come from it. If you were in the middle of a change for a message from the
+old branch, stop and reply to that message that the branch changed under you (the `[branch]`
+rule below applies). Work you did for the old branch may have come along (untracked files you
+created stay in the worktree): run `git status`, and do not commit, revert, stash or move
+anything you made for the old branch that is now in the worktree; tell the user in your reply.
+Do not switch branches yourself, and never use `git stash`, `git checkout` or `git reset` to
+recover. Several quick switches arrive as one line (from where you last heard to where the user
+stopped). `inbox` does not list these, and a watch started later does not print earlier ones
+(`REVUEY sessions` shows what is checked out).
 
 No Monitor tool (another harness): run `REVUEY inbox --session <id>` when the user says they sent something,
 or poll it every 30 seconds while they review.

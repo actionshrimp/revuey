@@ -192,9 +192,15 @@ are in `reports/Terminal code review tool landscape.md`.
    the branch checked out before, absent when detached; `to`; `layer`, `layer_index`/`layer_count`;
    `pr` {number, url, title} from `forge_view.pr`, the cached lookup, never fetched for this;
    `session`, `worktree`, `review` for watch's routing), which `watch --messages` prints as `revuey
-   switched <from> -> <to> (layer i of n[, <remote layer>][, PR #N <url>]): ...` like a message
-   (routed by session, printed once, not stamped or stored, so a later watch never catches it up;
-   the registry's `checked_out` is the lasting record). A question used to guard this; telling
+   switched <from> -> <to> (layer i of n[, <remote layer>][, PR #N <url>]): ...`, once per event
+   id. Unlike a message it is never stamped or stored, and it is live only: `watch` drops one whose
+   `at` is before the watch started (`--since`, a rotated feed read again), so a later watch never
+   catches it up (the registry's `checked_out` is the lasting record). It goes only to watchers of
+   the review that sent it (its `session` is the attached one, or the one that just ended),
+   never through `routed`'s fallback for messages of a review that is gone: a review closing with
+   a switch waiting writes the event and removes its entry in the same tick, and another
+   review's agent must not get it. A `bin/revuey watch` older than this event prints it without
+   `--messages` as a garbled `switched ? (new): #nil` line; nothing depends on that. A question used to guard this; telling
    instead keeps the agent informed without a prompt on every switch, and it is the agent's
    cue to re-read files. A write failure is logged (`log.write('agent', ...)`) and the done
    message says the agent was not told; it never fails or undoes the switch. `]s`/`[s` switches
@@ -202,8 +208,10 @@ are in `reports/Terminal code review tool landscape.md`.
    later switch takes its place keeping the first `from`, so walking the stack sends one message
    for where the user stopped rather than one per layer passed (each would tell the agent to drop
    its work and re-read files it is about to lose again). Any later switch (`gS` too, which sends at
-   once) carries a waiting one along, and closing the review (`detach`) sends it; a net move back
-   to the branch the agent last heard of sends nothing. A non-zero `git switch`
+   once) carries a waiting one along, and closing the review (`detach`) or quitting Neovim
+   (`VimLeavePre`, over every linked review) sends it; a net move back to the branch the agent
+   last heard of sends nothing, and says nothing about the agent. A review closed while `git
+   switch` ran tells the agent all the same when the last poll saw it connected. A non-zero `git switch`
    after which HEAD is on the branch (a failing `post-checkout` hook) is a warning and the switch
    goes on. **Parent setting:** on a local branch remote refs are layers only when a parent setting
    names them, so when the layer below is a remote-tracking layer and the layer's parent was
