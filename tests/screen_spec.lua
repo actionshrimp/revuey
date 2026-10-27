@@ -453,6 +453,56 @@ h.test('posting a review: comments added to the review, one in the pending revie
   screenshot('forge-post')
 end)
 
+-- The open PR's description (fake `gh`): it arrives after the review is drawn, so it goes above
+-- the first file without moving the view (the winbar says it is just above); `gg` shows it
+-- collapsed, <Tab> expands it.
+h.test('stack with pull requests: the PR description above the diff, collapsed and expanded', function()
+  local d = h.tmpdir('screen-forge-desc')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  local body = table.concat({
+    '<!-- Describe the change. Link the issue it fixes. -->',
+    '## Why',
+    'Totals ignored **discounts**; fixes [#7](https://github.com/acme/shop/issues/7).',
+    '',
+    '## What',
+    '- `Cart.total()` sums each line with `multiply`',
+    '- [x] tests',
+    '- [ ] docs',
+    '',
+    '![before and after](https://github.com/user-attachments/assets/1)',
+    '',
+    '<details>',
+    '<summary>How to try it</summary>',
+    '',
+    '```sh',
+    'npm test -- cart',
+    '```',
+    '</details>',
+  }, '\r\n')
+  h.use_fake_gh(h.tmpdir('screen-forge-desc-gh') .. '/calls.ndjson', {
+    ['acme/shop:stack/cart'] = { {
+      number = 42, title = 'Cart totals with discounts', url = 'https://github.com/acme/shop/pull/42', state = 'OPEN',
+      isDraft = false, author = { login = 'alice' }, latestReviews = { nodes = {} }, reviewRequests = { nodes = {} },
+      mergeable = 'MERGEABLE', baseRefName = 'stack/math', headRefName = 'stack/cart', headRepositoryOwner = { login = 'acme' },
+      commits = { nodes = {} }, updatedAt = '2026-01-01T00:00:00Z', body = body,
+    } },
+  }, nil, {})
+  start(d, '', 34, 120)
+  h.ok(child.lua([[
+    local s = require('revuey.view').session
+    return vim.wait(10000, function()
+      return s and not s.refreshing and s.forge and s.forge.ready and not s.forge.busy and s.layout.description ~= nil
+    end, 10)
+  ]]), 'the description did not arrive')
+  screenshot('forge-description-late')
+  child.type_keys('gg')
+  screenshot('forge-description')
+  child.type_keys('<Tab>')
+  screenshot('forge-description-expanded')
+end)
+
 -- Old branches built on a pre-amend version of the bottom layer: one dim summary line in the
 -- panel, and `!` opens the details float.
 h.test('stack notes: panel summary line and the details float', function()

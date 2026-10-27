@@ -139,6 +139,17 @@ M.defaults = {
       enabled = true,
       show = 'all',
     },
+    -- The description of the open PR(s) of the scope shown, at the top of the diff view (not the
+    -- guide), rendered as text (HTML comments from PR templates removed, images and links as
+    -- text, nothing fetched). It comes with the PR lookup (same call, cache and `ttl`; `R`
+    -- fetches again) and is inserted above the first file without moving the view. Longer than
+    -- `max_lines` it starts folded ("… N more lines"); <Tab> (toggle_fold) or `zo`/`zc` on it
+    -- expands / collapses it; `expanded = true` starts it unfolded.
+    description = {
+      enabled = true,
+      expanded = false,
+      max_lines = 6,
+    },
   },
   -- `:Revuey pr <N|url>` sets the PR's worktree up with worktrunk (`wt switch pr:<N>`), so your
   -- worktrunk hooks install and build it before the review (and its LSP) starts.

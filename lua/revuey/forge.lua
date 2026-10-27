@@ -55,6 +55,7 @@ local M = {}
 ---@field head_oid? string    head commit
 ---@field updated_at string   ISO time of the last update (sorts as text)
 ---@field repo string         host/owner/name it was found in
+---@field body string         the description as its author wrote it (Markdown; '' when none)
 
 -- ---------------------------------------------------------------------------
 -- Remotes
@@ -313,7 +314,7 @@ end
 
 local PR_FIELDS = [[
 fragment pr on PullRequest {
-  number title url state isDraft updatedAt headRefOid
+  number title url state isDraft updatedAt headRefOid body
   author { login }
   reviewDecision
   latestReviews(first: 50) { nodes { author { login } state } }
@@ -391,6 +392,7 @@ function M.normalize(n, repo_key)
     head_oid = str(n.headRefOid),
     updated_at = str(n.updatedAt) or '',
     repo = repo_key,
+    body = str(n.body) or '', -- the description as written (Markdown), see forge_description
   }
   for _, r in ipairs(nodes(n.latestReviews)) do
     if type(r) == 'table' then
@@ -500,6 +502,12 @@ local function opts()
     hosts = o.hosts or {},
     -- review threads of open PRs, shown inline (`forge.threads = false` or `{enabled = false}`)
     threads = o.enabled ~= false and o.threads ~= false and not (type(o.threads) == 'table' and o.threads.enabled == false),
+    -- the open PR's description at the top of the diff view (`forge.description = false` or
+    -- `{enabled = false}`); `expanded` starts it unfolded, `max_lines` is the collapsed length
+    description = o.enabled ~= false and o.description ~= false
+      and not (type(o.description) == 'table' and o.description.enabled == false),
+    description_expanded = type(o.description) == 'table' and o.description.expanded == true,
+    description_lines = type(o.description) == 'table' and tonumber(o.description.max_lines) or nil,
   }
 end
 M.options = opts

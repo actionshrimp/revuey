@@ -10,7 +10,8 @@
 #   REVUEY_FAKE_GH_PRS   JSON file: { "owner/name:branch": [PullRequest nodes, newest first] }
 #                        answering the `gh api graphql` queries built by lua/revuey/forge.lua;
 #                        `_parents` = { "me/shop": "acme/shop" } makes forks, `_null` = repos
-#                        that resolve to null (partial data, exit 1)
+#                        that resolve to null (partial data, exit 1); a node's `body` (the PR
+#                        description) is only answered when the query's PR fragment asks for it
 #   REVUEY_FAKE_GH_THREADS JSON file: { "owner/name#N": [PullRequestReviewThread nodes, each with
 #                        `comments` a plain list] } answering forge.lua's review-thread queries
 #                        page by page (`first`/`after`); `_null` = PRs that resolve to null,

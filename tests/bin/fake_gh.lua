@@ -630,6 +630,19 @@ local parents, null = prs._parents or {}, {}
 for _, r in ipairs(prs._null or {}) do
   null[r] = true
 end
+-- a PR's `body` (its description) only when the query's PR fragment asks for it, as GitHub does
+local wants_body = ((query or ''):match('fragment pr on PullRequest(.*)$') or ''):find('%f[%w]body%f[%W]') ~= nil
+local function answer(list)
+  if wants_body then
+    return list or {}
+  end
+  local out = {}
+  for i, n in ipairs(list or {}) do
+    out[i] = vim.deepcopy(n)
+    out[i].body = nil
+  end
+  return out
+end
 local data, errors = {}, {}
 local pat = '(l%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequests%(headRefName: (%b"")'
 for alias, owner, name, branch in (query or ''):gmatch(pat) do
@@ -641,9 +654,9 @@ for alias, owner, name, branch in (query or ''):gmatch(pat) do
   else
     local parent = vim.NIL
     if parents[repo] then
-      parent = { nameWithOwner = parents[repo], pullRequests = { nodes = prs[parents[repo] .. ':' .. branch] or {} } }
+      parent = { nameWithOwner = parents[repo], pullRequests = { nodes = answer(prs[parents[repo] .. ':' .. branch]) } }
     end
-    data[alias] = { nameWithOwner = repo, pullRequests = { nodes = prs[repo .. ':' .. branch] or {} }, parent = parent }
+    data[alias] = { nameWithOwner = repo, pullRequests = { nodes = answer(prs[repo .. ':' .. branch]) }, parent = parent }
   end
 end
 io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')

@@ -432,6 +432,49 @@ require('revuey').setup({
 })
 ```
 
+### The PR description
+
+When the review is backed by an open pull request with a description, the description is shown
+above the first file of the diff view (not in the guide view), as text:
+
+```
+          PR #42 · Cart totals with discounts
+            Why
+
+            Totals ignored discounts; fixes #7.
+
+            What
+            • Cart.total() sums each line with multiply
+            … 8 more lines (<Tab> expands)
+
+  A     ▾ src/cart.ts   +20 −0  added
+```
+
+- **Which PR.** The viewed layer's (a plain review's branch's), open or draft. In full-stack scope,
+  every layer's open PR, bottom first, each collapsed. Merged and closed PRs, an empty
+  description, or one that is only a PR template's `<!-- -->` comments show nothing.
+- **Rendered as text.** Headings, lists, code, quotes, tables and rules like comments are rendered;
+  HTML comments are removed; images (`![alt](…)`, `<img alt>`) show as `(image: alt)` and links as
+  their text; `<details>` shows its summary as `▸ …` with the content below; other HTML GitHub
+  allows becomes its text. Nothing is fetched.
+- **Collapsed** to `max_lines` body lines (6) with `… N more lines`. `<Tab>` on the description
+  expands or collapses it; it is a normal fold, so `zo`/`zc`/`za` work too. Your choice is kept
+  across refreshes and scope switches.
+- **It never moves the view.** It comes with the PR lookup, in the background, so it usually
+  arrives after the review is drawn: it is inserted above the first file and the view scrolls
+  with it, so the line you are on stays where it is on the screen. With the first file at the
+  top, the winbar says `↑ PR description`: `gg` (or `k`) shows it. It waits while you are in
+  Visual or Insert mode or writing a comment.
+- **When.** It is part of the PR lookup: the same call, cache and `forge.ttl`; `R` fetches it
+  again and an edited description is updated in place. Failures show nothing (a description
+  already shown stays) and are logged like the lookup's.
+
+```lua
+require('revuey').setup({
+  forge = { description = { enabled = true, expanded = false, max_lines = 6 } }, -- or false
+})
+```
+
 ### Review threads from GitHub
 
 The review threads of an open PR are drawn inline next to your own [comments](#comments), in the
@@ -1183,7 +1226,7 @@ Diff buffer:
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
 | `K` | LSP hover |
 | `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk you can see, skipping collapsed files). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches (a collapsed file in the selection counts whole). A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
-| `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
+| `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On a long [PR description](#the-pr-description): expand / collapse it. On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
 | `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
 
 `<Tab>` and `<S-Tab>` are buffer-local, so in revuey's diff/guide buffer they override your own
@@ -1259,7 +1302,8 @@ stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `Revuey
 (verdicts) and `RevueyAiTriage`, the pull requests' `RevueyForgeApproved`,
 `RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeNone`, `RevueyForgeDraft`, `RevueyForgeMerged`,
 `RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, GitHub review threads'
-`RevueyForgeBorder`, `RevueyForgeAuthor` and `RevueyForgeSign`, and others (see
+`RevueyForgeBorder`, `RevueyForgeAuthor` and `RevueyForgeSign`, the PR description's
+`RevueyForgeDescriptionTitle`, `RevueyForgeDescriptionMore` and `RevueyForgeDescriptionRule`, and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it

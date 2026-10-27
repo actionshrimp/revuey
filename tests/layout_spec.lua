@@ -61,4 +61,30 @@ h.test('fold levels: file folds, hunk folds and long context runs', function()
   h.eq('1', f[25])
 end)
 
+h.test('head rows (the PR description) come first; files, hunks and folds follow them', function()
+  local files = diff.parse(text)
+  local plain = layout.compose(files)
+  local block = { url = 'u', number = 1, title = 't', start_row = 1, end_row = 6, fold = { 3, 5 } }
+  local head = { rows = {}, blocks = { block } }
+  for i, t in ipairs({ 'PR #1 · t', '  a', '  b', '  c', '  d', '' }) do
+    head.rows[i] = { text = t, entry = { kind = 'prose', role = 'description', desc = block } }
+  end
+  local l = layout.compose(files, head)
+  h.eq(6 + #plain.lines, #l.lines)
+  h.eq(#l.lines, #l.map)
+  h.eq('PR #1 · t', l.lines[1])
+  h.eq(plain.lines, vim.list_slice(l.lines, 7))
+  h.eq({ start_row = 1, end_row = 6, blocks = { block } }, l.description)
+  h.eq({ start_row = 7, end_row = 13, hunk_rows = { 8 } }, l.files[1])
+  h.eq({ { row = 8, file_idx = 1, first_change = 10 } }, l.hunks)
+  h.eq({ { start_row = 8, end_row = 12 } }, l.blocks)
+  h.eq(12, layout.find_new_row(l, files, 'a.ts', 3))
+  h.eq(nil, plain.description)
+  -- the description's fold (rows 3-5) is level 1 on its own; its other rows are not folded
+  local f = layout.fold_levels(l, 12, 3)
+  h.eq({ nil, nil, '>1', '1', '1', nil, '>1', '>2' }, { f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8] })
+  -- an empty head is no head
+  h.eq(nil, layout.compose(files, { rows = {}, blocks = {} }).description)
+end)
+
 h.run()

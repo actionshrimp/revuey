@@ -24,6 +24,7 @@ local M = {}
 
 local cleanup -- forward declaration
 local find_guide_anchor -- forward declaration
+local description_folds, sync_description_folds, open_context_folds, reopen_context_folds -- forward declarations
 
 local ns = api.nvim_create_namespace('revuey.diff')
 local WINBAR = "%!v:lua.require'revuey.view'.winbar()"
@@ -436,6 +437,11 @@ function M.foldtext()
     return vim.fn.foldtext()
   end
   local e = s.layout.map[fs]
+  if e and e.role == 'description' then
+    local key = config.options.keymaps.toggle_fold
+    key = type(key) == 'table' and key[1] or key
+    return { { '  … ' .. (fe - fs + 1) .. ' more lines (' .. (key or 'zo') .. ' expands)', 'RevueyForgeDescriptionMore' } }
+  end
   if e and e.meta == 'file' then
     local f = s.review.files[e.file_idx]
     local chunks = { { s.layout.lines[fs], 'RevueyFilePath' } }
@@ -511,11 +517,15 @@ function M.winbar()
     return ''
   end
   local top = vim.fn.line('w0', win)
-  local fi = file_at_row(s, top)
-  local f = s.review.files[fi]
   local esc = function(str)
     return (str:gsub('%%', '%%%%'))
   end
+  local te = s.layout.map[top]
+  if te and te.role == 'description' and te.desc then
+    return ' %#RevueyForgeNumber#PR #' .. te.desc.number .. ' %#RevueyWinbar#' .. esc(te.desc.title or '') .. '%*%=description '
+  end
+  local fi = file_at_row(s, top)
+  local f = s.review.files[fi]
   local parts = {
     ' %#' .. (panel.status_hl[f.status] or 'Normal') .. '#' .. f.status .. ' ',
     '%#RevueyFilePath#' .. esc(layout_mod.file_title(f)) .. ' ',
@@ -525,7 +535,13 @@ function M.winbar()
   if p then
     parts[#parts + 1] = '  %#' .. p[2] .. '#' .. p[1]:sub(3)
   end
-  parts[#parts + 1] = '%*%=' .. fi .. '/' .. #s.review.files .. ' '
+  parts[#parts + 1] = '%*%='
+  local d = s.layout.description
+  if d and top == d.end_row + 1 then
+    -- the description is just above, scrolled out (it arrived after the view was drawn)
+    parts[#parts + 1] = '%#RevueyForgeDescriptionMore#↑ PR description  %*'
+  end
+  parts[#parts + 1] = fi .. '/' .. #s.review.files .. ' '
   return table.concat(parts)
 end
 
@@ -1228,6 +1244,9 @@ function M.fold_key()
     local c = vim.fn.foldclosed(row)
     local top = c ~= -1 and c or row
     local e = s.layout.map[top]
+    if e and e.role == 'description' and e.desc and e.desc.fold then
+      return '<Cmd>lua require("revuey.view").toggle_description()<CR>'
+    end
     if is_fold_title(e) then
       if e.meta == 'hunk' then
         local k = block_key_at(s, top)
@@ -2037,9 +2056,104 @@ local function compute_numw(review)
   return math.max(3, #tostring(maxl))
 end
 
+-- ---------------------------------------------------------------------------
+-- PR description folds (rows above the first file, forge_view.description_head)
+-- ---------------------------------------------------------------------------
+
+local function description_blocks(s)
+  return s.layout and s.layout.description and s.layout.description.blocks or {}
+end
+
+---Is a PR description expanded? As the user last left it (<Tab>, `zo`/`zc`), else
+---`forge.description.expanded`.
+local function description_expanded(s, url)
+  local e = s.desc_expanded and s.desc_expanded[url]
+  if e == nil then
+    return require('revuey.forge').options().description_expanded
+  end
+  return e
+end
+
+---After render's folds: a collapsed description folds the rows past its preview.
+function description_folds(s)
+  if #description_blocks(s) == 0 or not api.nvim_win_is_valid(s.diff_win) then
+    return
+  end
+  api.nvim_win_call(s.diff_win, function()
+    for _, b in ipairs(description_blocks(s)) do
+      if b.fold and not description_expanded(s, b.url) and vim.fn.foldclosed(b.fold[1]) == -1 then
+        pcall(vim.cmd, b.fold[1] .. 'foldclose')
+      end
+    end
+  end)
+end
+
+---Remember the descriptions' folds as the user left them (`zo`/`zc` count too). In the diff window.
+function sync_description_folds(s)
+  for _, b in ipairs(description_blocks(s)) do
+    if b.fold then
+      s.desc_expanded = s.desc_expanded or {}
+      s.desc_expanded[b.url] = vim.fn.foldclosed(b.fold[1]) == -1
+    end
+  end
+end
+
+---Unchanged-line folds (level 3) that are open, by file and line (a re-render closes them
+---again). In the diff window.
+function open_context_folds(s)
+  local out = {}
+  for row, lvl in pairs(s.folds or {}) do
+    local e = lvl == '>3' and s.layout.map[row]
+    if e and e.path and vim.fn.foldclosed(row) == -1 then
+      out[#out + 1] = e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')
+    end
+  end
+  return out
+end
+
+---Open those folds again in the new layout (only where nothing around them is collapsed).
+function reopen_context_folds(s, keys)
+  if #keys == 0 then
+    return
+  end
+  local want = {}
+  for _, k in ipairs(keys) do
+    want[k] = true
+  end
+  api.nvim_win_call(s.diff_win, function()
+    for row, lvl in pairs(s.folds or {}) do
+      local e = lvl == '>3' and s.layout.map[row]
+      if e and e.path and want[e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')] and vim.fn.foldclosed(row) == row then
+        pcall(vim.cmd, row .. 'foldopen')
+      end
+    end
+  end)
+end
+
+---<Tab> (toggle_fold) on a long PR description: expand or collapse it. Returns false when the
+---cursor is not on one that folds.
+function M.toggle_description()
+  local s = M.session
+  if not s or not api.nvim_win_is_valid(s.diff_win) then
+    return false
+  end
+  local e = s.layout.map[api.nvim_win_get_cursor(s.diff_win)[1]]
+  local b = e and e.role == 'description' and e.desc
+  if not (b and b.fold) then
+    return false
+  end
+  api.nvim_win_call(s.diff_win, function()
+    local closed = vim.fn.foldclosed(b.fold[1]) ~= -1
+    pcall(vim.cmd, b.fold[1] .. (closed and 'foldopen' or 'foldclose'))
+    s.desc_expanded = s.desc_expanded or {}
+    s.desc_expanded[b.url] = closed
+  end)
+  return true
+end
+
 ---Fill the diff buffer for the session's review.
 ---Snapshot of what the user is looking at, to restore after a re-render.
-local function capture_view(s)
+local function capture_view(s, keep_context)
   if s.view_mode == 'guide' then
     return M.capture_guide(s)
   end
@@ -2052,6 +2166,10 @@ local function capture_view(s)
     saved.offset = v.lnum - v.topline
     saved.col = v.col
     saved.row = v.lnum
+    sync_description_folds(s)
+    if keep_context then
+      saved.ctx_open = open_context_folds(s)
+    end
     for fi, f in ipairs(s.review.files) do
       local r = s.layout.files[fi]
       if r then
@@ -2298,7 +2416,10 @@ local function render(s, saved)
     s.prose_width, s.diagram_width = prose_width(s), diagram_width(s)
     s.layout = layout_mod.compose_guide(s.review.files, guide_view.doc(s, s.prose_width, s.diagram_width))
   else
-    s.layout = layout_mod.compose(s.review.files)
+    -- the open PR's description above the first file (from the PR lookup's cache; when it
+    -- arrives later, forge_view.sync_description renders again)
+    s.desc_width = prose_width(s)
+    s.layout = layout_mod.compose(s.review.files, require('revuey.forge_view').description_head(s, s.desc_width))
   end
   if s.view_mode ~= 'guide' and #s.review.files == 0 then
     local r = s.review
@@ -2375,6 +2496,10 @@ local function render(s, saved)
       close_file_fold(s, fi, true)
     end
   end
+  description_folds(s)
+  if saved and saved.ctx_open then
+    reopen_context_folds(s, saved.ctx_open)
+  end
   if saved then
     restore_view(s, saved)
   end
@@ -2388,11 +2513,13 @@ local function render(s, saved)
   require('revuey.forge_view').update(s)
 end
 
----Re-render in place, keeping the view (used when a guide finishes or the window is resized).
-function M.rerender(s)
+---Re-render in place, keeping the view (used when a guide finishes, the window is resized or a
+---PR description arrives). `keep_context_folds`: unchanged-line folds the user opened stay open.
+---@param o? {keep_context_folds?:boolean}
+function M.rerender(s, o)
   s = s or M.session
   if s and not s.cleaned and api.nvim_buf_is_valid(s.diff_buf) then
-    render(s, capture_view(s))
+    render(s, capture_view(s, o and o.keep_context_folds))
   end
 end
 
@@ -2568,6 +2695,10 @@ function M.show(review, opts)
         return
       end
       if s.view_mode ~= 'guide' then
+        -- the PR description is wrapped to the window (and its comments with it)
+        if s.layout.description and prose_width(s) ~= s.desc_width then
+          return M.rerender(s, { keep_context_folds = true })
+        end
         -- comment threads are wrapped to the window
         if s.cm and ((s.cm.store and next(s.cm.store.comments)) or (s.cm.forge_items and next(s.cm.forge_items))) then
           comments_view.render(s)
