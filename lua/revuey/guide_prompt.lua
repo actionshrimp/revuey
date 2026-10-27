@@ -203,8 +203,8 @@ A section is a logical unit of change, not a file and not a folder.
   a reviewer's attention and easy to miss: the line where the key decision happens, a subtle
   condition, the one call that wires things together. Most sections need none or one; never
   more than 3 per section or 12 in the whole guide. Leave the field out when no line stands out.
-  - `hunk`: the id of the hunk the line is in, for example "h7". It must be a hunk of THIS
-    section.
+  - `hunk`: the id of the hunk the line is in, for example "h7", usually one of this
+    section's. A note on a hunk of another section is shown with that hunk, in that section.
   - `line`: the number (from the `n|` prefix) of the line. `end_line`: the last line, when the
     note covers a few lines of the same hunk (at most 8); leave it out for one line.
   - `text`: one short sentence, under 15 words, in the voice above.

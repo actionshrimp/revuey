@@ -22,6 +22,7 @@ M.NOTE_MAX_SECTION = prompt.MAX_NOTES_PER_SECTION
 M.NOTE_MAX = prompt.MAX_NOTES
 M.NOTE_MAX_RANGE = prompt.MAX_NOTE_LINES
 M.NOTE_MAX_CHARS = 200
+M.NOTE_CONTEXT = 2 -- hunk lines stored either side of a note, to find it again after an edit
 
 local function int(v)
   v = tonumber(v)
@@ -212,30 +213,45 @@ end
 
 ---Stored line notes of one hunk anchor (records on disk may be edited by hand): integer lines,
 ---an end at or after the start within NOTE_MAX_RANGE, one-line text, a known side, the snippet
----as strings; anything else is dropped. nil when none are left. Version 1 records have none.
-function M.sanitize_notes(list)
+---and its context as strings; anything else is dropped, as is everything past `budget.left`
+---notes (shared by a record's hunks: NOTE_MAX per guide). nil when none are left. Version 1
+---records have none.
+function M.sanitize_notes(list, budget)
   if type(list) ~= 'table' then
     return nil
   end
+  budget = budget or { left = M.NOTE_MAX }
+  local function strings(v, max)
+    if type(v) ~= 'table' then
+      return nil
+    end
+    local out = {}
+    for _, l in ipairs(v) do
+      if type(l) ~= 'string' or #out >= max then
+        return nil
+      end
+      out[#out + 1] = l
+    end
+    return out
+  end
   local out = {}
   for _, n in ipairs(list) do
-    if type(n) == 'table' and #out < M.NOTE_MAX then
+    if type(n) == 'table' and budget.left > 0 then
       local line, last = int(n.line), int(n.end_line or n.line)
       local text = note_text(n.text)
-      local snippet = {}
-      for _, l in ipairs(type(n.lines) == 'table' and n.lines or {}) do
-        if type(l) == 'string' then
-          snippet[#snippet + 1] = l
-        end
-      end
       if line and last and line >= 1 and last >= line and last - line < M.NOTE_MAX_RANGE and text ~= '' then
+        local snippet = strings(n.lines, M.NOTE_MAX_RANGE)
+        local ok = snippet and #snippet == last - line + 1
         out[#out + 1] = {
           line = line,
           end_line = last,
           side = n.side == 'old' and 'old' or 'new',
           text = text,
-          lines = #snippet == last - line + 1 and snippet or nil,
+          lines = ok and snippet or nil,
+          before = ok and strings(n.before, M.NOTE_CONTEXT) or nil,
+          after = ok and strings(n.after, M.NOTE_CONTEXT) or nil,
         }
+        budget.left = budget.left - 1
       end
     end
   end
@@ -248,6 +264,7 @@ function M.sanitize(rec)
   rec.title = M.one_line(rec.title)
   rec.summary = M.clean_text(rec.summary)
   local sections = {}
+  local notes_budget = { left = M.NOTE_MAX }
   for _, s in ipairs(type(rec.sections) == 'table' and rec.sections or {}) do
     if type(s) == 'table' then
       local hunks = {}
@@ -255,7 +272,7 @@ function M.sanitize(rec)
         if type(a) == 'table' and type(a.hash) == 'string' then
           local note = M.one_line(a.note)
           a.note = note ~= '' and note or nil
-          a.line_notes = M.sanitize_notes(a.line_notes)
+          a.line_notes = M.sanitize_notes(a.line_notes, notes_budget)
           hunks[#hunks + 1] = a
         end
       end
@@ -637,6 +654,9 @@ function M.record(guide, hunks, meta)
             side = n.side,
             text = n.text,
             lines = vim.list_slice(h.text, n.line, n.end_line),
+            -- context, so an edited hunk never hands the note to a copy of a short line
+            before = vim.list_slice(h.text, math.max(1, n.line - M.NOTE_CONTEXT), n.line - 1),
+            after = vim.list_slice(h.text, n.end_line + 1, math.min(#h.text, n.end_line + M.NOTE_CONTEXT)),
           }
         end
       end
@@ -702,6 +722,7 @@ end
 ---@param anchors {a:table, si:integer}[] unmatched guide anchors with their section index
 ---@param free revuey.GuideHunk[] current hunks not matched by hash
 ---@return table<table, revuey.GuideHunk|false> anchor -> hunk (false: merged into another)
+---@return table<table, revuey.GuideHunk> anchor -> the hunk it matched (merged ones too)
 local function reanchor(anchors, free)
   local spans = {}
   for _, h in ipairs(free) do
@@ -730,7 +751,7 @@ local function reanchor(anchors, free)
       table.insert(claims[h], x)
     end
   end
-  local out, given = {}, {}
+  local out, given, into = {}, {}, {}
   for _, x in ipairs(anchors) do
     local list = cands[x]
     if #list == 1 then
@@ -743,24 +764,46 @@ local function reanchor(anchors, free)
       end
       if ok then
         out[x.a] = not given[h] and h or false
+        into[x.a] = h
         given[h] = true
       end
     end
   end
-  return out
+  return out, into
+end
+
+---Too little text to identify a place by itself (`return nil`, `end`, `}`): fewer than
+---comments.MIN_WORDS distinctive words, as for comments and GitHub threads.
+local function weak(lines)
+  local comments = require('revuey.comments')
+  local plain = {}
+  for i, l in ipairs(lines) do
+    plain[i] = l:sub(2)
+  end
+  return comments.distinctive_words(plain) < comments.MIN_WORDS
 end
 
 ---Line notes of a guide hunk on the hunk shown in its place. Unchanged hunks (same hash) keep
----them where they were; on a hunk re-anchored by overlap (edited) a note stays only where its
----lines are found again, unchanged and in one place (at the stored line, else a unique match);
----the rest are lost (counted), never guessed.
+---them where they were. On a hunk re-anchored by overlap (edited, or merged into another) a note
+---stays only where its lines AND the context stored around them (NOTE_CONTEXT lines either side,
+---fewer at the hunk's edges) are found again unchanged at exactly one place in the whole hunk,
+---its old line counting as one candidate like any other: a coincidental copy of a short line
+---(`return nil`) never takes the note. Records without stored context (made before it was
+---stored) need the lines alone to be unique in the hunk and not weak. Everything else is lost
+---(counted), never guessed: a note in the wrong place is worse than none.
 ---@return {line:integer, end_line:integer, side:string, text:string}[]? notes, integer lost
 local function place_notes(notes, h, edited)
-  if not notes or not h.hunk_idx then
-    return nil, notes and #notes or 0
+  if not notes then
+    return nil, 0
+  end
+  if not h.hunk_idx then
+    return nil, #notes
   end
   local out, lost = {}, 0
   local function matches(at, lines)
+    if at < 1 or at + #lines - 1 > #h.text then
+      return false
+    end
     for k, l in ipairs(lines) do
       if h.text[at + k - 1] ~= l then
         return false
@@ -775,16 +818,21 @@ local function place_notes(notes, h, edited)
     if not edited then
       at = n.end_line <= #h.text and n.line or nil
     elseif lines and #lines == span then
-      if matches(n.line, lines) then
-        at = n.line
-      else
+      local before, after = n.before, n.after
+      local pattern = vim.list_extend(vim.list_extend(vim.deepcopy(before or {}), lines), after or {})
+      if before or after or not weak(lines) then
+        local off = before and #before or 0
         local found = 0
-        for i = 1, #h.text - span + 1 do
-          if matches(i, lines) then
-            found, at = found + 1, i
+        for i = 1, #h.text - #pattern + 1 do
+          if matches(i, pattern) then
+            found, at = found + 1, i + off
           end
         end
         at = found == 1 and at or nil
+        -- stored context that does not tell the place apart (all of it weak, too) is no anchor
+        if at and weak(pattern) then
+          at = nil
+        end
       end
     end
     if at then
@@ -820,7 +868,7 @@ function M.resolve(rec, hunks)
       end
     end
   end
-  local moved = {}
+  local moved, merged_into = {}, {}
   if #unmatched > 0 then
     local free = {}
     for _, h in ipairs(hunks) do
@@ -828,7 +876,7 @@ function M.resolve(rec, hunks)
         free[#free + 1] = h
       end
     end
-    moved = reanchor(unmatched, free)
+    moved, merged_into = reanchor(unmatched, free)
     for _, h in pairs(moved) do
       if h then
         used[h.hash] = true
@@ -838,6 +886,7 @@ function M.resolve(rec, hunks)
   local sections, outdated, edited_total, notes_total, notes_lost = {}, 0, 0, 0, 0
   for _, s in ipairs(rec.sections or {}) do
     local items, missing, hashes, edited = {}, 0, {}, 0
+    local item_of = {} -- hunk -> its item (a merged anchor's notes join it)
     for _, a in ipairs(s.hunks or {}) do
       local h = by_hash[a.hash]
       local item
@@ -850,6 +899,7 @@ function M.resolve(rec, hunks)
         edited = edited + 1
       elseif moved[a] == nil then
         missing = missing + 1
+        notes_lost = notes_lost + #(a.line_notes or {}) -- its hunk is gone
       end
       if item then
         local lost
@@ -857,6 +907,26 @@ function M.resolve(rec, hunks)
         notes_total = notes_total + (item.line_notes and #item.line_notes or 0)
         notes_lost = notes_lost + lost
         items[#items + 1] = item
+        item_of[item.hunk] = item
+      elseif moved[a] == false then
+        -- joined into a hunk an earlier anchor of this section shows: its notes go there when
+        -- they are found again (as on any edited hunk), else they are lost
+        local into = item_of[merged_into[a]]
+        local placed, lost = place_notes(a.line_notes, merged_into[a], true)
+        if into and placed then
+          into.line_notes = into.line_notes or {}
+          vim.list_extend(into.line_notes, placed)
+          table.sort(into.line_notes, function(x, y)
+            if x.line ~= y.line then
+              return x.line < y.line
+            end
+            return x.end_line < y.end_line
+          end)
+          notes_total = notes_total + #placed
+        elseif placed then
+          lost = lost + #placed
+        end
+        notes_lost = notes_lost + lost
       end
     end
     if missing > 0 then

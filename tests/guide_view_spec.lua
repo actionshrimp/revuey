@@ -438,7 +438,7 @@ local function note_marks(s)
         t[#t + 1] = vim.trim(table.concat(parts))
       end
       -- (wrapped: headless specs keep the 80-column screen)
-      out[#out + 1] = { row = m[2] + 1, kind = 'lines', text = table.concat(t, ' '):gsub('%s+', ' '), above = d.virt_lines_above, chunks = d.virt_lines[1], n = #d.virt_lines }
+      out[#out + 1] = { row = m[2] + 1, kind = 'lines', text = table.concat(t, ' '):gsub('%s+', ' '), above = d.virt_lines_above, chunks = d.virt_lines[1], all = d.virt_lines, n = #d.virt_lines }
     elseif d.virt_text then
       out[#out + 1] = { row = m[2] + 1, kind = 'marker', text = vim.trim(d.virt_text[#d.virt_text][1]) }
     end
@@ -489,9 +489,11 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
   -- own highlight groups: label, band, inline code on the band
   h.eq('RevueyGuideLineNoteLabel', marks[2].chunks[1][2])
   local code
-  for _, ch in ipairs(marks[2].chunks) do
-    if ch[1] == 'sum' then
-      code = ch[2]
+  for _, l in ipairs(marks[2].all) do
+    for _, ch in ipairs(l) do
+      if ch[1] == 'sum' then
+        code = ch[2]
+      end
     end
   end
   h.eq({ 'RevueyGuideLineNote', 'RevueyGuideCode' }, code)
@@ -512,8 +514,14 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
   h.eq(marks[1].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   keys(s, '2]n')
   h.eq(marks[3].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  local said = {}
+  vim.notify = function(msg)
+    said[#said + 1] = msg
+  end
   keys(s, ']n')
+  vim.notify = function() end
   h.eq(marks[3].row, vim.api.nvim_win_get_cursor(s.diff_win)[1], 'no wrap past the last note')
+  h.eq({ 'revuey: no more line notes below' }, said)
   keys(s, '[n')
   h.eq(marks[2].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   -- gN collapses the notes to a marker at the end of their first line, and back
@@ -541,6 +549,75 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
   h.ok(notes[1] and notes[1]:find('part of the guide view', 1, true), vim.inspect(notes))
   view.set_view('guide')
   h.eq(3, #note_marks(s))
+end)
+
+h.test('line notes: a note past an abridged hunk\'s preview is dropped (the prompt never showed it)', function()
+  local s = view.session
+  view.set_view('guide')
+  vim.env.REVUEY_FAKE_CLAUDE = 'notes_abridged'
+  config.options.ai.max_prompt_chars = #require('revuey.guide_prompt').SYSTEM + 3000
+  view.guide_command(true)
+  wait_job(s)
+  config.options.ai.max_prompt_chars = 150000
+  local stdin = calls()[#calls()].stdin
+  h.ok(stdin:find('[abridged: ', 1, true), 'a hunk was abridged')
+  h.eq('abridged', s.guide.record.generator.prompt_level)
+  local notes = {}
+  for _, sec in ipairs(s.guide.resolved.sections) do
+    for _, it in ipairs(sec.items) do
+      for _, n in ipairs(it.line_notes or {}) do
+        notes[#notes + 1] = n.text
+      end
+    end
+  end
+  h.eq({ 'A line of the preview.' }, notes)
+  h.eq({ kept = 1, dropped = 1, unknown_hunk = 0, bad_line = 1, empty = 0, duplicates = 0, extra = 0 }, s.guide.record.generator.warnings.notes)
+end)
+
+h.test('line notes: text renders inline only (no code blocks or callouts) and fits a narrow window', function()
+  vim.env.REVUEY_FAKE_CLAUDE = 'notes'
+  local s = view.session
+  view.set_view('guide')
+  view.guide_command(true)
+  wait_job(s)
+  local guide = require('revuey.guide')
+  local rec = vim.deepcopy(s.guide.record)
+  rec.anchors = s.guide.anchors
+  rec.generator.generated_at = rec.generator.generated_at + 20
+  local texts = { '```lua', '> [!WARNING] This is a bug.', 'Plain `code` here.' }
+  local i = 0
+  for _, sec in ipairs(rec.sections) do
+    for _, a in ipairs(sec.hunks) do
+      for _, n in ipairs(a.line_notes or {}) do
+        i = i + 1
+        n.text = texts[i]
+      end
+    end
+  end
+  guide.save(guide.dir(state_dir), rec)
+  s = open(fixture)
+  view.set_view('guide')
+  vim.api.nvim_win_set_width(s.panel_win, 12) -- room for the words (the screen stays 80 wide)
+  view.rerender(s)
+  local got = vim.tbl_map(function(m)
+    return m.text
+  end, note_marks(s))
+  -- (an unclosed backtick pair renders as text, never as a code block)
+  h.eq({ '▼ guide `lua', '▼ guide · 2 lines > [!WARNING] This is a bug.', '▼ guide Plain code here.' }, got)
+  -- a narrow window: every band fits it
+  vim.api.nvim_win_set_width(s.diff_win, 30)
+  view.rerender(s)
+  local avail = vim.api.nvim_win_get_width(s.diff_win) - (2 * s.numw + 4)
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.diff_buf, gv.ns_notes, 0, -1, { details = true })) do
+    for _, l in ipairs(m[4].virt_lines or {}) do
+      local w = 0
+      for _, ch in ipairs(l) do
+        w = w + vim.api.nvim_strwidth(ch[1])
+      end
+      h.ok(w <= math.max(avail, 1) + 0, ('band of %d cells in %d'):format(w, avail))
+    end
+  end
+  vim.cmd('wincmd =')
 end)
 
 h.test('line notes: an old guide (version 1, no notes) still loads and renders', function()

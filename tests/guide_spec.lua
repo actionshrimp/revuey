@@ -728,7 +728,7 @@ h.test('line notes: stored with their lines, follow an edited hunk, survive load
   })
   h.eq(2, rec.version)
   h.eq({
-    { line = 3, end_line = 3, side = 'new', text = 'New spelling.', lines = { '+TWO' } },
+    { line = 3, end_line = 3, side = 'new', text = 'New spelling.', lines = { '+TWO' }, before = { ' one', '-two' }, after = { ' three' } },
   }, rec.sections[1].hunks[1].line_notes)
   -- sorted by line: the range (1-3) first
   h.eq({ ' ten', '+ten and a half', ' eleven' }, rec.sections[1].hunks[2].line_notes[1].lines)
@@ -737,14 +737,14 @@ h.test('line notes: stored with their lines, follow an edited hunk, survive load
   h.eq(3, fresh.notes)
   h.eq(0, fresh.notes_lost)
   h.eq({ { line = 3, end_line = 3, side = 'new', text = 'New spelling.' } }, fresh.sections[1].items[1].line_notes)
-  -- h2 edited: a line inserted above "+ten and a half" moves that note down one line; the range
-  -- note no longer finds its lines unchanged in one place and is lost (counted, not guessed)
+  -- h2 edited right next to its notes: their lines and context are no longer found unchanged,
+  -- so both are lost (counted, not guessed)
   local edited = vim.deepcopy(base_diff)
   edited[1].hunks[2] = { '@@ -10,2 +10,4 @@', ' ten', '+ten and a quarter', '+ten and a half', ' eleven' }
   local res = guide.resolve(rec, guide.hunks(diff.parse(difftext(edited))))
   h.eq(true, res.sections[1].items[2].edited)
-  h.eq({ { line = 3, end_line = 3, side = 'new', text = 'The half.' } }, res.sections[1].items[2].line_notes)
-  h.eq({ 2, 1 }, { res.notes, res.notes_lost })
+  h.eq(nil, res.sections[1].items[2].line_notes)
+  h.eq({ 1, 2 }, { res.notes, res.notes_lost })
   -- saved and loaded (sanitised on the way in)
   local dir = h.tmpdir('guide-notes-store')
   rec.generator = { generated_at = 5 }
@@ -776,6 +776,157 @@ h.test('line notes: stored with their lines, follow an edited hunk, survive load
   local ores = guide.resolve(guide.load(dir, old.key, 'old'), hs)
   h.eq({ 0, 0, false }, { ores.notes, ores.notes_lost, ores.stale })
   h.eq({ { 'A', { 'h1', 'h2' } }, { 'B', { 'h3', 'h4' } } }, titles_of(ores))
+end)
+
+
+-- An edited hunk: a note follows its line only when the line and the context stored around it
+-- are found again, unchanged, at exactly one place; a copy of a short line never takes it.
+local function notes_after(orig, notes, edited)
+  local rec = reanchor_rec(orig, { { title = 'A', overview = 'o', hunks = { 'h1' }, line_notes = notes } })
+  local hs = guide.hunks(diff.parse(difftext(edited)))
+  local res = guide.resolve(rec, hs)
+  local out = {}
+  for _, n in ipairs(res.sections[1].items[1] and res.sections[1].items[1].line_notes or {}) do
+    out[#out + 1] = { n.line, n.text, hs[1].text[n.line] }
+  end
+  return out, res, rec
+end
+
+local guard = { { path = 'a.lua', hunks = { {
+  '@@ -1,3 +1,8 @@ local function f(x)', ' local function f(x)', '+  if x == nil then', '+    log("nil input")',
+  '+    return nil', '+  end', '+  local y = g(x)', '   return y', ' end',
+} } } }
+local guarded = { { path = 'a.lua', hunks = { {
+  '@@ -1,3 +1,11 @@ local function f(x)', ' local function f(x)', '+  if not ready then', '+    log("not ready")',
+  '+    return nil', '+  end', '+  if x == nil then', '+    log("nil input")', '+    return nil', '+  end',
+  '+  local y = g(x)', '   return y', ' end',
+} } } }
+
+h.test('line notes on an edited hunk: a copy of the line at the old place never takes the note', function()
+  -- the note's `return nil` (line 4) now follows a new guard whose own `return nil` sits at 4:
+  -- the note goes with its context to line 8, the guard it was written for
+  local kept, res = notes_after(guard, { { hunk = 'h1', line = 4, text = 'Early return for nil input.' } }, guarded)
+  h.eq({ { 8, 'Early return for nil input.', '+    return nil' } }, kept)
+  h.eq({ 1, 0 }, { res.notes, res.notes_lost })
+  -- a range note keeps its span
+  kept = notes_after(guard, { { hunk = 'h1', line = 4, end_line = 5, text = 'The nil guard ends.' } }, guarded)
+  h.eq({ { 8, 'The nil guard ends.', '+    return nil' } }, kept)
+  -- the original guard deleted while the new one stays: not found, lost
+  local only_new = { { path = 'a.lua', hunks = { {
+    '@@ -1,3 +1,7 @@ local function f(x)', ' local function f(x)', '+  if not ready then', '+    log("not ready")',
+    '+    return nil', '+  end', '+  local y = g(x)', '   return y', ' end',
+  } } } }
+  kept, res = notes_after(guard, { { hunk = 'h1', line = 4, text = 'Early return for nil input.' } }, only_new)
+  h.eq({}, kept)
+  h.eq({ 0, 1 }, { res.notes, res.notes_lost })
+end)
+
+h.test('line notes on an edited hunk: a deleted line\'s note never moves to another copy', function()
+  local orig = { { path = 'b.lua', hunks = { {
+    '@@ -1,2 +1,9 @@ function M.run(o)', ' function M.run(o)', '+  if not check(o) then', '+    return false', '+  end',
+    '+  for _, x in ipairs(o) do', '+    if x.bad then', '+      return false', '+    end', '+  end', ' end',
+  } } } }
+  local edited = { { path = 'b.lua', hunks = { {
+    '@@ -1,2 +1,8 @@ function M.run(o)', ' function M.run(o)', '+  assert(check(o))', '+  for _, x in ipairs(o) do',
+    '+    if x.bad then', '+    return false', '+    end', '+  end', ' end',
+  } } } }
+  local kept, res = notes_after(orig, { { hunk = 'h1', line = 3, text = 'Bails out before the loop when the check fails.' } }, edited)
+  h.eq({}, kept)
+  h.eq({ 0, 1 }, { res.notes, res.notes_lost })
+end)
+
+h.test('line notes on an edited hunk: found again by context after lines added elsewhere; old records', function()
+  local orig = { { path = 'c.lua', hunks = { {
+    '@@ -1,2 +1,6 @@ function M.total(cart)', ' function M.total(cart)', '+  local sum = 0', '+  for _, item in ipairs(cart.items) do',
+    '+    sum = sum + item.price * item.qty', '+  end', '+  return round(sum)', ' end',
+  } } } }
+  local edited = { { path = 'c.lua', hunks = { {
+    '@@ -1,2 +1,8 @@ function M.total(cart)', ' function M.total(cart)', '+  assert(cart.items)', '+  log("total")',
+    '+  local sum = 0', '+  for _, item in ipairs(cart.items) do', '+    sum = sum + item.price * item.qty', '+  end',
+    '+  return round(sum)', ' end',
+  } } } }
+  local notes = { { hunk = 'h1', line = 4, text = 'Price times quantity, per item.' } }
+  local kept, res, rec = notes_after(orig, notes, edited)
+  h.eq({ { 6, 'Price times quantity, per item.', '+    sum = sum + item.price * item.qty' } }, kept)
+  h.eq({ 1, 0 }, { res.notes, res.notes_lost })
+  -- a record without stored context (written before it was stored): a unique, distinctive line
+  -- is still found; a weak one (`return nil`, `end`) is lost even when it is unique
+  local old = vim.deepcopy(rec)
+  for _, n in ipairs(old.sections[1].hunks[1].line_notes) do
+    n.before, n.after = nil, nil
+  end
+  res = guide.resolve(old, guide.hunks(diff.parse(difftext(edited))))
+  h.eq(6, res.sections[1].items[1].line_notes[1].line)
+  local _, _, grec = notes_after(guard, { { hunk = 'h1', line = 4, text = 'Early return.' } }, guard)
+  for _, n in ipairs(grec.sections[1].hunks[1].line_notes) do
+    n.before, n.after = nil, nil
+  end
+  local nilonly = { { path = 'a.lua', hunks = { {
+    '@@ -1,3 +1,8 @@ local function f(x)', ' local function f(x)', '+  if x == false then', '+    log("false input")',
+    '+    return nil', '+  end', '+  local y = g(x)', '   return y', ' end',
+  } } } }
+  res = guide.resolve(grec, guide.hunks(diff.parse(difftext(nilonly))))
+  h.eq({ 0, 1 }, { res.notes, res.notes_lost }, 'a weak line alone is no anchor')
+end)
+
+h.test('line notes: merged hunks keep notes found again; notes of vanished hunks are counted', function()
+  local orig = { { path = 'c.lua', hunks = {
+    { '@@ -1,3 +1,3 @@', ' local alpha = 1', '-local beta = compute_beta()', '+local beta = compute_beta(alpha)', ' local gamma = 3' },
+    { '@@ -20,3 +20,3 @@', ' local tau = 20', '-local upsilon = compute_upsilon()', '+local upsilon = compute_upsilon(tau)', ' local value = 22' },
+  } } }
+  local rec = reanchor_rec(orig, { { title = 'A', overview = 'o', hunks = { 'h1', 'h2' }, line_notes = {
+    { hunk = 'h1', line = 3, text = 'Beta now depends on alpha.' },
+    { hunk = 'h2', line = 3, text = 'Upsilon now depends on tau.' },
+  } } })
+  local body = { '@@ -1,22 +1,22 @@', ' local alpha = 1', '-local beta = compute_beta()', '+local beta = compute_beta(alpha)', ' local gamma = 3' }
+  for i = 4, 10 do
+    body[#body + 1] = ' local v' .. i .. ' = ' .. i
+  end
+  vim.list_extend(body, { '-local mid = 11', '+local mid = 12' })
+  for i = 12, 19 do
+    body[#body + 1] = ' local w' .. i .. ' = ' .. i
+  end
+  vim.list_extend(body, { ' local tau = 20', '-local upsilon = compute_upsilon()', '+local upsilon = compute_upsilon(tau)', ' local value = 22' })
+  local hs = guide.hunks(diff.parse(difftext({ { path = 'c.lua', hunks = { body } } })))
+  local res = guide.resolve(rec, hs)
+  h.eq(1, #res.sections[1].items, 'one merged hunk')
+  h.eq({ 'Beta now depends on alpha.', 'Upsilon now depends on tau.' }, vim.tbl_map(function(n)
+    return n.text
+  end, res.sections[1].items[1].line_notes))
+  h.eq('+local upsilon = compute_upsilon(tau)', hs[1].text[res.sections[1].items[1].line_notes[2].line])
+  h.eq({ 2, 0 }, { res.notes, res.notes_lost })
+  -- the file gone from the review: its notes are counted as lost
+  local other = guide.hunks(diff.parse(difftext({ { path = 'z.lua', hunks = { { '@@ -1,1 +1,1 @@', '-q', '+r' } } } })))
+  local gone = guide.resolve(rec, other)
+  h.eq({ 0, 2 }, { gone.notes, gone.notes_lost })
+end)
+
+h.test('line notes: an end past the hunk is dropped; the record keeps at most 12 notes on load', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local g, w = guide.validate({ title = 'T', sections = { { title = 'A', hunks = { 'h1', 'h2', 'h3', 'h4' }, line_notes = {
+    { hunk = 'h1', line = 2, end_line = 5, text = 'One past the last line.' },
+    { hunk = 'h1', line = 2, end_line = 4, text = 'Up to the last line.' },
+  } } } }, hs)
+  h.eq({ { 1, 'h1', 2, 4, 'old', 'Up to the last line.' } }, notes_of(g))
+  h.eq(1, w.notes.bad_line)
+  -- a hand-edited record with 5 notes on each of 4 hunks: the first 12 survive loading
+  local dir = h.tmpdir('guide-notes-cap')
+  local key = { repo = '/r', branch = 'b', base = 'main' }
+  local hunks = {}
+  for i = 1, 4 do
+    local list = {}
+    for l = 1, 5 do
+      list[l] = { line = l, text = 'n' .. i .. '.' .. l }
+    end
+    hunks[i] = { hash = 'x' .. i, line_notes = list }
+  end
+  guide.save(dir, { kind = 'revuey-guide', version = 2, key = key, anchors = 'cap', title = 'T',
+    sections = { { title = 'A', overview = 'o', hunks = hunks } }, generator = { generated_at = 1 } })
+  local n = 0
+  for _, a in ipairs(guide.load(dir, key, 'cap').sections[1].hunks) do
+    n = n + #(a.line_notes or {})
+  end
+  h.eq(guide.NOTE_MAX, n)
 end)
 
 h.test('storage: exact diff first, else the newest guide for the key; only that one is decoded', function()

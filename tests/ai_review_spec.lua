@@ -514,6 +514,21 @@ h.test('import: a concurrent accept in another instance is never deleted by a re
   end
 end)
 
+h.test('validate: a range longer than a comment may span is clamped to its first lines', function()
+  local text = {}
+  for i = 1, comments.MAX_RANGE + 50 do
+    text[i] = '+line ' .. i
+  end
+  local big = { id = 'h1', file_idx = 1, hunk_idx = 1, path = 'big.txt', text = text }
+  local doc, w = ai_review.validate({ summary = 's', verdict = 'comment', findings = {
+    { hunk = 'h1', line = 10, end_line = #text, severity = 'minor', title = 'Long', body = 'b' },
+    { hunk = 'h1', line = 3, end_line = 5, severity = 'minor', title = 'Short', body = 'b' },
+  } }, { big })
+  h.eq(0, w.dropped)
+  h.eq({ 10, 10 + comments.MAX_RANGE - 1 }, { doc.findings[1].line, doc.findings[1].end_line })
+  h.eq({ 3, 5 }, { doc.findings[2].line, doc.findings[2].end_line })
+end)
+
 h.test('validate: lines past an abridged hunk\'s preview are dropped; with no hunk bodies findings are whole-file', function()
   local big = {}
   for k = 1, 20 do
