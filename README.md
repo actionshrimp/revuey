@@ -260,7 +260,7 @@ shown while you are on the branch: review from a detached worktree to see the wh
 switch is refused the view still moves, and a message says the branch did not. A connected agent
 is told once you stop: switches less than 1.5 s apart become one message, from the branch the
 agent last heard of to the one you stopped on (nothing when that is where it was), sent after the
-pause, with your next `gS`, or when the review closes.
+pause, with your next `gS`, or when the review closes or Neovim quits.
 
 ### Someone else's stack (no local branches)
 
@@ -1022,8 +1022,8 @@ revuey message 19a3f0c2d4e1a8b7f src/cart.ts:12-14 (new) [stack/cart]: Why multi
 ```
 
 When you [check out another layer](#checking-out-a-layer) (`gS`, `:RevueySwitch`, `]s`/`[s`
-with `switch_on_navigate`), the watch prints a line saying so (a `switched` event in the feed;
-live only, never caught up by a later watch):
+with `switch_on_navigate`), the watch of that review prints a line saying so (a `switched` event
+in the feed; live only: neither a later watch nor `--since` prints it again):
 
 ```
 revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on

@@ -15,9 +15,15 @@ local M = {}
 M.POLL_MS = 2000
 
 local live = {} -- registry path -> true, removed on exit
+local linked = {} -- session -> true while attached (a switch still waiting is sent on exit)
 local group
+local flush
 
 local function on_exit()
+  for s in pairs(linked) do
+    flush(s.link)
+  end
+  linked = {}
   for path in pairs(live) do
     sessions.remove(path)
   end
@@ -177,6 +183,7 @@ function M.attach(s)
     open_mode = s.opts.mode or (config.options.uncommitted and 'worktree' or 'committed'),
   }
   M.update(s)
+  linked[s] = true
   if not group then
     group = api.nvim_create_augroup('revuey_agent_link', { clear = true })
     api.nvim_create_autocmd('VimLeavePre', { group = group, callback = on_exit })
@@ -227,10 +234,10 @@ local function take_pending(l)
   return p
 end
 
----Send a coalesced switch now (nothing when the user ended up where the agent last heard of).
-local function flush(l)
-  local p = take_pending(l)
-  if p and p.info.from ~= p.info.to then
+---Send a coalesced switch now.
+flush = function(l)
+  local p = l and take_pending(l)
+  if p then
     deliver(p)
   end
 end
@@ -239,21 +246,32 @@ end
 ---event (comments.switch_event) in the review's feed, which `bin/revuey watch --messages`
 ---prints. Nothing is sent without a connected agent. With `coalesce` (`]s`/`[s`) it waits
 ---SWITCH_COALESCE_MS for another switch, which takes its place (keeping the first `from`); any
----switch sends a waiting one along with it, as one message.
+---switch sends a waiting one along with it, as one message. Ending where the agent last heard of
+---sends nothing. A review closed while the switch ran (detached) uses the presence last seen,
+---and sends at once.
 ---@param info {from?:string, to:string, layer:string, index?:integer, count?:integer, pr?:table}
 ---@param o? {coalesce?:boolean}
 ---@return 'told'|'later'|'failed'|'unchanged'|nil what happened (nil: no agent connected)
 function M.tell_switch(s, info, o)
   local l = s and s.link
-  if not l or s.cleaned then
+  if not l then
     return nil
   end
   local waiting = take_pending(l)
   if waiting then
     info.from = waiting.info.from -- the branch the agent last heard of
   end
-  if not M.poll(s) then
+  local on
+  if s.cleaned then
+    on = l.connected -- closed during the switch: no more polls, the last one counts
+  else
+    on = M.poll(s)
+  end
+  if not on then
     return nil
+  end
+  if info.from == info.to then
+    return 'unchanged'
   end
   info.session, info.worktree = l.id, s.review.root
   local comments = require('revuey.comments')
@@ -262,7 +280,7 @@ function M.tell_switch(s, info, o)
     review = comments.review_info(s.review),
     events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path),
   }
-  if o and o.coalesce then
+  if o and o.coalesce and not s.cleaned then
     local timer = vim.uv.new_timer()
     p.timer = timer
     l.switch_pending = p
@@ -272,9 +290,6 @@ function M.tell_switch(s, info, o)
       end
     end))
     return 'later'
-  end
-  if info.from == info.to then
-    return 'unchanged'
   end
   return deliver(p) and 'told' or 'failed'
 end
@@ -286,6 +301,7 @@ function M.detach(s)
     return
   end
   flush(l)
+  linked[s] = nil
   if l.timer then
     pcall(function()
       l.timer:stop()

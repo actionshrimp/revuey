@@ -328,10 +328,10 @@ h.teardown(function()
 end)
 
 ---Start `bin/revuey watch --messages` in `dir` (what the skill's agent runs) and wait until it follows the feed.
-local function start_watch(dir)
+local function start_watch(dir, args)
   local w = { out = '', err = '' }
   watchers[#watchers + 1] = w
-  w.proc = vim.system({ h.root .. '/bin/revuey', 'watch', '--messages' }, {
+  w.proc = vim.system(vim.list_extend({ h.root .. '/bin/revuey', 'watch' }, args or { '--messages' }), {
     cwd = dir,
     env = { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath },
     text = true,
@@ -871,6 +871,125 @@ h.test('switch_on_navigate: a coalesced switch back to where the agent last hear
     view.close()
   end
   assert(ok, err)
+end)
+
+---Append a `switched` event to the review's feed as if review `session` had sent it.
+local function append_switch(s, session, to)
+  local comments = require('revuey.comments')
+  comments.append_event(comments.events_path_for(s.review.state._path), comments.switch_event(comments.review_info(s.review), {
+    session = session, worktree = s.review.root, from = 'stack/cart', to = to, layer = to, index = 1, count = 3,
+  }))
+end
+
+h.test('a switch still waiting to be told is sent when Neovim quits (VimLeavePre)', function()
+  local dir = fixture('--stack', 'navigate-quit')
+  local s = open(dir)
+  link_agent(s)
+  local cfg = require('revuey.config').options
+  local orig_ms = agent_link.SWITCH_COALESCE_MS
+  cfg.stack.switch_on_navigate = true
+  local ok, err = pcall(function()
+    agent_link.SWITCH_COALESCE_MS = 60000
+    nav(s, '[s', function()
+      return head_layer(s) == 'stack/math'
+    end)
+    h.eq({}, switch_events(dir))
+    vim.api.nvim_exec_autocmds('VimLeavePre', { group = 'revuey_agent_link' })
+    local evs = switch_events(dir)
+    h.eq(1, #evs)
+    h.eq({ 'stack/cart', 'stack/math' }, { evs[1].from, evs[1].to })
+  end)
+  cfg.stack.switch_on_navigate = false
+  agent_link.SWITCH_COALESCE_MS = orig_ms
+  if view.session then
+    view.close()
+  end
+  assert(ok, err)
+  h.eq(1, #switch_events(dir), 'sent once')
+end)
+
+h.test('switch_on_navigate: ]s then [s back to where the agent was: no "told" note, and nothing sent later', function()
+  local dir = fixture('--stack', 'navigate-there-back')
+  local s = open(dir)
+  link_agent(s)
+  local cfg = require('revuey.config').options
+  local orig_ms = agent_link.SWITCH_COALESCE_MS
+  cfg.stack.switch_on_navigate = true
+  local ok, err = pcall(function()
+    agent_link.SWITCH_COALESCE_MS = 60000
+    nav(s, '[s', function()
+      return head_layer(s) == 'stack/math'
+    end)
+    local msgs = nav(s, ']s', function()
+      return head_layer(s) == 'stack/cart'
+    end)
+    local texts = vim.tbl_map(function(m)
+      return m.msg
+    end, msgs)
+    h.ok(vim.tbl_contains(texts, 'revuey: switched to stack/cart'), vim.inspect(texts))
+    view.close() -- sends whatever still waits
+    h.eq({}, switch_events(dir))
+  end)
+  cfg.stack.switch_on_navigate = false
+  agent_link.SWITCH_COALESCE_MS = orig_ms
+  if view.session then
+    view.close()
+  end
+  assert(ok, err)
+end)
+
+h.test('the review closes while git switch runs: the agent seen connected is still told', function()
+  local dir = fixture('--stack', 'close-during')
+  local s = open(dir)
+  link_agent(s)
+  local orig = switch.run
+  switch.run = function(root, p)
+    view.close()
+    return orig(root, p)
+  end
+  local ok, res = pcall(do_switch, 1)
+  switch.run = orig
+  assert(ok, res)
+  h.eq(true, res.ok, res.msg)
+  h.eq('stack/math', branch(dir))
+  h.eq('revuey: switched to stack/math; told the connected agent', res.msg)
+  local evs = switch_events(dir)
+  h.eq(1, #evs)
+  h.eq({ 'stack/cart', 'stack/math', s.link.id }, { evs[1].from, evs[1].to, evs[1].session })
+end)
+
+h.test('watch never replays switches from before it started (--since all; --messages, plain, --json)', function()
+  local dir = fixture('--stack', 'since')
+  local s = open(dir)
+  append_switch(s, s.link.id, 'stack/OLD')
+  vim.wait(20)
+  for i, args in ipairs({ { '--messages', '--since', 'all' }, { '--since', 'all' }, { '--json', '--since', 'all' } }) do
+    local w = start_watch(dir, args)
+    local to = 'stack/new' .. i
+    append_switch(s, s.link.id, to)
+    h.ok(vim.wait(10000, function()
+      return w.out:find(to, 1, true) ~= nil
+    end, 20), table.concat(args, ' ') .. ' printed: ' .. w.out .. w.err)
+    h.eq(nil, w.out:find('stack/OLD', 1, true), table.concat(args, ' ') .. ' replayed an old switch: ' .. w.out)
+    w.proc:kill('sigterm')
+    h.eq(0, w.proc:wait(5000).code)
+  end
+  view.close()
+end)
+
+h.test('watch prints a switch only to its own review\'s agent (never one from a review that is gone)', function()
+  local dir = fixture('--stack', 'route')
+  local s = open(dir)
+  local w = start_watch(dir)
+  append_switch(s, '999999', 'stack/gone')
+  append_switch(s, s.link.id, 'stack/mine')
+  h.ok(vim.wait(10000, function()
+    return w.out:find('stack/mine', 1, true) ~= nil
+  end, 20), 'watch printed: ' .. w.out .. w.err)
+  h.eq(nil, w.out:find('stack/gone', 1, true), w.out)
+  w.proc:kill('sigterm')
+  h.eq(0, w.proc:wait(5000).code)
+  view.close()
 end)
 
 h.test('one switch at a time: a second request while one runs is dropped with a message', function()
