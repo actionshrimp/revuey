@@ -35,7 +35,8 @@ is available.
   a line the hunk lacks, a file without numbered lines), picked from the numbered lines of the
   prompt it was given.
 - **GitHub:** a fake `gh` (`tests/bin/gh`, `h.use_fake_gh`) records its argv and returns canned JSON for
-  GraphQL PR lookups (PR nodes per `owner/name:branch`, forks' parents, repos that resolve to null), or a
+  GraphQL PR lookups (PR nodes per `owner/name:branch`, forks' parents, repos that resolve to null; a
+  node's `body` only when the query asks for it), or a
   failure scenario (exit 1, garbage, rate limit, GraphQL errors, a hang that dies on SIGTERM). It also
   answers review-thread queries (thread nodes per `owner/name#N`, cut into pages by the query's
   `first`/`after`, PRs that resolve to null) with a failure scenario of their own

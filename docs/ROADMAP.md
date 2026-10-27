@@ -83,6 +83,13 @@ sequence; later items build on earlier ones.
   reason. Added comments are recorded as pending at once (a cancel or failed submit leaves them
   there, never added twice), posted ones keep their GitHub ids and are shown as the GitHub thread
   after the refetch.
+- PR description: the open PR's description (the viewed layer's; every layer's in full-stack
+  scope) above the first file of the diff view, from the PR lookup (`body` in the same call,
+  cache and TTL; `R` refetches). Rendered as text with the comments' Markdown (template
+  comments removed, images and links as text, `<details>` unfolded, nothing fetched), collapsed
+  to a few lines (`<Tab>`/`zo` expands; `forge.description.expanded`), inserted when it arrives
+  without moving the view or the cursor (a re-render that keeps them on the code), and absent
+  without a PR, with an empty or template-only body, or when `gh` fails.
 
 
 ## Next

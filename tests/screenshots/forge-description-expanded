@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//s/c/math                                                                                              X
+02| Files                       ○ no agent │ PR #42 Cart totals with discounts                                 description 
+03| Stack: 3 layers on main                │          PR #42 · Cart totals with discounts                                  
+04|    stack/math                1c 1f ✓0/1│            Why                                                                
+05| ▶@ stack/cart          #42 ○ 2c 2f ✓0/2│                                                                               
+06|    stack/ui                  1c 2f ✓0/2│            Totals ignored discounts; fixes #7.                                
+07|    full stack                4c 4f ✓0/4│                                                                               
+08|                                        │            What                                                               
+09| ▾ PR #42                              ○│            • Cart.total() sums each line with multiply                        
+10|   Cart totals with discounts           │            • ☑ tests                                                          
+11|   by alice · open                      │            • ☐ docs                                                           
+12|   ○ no review decision                 │                                                                               
+13|   checks: none                         │            (image: before and after)                                          
+14|   mergeable                            │                                                                               
+15|   base: stack/math                     │            ▸ How to try it                                                    
+16|                                        │                                                                               
+17| stack/cart → stack/math                │              npm test -- cart                                                 
+18| 2 files  +23 −2  ✓ 0/2                 │                                                                               
+19| base 41f287d7  head d0242a9d           │  A     ▾ src/cart.ts   +20 −0  added                                          
+20| layer 2/3                              │          @@ -0,0 +1,20 @@                                                     
+21| working tree  ● uncommitted            │      1 + import { multiply, sum } from "./math";                              
+22|                                        │      2 +                                                                      
+23|   A  cart.ts  src                +20 −0│      3 + export interface LineItem {                                          
+24|   M  index.ts  src                +3 −2│      4 +   name: string;                                                      
+25|                                        │      5 +   price: number;                                                     
+26| <CR> show  mr reviewed  gp diff        │      6 +   quantity: number;                                                  
+27| ]c [c hunk  ]f [f file  <Tab> fold     │      7 + }                                                                    
+28| gd def  K hover  go open  R refresh    │      8 +                                                                      
+29| gu committed/working tree  q close     │      9 + export class Cart {                                                  
+30| gG AI guide                            │     10 +   private items: LineItem[] = [];                                    
+31| ]s [s layer  gs full stack             │     11 +                                                                      
+32| gS check out layer                     │     12 +   addItem(item: LineItem): this {                                    
+33|revuey://files [-]    21,1           Top revuey://stack/cart..stack/math [-]                          1,1            Top
+34|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345666666655555555555555555555555555555555555555555555555555555555555555555555555
+03|222222222222222222222222777777777777777748888888888999999:::::::::::::::::::::::::::::;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+04|7<=744444444447777777777777777>>>>>>>>>>4??????????772227777777777777777777777777777777777777777777777777777777777777777
+05|7<=722222222227777777777<<<>>4>>>>>>>>>>4??????????777777777777777777777777777777777777777777777777777777777777777777777
+06|7<=744444444777777777777777777>>>>>>>>>>4??????????77777777777777777@@@@@@@@@77777777AA777777777777777777777777777777777
+07|7<77>>>>>>>>>>7777777777777777>>>>>>>>>>4??????????777777777777777777777777777777777777777777777777777777777777777777777
+08|77777777777777777777777777777777777777774??????????772222777777777777777777777777777777777777777777777777777777777777777
+09|7>2222222777777777777777777777777777777>4??????????77<7<<<<<<<<<<<<777777777777777777777<<<<<<<<777777777777777777777777
+10|77744444444444444444444444444777777777774??????????77<777777777777777777777777777777777777777777777777777777777777777777
+11|777>>>>>>>>>>>>>>>77777777777777777777774??????????77<777777777777777777777777777777777777777777777777777777777777777777
+12|777>>>>>>>>>>>>>>>>>>>>777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+13|777>>>>>>>>>>>>77777777777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+14|777>>>>>>>>>77777777777777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+15|777>>>>>>>>>>>>>>>>7777777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+16|77777777777777777777777777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+17|22222222222222222222222277777777777777774??????????77<<<<<<<<<<<<<<<<<<7777777777777777777777777777777777777777777777777
+18|7777777777BBBCCC>>>>>>>777777777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+19|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777777774BBBBBBBBBBDDDDDDDDDDDEEEFFFGGGFFFFFFFEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+20|<<<<<<<<<<7777777777777777777777777777774??????????HHHHHHHHHHHHHHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+21|<<<<<<<<<<<<<>>>>>>>>>>>>>>>7777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+22|77777777777777777777777777777777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+23|;N;NO;PPPPPPPQQQQQ;;;;;;;;;;;;;;;;BBBCCC4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+24|7B7<=744444444>>>>>7777777777777777BBCCC4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+25|77777777777777777777777777777777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+26|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+27|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+28|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>77774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+29|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+30|>>>>>>>>>>>>77777777777777777777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+31|>>>>>>>>>>>>>>>>>>>>>>>>>>>77777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+32|>>>>>>>>>>>>>>>>>>>7777777777777777777774JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+33|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+34|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

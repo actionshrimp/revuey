@@ -156,6 +156,10 @@ function M.setup()
   set('RevueyForgeBorder', { link = 'Comment' })
   set('RevueyForgeAuthor', { link = 'Special' })
   set('RevueyForgeSign', { link = 'Special' })
+  -- the PR description at the top of the diff view (its body uses the RevueyGuide* text groups)
+  set('RevueyForgeDescriptionTitle', { link = 'Title' })
+  set('RevueyForgeDescriptionMore', { link = 'Comment' }) -- "… N more lines" while collapsed
+  set('RevueyForgeDescriptionRule', { link = 'Comment' }) -- horizontal rules, table separators
   set('RevueyCommentInReview', { link = 'DiagnosticHint' }) -- added to the review to post on GitHub
 end
 

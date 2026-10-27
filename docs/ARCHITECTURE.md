@@ -773,7 +773,7 @@ are in `reports/Terminal code review tool landscape.md`.
       distinct (repo, branch), so a fork's parent is searched in the same request (null for a
       non-fork; left out when the base came from `gh-resolved` or `upstream`, so an internal fork
       doesn't match its public parent's PRs), with a shared fragment: number, title, url, state, isDraft, updatedAt,
-      headRefOid, author, reviewDecision, latestReviews,
+      headRefOid, body (the description, decision 19), author, reviewDecision, latestReviews,
       reviewRequests, mergeable, base/head ref names, headRepositoryOwner and the head commit's
       `statusCheckRollup.contexts` `checkRunCountsByState`/`statusContextCountsByState` (counts
       only, no per-check nodes). One `gh api graphql -f query=…` per host per fetch (in practice
@@ -1348,9 +1348,76 @@ are in `reports/Terminal code review tool landscape.md`.
       write-ahead and the answer, lost atomic reviews found and not found, and a Graphite
       comment with the same text as a lost add are specs.
 
+19. **The PR description** (`forge.lua` the field; `forge_description.lua` pure cleaning, rows and
+    fold; `forge_view.lua` which PRs, signature and the redraw; `layout.lua` head rows and their
+    fold; `view.lua` folds, `<Tab>`, winbar). The open PR's description is shown above the first
+    file of the diff view (never the guide view), read-only.
+    - **Which PRs.** `forge_view.scope_prs`, as threads (decision 17): the viewed layer's (a plain
+      review's), OPEN only (drafts too, marked `draft`). Full-stack scope: every layer's, bottom
+      first, each collapsed on its own: the scope reviews all of them, and the top layer's alone
+      would describe only its own part. A layer switch shows that layer's alone.
+    - **Data.** `body` in the PR lookup's fragment (decision 13): no second call, the same cache,
+      TTL, `R`, failure handling and kill-on-close. `body` (the Markdown as written) rather than
+      `bodyText` (GitHub's plain text: code fences, lists and headings flattened) or `bodyHTML`
+      (sanitised HTML with camo image URLs, which would need an HTML-to-text pass and is bigger).
+      Cost: the lookup now returns the body of every PR it reads (up to 30 per head branch name,
+      usually one); GitHub caps a body at 65,536 characters.
+    - **Cleaning** (`forge_description.clean`, outside fenced code and inline code spans): HTML
+      comments removed (PR templates; across lines; an unclosed one hides the rest, as on GitHub;
+      a line that held only a comment leaves no blank), Markdown and `<img>` images as
+      `(image: alt)`, GitHub's allowed HTML (`details`/`summary` as a `▸` line, `br`, `p`, `b`,
+      `code`, `a`, headings, lists, ...) turned into Markdown or dropped keeping its text, other
+      `<...>` left as typed (`Vec<String>`), entities decoded, task boxes `☑`/`☐`, setext headings,
+      `~~~` fences, blank runs collapsed. Empty once cleaned (no body, whitespace, a template's
+      comments only): nothing is shown. Nothing is fetched: links keep their text (prose drops the
+      URL, as in comments), images are text.
+    - **Rows** (`forge_description.render`): `PR #N · title`, the body through `prose.render`
+      (the comments' Markdown renderer, `RevueyGuide*` groups) indented two cells and wrapped to
+      the guide's prose width, table rows and rules on rows of their own (prose would run them
+      into a paragraph), a blank row. Longer than `max_lines` + 1 body rows (6 by default), the
+      rest is a fold.
+    - **Real rows, not virtual lines.** The rows are buffer lines at the top of the layout
+      (`layout.compose(files, head)`), prose rows with `role = 'description'` (`kind = 'prose'`,
+      which every diff feature already skips for the guide: comments, marks, `ge`, LSP and its
+      proxy, syntax, word diff, `]c`, `]f`). Virtual lines above row 1 were tried and rejected:
+      Neovim shows them only through `topfill` (`<C-y>`), not with `gg`, and not at all while
+      row 1 is in a closed fold, so a review whose first file is reviewed (folded) would never
+      show the description. Real rows are reachable with `gg`/`k`, searchable and yankable, and
+      fold with the normal fold commands.
+    - **Arriving later.** Opening never waits: the first render has no description unless the
+      cache already holds it. `forge_view.update`, after the lookup, compares
+      `description_signature` with what render last drew (`f.desc_drawn`) and, when it changed
+      (arrived, edited, emptied), re-renders the diff view in place (`view.rerender`): every
+      row-keyed structure (layout map, folds, comment rows and `]m` targets, marks, extmarks,
+      word diff, LSP positions) is rebuilt as on any refresh, and `capture_view`/`restore_view`
+      keep the cursor on its code line at the same window line, so rows inserted above scroll
+      the view by exactly that many rows and nothing visible moves. Unchanged-line folds the user
+      opened are kept (`keep_context_folds`, a re-render would close them again). Not in Visual,
+      Insert or any other mode but Normal (it waits for `ModeChanged`), nor with the comment
+      editor open (a float at a buffer row; retried every 500ms), nor in the guide view
+      (switching back renders it). The render inside a lookup does not start another
+      (`f.rerendering`). When the cursor is on the first file with the description just above,
+      the winbar says `↑ PR description`; on its rows it names the PR. Width changes re-wrap it
+      (`WinResized`).
+    - **Folds.** The hidden part is a level-1 fold of its own (`fold_levels`), so `zo`/`zc`/`za`
+      work; `<Tab>` (toggle_fold) anywhere on the description toggles it
+      (`view.toggle_description`), foldtext `… N more lines (<Tab> expands)`. The state is per
+      PR URL (`s.desc_expanded`, read back from the folds in `capture_view`, so `zo` counts),
+      kept across refreshes and scopes; `forge.description.expanded` starts them open.
+    - **Failures** as decision 13: no PR, a failed lookup, `gh` missing: nothing shown, logged. A
+      failed refetch keeps the PR (stale) and so the description shown.
+    - **Config** `forge.description = { enabled, expanded, max_lines }` (or `false`). Highlights
+      `RevueyForgeDescriptionTitle`, `RevueyForgeDescriptionMore`, `RevueyForgeDescriptionRule`.
+    - **Tests**: the fake `gh` answers a PR node's `body` only when the query's fragment asks for
+      it. `forge_description_spec.lua` covers cleaning and rows, and through the fake `gh`: shown,
+      absent (no PR, empty, template-only, merged, turned off), arriving late (`slow`) under a
+      cursor, a comment and an opened context fold, Visual mode and the editor, `<Tab>`/`zc`/`R`,
+      edits and failures, scopes and the guide view; `screen_spec.lua` has it late (winbar hint),
+      collapsed and expanded.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

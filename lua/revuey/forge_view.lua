@@ -46,6 +46,9 @@ function M.update(s, force)
     return
   end
   local f = state(s)
+  if f.rerendering then
+    return -- the re-render that draws a description, from inside a lookup
+  end
   force = force or s.forge_force
   s.forge_force = nil
   if f.busy then
@@ -110,6 +113,10 @@ function M.update(s, force)
       require('revuey.panel').render(s, { keep_view = true })
     elseif s.review ~= review then
       f.again = true
+    end
+    -- the description of the scope's open PR (same lookup, same cache): rows above the first file
+    if s.review == review then
+      M.sync_description(s)
     end
     -- then the review threads of the scope's open PRs (their own TTL cache)
     local prs = M.threads_enabled() and s.review == review and M.scope_prs(s) or {}
@@ -220,6 +227,132 @@ function M.scope_prs(s)
     end
   end
   return out
+end
+
+---Is the PR description shown (forge and `forge.description` enabled)?
+function M.description_enabled()
+  local o = forge.options()
+  return o.enabled and o.description
+end
+
+---Descriptions to show at the top of the diff view: the scope's open PRs (scope_prs: the viewed
+---layer's, every layer's in full-stack scope, bottom first) whose body is not empty once cleaned
+---(no body, whitespace or only a PR template's comments: nothing). From the PR lookup's cache,
+---so a failed refetch keeps what was shown.
+---@return {pr:revuey.PR, md:string}[]
+function M.descriptions(s)
+  if not M.description_enabled() then
+    return {}
+  end
+  local fd = require('revuey.forge_description')
+  local out = {}
+  for _, pr in ipairs(M.scope_prs(s)) do
+    local md = fd.clean(pr.body)
+    if md ~= '' then
+      out[#out + 1] = { pr = pr, md = md }
+    end
+  end
+  return out
+end
+
+---Signature of the descriptions the diff view would show now (render records what it drew).
+function M.description_signature(s)
+  local parts = {}
+  for _, d in ipairs(M.descriptions(s)) do
+    parts[#parts + 1] = table.concat({ d.pr.url, d.pr.number, d.pr.title, tostring(d.pr.draft), d.md }, '\0')
+  end
+  return table.concat(parts, '\n')
+end
+
+---Rows to put above the first file of the diff layout (layout.compose's `head`): each
+---description's title, body and a blank row, as prose rows (`role = 'description'`, which every
+---diff feature skips), and a block per PR `{url, number, title, start_row, end_row, fold?}`
+---(rows: the description is at the top, so they are rows of the buffer). Records what it drew.
+---@return {rows:{text:string, entry:table}[], blocks:table[]}?
+function M.description_head(s, width)
+  local f = s and s.forge
+  if not f then
+    return nil -- no lookup yet (or the forge is off): nothing to show
+  end
+  f.desc_drawn = M.description_signature(s)
+  local list = M.descriptions(s)
+  if #list == 0 then
+    return nil
+  end
+  local fd = require('revuey.forge_description')
+  local o = forge.options()
+  local head = { rows = {}, blocks = {} }
+  for _, d in ipairs(list) do
+    local r = fd.render(d.pr, d.md, width, { max_lines = o.description_lines })
+    local base = #head.rows
+    local block = { url = d.pr.url, number = d.pr.number, title = d.pr.title, start_row = base + 1, end_row = base + #r.rows }
+    if r.fold then
+      block.fold = { base + r.fold[1], base + r.fold[2] }
+    end
+    for _, row in ipairs(r.rows) do
+      head.rows[#head.rows + 1] = {
+        text = (row.text:gsub('[\r\n]', ' ')),
+        entry = { kind = 'prose', role = 'description', hls = row.hls, desc = block },
+      }
+    end
+    head.blocks[#head.blocks + 1] = block
+  end
+  return head
+end
+
+---After a lookup: when the descriptions changed (one arrived, was edited, went away), draw them
+---again by re-rendering the diff view in place (its cursor and view are kept on the code, so
+---rows inserted above never move it). Not in the guide view (it has none; switching back
+---renders them), and only from Normal mode: in Visual or Insert mode it waits for the mode to
+---change, so a selection or an edit never sees the rows move; with the comment editor open (a
+---float at a buffer row), once it is closed.
+function M.sync_description(s)
+  local f = s and s.forge
+  if not f or s.cleaned or (s.view_mode or 'diff') ~= 'diff' or not s.layout then
+    return
+  end
+  if M.description_signature(s) == (f.desc_drawn or '') then
+    return
+  end
+  local api = vim.api
+  if not (s.diff_buf and api.nvim_buf_is_valid(s.diff_buf) and s.diff_win and api.nvim_win_is_valid(s.diff_win)) then
+    return
+  end
+  local mode = api.nvim_get_mode()
+  if mode.blocking or mode.mode ~= 'n' then
+    if not f.desc_wait then
+      f.desc_wait = true
+      api.nvim_create_autocmd('ModeChanged', {
+        group = s.augroup,
+        once = true,
+        callback = function()
+          f.desc_wait = nil
+          vim.schedule(function()
+            M.sync_description(s)
+          end)
+        end,
+      })
+    end
+    return
+  end
+  local editor = package.loaded['revuey.comment_editor']
+  if editor and editor.current and not editor.current.done then
+    -- the comment editor floats at a buffer row: once it is closed
+    if not f.desc_later then
+      f.desc_later = true
+      vim.defer_fn(function()
+        f.desc_later = nil
+        M.sync_description(s)
+      end, 500)
+    end
+    return
+  end
+  f.rerendering = true -- render asks for a lookup: not from inside this one
+  local ok, err = pcall(require('revuey.view').rerender, s, { keep_context_folds = true })
+  f.rerendering = false
+  if not ok then
+    log.write('forge', 'description: ' .. tostring(err))
+  end
 end
 
 ---Review threads to draw in the scope shown: `{item, thread, pr}` (forge_threads.item), PR by

@@ -44,6 +44,8 @@ local M = {}
 ---@field sections? {start_row:integer, end_row:integer, section_idx:integer}[] guide only
 ---@field file_rows? table<integer, integer> guide only: first row showing each file
 ---@field diagram? {start_row:integer, end_row:integer} guide only: overview diagram (heading first)
+---@field description? {start_row:integer, end_row:integer, blocks:table[]} diff only: the PR
+---  description rows above the first file (forge_view.description_head)
 
 ---@param f revuey.FileDiff
 function M.file_title(f)
@@ -139,10 +141,19 @@ local function pusher(lines, map)
 end
 
 ---@param files revuey.FileDiff[]
+---@param head? {rows:{text:string, entry:table}[], blocks:table[]} rows above the first file (the
+---  PR description, forge_view.description_head): prose rows every diff feature skips
 ---@return revuey.Layout
-function M.compose(files)
+function M.compose(files, head)
   local lines, map, ranges, hunks, base, blocks = {}, {}, {}, {}, {}, {}
   local push = pusher(lines, map)
+  local description
+  if head and #head.rows > 0 then
+    for _, r in ipairs(head.rows) do
+      push(r.text, r.entry)
+    end
+    description = { start_row = 1, end_row = #lines, blocks = head.blocks or {} }
+  end
 
   for fi, f in ipairs(files) do
     local range = { hunk_rows = {} }
@@ -162,7 +173,7 @@ function M.compose(files)
     range.end_row = push('', { kind = 'meta', meta = 'blank', file_idx = fi, path = f.path })
     ranges[fi] = range
   end
-  return { kind = 'diff', lines = lines, map = map, files = ranges, hunks = hunks, hunk_base = base, blocks = blocks }
+  return { kind = 'diff', lines = lines, map = map, files = ranges, hunks = hunks, hunk_base = base, blocks = blocks, description = description }
 end
 
 ---@class revuey.GuideDocItem
@@ -326,6 +337,15 @@ function M.fold_levels(layout, ctx_threshold, keep)
   local levels = {}
   -- diff: one fold per file; guide: one per section (title and summary stay unfolded)
   local ranges = layout.kind == 'guide' and vim.list_extend({ layout.diagram }, layout.sections) or layout.files
+  -- a long PR description: the rows past its preview are a level-1 fold of their own
+  for _, b in ipairs(layout.description and layout.description.blocks or {}) do
+    if b.fold then
+      levels[b.fold[1]] = '>1'
+      for row = b.fold[1] + 1, b.fold[2] do
+        levels[row] = '1'
+      end
+    end
+  end
   for _, r in ipairs(ranges) do
     levels[r.start_row] = '>1'
     for row = r.start_row + 1, r.end_row do
