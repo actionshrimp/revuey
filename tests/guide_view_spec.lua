@@ -423,6 +423,160 @@ h.test('newlines in model strings never reach a buffer line; reopening works', f
   h.eq('Title second line', lines(s)[1])
 end)
 
+---Line note extmarks in the guide buffer: {row, kind ('lines'|'marker'), text, chunks}.
+local function note_marks(s)
+  local out = {}
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.diff_buf, gv.ns_notes, 0, -1, { details = true })) do
+    local d = m[4]
+    if d.virt_lines then
+      local t = {}
+      for _, l in ipairs(d.virt_lines) do
+        local parts = {}
+        for _, ch in ipairs(l) do
+          parts[#parts + 1] = ch[1]
+        end
+        t[#t + 1] = vim.trim(table.concat(parts))
+      end
+      -- (wrapped: headless specs keep the 80-column screen)
+      out[#out + 1] = { row = m[2] + 1, kind = 'lines', text = table.concat(t, ' '):gsub('%s+', ' '), above = d.virt_lines_above, chunks = d.virt_lines[1], n = #d.virt_lines }
+    elseif d.virt_text then
+      out[#out + 1] = { row = m[2] + 1, kind = 'marker', text = vim.trim(d.virt_text[#d.virt_text][1]) }
+    end
+  end
+  return out
+end
+
+h.test('line notes: above their lines in the guide, bad anchors dropped and counted, ]n [n, gN; not in the diff view', function()
+  local s = view.session
+  view.set_view('guide')
+  local notes = {}
+  vim.notify = function(msg)
+    notes[#notes + 1] = msg
+  end
+  vim.env.REVUEY_FAKE_CLAUDE = 'notes'
+  view.guide_command(true)
+  wait_job(s)
+  vim.notify = function() end
+  -- the prompt numbered the lines the notes point at
+  local stdin = calls()[#calls()].stdin
+  h.ok(stdin:find('\n1|+import { formatCurrency } from "../format";\n', 1, true), stdin)
+  -- three bad anchors (an unknown hunk, a line the hunk lacks, a file without lines): dropped,
+  -- counted, stored and told
+  h.eq({ kept = 3, dropped = 3, unknown_hunk = 1, bad_line = 2, empty = 0, duplicates = 0, extra = 0 }, s.guide.record.generator.warnings.notes)
+  local ready = vim.iter(notes):find(function(m)
+    return m:find('guide ready', 1, true) ~= nil
+  end)
+  h.ok(ready and ready:find('line notes: 3 dropped (1 unknown hunk, 2 lines outside their hunks)', 1, true), vim.inspect(notes))
+  h.eq(3, s.guide.resolved.notes)
+  -- drawn above the lines they point at, in row order
+  local marks = note_marks(s)
+  h.eq(3, #marks, vim.inspect(marks))
+  local function at(m)
+    local e = s.layout.map[m.row]
+    return { e.path, e.line_idx, e.kind }
+  end
+  h.eq({ 'src/components/Total.tsx', 1, 'add' }, at(marks[1]))
+  h.eq('▼ guide The new module starts here.', marks[1].text)
+  h.eq({ 'src/components/Total.tsx', 2, 'add' }, at(marks[2]))
+  h.eq('▼ guide · 2 lines Note the sum call: totals are built here.', marks[2].text)
+  h.ok(marks[2].n > 1, 'wrapped to the window')
+  h.eq({ 'src/cart.ts', 1, 'add' }, at(marks[3]))
+  h.eq('▼ guide Wired in here.', marks[3].text)
+  h.eq(true, marks[1].above)
+  -- the row sits under the right section and hunk header
+  h.eq(1, s.layout.map[marks[1].row].section_idx)
+  h.eq(2, s.layout.map[marks[3].row].section_idx)
+  -- own highlight groups: label, band, inline code on the band
+  h.eq('RevueyGuideLineNoteLabel', marks[2].chunks[1][2])
+  local code
+  for _, ch in ipairs(marks[2].chunks) do
+    if ch[1] == 'sum' then
+      code = ch[2]
+    end
+  end
+  h.eq({ 'RevueyGuideLineNote', 'RevueyGuideCode' }, code)
+  for _, g in ipairs({ 'RevueyGuideLineNote', 'RevueyGuideLineNoteLabel', 'RevueyGuideLineNoteMarker' }) do
+    h.ok(next(vim.api.nvim_get_hl(0, { name = g })) ~= nil, g)
+  end
+  -- not comments: no gutter bars, nothing for ]m, the comment list or exports
+  for _, r in pairs(s.cm and s.cm.jump or {}) do
+    h.ok(r ~= marks[1].row and r ~= marks[2].row and r ~= marks[3].row, 'a note is not a comment')
+  end
+  h.eq(nil, require('revuey.comments_view').sign(s, marks[1].row))
+  -- the panel names the keys while the guide has notes
+  local panel = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')
+  h.ok(panel:find(' ]n [n line note  gN show/collapse', 1, true), panel)
+  -- ]n / [n (with a count) move between notes
+  vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
+  keys(s, ']n')
+  h.eq(marks[1].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  keys(s, '2]n')
+  h.eq(marks[3].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  keys(s, ']n')
+  h.eq(marks[3].row, vim.api.nvim_win_get_cursor(s.diff_win)[1], 'no wrap past the last note')
+  keys(s, '[n')
+  h.eq(marks[2].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  -- gN collapses the notes to a marker at the end of their first line, and back
+  keys(s, 'gN')
+  h.eq({ { marks[1].row, 'marker', '◆ guide' }, { marks[2].row, 'marker', '◆ guide' }, { marks[3].row, 'marker', '◆ guide' } },
+    vim.tbl_map(function(m)
+      return { m.row, m.kind, m.text }
+    end, note_marks(s)))
+  keys(s, ']n')
+  h.eq(marks[3].row, vim.api.nvim_win_get_cursor(s.diff_win)[1], 'navigation works on collapsed notes')
+  -- collapsed survives a re-render (window resize, refresh)
+  view.rerender(s)
+  h.eq('marker', note_marks(s)[1].kind)
+  keys(s, 'gN')
+  h.eq('lines', note_marks(s)[1].kind)
+  -- the diff view has no notes; its ]n says where they are
+  view.set_view('diff')
+  h.eq({}, note_marks(s))
+  notes = {}
+  vim.notify = function(msg)
+    notes[#notes + 1] = msg
+  end
+  keys(s, ']n')
+  vim.notify = function() end
+  h.ok(notes[1] and notes[1]:find('part of the guide view', 1, true), vim.inspect(notes))
+  view.set_view('guide')
+  h.eq(3, #note_marks(s))
+end)
+
+h.test('line notes: an old guide (version 1, no notes) still loads and renders', function()
+  local s = view.session
+  view.set_view('guide')
+  local guide = require('revuey.guide')
+  local old = vim.deepcopy(s.guide.record)
+  old.version = 1
+  old.title = 'An old guide'
+  for _, sec in ipairs(old.sections) do
+    for _, a in ipairs(sec.hunks) do
+      a.line_notes = nil
+    end
+  end
+  old.generator.generated_at = old.generator.generated_at + 10 -- the newest for this diff
+  old.generator.warnings = { unknown = 0, duplicates = 0, missed = 0, unplaced = 0 }
+  local f = io.open(guide.save(guide.dir(state_dir), old), 'r')
+  h.ok(not f:read('*a'):find('line_notes', 1, true), 'written without notes')
+  f:close()
+  s = open(fixture)
+  view.set_view('guide')
+  h.eq('An old guide', lines(s)[1])
+  h.eq({ 0, 0, false }, { s.guide.resolved.notes, s.guide.resolved.notes_lost, s.guide.resolved.stale })
+  h.ok(find(s, '1. Core change', 'section'), text(s))
+  h.eq({}, note_marks(s))
+  local panel = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')
+  h.ok(not panel:find('line note', 1, true), panel)
+  local msgs = {}
+  vim.notify = function(msg)
+    msgs[#msgs + 1] = msg
+  end
+  keys(s, ']n')
+  vim.notify = function() end
+  h.eq({ 'revuey: this guide has no line notes' }, msgs)
+end)
+
 h.test('failures: invalid output, API error, not logged in, missing CLI; the last guide stays', function()
   local s = view.session
   local before = s.guide.resolved.title

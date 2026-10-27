@@ -499,6 +499,27 @@ h.test('guide with an overview diagram', function()
   vim.env.REVUEY_FAKE_CLAUDE = nil
 end)
 
+-- Line notes from the guide: a violet band above the lines they point at (a range says how many
+-- lines), unlike comment boxes below their lines; `gN` collapses them to a marker.
+h.test('guide line notes above their lines, collapsed with gN', function()
+  h.use_fake_claude(h.tmpdir('screen-fake-claude-notes') .. '/calls.ndjson')
+  vim.env.REVUEY_FAKE_CLAUDE = 'notes'
+  local d = h.tmpdir('screen-guide-notes')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', d }):wait().code == 0)
+  start(d, 'main', 40, 130)
+  h.ok(generate_guide(), 'guide did not generate')
+  child.lua('vim.cmd("redraw")')
+  -- ]n to the first note: the hunk and its notes on screen
+  child.type_keys(']n', 'zt', '<C-y><C-y><C-y><C-y>')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-line-notes')
+  child.type_keys('gN')
+  child.lua('vim.cmd("redraw")')
+  screenshot('guide-line-notes-collapsed')
+  vim.env.REVUEY_FAKE_CLAUDE = nil
+end)
+
 -- A full-stack guide: each hunk header names the branch (or branches) that introduced it.
 h.test('full-stack guide with branch labels', function()
   h.use_fake_claude(h.tmpdir('screen-fake-claude-stack') .. '/calls.ndjson')

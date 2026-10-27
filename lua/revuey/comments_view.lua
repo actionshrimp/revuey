@@ -271,6 +271,8 @@ local function chunks(line, base)
   return out
 end
 
+M.chunks = chunks -- (guide line notes too)
+
 local function fill(width, used)
   return string.rep('─', math.max(1, width - used))
 end

@@ -77,13 +77,6 @@ function M.clean_code(v)
   return t:find('%S') and t or nil
 end
 
-local function int(v)
-  v = tonumber(v)
-  if v and v == math.floor(v) then
-    return v
-  end
-end
-
 ---@class revuey.AiFinding
 ---@field hunk string          h1..hn
 ---@field line? integer        1-based line of the hunk (nil: the whole file)
@@ -126,8 +119,6 @@ function M.validate(raw, hunks, shown)
   if type(raw.verdict) ~= 'string' then
     return nil, 'the review has no verdict'
   end
-  local level = shown and shown.level or 'full'
-  local abridged = shown and shown.abridged or {}
   local by_id = {}
   for _, h in ipairs(hunks) do
     by_id[h.id] = h
@@ -149,24 +140,9 @@ function M.validate(raw, hunks, shown)
       elseif title == '' and body == '' then
         reason = 'empty'
       else
-        local line, last = int(f.line), int(f.end_line)
-        if f.line ~= nil and not line or f.end_line ~= nil and not last then
-          reason = 'bad_line'
-        elseif h.hunk_idx and line and level ~= 'files' then
-          last = last or line
-          -- an abridged hunk only showed (and numbered) its first lines
-          local max = abridged[id] and math.min(#h.text, prompt.PREVIEW_LINES) or #h.text
-          if line < 1 or line > max or last < line or last > max then
-            reason = 'bad_line'
-          else
-            -- a comment spans at most MAX_RANGE lines (as one from the shell)
-            last = math.min(last, line + comments.MAX_RANGE - 1)
-          end
-        elseif h.hunk_idx and last and level ~= 'files' then
-          reason = 'bad_line' -- an end without a start
-        else
-          line, last = nil, nil -- the whole file
-        end
+        -- no lines: the whole file; a comment spans at most MAX_RANGE lines (as one from the shell)
+        local line, last
+        line, last, reason = guide.hunk_range(h, f.line, f.end_line, shown, comments.MAX_RANGE)
         if not reason then
           local severity = M.norm_severity(f.severity)
           if title == '' then
@@ -215,26 +191,7 @@ function M.validate(raw, hunks, shown)
 end
 
 ---"2 dropped (1 unknown hunk, 1 line outside its hunk)" for warnings with drops, else nil.
-function M.dropped_text(w)
-  if type(w) ~= 'table' or (w.dropped or 0) == 0 then
-    return nil
-  end
-  local parts = {}
-  local names = {
-    { 'unknown_hunk', 'unknown hunk', 'unknown hunks' },
-    { 'bad_line', 'line outside its hunk', 'lines outside their hunks' },
-    { 'empty', 'empty', 'empty' },
-    { 'duplicates', 'duplicate', 'duplicates' },
-    { 'extra', 'over the limit', 'over the limit' },
-  }
-  for _, n in ipairs(names) do
-    local k = w[n[1]] or 0
-    if k > 0 then
-      parts[#parts + 1] = k .. ' ' .. (k == 1 and n[2] or n[3])
-    end
-  end
-  return ('%d dropped (%s)'):format(w.dropped, table.concat(parts, ', '))
-end
+M.dropped_text = guide.dropped_text
 
 -- ---------------------------------------------------------------------------
 -- Findings as comments

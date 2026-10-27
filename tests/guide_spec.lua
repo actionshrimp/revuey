@@ -139,8 +139,15 @@ h.test('prompt: file list, id markers, methodology and schema', function()
   h.ok(text:find('- Add a\n- Fix b', 1, true))
   h.ok(text:find('src/a.ts (+2 -1): h1 h2', 1, true), 'file list with counts and ids')
   h.ok(text:find('logo.png (+0 -0): h4', 1, true))
-  h.ok(text:find('\n@@ h1 src/a.ts @@\n@@ -1,3 +1,3 @@ function a\n one\n-two\n+TWO\n three\n', 1, true))
+  -- lines numbered within the hunk, for line notes (as AI review findings)
+  h.ok(text:find('\n@@ h1 src/a.ts @@\n@@ -1,3 +1,3 @@ function a\n1| one\n2|-two\n3|+TWO\n4| three\n', 1, true), text)
   h.ok(text:find('\n@@ h4 logo.png @@\n(Binary file not shown)\n', 1, true))
+  h.ok(text:find('Line notes use the `n|` numbers of their hunk.', 1, true))
+  h.ok(text:find('**line_notes** (optional)', 1, true), 'the methodology explains line notes')
+  h.ok(text:find('A line note is NOT a review comment.', 1, true))
+  -- the caps the prompt states are the ones the import enforces
+  h.ok(text:find(('never\n  more than %d per section or %d in the whole guide'):format(gp.MAX_NOTES_PER_SECTION, gp.MAX_NOTES), 1, true))
+  h.ok(text:find(('(at most %d)'):format(gp.MAX_NOTE_LINES), 1, true))
   h.ok(text:find('Hunk ids: h1 to h4', 1, true))
   h.ok(not text:find('[abridged', 1, true) and not text:find('marked [abridged]', 1, true))
   h.ok(not text:find('—', 1, true), 'no em-dashes in our own prompt')
@@ -234,10 +241,10 @@ h.test('prompt: size budget sends the largest hunks as an index', function()
   h.ok(text:find('so 1 hunk is marked [abridged]', 1, true))
   h.ok(text:find('The files are in the current directory', 1, true))
   h.ok(text:find('@@ -1,0 +1,200 @@ big  [abridged: +200 -0, 200 lines]', 1, true))
-  h.ok(text:find('+line 6 ', 1, true) and not text:find('+line 7 ', 1, true), 'first lines only')
+  h.ok(text:find('6|+line 6 ', 1, true) and not text:find('+line 7 ', 1, true), 'first lines only, numbered')
   h.ok(text:find('[... 194 more lines]', 1, true))
   -- small hunks stay in full
-  h.ok(text:find('\n@@ h1 src/a.ts @@\n@@ -1,3 +1,3 @@ function a\n one\n', 1, true))
+  h.ok(text:find('\n@@ h1 src/a.ts @@\n@@ -1,3 +1,3 @@ function a\n1| one\n', 1, true))
   -- generous budget: nothing abridged
   local _, info2 = gp.build({ repo = 'r', branch = 'b', base = 'main' }, hs, { budget = 1e6 })
   h.eq(0, info2.abridged)
@@ -587,6 +594,188 @@ h.test('re-anchoring: ambiguous matches and no match fall back to "Not in guide"
     h.eq({ { 'A', {} }, { 'Not in guide', { 'h1' } } }, titles_of(res), spec.path .. ' ' .. spec.hunks[1][1])
     h.eq(0, res.edited)
   end
+end)
+
+-- Line notes: anchored like AI review findings (hunk id + line numbers within the hunk), checked
+-- against what the prompt showed; bad anchors dropped and counted, never guessed; caps.
+local function notes_of(g)
+  local out = {}
+  for si, s in ipairs(g.sections) do
+    for _, r in ipairs(s.hunks) do
+      for _, n in ipairs(r.line_notes or {}) do
+        out[#out + 1] = { si, r.id, n.line, n.end_line, n.side, n.text }
+      end
+    end
+  end
+  return out
+end
+
+h.test('line notes: valid anchors kept with their side; bad ones dropped and counted', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local g, w = guide.validate({
+    title = 'T', summary = 'S',
+    sections = {
+      { title = 'A', overview = 'o', hunks = { { id = 'h1' }, { id = 'h2' } }, line_notes = {
+        { hunk = 'h1', line = 3, text = 'The new spelling.' },
+        { hunk = 'h1', line = 2, text = 'The old one goes.' }, -- a deleted line: the old side
+        { hunk = 'h2', line = 1, end_line = 3, text = 'A short range.' },
+        { hunk = 'h1', line = 3, text = 'The new spelling.' }, -- exact duplicate
+        { hunk = 'h9', line = 1, text = 'Unknown hunk.' },
+        { hunk = 'h1', line = 5, text = 'Past the end of the hunk.' },
+        { hunk = 'h1', line = 0, text = 'Zero.' },
+        { hunk = 'h1', line = 2, end_line = 1, text = 'End before start.' },
+        { hunk = 'h1', line = 1.5, text = 'Not an integer.' },
+        { hunk = 'h1', text = 'No line.' },
+        { hunk = 'h4', line = 1, text = 'A binary file has no lines.' },
+        { hunk = 'h1', line = 1, text = '  \n ' }, -- empty
+        'junk',
+        -- a note on a hunk another section shows stays with that hunk (and counts there)
+        { hunk = 'h3', line = 1, text = 'Shown in B.' },
+      } },
+      { title = 'B', overview = 'o', hunks = { { id = 'h3' } }, line_notes = {
+        { hunk = 'h2', line = 2, text = 'Section A already has 3 notes.' }, -- over the section cap
+        { hunk = 'h3', line = 2, text = 'Line\nbreaks\0 become spaces.' },
+      } },
+    },
+    unplaced = {},
+  }, hs)
+  assert(g, w)
+  h.eq({
+    { 1, 'h1', 2, 2, 'old', 'The old one goes.' },
+    { 1, 'h1', 3, 3, 'new', 'The new spelling.' },
+    { 1, 'h2', 1, 3, 'new', 'A short range.' },
+    { 2, 'h3', 1, 1, 'old', 'Shown in B.' }, -- h3's first line is deleted
+    { 2, 'h3', 2, 2, 'new', 'Line breaks become spaces.' },
+    -- h4 went to "Other changes" without notes
+  }, notes_of(g))
+  h.eq({ kept = 5, dropped = 11, unknown_hunk = 1, bad_line = 6, empty = 2, duplicates = 1, extra = 1 }, w.notes)
+  h.eq('11 dropped (1 unknown hunk, 6 lines outside their hunks, 2 empty, 1 duplicate, 1 over the limit)', guide.dropped_text(w.notes))
+  -- no notes at all: no note warnings
+  local _, w2 = guide.validate({ title = 'T', sections = { { title = 'A', hunks = { 'h1' } } } }, hs)
+  h.eq(nil, w2.notes)
+  h.eq(nil, guide.dropped_text(w2.notes))
+end)
+
+h.test('line notes: only lines the prompt numbered; long ranges clamped; long text cut', function()
+  local hs = guide.hunks(diff.parse(difftext(base_diff)))
+  local function one(n, shown)
+    local g, w = guide.validate({ title = 'T', sections = { { title = 'A', hunks = { 'h1', 'h2', 'h3', 'h4' }, line_notes = { n } } } }, hs, shown)
+    return notes_of(g)[1], w.notes
+  end
+  -- an abridged hunk numbered only its first PREVIEW_LINES lines (h1 has 4, so all of them)
+  local big = { '@@ -1,0 +1,20 @@' }
+  for i = 1, 20 do
+    big[#big + 1] = '+l' .. i
+  end
+  local bhs = guide.hunks(diff.parse(difftext({ { path = 'big.ts', hunks = { big } } })))
+  local function bnote(n, shown)
+    local g, w = guide.validate({ title = 'T', sections = { { title = 'A', hunks = { 'h1' }, line_notes = { n } } } }, bhs, shown)
+    return notes_of(g)[1], w.notes
+  end
+  local ab = { level = 'abridged', abridged = { h1 = true } }
+  h.eq({ 1, 'h1', 6, 6, 'new', 'x' }, (bnote({ hunk = 'h1', line = gp.PREVIEW_LINES, text = 'x' }, ab)))
+  local n, w = bnote({ hunk = 'h1', line = gp.PREVIEW_LINES + 1, text = 'x' }, ab)
+  h.eq(nil, n)
+  h.eq(1, w.bad_line, 'past the preview: never shown, so never anchored')
+  h.eq({ 1, 'h1', 7, 7, 'new', 'x' }, (bnote({ hunk = 'h1', line = 7, text = 'x' }, { level = 'abridged', abridged = {} })))
+  -- files level: no lines were shown, so no note can anchor
+  n, w = one({ hunk = 'h1', line = 1, text = 'x' }, { level = 'files', abridged = {} })
+  h.eq({ nil, 1 }, { n, w.bad_line })
+  -- a range longer than NOTE_MAX_RANGE is clamped to its first lines
+  h.eq({ 1, 'h1', 2, 1 + guide.NOTE_MAX_RANGE, 'new', 'x' }, (bnote({ hunk = 'h1', line = 2, end_line = 20, text = 'x' })))
+  -- the text is one line of at most NOTE_MAX_CHARS characters
+  n = one({ hunk = 'h1', line = 1, text = string.rep('ä', 300) })
+  h.eq(guide.NOTE_MAX_CHARS, vim.fn.strchars(n[6]))
+  h.ok(n[6]:find('…$'))
+  -- `id` for `hunk`, numbers as ids, upper case: normalised like section hunk references
+  h.eq({ 1, 'h1', 1, 1, 'new', 'x' }, (one({ id = 'H1', line = 1, text = 'x' })))
+end)
+
+h.test('line notes: caps per section and per guide, in the model\'s order', function()
+  local d = {}
+  for i = 1, 8 do
+    d[i] = { path = 'f' .. i .. '.ts', hunks = { { '@@ -1,1 +1,5 @@', '-a', '+1', '+2', '+3', '+4', '+5' } } }
+  end
+  local hs = guide.hunks(diff.parse(difftext(d)))
+  local sections = {}
+  for i = 1, 8 do
+    local notes = {}
+    for l = 1, 5 do
+      notes[l] = { hunk = 'h' .. i, line = l + 1, text = 's' .. i .. 'l' .. l }
+    end
+    sections[i] = { title = 'S' .. i, hunks = { 'h' .. i }, line_notes = notes }
+  end
+  local g, w = guide.validate({ title = 'T', sections = sections }, hs)
+  local kept = notes_of(g)
+  h.eq(guide.NOTE_MAX, #kept)
+  h.eq(12, guide.NOTE_MAX)
+  h.eq(3, guide.NOTE_MAX_SECTION)
+  -- 3 per section for the first 4 sections; nothing after the overall cap
+  h.eq({ 's1l1', 's1l2', 's1l3' }, { kept[1][6], kept[2][6], kept[3][6] })
+  h.eq('s4l3', kept[12][6])
+  h.eq({ 12, 28, 28 }, { w.notes.kept, w.notes.dropped, w.notes.extra })
+  h.eq(gp.MAX_NOTES_PER_SECTION, gp.SCHEMA.properties.sections.items.properties.line_notes.maxItems)
+end)
+
+h.test('line notes: stored with their lines, follow an edited hunk, survive loading; old guides load', function()
+  local rec, hs = reanchor_rec(base_diff, {
+    { title = 'A', overview = 'o', hunks = { { id = 'h1' }, { id = 'h2' } }, line_notes = {
+      { hunk = 'h1', line = 3, text = 'New spelling.' },
+      { hunk = 'h2', line = 2, text = 'The half.' },
+      { hunk = 'h2', line = 1, end_line = 3, text = 'All of it.' },
+    } },
+    { title = 'B', overview = 'o', hunks = { { id = 'h3' }, { id = 'h4' } } },
+  })
+  h.eq(2, rec.version)
+  h.eq({
+    { line = 3, end_line = 3, side = 'new', text = 'New spelling.', lines = { '+TWO' } },
+  }, rec.sections[1].hunks[1].line_notes)
+  -- sorted by line: the range (1-3) first
+  h.eq({ ' ten', '+ten and a half', ' eleven' }, rec.sections[1].hunks[2].line_notes[1].lines)
+  -- unchanged: as stored
+  local fresh = guide.resolve(rec, hs)
+  h.eq(3, fresh.notes)
+  h.eq(0, fresh.notes_lost)
+  h.eq({ { line = 3, end_line = 3, side = 'new', text = 'New spelling.' } }, fresh.sections[1].items[1].line_notes)
+  -- h2 edited: a line inserted above "+ten and a half" moves that note down one line; the range
+  -- note no longer finds its lines unchanged in one place and is lost (counted, not guessed)
+  local edited = vim.deepcopy(base_diff)
+  edited[1].hunks[2] = { '@@ -10,2 +10,4 @@', ' ten', '+ten and a quarter', '+ten and a half', ' eleven' }
+  local res = guide.resolve(rec, guide.hunks(diff.parse(difftext(edited))))
+  h.eq(true, res.sections[1].items[2].edited)
+  h.eq({ { line = 3, end_line = 3, side = 'new', text = 'The half.' } }, res.sections[1].items[2].line_notes)
+  h.eq({ 2, 1 }, { res.notes, res.notes_lost })
+  -- saved and loaded (sanitised on the way in)
+  local dir = h.tmpdir('guide-notes-store')
+  rec.generator = { generated_at = 5 }
+  guide.save(dir, rec)
+  local back = guide.load(dir, rec.key, rec.anchors)
+  h.eq(rec.sections[1].hunks, back.sections[1].hunks)
+  -- a hand-edited record: bad notes dropped on load
+  local bad = vim.deepcopy(rec)
+  bad.anchors = 'bad'
+  bad.sections[1].hunks[1].line_notes = {
+    { line = 'x', text = 'not a number' },
+    { line = 2, end_line = 1, text = 'end before start' },
+    { line = 1, end_line = 40, text = 'too long a range' },
+    { line = 1, text = '' },
+    { line = 2, side = 'sideways', text = 'Kept\nwith a known side.', lines = { 5 } },
+  }
+  guide.save(dir, bad)
+  local loaded = guide.load(dir, bad.key, 'bad')
+  h.eq({ { line = 2, end_line = 2, side = 'new', text = 'Kept with a known side.' } }, loaded.sections[1].hunks[1].line_notes)
+  -- a version 1 guide (written before line notes) loads and resolves without notes
+  local old = vim.deepcopy(rec)
+  old.version, old.anchors = 1, 'old'
+  for _, s in ipairs(old.sections) do
+    for _, a in ipairs(s.hunks) do
+      a.line_notes = nil
+    end
+  end
+  guide.save(dir, old)
+  local ores = guide.resolve(guide.load(dir, old.key, 'old'), hs)
+  h.eq({ 0, 0, false }, { ores.notes, ores.notes_lost, ores.stale })
+  h.eq({ { 'A', { 'h1', 'h2' } }, { 'B', { 'h3', 'h4' } } }, titles_of(ores))
 end)
 
 h.test('storage: exact diff first, else the newest guide for the key; only that one is decoded', function()

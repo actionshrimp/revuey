@@ -623,6 +623,24 @@ with light markdown styling.
   and so does the panel's section list (`✓`, `◐`); the guide header counts fully reviewed
   sections. Marks follow the hunks' content, so they survive regenerating the guide.
 
+**Line notes.** Claude can also pin a short note to a line, or a few lines, it wants you to
+look at: "The cache key is built here.", "Note the early return for empty carts." A note is
+drawn right above its lines, as a violet band labelled `▼ guide` (`▼ guide · 3 lines` for a
+range), so it reads differently from comment boxes, AI review findings and GitHub threads, which
+sit below their lines. Notes are rare by design: at most 3 per section and 12 per guide, and
+never a bug report (those belong in an [AI review](#ai-review)).
+
+- `]n` / `[n`: next / previous line note (takes a count).
+- `gN`: collapse every note to a `◆ guide` marker at the end of its line, and back.
+
+Notes belong to the guide, not to your comments: they are not in the comment list, `]m`,
+exports, the agent link or anything posted, and they are not shown in the diff view, where the
+code stays yours. Claude points at a line by its hunk id and the line's number within the hunk,
+as AI review findings do; a note on a line the prompt did not show (or an unknown hunk) is
+dropped, never moved, and the "guide ready" message counts the drops. Guides made before line
+notes existed load as they are, without notes. After an edit, a note on an edited hunk stays
+only where its lines are found again unchanged; the banner counts the ones that were lost.
+
 **Overview diagram.** When the structure is worth seeing (several modules calling each other, a
 data flow, a new component wired into existing ones), the guide starts with a small diagram
 below the summary. Claude only names the nodes (modules or concepts, each new, changed or
@@ -686,9 +704,10 @@ order with each branch's commits, and notes which branch introduced what when th
 read files in the repo and run `git diff`/`log`/`show`, nothing else: `--restricted` and
 `--safe-mode` make it ignore settings files (yours and the repo's, so no extra allow rules or
 hooks), plugins and MCP servers. revuey never reads your credentials. The prompt contains the
-commit subjects, a file list and the diff, with each hunk marked by an id (`@@ h7 path @@`);
-Claude only refers to hunks by id, and revuey checks the answer (unknown ids are dropped, missed
-hunks go to an "Other changes" section). The whole prompt stays under `ai.max_prompt_chars`
+commit subjects, a file list and the diff, with each hunk marked by an id (`@@ h7 path @@`) and
+its lines numbered within the hunk (`3|+text`, for line notes); Claude only refers to hunks by
+id, and revuey checks the answer (unknown ids are dropped, missed hunks go to an "Other changes"
+section, line notes on lines that were not shown are dropped). The whole prompt stays under `ai.max_prompt_chars`
 (150k characters): the largest hunks are sent as a short index entry, and if that is not
 enough, only the file list; a review too big even for that is refused (review one layer). The
 Claude session is kept (named "revuey guide: <branch>" in `claude --resume`) and its id is
@@ -1093,6 +1112,8 @@ Diff buffer:
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
+| `]n` / `[n` | Guide view: next / previous [line note](#ai-guide) (takes a count) |
+| `gN` | Guide view: collapse the line notes to markers, or show them in full |
 | `gc` | [Comment](#comments) on this line (visual: the selected lines; a file or hunk header: the whole file) |
 | `ce` / `cr` / `cx` / `cd` | Edit / reply to / resolve or reopen / delete the comment on this line |
 | `cz` | Expand / collapse a long or resolved comment |
@@ -1137,7 +1158,8 @@ All highlight groups can be overridden: `RevueyAdd`, `RevueyDelete`, `RevueyAddT
 `RevueyDeleteSign`, `RevueyLineNr`, `RevueyAddLineNr`, `RevueyDeleteLineNr`, `RevueyReviewed`,
 `RevueyPartial` (partly reviewed, `◐`),
 the guide's `RevueyGuideTitle`, `RevueyGuideSection`, `RevueyGuideCode`, `RevueyGuideImportant`,
-`RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the diagram's `RevueyDiagramNew`,
+`RevueyGuideWarning`, `RevueyGuideHunkNote`, `RevueyGuideOutdated`, the line notes'
+`RevueyGuideLineNote` (the band), `RevueyGuideLineNoteLabel` and `RevueyGuideLineNoteMarker`, the diagram's `RevueyDiagramNew`,
 `RevueyDiagramChanged`, `RevueyDiagramContext`, `RevueyDiagramEdge`, `RevueyDiagramLabel`, the
 stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `RevueyStackWarn`, the comments'
 `RevueyCommentSign`, `RevueyCommentBorder`, `RevueyCommentAuthor`, `RevueyCommentDraft`,
@@ -1277,6 +1299,8 @@ cd /tmp/revuey-guide
   introduced each hunk (`[stack/cart, stack/ui]` on `src/cart.ts`).
 - `gs` for a layer: it has no guide of its own yet, and no branch labels. `gs` again: the
   full-stack guide is back.
+- If Claude added line notes (a violet `▼ guide` band above a line), `]n` / `[n` move between
+  them and `gN` collapses them to `◆ guide` markers. `gG`: the diff view shows none.
 
 ### An AI review
 
@@ -1310,6 +1334,8 @@ In the same review (needs `claude` too):
   and merging).
 - **Unit (guide):** hunk ids and anchors, prompt building (layer and full-stack scope wording) and the size budget, the stream-json
   parser, validation and JSON repair, section identity, staleness, guide storage, markdown prose.
+  Line notes: anchors checked against the numbered lines the prompt showed (bad ones dropped and
+  counted by reason), caps, storage, following an edited hunk, sanitising on load, old guides.
   The overview diagram: schema validation, golden layouts (chain, fan-out, fan-in, cycle,
   multibyte labels, the list fallback) and Mermaid text. Branch attribution on a 3-layer git
   stack (a hunk two layers touched, a pure deletion, a rename, uncommitted and untracked work).
@@ -1325,7 +1351,7 @@ In the same review (needs `claude` too):
   a server; `vim.lsp.buf.definition`/`type_definition`/`references`/`hover` from context and
   added lines, in the diff and the guide, run against `typescript-language-server`. TypeScript highlight checks skip without the TS parser/queries.
   The AI guide runs against a fake `claude` (`tests/bin/claude`) that records its argv and stdin
-  and replays canned stream-json (good, diagram, invalid, missing hunks, unknown ids, errors, slow, hang),
+  and replays canned stream-json (good, diagram, line notes with bad anchors, invalid, missing hunks, unknown ids, errors, slow, hang),
   so the tests never need the network or a subscription.
 - **Checking out a layer** (`switch_spec.lua`): the `gS` decision (local, remote with a tracking
   branch, a conflicting local name, a fresh `--track`, detached, already on it), collisions, the

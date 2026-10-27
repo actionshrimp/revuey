@@ -302,7 +302,9 @@ are in `reports/Terminal code review tool landscape.md`.
      (heart, consequences, glue last), hunk-level chunking (a file's hunks may be split), coverage
      (every id exactly once in a section or `unplaced`), 2-6 sections (max 10), optional
      `> [!IMPORTANT]`/`> [!WARNING]` callouts. The user message has the repo, scope, commit subjects,
-     a file list with `+/-` counts and ids, then each hunk as `@@ h7 path @@` + the git hunk. Over
+     a file list with `+/-` counts and ids, then each hunk as `@@ h7 path @@` + the git hunk, its
+     lines numbered within the hunk (`3|+text`, as for AI reviews, so line notes can point at
+     them; the numbers cost a few characters per line of the budget). Over
      `ai.max_prompt_chars` the largest hunks become index entries (header, counts, first 6 lines,
      `[abridged]`) and the model is told the files are in its cwd.
    - **Scope wording** (a guide covers one review scope, `ctx.stack` from `guide_view`). Layer
@@ -314,7 +316,8 @@ are in `reports/Terminal code review tool landscape.md`.
      branch introduced what. Plain branch reviews keep `Changes: X compared with Y` and no stack
      wording. The guide's winbar shows the scope (`Guide · layer stack/cart`, `Guide · full stack`).
    - **Schema** (`--json-schema`, `additionalProperties: false` everywhere):
-     `{title, summary (md), sections: [{title, overview (md), hunks: [{id, note?}]}], unplaced: [id],
+     `{title, summary (md), sections: [{title, overview (md), hunks: [{id, note?}], line_notes?:
+     [{hunk, line, end_line?, text}] (max 3)}], unplaced: [id],
      diagram?: {nodes: [{id, label, kind: new|changed|context, section? (1-based)}] (max 12),
      edges: [{from, to, label?}] (max 20)}}`.
    - **Invocation.** `ai.run` spawns `claude -p --output-format stream-json --verbose --permission-mode
@@ -353,6 +356,46 @@ are in `reports/Terminal code review tool landscape.md`.
      repair (strip fences, slice `{`..`}`), unknown ids and duplicates dropped (first wins), empty
      sections dropped, unplaced and missed hunks put in a final "Other changes" section, zero valid
      sections is a failure. Warnings are stored with the guide.
+   - **Line notes** (the guide drawing the reviewer's eye to specific lines). A section's
+     `line_notes` point at lines the way AI review findings do (decision 15): a hunk id plus the
+     `n|` numbers of that hunk's lines, `end_line` for a short range. There is no side field:
+     the numbered line's `+`/`-`/space marker decides it (`old` for a deleted line, else `new`),
+     so the model cannot contradict itself. The prompt asks for notes sparingly (a key line, a
+     subtle condition, the call that wires things together), never restating the overview and
+     never reporting issues, which belong in an AI review (`:RevueyAIReview`) or a
+     `> [!WARNING]` callout. `guide.validate(raw, hunks, shown)` checks each note with
+     `guide.hunk_range`, the check AI review findings now share (unknown or unplaced hunk, a
+     line that is not an integer inside the hunk or past what the prompt numbered: an
+     abridged hunk's first 6 lines, nothing at the `files` level), and drops, never moves, a
+     note with a bad anchor, no line, no text, an exact duplicate, or past the caps: 3 per
+     section (also the schema's `maxItems`) and 12 per guide, in the model's order. Ranges are
+     clamped to 8 lines and text to one line of 200 characters. A note stays with the hunk it
+     points into, whichever section shows that hunk, and counts towards that section's cap.
+     Drops are counted by reason (`warnings.notes`, the same reasons and wording as findings,
+     `guide.dropped_text`) and named in the "guide ready" message.
+     The record (version 2) stores each note on its hunk anchor with the lines it pointed at
+     (`lines`); version 1 records have none and load unchanged (`sanitize_notes` also drops
+     malformed notes of hand-edited files). `guide.resolve` keeps notes of hash-matched hunks
+     as they are; on a hunk re-anchored by overlap a note stays only where its stored lines are
+     found again unchanged, at its old offset or at a unique other one, else it is lost and
+     counted (`notes_lost`, in the stale banner). Not regenerated automatically.
+     Rendering (`guide_view.draw_notes`, namespace `revuey.guide.notes`, after comments on every
+     render): `virt_lines_above` on the note's first row, a band (`RevueyGuideLineNote`, a
+     violet tint mixed into `Normal`'s background, per light/dark) with a `▼ guide` label
+     (`· N lines` for a range) and inline markdown, wrapped to the text width. Choices: above
+     the line (the reader meets the note before the code, and comments, AI findings and GitHub
+     threads all hang below their last line, so they never collide); no box and no author
+     line, so it never reads as a comment; shown by default (that is the point of a note);
+     `gN` collapses all of them to a `◆ guide` end-of-line marker and back (per session, kept
+     across re-renders; one toggle for all, since notes are one-liners and per-note collapse
+     would need a key nobody remembers); `]n`/`[n` move between them, a pair of their own
+     because `]m`/`[m` is the comment list's order and covers items with actions (`ce`, `ca`,
+     `cn`), which notes have none of. `]n`/`[n` are unused by Neovim and `gN` (select the
+     previous match) means nothing in a read-only buffer; the keys are configurable
+     (`keymaps.next_note`, `prev_note`, `toggle_notes`) and only mapped in the review buffer.
+     Notes are part of the guide document, not the comment store: no triage, export, agent
+     delivery or posting, and they are not drawn in the diff view, which stays the plain diff
+     plus your own comments; a note's wording is the guide's narrative and may be stale.
    - **Persistence.** `<state_dir>/guides/<slug>-<hash(repo, branch, base)>-<generated_at>-<hash(anchor set)>.json`
      (the name carries time and anchors, so lookups decode one file; the newest `ai.keep_guides` (5)
      per review key are kept),
@@ -859,7 +902,8 @@ are in `reports/Terminal code review tool landscape.md`.
       `findings` list, else it is an error (prose around some other JSON object, a guide, `{}`,
       a findings map), so invalid output never replaces the last review; ids normalised (`H7`,
       `7`); a finding is dropped and counted by reason when its hunk is unknown, its lines are
-      not integers inside the hunk or past what the prompt showed (an abridged hunk numbers only
+      not integers inside the hunk or past what the prompt showed (`guide.hunk_range`, shared
+      with the guide's line notes; an abridged hunk numbers only
       its first 6 lines; `guide_prompt.user_message` reports `abridged_ids`, and at its `files`
       level every finding is whole-file), or end before they start, or an end comes without a
       start, it has neither title nor body, it duplicates an

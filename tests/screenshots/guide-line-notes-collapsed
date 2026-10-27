@@ -1,0 +1,83 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//f/cart..main                                                                                                    X
+02| Files                       ○ no agent │ Guide 1. Core change                                                        §1/2  ✓ 0/2 
+03| Guide                      0/2 reviewed│          Binary file not shown                                                          
+04|   1 Core change                       4│                                                                                         
+05|   2 Follow-up wiring                  3│  A       src/components/Total.tsx  @@ -0,0 +1,5 @@   +5 −0  added                       
+06|                                        │      1 + import { formatCurrency } from "../format";    ◆ guide                         
+07| feature/cart → main                    │      2 +     ◆ guide                                                                    
+08| 7 files  +57 −22  ✓ 0/7                │      3 + export function Total(props: { amount: number }) {                             
+09| base ee2e6fcf  head 6b2be8a3           │      4 +   return <strong className="total">{formatCurrency(props.amount)}</strong>;    
+10| working tree  ● uncommitted            │      5 + }                                                                              
+11|                                        │                                                                                         
+12|   M  logo.png  assets               bin│  D       src/legacy.ts  @@ -1,6 +0,0 @@   +0 −6  deleted                                
+13|   A  cart.ts  src                +27 −0│  1     - // Old helpers kept for backwards compatibility.                               
+14|   A  Total.tsx  src/components    +5 −0│  2     - export function oldTotal(prices: number[]): number {                           
+15|   M  index.ts  src                +9 −6│  3     -   var t = 0;                                                                   
+16|   D  legacy.ts  src               +0 −6│  4     -   for (var i = 0; i < prices.length; i++) t += prices[i];                      
+17|   M  math.ts  src                +14 −8│  5     -   return t;                                                                    
+18|   R  text.ts  src                 +2 −2│  6     - }                                                                              
+19|                                        │                                                                                         
+20| ]] [[ section  mr reviewed             │  R       src/utils/strings.ts → src/text.ts  @@ -7,8 +7,8 @@ export function truncate(s:
+21| ]c [c hunk  <Tab> fold  gp diff        │  7   7     return s.length > max ? s.slice(0, max - 1) + "…" : s;                       
+22| gd def  K hover  go open  R refresh    │  8   8   }                                                                              
+23| gG diff view  gR regenerate  q close   │  9   9                                                                                  
+24| ]n [n line note  gN show/collapse      │ 10     - export function slugify(s: string): string {                                   
+25|~                                       │ 11     -   return s                                                                     
+26|~                                       │     10 + export function slugify(input: string): string {                               
+27|~                                       │     11 +   return input                                                                 
+28|~                                       │ 12  12       .toLowerCase()                                                             
+29|~                                       │ 13  13       .replace(/[^a-z0-9]+/g, "-")                                               
+30|~                                       │ 14  14       .replace(/(^-|-$)/g, "");                                                  
+31|~                                       │                                                                                         
+32|~                                       │       ▾  ☐ 2. Follow-up wiring   3 hunks                                                
+33|~                                       │          Call sites and glue.                                                           
+34|~                                       │                                                                                         
+35|~                                       │          • one                                                                          
+36|~                                       │          • two                                                                          
+37|~                                       │                                                                                         
+38|~                                       │  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added                                  
+39|revuey://files [-]    2,1            All revuey://feature/cart..main [-]                                        16,1           12%
+40|                                                                                                                                  
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|0000000000012111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|3333333333333333333333333333333333333333456666665555555555555555555555555555555555555555555555555555555555555555555555555555555555
+03|2222227777777777777777777777888888888888499999999998888888888888888888887777777777777777777777777777777777777777777777777777777777
+04|:;:<:===========:::::::::::::::::::::::8499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+05|7>727444444444444444477777777777777777784>>>>>>>>>>????????????????????????@@@@@@@@@@@@@@@@@AAABBCCCBBBBBBBAAAAAAAAAAAAAAAAAAAAAAA
+06|77777777777777777777777777777777777777774DDDDEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHIIIIIIIIHHHHHHHHHHHHHHHHHHHHHHHHH
+07|22222222222222222222777777777777777777774JJJJKKKFFFHHHIIIIIIIIHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+08|7777777777>>>LLLL888888877777777777777774JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+09|88888888888888888888888888888777777777774JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+10|MMMMMMMMMMMMM8888888888888887777777777774JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+11|7777777777777777777777777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+12|7>7MN744444444888888887777777777777778884LLLLLLLLLL?????????????@@@@@@@@@@@@@@@@@AAABBCCCCCCCCCCCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+13|7>7>N74444444888887777777777777777>>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+14|7>7>N744444444488888888888888887777>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+15|7>7MN744444444888887777777777777777>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+16|7>7LN744444444488888777777777777777>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+17|7>7MN74444444888887777777777777777>>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+18|7>7MN744444448888877777777777777777>>LLL4OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+19|7777777777777777777777777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+20|88888888888888888888888888877777777777774MMMMMMMMMM??????????????????????????????????@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+21|88888888888888888888888888888888777777774JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+22|88888888888888888888888888888888888877774JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+23|88888888888888888888888888888888888887774JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+24|88888888888888888888888888888888887777774OOOOOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+25|99999999999999999999999999999999999999994OOOOOOOPPPQQQQQQQQQRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+26|99999999999999999999999999999999999999994JJJJKKKFFFHHHHHHHHHHHHHHHHHHHHHHHHSSSSSHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+27|99999999999999999999999999999999999999994JJJJKKKFFFHHHHHHHHHSSSSSHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+28|99999999999999999999999999999999999999994JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+29|99999999999999999999999999999999999999994JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+30|99999999999999999999999999999999999999994JJJJJJJJJJ7777777777777777777777777777777777777777777777777777777777777777777777777777777
+31|9999999999999999999999999999999999999999499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+32|999999999999999999999999999999999999999942222222222TTUUVVVVVVVVVVVVVVVVVVVVTTTTTTTVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+33|9999999999999999999999999999999999999999499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+34|9999999999999999999999999999999999999999499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+35|999999999999999999999999999999999999999949999999999M777777777777777777777777777777777777777777777777777777777777777777777777777777
+36|999999999999999999999999999999999999999949999999999M777777777777777777777777777777777777777777777777777777777777777777777777777777
+37|9999999999999999999999999999999999999999499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+38|99999999999999999999999999999999999999994>>>>>>>>>>???????????@@@@@@@@@@@@@@@@@@AAABBBCCCBBBBBBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+39|00000000000000000000000000000000000000000WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+40|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

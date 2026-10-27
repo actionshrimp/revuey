@@ -30,7 +30,10 @@ is available.
   `stream-json` fixtures, can simulate slow streams, errors and cancellation, and records the argv it was given so
   tests can assert on flags such as `--resume`, `--allowedTools` and `--json-schema`. A run whose
   schema has `findings` (an AI review) answers with a canned review, or with
-  `$REVUEY_FAKE_CLAUDE_OUTPUT` when a test sets it.
+  `$REVUEY_FAKE_CLAUDE_OUTPUT` when a test sets it. A guide run answers with a canned guide;
+  `REVUEY_FAKE_CLAUDE=notes` adds line notes, three of them with bad anchors (an unknown hunk,
+  a line the hunk lacks, a file without numbered lines), picked from the numbered lines of the
+  prompt it was given.
 - **GitHub:** a fake `gh` (`tests/bin/gh`, `h.use_fake_gh`) records its argv and returns canned JSON for
   GraphQL PR lookups (PR nodes per `owner/name:branch`, forks' parents, repos that resolve to null), or a
   failure scenario (exit 1, garbage, rate limit, GraphQL errors, a hang that dies on SIGTERM). It also

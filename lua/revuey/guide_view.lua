@@ -16,6 +16,7 @@ local review_mod = require('revuey.review')
 local M = {}
 
 M.ns_status = api.nvim_create_namespace('revuey.guide.status')
+M.ns_notes = api.nvim_create_namespace('revuey.guide.notes')
 
 ---Jobs by review key string; they outlive scope switches (each scope has its own guide).
 ---@type table<string, {job: revuey.AiJob, label: string, progress?: string}>
@@ -255,6 +256,9 @@ function M.doc(s, width, diagram_width)
     if (res.edited or 0) > 0 then
       parts[#parts + 1] = plural(res.edited, 'hunk') .. ' edited'
     end
+    if (res.notes_lost or 0) > 0 then
+      parts[#parts + 1] = plural(res.notes_lost, 'line note') .. ' lost'
+    end
     local key = config.options.keymaps.regenerate_guide
     line(doc, '', nil, 'blank')
     add_prose(doc, ('> [!WARNING] The diff changed since this guide was generated (%s). Press `%s` to regenerate.'):format(
@@ -335,6 +339,181 @@ function M.add_diagram(doc, d, width)
   end
   vim.list_extend(doc, rows)
   return out
+end
+
+-- ---------------------------------------------------------------------------
+-- Line notes: the guide's notes on specific lines, drawn above them (guide view only)
+-- ---------------------------------------------------------------------------
+
+---Line notes of the resolved guide with their rows in the current guide layout, in row order:
+---{first, last, text, side, section_idx}.
+function M.note_rows(s)
+  local g = s.guide
+  local res = g and g.resolved
+  local L = s.layout
+  local out = {}
+  if not res or not L or L.kind ~= 'guide' then
+    return out
+  end
+  for si, sec in ipairs(res.sections) do
+    for _, item in ipairs(sec.items) do
+      local h = item.hunk
+      local base = h.hunk_idx and L.hunk_base[h.file_idx] and L.hunk_base[h.file_idx][h.hunk_idx]
+      if base then
+        for _, n in ipairs(item.line_notes or {}) do
+          out[#out + 1] = { first = base + n.line, last = base + n.end_line, text = n.text, side = n.side, section_idx = si }
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.first ~= b.first then
+      return a.first < b.first
+    end
+    return a.last < b.last
+  end)
+  return out
+end
+
+---Text width for a note: the diff window minus the gutter, at most the prose width.
+local function note_width(s)
+  local w = (s.diff_win and api.nvim_win_is_valid(s.diff_win)) and api.nvim_win_get_width(s.diff_win) or 100
+  return math.max(30, math.min(w - (2 * (s.numw or 3) + 4) - 1, s.prose_width or 100))
+end
+
+M.NOTE_LABEL = ' ▼ guide '
+
+local function chunks(line, base)
+  return require('revuey.comments_view').chunks(line, base)
+end
+
+---Draw the line notes (guide view): above the first line of each note, a band with a `guide`
+---label and the text (wrapped); with notes collapsed (`gN`), a `◆ guide` marker at the end of
+---that line instead. Notes on one row stack in order. Rows are kept for `]n`/`[n`.
+function M.draw_notes(s)
+  local buf = s.diff_buf
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return
+  end
+  api.nvim_buf_clear_namespace(buf, M.ns_notes, 0, -1)
+  s.guide_note_rows = {}
+  if s.view_mode ~= 'guide' then
+    return
+  end
+  local notes = M.note_rows(s)
+  local width = note_width(s)
+  local by_row, order = {}, {}
+  for _, n in ipairs(notes) do
+    if not by_row[n.first] then
+      by_row[n.first] = {}
+      order[#order + 1] = n.first
+      s.guide_note_rows[#s.guide_note_rows + 1] = n.first
+    end
+    table.insert(by_row[n.first], n)
+  end
+  for _, row in ipairs(order) do
+    local list = by_row[row]
+    if s.guide_notes_collapsed then
+      local label = #list > 1 and (' ◆ guide ×' .. #list) or ' ◆ guide'
+      pcall(api.nvim_buf_set_extmark, buf, M.ns_notes, row - 1, 0, {
+        virt_text = { { '  ' }, { label, 'RevueyGuideLineNoteMarker' } },
+        virt_text_pos = 'eol',
+        hl_mode = 'combine',
+        priority = 25,
+      })
+    else
+      local vl = {}
+      for _, n in ipairs(list) do
+        local label = M.NOTE_LABEL
+        if n.last > n.first then
+          label = label .. '· ' .. (n.last - n.first + 1) .. ' lines '
+        end
+        local lw = api.nvim_strwidth(label)
+        -- inline markdown (backticks, bold) like the guide's prose; the band fills the width
+        local rendered = prose.render(n.text, math.max(width - lw - 2, 10))
+        while #rendered > 1 and rendered[#rendered].text == '' do
+          rendered[#rendered] = nil
+        end
+        for i, l in ipairs(rendered) do
+          local line = { { i == 1 and label or string.rep(' ', lw), 'RevueyGuideLineNoteLabel' }, { ' ', 'RevueyGuideLineNote' } }
+          vim.list_extend(line, chunks(l, 'RevueyGuideLineNote'))
+          local used = lw + 1 + api.nvim_strwidth(l.text)
+          line[#line + 1] = { string.rep(' ', math.max(width - used, 1)), 'RevueyGuideLineNote' }
+          vl[#vl + 1] = line
+        end
+      end
+      pcall(api.nvim_buf_set_extmark, buf, M.ns_notes, row - 1, 0, {
+        virt_lines = vl,
+        virt_lines_above = true,
+        priority = 25,
+      })
+    end
+  end
+end
+
+---`gN` (guide view): show the line notes in full, or collapse them to a marker at the end of
+---their line.
+function M.toggle_notes(s)
+  if not s then
+    return
+  end
+  if s.view_mode ~= 'guide' then
+    return vim.notify('revuey: line notes are part of the guide view (' .. (config.options.keymaps.toggle_guide or ':RevueyGuide') .. ')', vim.log.levels.INFO)
+  end
+  s.guide_notes_collapsed = not s.guide_notes_collapsed or nil
+  M.draw_notes(s)
+  vim.notify('revuey: guide line notes ' .. (s.guide_notes_collapsed and 'collapsed' or 'shown'), vim.log.levels.INFO)
+end
+
+---`]n` / `[n` (guide view): the next or previous line note (takes a count).
+function M.next_note(s, dir)
+  if not s then
+    return
+  end
+  if s.view_mode ~= 'guide' then
+    return vim.notify('revuey: line notes are part of the guide view (' .. (config.options.keymaps.toggle_guide or ':RevueyGuide') .. ')', vim.log.levels.INFO)
+  end
+  local rows = s.guide_note_rows or {}
+  if #rows == 0 then
+    return vim.notify('revuey: this guide has no line notes', vim.log.levels.INFO)
+  end
+  local row = api.nvim_win_get_cursor(s.diff_win)[1]
+  local target
+  for _ = 1, vim.v.count1 do
+    local t
+    if dir > 0 then
+      for _, r in ipairs(rows) do
+        if r > row then
+          t = r
+          break
+        end
+      end
+    else
+      for i = #rows, 1, -1 do
+        if rows[i] < row then
+          t = rows[i]
+          break
+        end
+      end
+    end
+    if not t then
+      break
+    end
+    row, target = t, t
+  end
+  if not target then
+    return
+  end
+  api.nvim_set_current_win(s.diff_win)
+  api.nvim_win_call(s.diff_win, function()
+    vim.cmd("normal! m'")
+    api.nvim_win_set_cursor(0, { target, 0 })
+    vim.cmd('normal! zv')
+    local top, bot = vim.fn.line('w0'), vim.fn.line('w$')
+    if target <= top or target >= bot - 1 then
+      vim.cmd('normal! zz')
+    end
+  end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -477,6 +656,7 @@ function M.generate(s, on_change)
     end
     entry.abridged = info.abridged
     entry.prompt_level = info.level
+    entry.shown = { level = info.level, abridged = info.abridged_ids }
     entry.job = ai.run({
       prompt = text,
       schema = prompt.schema_json(),
@@ -496,7 +676,7 @@ function M.generate(s, on_change)
         M.jobs[ks] = nil
         local rec
         if not err then
-          local valid, w = guide.validate(result.output or result.text or '', hunks)
+          local valid, w = guide.validate(result.output or result.text or '', hunks, entry.shown)
           if not valid then
             err = w --[[@as string]]
           else
@@ -531,7 +711,10 @@ function M.generate(s, on_change)
           local secs = math.floor((vim.uv.hrtime() - entry.started) / 1e9 + 0.5)
           local cur = require('revuey.view').session
           local here = cur and cur.guide and cur.guide.ks == ks and cur.view_mode == 'guide'
-          vim.notify(('revuey: guide ready (%d sections, %ds)%s'):format(#rec.sections, secs,
+          local nw = rec.generator.warnings and rec.generator.warnings.notes
+          local dropped = guide.dropped_text(nw)
+          vim.notify(('revuey: guide ready (%d sections, %ds)%s%s'):format(#rec.sections, secs,
+            dropped and ('; line notes: ' .. dropped) or '',
             here and '' or ('; ' .. (config.options.keymaps.toggle_guide or ':RevueyGuide') .. ' to open')), vim.log.levels.INFO)
         end
         on_change()

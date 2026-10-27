@@ -65,6 +65,12 @@ sequence; later items build on earlier ones.
   copy in the file's text), else in a "not shown here" group of its file. Resolved and outdated threads are collapsed (`cz` expands), `gH` cycles all /
   open / none, `]m`, `cl` and the panel's PR section include them, `gx` opens one. Read-only: `cr` makes a
   local reply (a normal comment linked to the thread's ids, for posting later). Failures are logged only.
+- Guide line notes: a guide section may pin short notes to specific lines (`line_notes`: hunk id plus
+  line numbers within the hunk, as AI review findings; the guide prompt now numbers hunk lines). Bad
+  anchors are dropped and counted, never guessed; at most 3 per section and 12 per guide. Drawn above
+  their lines in the guide view only (a violet `▼ guide` band), `]n`/`[n` between them, `gN` collapses
+  them to markers. Not comments: never triaged, exported or posted. Guide records are version 2;
+  version 1 guides load without notes.
 
 
 ## Next

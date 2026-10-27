@@ -3,17 +3,42 @@
 --   * hunk ids and anchors: every hunk of the review gets a short id (h1..hn, diff order) for the
 --     model to reference, and an anchor {path, old_start, new_start, header, hash} that survives
 --     line shifts (the hash covers the path and the hunk's +/-/context lines, not line numbers);
---   * validation and repair of the model's output (instructed, not trusted);
+--   * validation and repair of the model's output (instructed, not trusted), including line notes
+--     anchored to a hunk id plus line numbers within the hunk (the same check as AI review findings);
 --   * the persisted guide record, and resolving it against the current hunks (staleness);
 --   * section identity (hash of the section's hunk hashes) for reviewed state;
 --   * storage under <state_dir>/guides/.
 -- Prompt text and schema live in guide_prompt.lua; the CLI call in ai.lua.
 local layout = require('revuey.layout')
 local diagram_mod = require('revuey.diagram')
+local prompt = require('revuey.guide_prompt')
 
 local M = {}
 
-M.VERSION = 1
+-- 2: sections' hunk anchors may carry `line_notes` (version 1 records simply have none)
+M.VERSION = 2
+
+M.NOTE_MAX_SECTION = prompt.MAX_NOTES_PER_SECTION
+M.NOTE_MAX = prompt.MAX_NOTES
+M.NOTE_MAX_RANGE = prompt.MAX_NOTE_LINES
+M.NOTE_MAX_CHARS = 200
+
+local function int(v)
+  v = tonumber(v)
+  if v and v == math.floor(v) then
+    return v
+  end
+end
+
+---Note text: one line, at most NOTE_MAX_CHARS characters.
+local function note_text(v)
+  local t = M.one_line(v)
+  if vim.fn.strchars(t) > M.NOTE_MAX_CHARS then
+    t = vim.fn.strcharpart(t, 0, M.NOTE_MAX_CHARS - 1) .. '…'
+  end
+  return t
+end
+
 
 ---@class revuey.GuideHunk
 ---@field id string          h1..hn
@@ -185,6 +210,38 @@ function M.clean_text(v)
   return vim.trim((v:gsub('\r\n', '\n'):gsub('[%z\1-\8\11-\31\127]', '')))
 end
 
+---Stored line notes of one hunk anchor (records on disk may be edited by hand): integer lines,
+---an end at or after the start within NOTE_MAX_RANGE, one-line text, a known side, the snippet
+---as strings; anything else is dropped. nil when none are left. Version 1 records have none.
+function M.sanitize_notes(list)
+  if type(list) ~= 'table' then
+    return nil
+  end
+  local out = {}
+  for _, n in ipairs(list) do
+    if type(n) == 'table' and #out < M.NOTE_MAX then
+      local line, last = int(n.line), int(n.end_line or n.line)
+      local text = note_text(n.text)
+      local snippet = {}
+      for _, l in ipairs(type(n.lines) == 'table' and n.lines or {}) do
+        if type(l) == 'string' then
+          snippet[#snippet + 1] = l
+        end
+      end
+      if line and last and line >= 1 and last >= line and last - line < M.NOTE_MAX_RANGE and text ~= '' then
+        out[#out + 1] = {
+          line = line,
+          end_line = last,
+          side = n.side == 'old' and 'old' or 'new',
+          text = text,
+          lines = #snippet == last - line + 1 and snippet or nil,
+        }
+      end
+    end
+  end
+  return #out > 0 and out or nil
+end
+
 ---Clean every model-provided string of a stored record (records on disk may predate a fix, or
 ---have been edited by hand).
 function M.sanitize(rec)
@@ -198,6 +255,7 @@ function M.sanitize(rec)
         if type(a) == 'table' and type(a.hash) == 'string' then
           local note = M.one_line(a.note)
           a.note = note ~= '' and note or nil
+          a.line_notes = M.sanitize_notes(a.line_notes)
           hunks[#hunks + 1] = a
         end
       end
@@ -236,6 +294,139 @@ local function norm_id(v)
   return n and ('h' .. tonumber(n)) or nil
 end
 M.norm_id = norm_id
+
+---Check a line anchor within a hunk (AI review findings and guide line notes): `line_v` and
+---`end_v` are 1-based numbers of the hunk's lines as the prompt numbered them. `shown` is what the
+---prompt showed (guide_prompt.user_message's info): `level` ('full'|'abridged'|'files') and
+---`abridged` (set of ids shown as a preview of PREVIEW_LINES lines); nil: every line.
+---Returns the range (clamped to `max_range` lines), or no lines when the anchor is the whole
+---file (no line given, a file without a text diff, or no hunk bodies shown), or a reason:
+---'bad_line' (not an integer, outside the lines shown, an end before its start or without one).
+---@param h revuey.GuideHunk
+---@return integer? line, integer? last, string? reason
+function M.hunk_range(h, line_v, end_v, shown, max_range)
+  local line, last = int(line_v), int(end_v)
+  if line_v ~= nil and not line or end_v ~= nil and not last then
+    return nil, nil, 'bad_line'
+  end
+  if not h.hunk_idx or (shown and shown.level) == 'files' then
+    return nil, nil -- the whole file
+  end
+  if not line then
+    if last then
+      return nil, nil, 'bad_line' -- an end without a start
+    end
+    return nil, nil
+  end
+  last = last or line
+  -- an abridged hunk only showed (and numbered) its first lines
+  local max = (shown and shown.abridged and shown.abridged[h.id]) and math.min(#h.text, prompt.PREVIEW_LINES) or #h.text
+  if line < 1 or line > max or last < line or last > max then
+    return nil, nil, 'bad_line'
+  end
+  if max_range then
+    last = math.min(last, line + max_range - 1)
+  end
+  return line, last
+end
+
+---"2 dropped (1 unknown hunk, 1 line outside its hunk)" for warnings with drops, else nil
+---(AI review findings and guide line notes count their drops the same way).
+function M.dropped_text(w)
+  if type(w) ~= 'table' or (w.dropped or 0) == 0 then
+    return nil
+  end
+  local parts = {}
+  local names = {
+    { 'unknown_hunk', 'unknown hunk', 'unknown hunks' },
+    { 'bad_line', 'line outside its hunk', 'lines outside their hunks' },
+    { 'empty', 'empty', 'empty' },
+    { 'duplicates', 'duplicate', 'duplicates' },
+    { 'extra', 'over the limit', 'over the limit' },
+  }
+  for _, n in ipairs(names) do
+    local k = w[n[1]] or 0
+    if k > 0 then
+      parts[#parts + 1] = k .. ' ' .. (k == 1 and n[2] or n[3])
+    end
+  end
+  return ('%d dropped (%s)'):format(w.dropped, table.concat(parts, ', '))
+end
+
+---Side of a hunk line ('old' for a deleted line, else 'new') from its +/-/space marker.
+local function line_side(h, line)
+  return (h.text[line] or ''):sub(1, 1) == '-' and 'old' or 'new'
+end
+
+---Validate the model's line notes (each section's `line_notes`) once the hunks are placed. A note
+---is kept on the hunk reference it points into, whichever section shows that hunk (so caps count
+---per section shown): an unknown or unplaced hunk, a line the prompt did not number, no line or
+---no text drop it, as do exact duplicates and notes past NOTE_MAX_SECTION per section or NOTE_MAX
+---in all. Never guessed: a bad anchor is dropped and counted, not moved.
+---@param raw_sections table[] the model's sections
+---@param refs table<string, {ref: table, si: integer}> placed hunk id -> its reference and section
+---@return table? warnings {kept, dropped, unknown_hunk, bad_line, empty, duplicates, extra}; nil when the model wrote none
+local function validate_notes(raw_sections, refs, by_id, shown)
+  local w = { kept = 0, dropped = 0, unknown_hunk = 0, bad_line = 0, empty = 0, duplicates = 0, extra = 0 }
+  local any = false
+  local per_section, seen = {}, {}
+  for _, s in ipairs(raw_sections) do
+    local list = type(s) == 'table' and s.line_notes
+    for _, n in ipairs(type(list) == 'table' and list or {}) do
+      any = true
+      local reason, note, at
+      if type(n) ~= 'table' then
+        reason = 'empty'
+      else
+        local id = norm_id(n.hunk or n.id)
+        local h = id and by_id[id]
+        at = id and refs[id]
+        local text = note_text(n.text or n.note)
+        if not h or not at then
+          reason = 'unknown_hunk'
+        elseif text == '' then
+          reason = 'empty'
+        else
+          local line, last, why = M.hunk_range(h, n.line, n.end_line, shown, M.NOTE_MAX_RANGE)
+          if why or not line then
+            reason = 'bad_line' -- a note points at a line: no line (or no numbered lines) is no anchor
+          else
+            note = { line = line, end_line = last, side = line_side(h, line), text = text }
+            local key = table.concat({ id, line, last, text:lower() }, '\0')
+            if seen[key] then
+              reason, note = 'duplicates', nil
+            else
+              seen[key] = true
+            end
+          end
+        end
+      end
+      if note and ((per_section[at.si] or 0) >= M.NOTE_MAX_SECTION or w.kept >= M.NOTE_MAX) then
+        reason, note = 'extra', nil
+      end
+      if note then
+        per_section[at.si] = (per_section[at.si] or 0) + 1
+        w.kept = w.kept + 1
+        at.ref.line_notes = at.ref.line_notes or {}
+        table.insert(at.ref.line_notes, note)
+      else
+        w[reason] = w[reason] + 1
+        w.dropped = w.dropped + 1
+      end
+    end
+  end
+  for _, at in pairs(refs) do
+    if at.ref.line_notes then
+      table.sort(at.ref.line_notes, function(a, b)
+        if a.line ~= b.line then
+          return a.line < b.line
+        end
+        return a.end_line < b.end_line
+      end)
+    end
+  end
+  return any and w or nil
+end
 
 M.OTHER_TITLE = 'Other changes'
 
@@ -305,12 +496,15 @@ end
 
 ---Hold model output to the schema and the coverage rule, against the launch-time hunks.
 ---Unknown ids and duplicates are dropped (first placement wins), empty sections dropped, missed and
----unplaced hunks go to a final "Other changes" section. Zero valid sections is a failure.
+---unplaced hunks go to a final "Other changes" section. Zero valid sections is a failure. Line
+---notes are checked against what the prompt showed (`shown`, as for AI reviews; nil: every line)
+---and kept on the hunk they point into (validate_notes).
 ---@param raw table|string decoded output, or text to repair
 ---@param hunks revuey.GuideHunk[]
----@return table? guide {title, summary, sections = {{title, overview, hunks = {{id, note?}}, other?}}}
----@return string|table err_or_warnings error message, or on success {unknown, duplicates, missed, unplaced}
-function M.validate(raw, hunks)
+---@param shown? {level?: string, abridged?: table<string, boolean>}
+---@return table? guide {title, summary, sections = {{title, overview, hunks = {{id, note?, line_notes?}}, other?}}}
+---@return string|table err_or_warnings error message, or on success {unknown, duplicates, missed, unplaced, notes?}
+function M.validate(raw, hunks, shown)
   if type(raw) == 'string' then
     raw = M.repair_json(raw)
     if not raw then
@@ -328,7 +522,9 @@ function M.validate(raw, hunks)
   local warnings = { unknown = 0, duplicates = 0, missed = 0, unplaced = 0 }
   local sections = {}
   local sec_map, sec_titles = {}, {} -- model section index / title -> validated index
-  for ri, s in ipairs(type(raw.sections) == 'table' and raw.sections or {}) do
+  local refs_by_id = {} -- placed id -> {ref, si}
+  local raw_sections = type(raw.sections) == 'table' and raw.sections or {}
+  for ri, s in ipairs(raw_sections) do
     if type(s) == 'table' then
       local refs = {}
       for _, r in ipairs(type(s.hunks) == 'table' and s.hunks or {}) do
@@ -341,6 +537,7 @@ function M.validate(raw, hunks)
           placed[id] = true
           local note = type(r) == 'table' and M.one_line(r.note) or ''
           refs[#refs + 1] = { id = id, note = note ~= '' and note or nil }
+          refs_by_id[id] = { ref = refs[#refs], si = #sections + 1 }
         end
       end
       if #refs > 0 then
@@ -378,6 +575,7 @@ function M.validate(raw, hunks)
         warnings.missed = warnings.missed + 1
       end
       rest[#rest + 1] = { id = h.id }
+      refs_by_id[h.id] = { ref = rest[#rest], si = #sections + 1 }
     end
   end
   if #rest > 0 then
@@ -400,6 +598,7 @@ function M.validate(raw, hunks)
   if raw.diagram ~= nil and not diagram then
     warnings.diagram_dropped = true
   end
+  warnings.notes = validate_notes(raw_sections, refs_by_id, by_id, shown)
   return {
     title = title ~= '' and title or 'Guided review',
     summary = M.clean_text(raw.summary),
@@ -425,8 +624,22 @@ function M.record(guide, hunks, meta)
   for _, s in ipairs(guide.sections) do
     local refs = {}
     for _, r in ipairs(s.hunks) do
-      local a = M.anchor(by_id[r.id])
+      local h = by_id[r.id]
+      local a = M.anchor(h)
       a.note = r.note
+      if r.line_notes then
+        -- with the lines they point at, so a re-anchored (edited) hunk can find them again
+        a.line_notes = {}
+        for _, n in ipairs(r.line_notes) do
+          a.line_notes[#a.line_notes + 1] = {
+            line = n.line,
+            end_line = n.end_line,
+            side = n.side,
+            text = n.text,
+            lines = vim.list_slice(h.text, n.line, n.end_line),
+          }
+        end
+      end
       refs[#refs + 1] = a
     end
     sections[#sections + 1] = { title = s.title, overview = s.overview, hunks = refs, other = s.other or nil }
@@ -448,7 +661,7 @@ end
 ---@class revuey.ResolvedSection
 ---@field title string
 ---@field overview string
----@field items {hunk: revuey.GuideHunk, note?: string}[]
+---@field items {hunk: revuey.GuideHunk, note?: string, edited?: boolean, line_notes?: {line: integer, end_line: integer, side: string, text: string}[]}[]
 ---@field missing integer   hunks of the guide no longer in the diff (changed or gone)
 ---@field outdated boolean
 ---@field kind 'section'|'other'|'new'
@@ -537,6 +750,52 @@ local function reanchor(anchors, free)
   return out
 end
 
+---Line notes of a guide hunk on the hunk shown in its place. Unchanged hunks (same hash) keep
+---them where they were; on a hunk re-anchored by overlap (edited) a note stays only where its
+---lines are found again, unchanged and in one place (at the stored line, else a unique match);
+---the rest are lost (counted), never guessed.
+---@return {line:integer, end_line:integer, side:string, text:string}[]? notes, integer lost
+local function place_notes(notes, h, edited)
+  if not notes or not h.hunk_idx then
+    return nil, notes and #notes or 0
+  end
+  local out, lost = {}, 0
+  local function matches(at, lines)
+    for k, l in ipairs(lines) do
+      if h.text[at + k - 1] ~= l then
+        return false
+      end
+    end
+    return true
+  end
+  for _, n in ipairs(notes) do
+    local at
+    local lines = n.lines
+    local span = n.end_line - n.line + 1
+    if not edited then
+      at = n.end_line <= #h.text and n.line or nil
+    elseif lines and #lines == span then
+      if matches(n.line, lines) then
+        at = n.line
+      else
+        local found = 0
+        for i = 1, #h.text - span + 1 do
+          if matches(i, lines) then
+            found, at = found + 1, i
+          end
+        end
+        at = found == 1 and at or nil
+      end
+    end
+    if at then
+      out[#out + 1] = { line = at, end_line = at + span - 1, side = n.side, text = n.text }
+    else
+      lost = lost + 1
+    end
+  end
+  return #out > 0 and out or nil, lost
+end
+
 ---Resolve a guide record against the current hunks. Sections render their hunks that still
 ---exist (by content hash); a hunk that changed in place (an edit) is re-anchored by overlap and
 ---stays in its section marked `edited`; sections that lost hunks are outdated; hunks the guide
@@ -576,20 +835,28 @@ function M.resolve(rec, hunks)
       end
     end
   end
-  local sections, outdated, edited_total = {}, 0, 0
+  local sections, outdated, edited_total, notes_total, notes_lost = {}, 0, 0, 0, 0
   for _, s in ipairs(rec.sections or {}) do
     local items, missing, hashes, edited = {}, 0, {}, 0
     for _, a in ipairs(s.hunks or {}) do
       local h = by_hash[a.hash]
+      local item
       if h and used[h.hash] == a then
-        items[#items + 1] = { hunk = h, note = a.note }
+        item = { hunk = h, note = a.note }
         hashes[#hashes + 1] = h.hash
       elseif moved[a] then
-        items[#items + 1] = { hunk = moved[a], note = a.note, edited = true }
+        item = { hunk = moved[a], note = a.note, edited = true }
         hashes[#hashes + 1] = moved[a].hash
         edited = edited + 1
       elseif moved[a] == nil then
         missing = missing + 1
+      end
+      if item then
+        local lost
+        item.line_notes, lost = place_notes(a.line_notes, item.hunk, item.edited)
+        notes_total = notes_total + (item.line_notes and #item.line_notes or 0)
+        notes_lost = notes_lost + lost
+        items[#items + 1] = item
       end
     end
     if missing > 0 then
@@ -635,6 +902,8 @@ function M.resolve(rec, hunks)
     outdated = outdated,
     new = #new,
     edited = edited_total,
+    notes = notes_total,
+    notes_lost = notes_lost,
     diagram = rec.diagram,
     generator = rec.generator or {},
   }
