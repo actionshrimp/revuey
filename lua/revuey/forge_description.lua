@@ -471,13 +471,14 @@ end
 
 local INDENT = '  '
 
----Rows for one PR's description: the title (`PR #12 · title`, `draft` when it is one), the body
+---Rows for one PR's description: the title (`PR #12 · title`, `draft` when it is one, then
+---`new on GitHub · R to refresh` for `o.mark = 'new'` or `stale` for 'stale'), the body
 ---indented, then a blank row. A body longer than `max_lines` + 1 rows has the rest as a fold
 ---(`fold = {first, last}`, indices into `rows`, the rows a collapsed description hides).
 ---@param pr {number:integer, title:string, draft?:boolean}
 ---@param md string cleaned body (M.clean), not empty
 ---@param width integer text width of the window
----@param o? {max_lines?:integer}
+---@param o? {max_lines?:integer, mark?:'new'|'stale'}
 ---@return {rows:{text:string, hls:table}[], fold?:integer[], more?:integer}
 function M.render(pr, md, width, o)
   o = o or {}
@@ -488,6 +489,12 @@ function M.render(pr, md, width, o)
   if pr.draft then
     hls[#hls + 1] = { #title, #title + #' · draft', 'RevueyForgeDraft' }
     title = title .. ' · draft'
+  end
+  local mark = o.mark == 'new' and { 'new on GitHub · R to refresh', 'RevueyForgeChanged' }
+    or o.mark == 'stale' and { 'stale', 'RevueyForgeDim' } or nil
+  if mark then
+    hls[#hls + 1] = { #title + #' · ', #title + #' · ' + #mark[1], mark[2] }
+    title = title .. ' · ' .. mark[1]
   end
   local rows = { { text = title, hls = hls } }
   local body = M.render_body(md, math.max(20, width - #INDENT))

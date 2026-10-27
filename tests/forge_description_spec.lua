@@ -714,7 +714,7 @@ h.test('R fetches again: an edited description is updated in place, the cursor s
   consistent(s)
   e = s.layout.map[cursor(s)]
   h.eq({ 'src/index.ts', 8 }, { e.path, e.new_lnum })
-  -- within the TTL a re-render uses the cache (no call)
+  -- a re-render uses the cache (no call)
   local n = #h.read_calls(calls)
   view.rerender(s)
   idle(s)

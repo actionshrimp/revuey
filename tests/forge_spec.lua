@@ -1,7 +1,7 @@
 -- Pull requests on GitHub (forge.lua, forge_view.lua): remote URL parsing, the batched GraphQL
 -- query, response mapping to row and detail models, then real git fixtures with a fake `gh`
 -- (tests/bin/gh) on PATH: stacks with mixed PR states, remote layers, fork PRs, failures, the
--- TTL cache, the open-in-browser key and the base-mismatch warning.
+-- cache (fetched on open and `R` only), the open-in-browser key and the base-mismatch warning.
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
 local state_dir = h.tmpdir('forge-state')
@@ -576,16 +576,15 @@ local function press_R(s)
   vim.api.nvim_feedkeys('R', 'mtx', false)
 end
 
-h.test('TTL cache: open, scope switches and redraws reuse it; R always refetches; lazy after the TTL', function()
+h.test('cache: open fetches; scope switches, refreshes and redraws never do, however late; R always refetches', function()
   reset()
   local t = 1000000
   forge.now = function()
     return t
   end
-  local calls = h.tmpdir('forge-gh-ttl') .. '/calls.ndjson'
+  local calls = h.tmpdir('forge-gh-cache') .. '/calls.ndjson'
   h.use_fake_gh(calls, stack_prs)
-  setup({ forge = { ttl = 30 } })
-  local d = stack_fixture('forge-ttl')
+  local d = stack_fixture('forge-cache')
   local s = open(d)
   idle(s)
   h.eq(1, #h.read_calls(calls))
@@ -593,14 +592,15 @@ h.test('TTL cache: open, scope switches and redraws reuse it; R always refetches
   idle(s)
   view.set_scope({ kind = 'layer', index = 1 })
   idle(s)
-  t = t + 29 * 1000
+  t = t + 3600 * 1000 -- an hour later: no time limit
   require('revuey.panel').render(s)
+  view.refresh({ force = true })
   idle(s)
-  h.eq(1, #h.read_calls(calls), 'within the TTL: cached')
+  h.eq(1, #h.read_calls(calls), 'nothing refetched')
   local _, restore = h.capture_notify()
   press_R(s)
   idle(s)
-  h.eq(2, #h.read_calls(calls), 'R within the TTL: fetched again')
+  h.eq(2, #h.read_calls(calls), 'R: fetched again')
   -- R pressed repeatedly: the one in-flight lookup absorbs them (at most one follow-up)
   press_R(s)
   press_R(s)
@@ -610,13 +610,7 @@ h.test('TTL cache: open, scope switches and redraws reuse it; R always refetches
   local n = #h.read_calls(calls)
   h.ok(n >= 3 and n <= 4, 'repeated R: ' .. n .. ' calls')
   h.ok(find(panel_lines(s), '| #12 ✓ '), 'still shown')
-  -- lazily, when the panel is redrawn after the TTL (no polling)
-  t = t + 31 * 1000
-  require('revuey.panel').render(s)
-  idle(s)
-  h.eq(n + 1, #h.read_calls(calls), 'panel redraw after the TTL: fetched again')
   view.close()
-  setup()
 end)
 
 h.test('R after gh was fixed shows the PR at once (a cached failure is skipped)', function()
@@ -824,6 +818,11 @@ h.test('a transient failure keeps the PRs shown, marked stale', function()
   t = t + 61000
   require('revuey.panel').render(s)
   idle(s)
+  h.eq(1, #h.read_calls(calls), 'a redraw never refetches')
+  local _, restore = h.capture_notify()
+  press_R(s)
+  idle(s)
+  restore()
   h.eq(2, #h.read_calls(calls))
   local lines = panel_lines(s)
   local _, cart = find(lines, '@ stack/cart')

@@ -785,11 +785,13 @@ are in `reports/Terminal code review tool landscape.md`.
       counts as unrelated), among PRs whose head owner is the candidate's
       (null for a deleted fork: never ours). The first candidate with a PR wins.
     - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}` (a
-      repo's entry also holds its parent's PRs); a target is fresh when every repo it searches
-      was fetched (or failed) within `forge.ttl`. A failure keeps the last good `branches`, so
-      what was shown stays, marked stale (`?`, `(stale)`). `forge_view.update` runs from view's
-      `render` (open, scope switches, refreshes that re-render), resolves targets and fetches
-      only when something is stale, then redraws the panel only if the PRs it shows changed
+      repo's entry also holds its parent's PRs). Nothing in it expires: when it is filled is
+      decision 20 (the first time a review needs a target, `R`, after a submit; never a redraw,
+      refresh or timer). A failure keeps the last good `branches`, so what was shown stays,
+      marked stale (`?`, `(stale)`). `forge_view.update` runs from view's `render` (open, scope
+      switches, refreshes that re-render), resolves targets and fetches only the targets this
+      review never fetched (all of them with `R`), then redraws the panel only if the PRs it
+      shows changed
       (`forge_view.signature` against what `panel.render` last drew), with
       `panel.render(s, {keep_view = true})`: background redraws (this one and the stack stats)
       keep the panel cursor on the item it was on (file, layer, section, PR heading; the view
@@ -798,9 +800,8 @@ are in `reports/Terminal code review tool landscape.md`.
       per review at a time: requests while one runs become one follow-up. Each lookup has a
       generation; `forge_view.detach` (review cleanup) bumps it and kills `gh`, and `fetch`
       writes nothing when `alive()` is false after the call, so a late result or failure never
-      reaches the cache or a newer panel. No polling: `panel.render` calls `forge_view.lazy`,
-      which schedules an update once the TTL has passed. A failure is cached like a result, so
-      a broken `gh` is retried once per TTL (or on `R`), not on every redraw.
+      reaches the cache or a newer panel. A failed first fetch counts as fetched: a broken `gh`
+      is tried again on `R`, never on a redraw.
     - **Failures** (spawn error for a missing `gh`, non-zero exit, unparsable JSON, GraphQL
       errors, rate limits, network) show nothing: the reason goes to `log.lua`, which appends to
       `log_file` (default `stdpath('log')/revuey.log`, moved to `.1` at 256KB) and keeps the last
@@ -1067,9 +1068,9 @@ are in `reports/Terminal code review tool landscape.md`.
       re-rendering never wait for GitHub; threads appear when they arrive (comments re-render,
       panel redraw with `keep_view`), only when their signature changed. Cached per PR
       (`forge.threads_cache[host/owner/name#N] = {at, threads, sig, failed?, truncated?}`) for
-      `forge.ttl`, like PRs; scope switches and refreshes reuse it, `R` forces it, the panel's
-      `lazy` also refetches stale threads. A failed fetch keeps the last threads (no stale marker
-      on threads: what was shown stays).
+      the review (decision 20): a PR's threads are fetched the first time a scope shows it, then
+      only on `R` (and after a submit); scope switches and refreshes reuse them. A failed fetch
+      keeps the last threads, marked `(stale)` on the panel's threads line.
     - **Query** (`build_threads_query`, aliased requests in one call per host): `tN:
       repository(owner, name) { pullRequest(number) { reviewThreads(first: 50, after?) {
       pageInfo nodes { ...thread } } } }` and, for a thread with more comments, `cN: node(id) {
@@ -1359,7 +1360,7 @@ are in `reports/Terminal code review tool landscape.md`.
       first, each collapsed on its own: the scope reviews all of them, and the top layer's alone
       would describe only its own part. A layer switch shows that layer's alone.
     - **Data.** `body` in the PR lookup's fragment (decision 13): no second call, the same cache,
-      TTL, `R`, failure handling and kill-on-close. `body` (the Markdown as written) rather than
+      `R`, change check (decision 20), failure handling and kill-on-close. `body` (the Markdown as written) rather than
       `bodyText` (GitHub's plain text: code fences, lists and headings flattened) or `bodyHTML`
       (sanitised HTML with camo image URLs, which would need an HTML-to-text pass and is bigger).
       Cost: the lookup now returns the body of every PR it reads (up to 30 per head branch name,
@@ -1436,7 +1437,9 @@ are in `reports/Terminal code review tool landscape.md`.
       rows are replaced, so `zo` counts),
       kept across refreshes and scopes; `forge.description.expanded` starts them open.
     - **Failures** as decision 13: no PR, a failed lookup, `gh` missing: nothing shown, logged. A
-      failed refetch keeps the PR (stale) and so the description shown.
+      failed refetch keeps the PR (stale) and so the description shown, its title row ending
+      `· stale`; news found by the change check end it `· new on GitHub · R to refresh`
+      (decision 20).
     - **Config** `forge.description = { enabled, expanded, max_lines }` (or `false`). Highlights
       `RevueyForgeDescriptionTitle`, `RevueyForgeDescriptionMore`, `RevueyForgeDescriptionRule`.
     - **Tests**: the fake `gh` answers a PR node's `body` only when the query's fragment asks for
@@ -1448,6 +1451,101 @@ are in `reports/Terminal code review tool landscape.md`.
       failures, scopes and the guide view, plus hostile bodies under a time bound;
       `layout_spec.lua` checks `replace_head` against `compose`; `screen_spec.lua` has it late
       (winbar hint), collapsed and expanded.
+
+20. **When GitHub is read: first fetch, `R`, and the change check** (`forge.lua` the check query,
+    signals, comparison and marks; `forge_view.lua` what is fetched when, the timer, focus and
+    redraws). What revuey shows from GitHub (PR status, review threads, the description, and so
+    the head blobs placement trusts) changes only when the user can expect it to.
+    - **Fetches.** `forge_view.update` (from every render) fetches only what this review has never
+      fetched: the PR lookup for targets not yet looked up (keyed by name and candidates, not the
+      tip, so a commit does not refetch; on open that is every layer, so `]s`/`[s`, `gs` and `gS`
+      fetch no PR), and the threads of the scope's open PRs never fetched here (a layer or the
+      full stack shown for the first time). With `force` (`R`, `refresh{forge = true}`; and after
+      a submit, `forge_post_view`) everything for the scope. Local refreshes (a file save, git
+      changes, focus, a resize) re-render and so call `update`, which then fetches nothing,
+      except a target that did not exist before (a new stack layer: a PR never looked up). Posting
+      (`gP`) reads GitHub in its own preflight, untouched. `load_head_blobs` is local (`git
+      cat-file`) and still runs on every update. The time-based expiry (`forge.ttl` as a TTL,
+      `forge_view.lazy` from `panel.render`, `is_fresh`, `threads_fresh`) is gone: a redraw
+      after the TTL used to replace what was shown without the user asking.
+    - **The change check.** Every `forge.ttl` seconds (180 by default; the name is kept for old
+      configs) while the review is shown, one `gh api graphql` call per host (in practice one)
+      asks for the scope's PRs (every layer's in full-stack scope; any state) only change
+      signals: `kN: repository(owner, name) { pM: pullRequest(number) { ...check } }` with
+      `headRefOid state isDraft title lastEditedAt reviewDecision reviews { totalCount }
+      reviewRequests { totalCount } commits(last: 1) { statusCheckRollup { state } }
+      reviewThreads(first: 100) { totalCount nodes { isResolved comments { totalCount } } }`
+      (threads only when shown). The baseline is what is shown: `forge.signals` of the PR node
+      the lookup returned (the lookup's fragment asks the same fields: `lastEditedAt`, `reviews {
+      totalCount }`, `reviewRequests { totalCount }`, the rollup's `state`) and the cached threads
+      (count, resolved and comment counts of the first 100; none when the last threads fetch
+      failed, a cut list has no count). A difference marks the PR in `forge.changed[repo#N] =
+      {signal = true}`; nothing in the caches is touched, so nothing shown changes. A PR lookup
+      that works clears the PR signals of the PRs it read, a complete threads fetch the thread
+      signals.
+    - **Why these signals, not `updatedAt`.** Measured read-only on 125 recently updated PRs of
+      neovim, vscode, TypeScript, ruff and deno (October 2026): `updatedAt` equals the time of an
+      issue comment, a comment or description edit, a review, a label, a milestone, an assignee,
+      a review request or its removal, a title rename, ready-for-review, a close or merge, and
+      follows each push within seconds; it does not move for cross-references, mentions or
+      subscriptions. Many of those (labels, milestones, assignees, issue comments) are not
+      shown by revuey and would nag; and no timeline event or timestamp exists for resolving a
+      thread, so whether it bumps `updatedAt` could not be verified without a write. The
+      signals cover what revuey shows: a push (`headRefOid`), merge/close/reopen (`state`),
+      draft, a title or description edit (`title`, `lastEditedAt`), a review or a reply in a
+      thread (`reviews.totalCount`: on GitHub every review comment belongs to a review),
+      requested reviewers, the review decision, CI (`statusCheckRollup.state`: checks finishing
+      do not bump `updatedAt`; on five deno PRs the last check run completed 40 minutes to 3
+      hours after their `updatedAt`), and threads: a new thread (count), a reply (comment counts), resolving
+      or unresolving (`isResolved`). **Not detected:** an edited review comment (no cheap
+      signal; `lastEditedAt` per comment would mean reading comments), threads beyond the first
+      100 being resolved, mergeability (left out on purpose: GitHub computes it lazily, so it
+      flips from UNKNOWN on its own right after a fetch), a PR opened for a branch that had none
+      (the check covers PRs shown; `R` looks), and changes to other layers' PRs while one layer
+      is viewed (their chips are not checked).
+    - **Cost.** Measured with `rateLimit { cost }`: the check costs 1 point for 1 to 20 PRs with
+      their threads' flags and counts (a 20-PR answer is about 10KB; about 2s including `gh`
+      start-up), so 20 points an hour at most of the 5,000. REST conditional requests (`gh api -i
+      -H 'If-None-Match: <etag>' repos/o/r/pulls/N`) were measured too: ETags come back, a 304
+      costs nothing (`X-Ratelimit-Used` unchanged) and a 200 one point, and the PR's
+      `Last-Modified` is its `updatedAt`. Rejected: one `gh` process per PR per endpoint (plus
+      `/reviews`, `/comments` and check runs for what the PR object lacks), the PR object has
+      no review decision, thread resolution or check state, and its ETag moves with every field
+      revuey does not show (labels, assignees, `mergeable_state`). Adding `lastEditedAt`,
+      `reviews { totalCount }`, `reviewRequests { totalCount }` and the rollup's `state` to the
+      PR lookup left its cost unchanged (6 points for 5 neovim branches, before and after).
+    - **When it runs.** `forge_view.attach` (from `view.show`, once the session's augroup exists)
+      starts a `vim.uv` timer ticking every quarter of the interval; a tick only compares
+      clocks (`forge.now`, which tests replace). `maybe_check` runs the check when it is due (the
+      interval since the last fetch or check), Neovim is focused (`FocusLost`/`FocusGained`),
+      the diff buffer is in a window of the current tab page, and no lookup or check is in
+      flight; `FocusGained`, `TabEnter` and `BufWinEnter` call it too, so a check that came due
+      while away runs at once on coming back. One check at a time, its own generation,
+      `forge.timeout`, its `gh` killed and the timer stopped and closed by `detach` (review
+      cleanup). A fetch that starts (`R`, a first fetch) drops a check in flight: compared
+      against data the fetch replaces, its marks would announce news already shown. A failed check is logged and marks nothing (stale keeps its meaning: a failed
+      fetch); the next one waits for the interval. `forge.check = false` starts no timer. When
+      a check marks something new, the panel is redrawn (`keep_view`, only when its signature,
+      which includes the marks, changed), the description rows go through `sync_description`
+      (its signature includes the mark) and the winbar is redrawn; a check that finds nothing
+      redraws nothing.
+    - **Marks.** News (`RevueyForgeChanged`, linked to `DiagnosticInfo`: something to act on, not
+      an error, and apart from the dim failure mark): the row chip `#12 ✓↻`, the detail heading
+      `(new on GitHub · R)`, the threads line `(new)` when thread signals moved (short: the
+      heading says the rest and the panel is 40 cells), the description's title row `· new on
+      GitHub · R to refresh` when the title or description moved, and the winbar on the
+      description `new on GitHub · R`. A failed fetch keeps the existing dim marks: `?` on the
+      chip, `(stale)` on the heading and the threads line, and now `· stale` on the description
+      title and `stale` in its winbar. Both can show at once (`#12 ✓↻?`, a failed `R` after
+      news); `R` that works clears both.
+    - **Tests** (`forge_check_spec.lua`, fake `gh` answering the check from the same PRs and
+      threads files, so a test changes a signal by rewriting them; `REVUEY_FAKE_GH_CHECK_SCENARIO
+      = fail`): no fetch on redraws, refreshes, resizes, focus, fetched scopes or hours later;
+      first fetches of a never-shown layer's threads; the quiet check (no redraw, no body);
+      each signal marking only its PR in one full-stack query; the marks everywhere, the data
+      unchanged until `R`, which clears them; a failed `R`; a failed check; focus and
+      visibility; the real timer and its stop on close; `forge.check = false`.
+      `forge_post_spec.lua` checks the refetch after a submit clears the marks.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

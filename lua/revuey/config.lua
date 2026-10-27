@@ -121,28 +121,33 @@ M.defaults = {
     width = 100, -- max width of a thread box (else the window's text width)
   },
   -- Pull requests on GitHub: number and review status on stack rows (or a plain review's title)
-  -- and a detail section for the layer being viewed. Runs your own `gh` (assumed logged in) once
-  -- per refresh for all layers; results are cached per repo for `ttl` seconds. Any failure
-  -- (no gh, offline, rate limits) shows nothing and is written to the log file.
+  -- and a detail section for the layer being viewed. Runs your own `gh` (assumed logged in) when
+  -- a review opens (one call for all layers) and on `R`; what is shown never changes on its own.
+  -- Any failure (no gh, offline, rate limits) shows nothing new and is written to the log file.
   forge = {
     enabled = true,
-    ttl = 60, -- `R` always looks again
+    -- Every `ttl` seconds while the review is shown and Neovim focused, one small query asks
+    -- GitHub whether the scope's PRs changed (head, state, reviews, threads, checks, description)
+    -- and marks the ones that did ("↻", "new on GitHub · R"); nothing shown is replaced until `R`.
+    -- `check = false` turns the check off.
+    ttl = 180,
+    check = true,
     timeout = 15, -- seconds before a gh call is stopped
     cmd = 'gh',
     -- GitHub Enterprise hosts (github.com and hosts with "github" in their name are known)
     hosts = {},
     -- Review threads of the open PR(s) of the scope shown, inline next to your comments
-    -- (read-only; `cr` adds a local reply). Fetched in the background after the PR lookup, cached
-    -- for `ttl` like it; `R` fetches again. show: 'all' (resolved and outdated threads
-    -- collapsed), 'open' (resolved ones hidden) or 'none'; the forge_threads key cycles it.
+    -- (read-only; `cr` adds a local reply). Fetched in the background after the PR lookup, the
+    -- first time a scope shows the PR; `R` fetches again. show: 'all' (resolved and outdated
+    -- threads collapsed), 'open' (resolved ones hidden) or 'none'; the forge_threads key cycles it.
     threads = {
       enabled = true,
       show = 'all',
     },
     -- The description of the open PR(s) of the scope shown, at the top of the diff view (not the
     -- guide), rendered as text (HTML comments from PR templates removed, images and links as
-    -- text, nothing fetched). It comes with the PR lookup (same call, cache and `ttl`; `R`
-    -- fetches again) and is inserted above the first file without moving the view. Longer than
+    -- text, nothing fetched). It comes with the PR lookup (same call and cache; `R` fetches
+    -- again) and is inserted above the first file without moving the view. Longer than
     -- `max_lines` it starts folded ("… N more lines"); <Tab> (toggle_fold) or `zo`/`zc` on it
     -- expands / collapses it; `expanded = true` starts it unfolded.
     description = {

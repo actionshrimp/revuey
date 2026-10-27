@@ -722,16 +722,15 @@ h.test('full stack: every layer\'s open PR, moved lines found by text; layer sco
   view.close()
 end)
 
-h.test('cache: refreshes reuse it within the TTL; R fetches again; lazily after the TTL', function()
+h.test('cache: refreshes and redraws reuse it, however late; R fetches again', function()
   reset()
   local now = 1000000
   forge.now = function()
     return now
   end
-  local calls = h.tmpdir('ft-gh-ttl') .. '/calls.ndjson'
+  local calls = h.tmpdir('ft-gh-cache') .. '/calls.ndjson'
   h.use_fake_gh(calls, PRS, nil, THREADS)
-  setup({ forge = { ttl = 30 } })
-  local d = stack_fixture('ft-ttl')
+  local d = stack_fixture('ft-cache')
   local s = open(d)
   idle(s)
   h.eq(1, thread_calls(calls))
@@ -743,12 +742,12 @@ h.test('cache: refreshes reuse it within the TTL; R fetches again; lazily after 
   idle(s)
   restore()
   h.eq(2, thread_calls(calls), 'R')
-  now = now + 31 * 1000
+  now = now + 3600 * 1000
   require('revuey.panel').render(s)
+  view.refresh({ force = true })
   idle(s)
-  h.eq(3, thread_calls(calls), 'after the TTL')
+  h.eq(2, thread_calls(calls), 'an hour later: still cached')
   view.close()
-  setup()
 end)
 
 h.test('pagination: every page of threads and of long threads\' comments, in order; a round cap', function()

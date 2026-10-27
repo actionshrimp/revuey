@@ -393,8 +393,10 @@ and review state on the layer's row, and a section with the details of the layer
 
 - Row chips: `✓` approved (`RevueyForgeApproved`), `✗` changes requested (`RevueyForgeChanges`),
   `●` review required (`RevueyForgePending`), `○` no review decision (`RevueyForgeNone`); drafts,
-  merged and closed PRs are dim with `draft`, `merged` or `closed`. A dim `?` (and `(stale)` on
-  the detail heading) means the last lookup failed and this is the previous result. In a narrow panel the branch name is cut first, then the
+  merged and closed PRs are dim with `draft`, `merged` or `closed`. A `↻` (and `(new on GitHub ·
+  R)` on the detail heading) means the PR changed on GitHub since it was fetched: press `R` to
+  see it. A dim `?` (and `(stale)` on the detail heading) means the last lookup failed and this is
+  the previous result. In a narrow panel the branch name is cut first, then the
   commit count. A review without a stack shows the chip on its `branch → base` line.
 - The detail section has the title, author, state, the review decision, each reviewer's latest
   review and the reviewers still requested, check counts, mergeability and the base branch. When
@@ -416,10 +418,23 @@ and review state on the layer's row, and a section with the details of the layer
   branch behind commits made on GitHub still shows its PR), so a new branch reusing an old name
   doesn't show the old PR. Hosts other than github.com need `forge.hosts` (hosts with
   "github" in their name are recognised).
-- **When.** On open and on scope switches, in the background, with results cached per repo for
-  `forge.ttl` seconds (60). `R` always looks again. There is no polling: a panel redraw after the
-  TTL looks again. One lookup runs at a time per review; `gh` is stopped after `forge.timeout`
-  seconds (15) and when the review closes, and a lookup that ends after that is ignored.
+- **When.** What you see from GitHub changes only when you ask: the PRs are looked up when the
+  review opens (one call for every layer, in the background), and again only on `R`. Switching
+  layers (`]s`/`[s`, `gs`, `gS`), refreshes after a save or a git change, focus, resizes and
+  redraws never fetch (a layer that appears in the stack later is looked up once). One lookup
+  runs at a time per review; `gh` is stopped after `forge.timeout` seconds (15) and when the
+  review closes, and a lookup that ends after that is ignored.
+- **News on GitHub.** While the review is shown and Neovim has focus, every `forge.ttl` seconds
+  (180) one small query asks GitHub whether the scope's PRs changed: a push, merge or close,
+  draft, the title or description edited, a new review or reply, requested reviewers, the review
+  decision, CI state, threads added or resolved. A PR that changed is marked (`↻` on its row,
+  `(new on GitHub · R)` on the detail heading, `(new)` on the threads line, `new on GitHub · R to
+  refresh` on the description) and nothing shown is replaced until you press `R`, which fetches
+  everything and clears the marks. Back from another window or tab (`FocusGained`), it checks at
+  once if one is due. Not detected: an edited review comment, a PR opened for a branch that had
+  none (`R` finds it), changes to other layers' PRs while one layer is viewed. A failed check is
+  only logged. `forge.check = false` turns it off. Each check costs one GraphQL rate-limit point
+  (of 5,000 an hour).
 - **Failures are quiet.** No `gh`, not logged in, offline, timed out, rate limited or unexpected
   output: nothing new is shown (PRs already shown stay, marked stale), and the reason is written
   to the log file (`log_file`, default `stdpath('log')/revuey.log`, moved to `revuey.log.1` at
@@ -427,7 +442,8 @@ and review state on the layer's row, and a section with the details of the layer
 
 ```lua
 require('revuey').setup({
-  forge = { enabled = true, ttl = 60, timeout = 15, cmd = 'gh', hosts = { 'git.example.com' } },
+  -- ttl: seconds between checks for news on GitHub (nothing is refetched until `R`)
+  forge = { enabled = true, ttl = 180, check = true, timeout = 15, cmd = 'gh', hosts = { 'git.example.com' } },
   keymaps = { forge_open = 'gx' },
 })
 ```
@@ -466,9 +482,11 @@ above the first file of the diff view (not in the guide view), as text:
   on screen above it, a longer description pushes the code down). With the first file at the
   top, the winbar says `↑ PR description`: `gg` (or `k`) shows it. It waits while you are in
   Visual or Insert mode or writing a comment.
-- **When.** It is part of the PR lookup: the same call, cache and `forge.ttl`; `R` fetches it
-  again and an edited description is updated in place. Failures show nothing (a description
-  already shown stays) and are logged like the lookup's.
+- **When.** It is part of the PR lookup: the same call and cache; `R` fetches it again and an
+  edited description is updated in place. When the title or description changed on GitHub
+  since, its title line ends `· new on GitHub · R to refresh`. Failures show nothing (a
+  description already shown stays, its title line ending `· stale`) and are logged like the
+  lookup's.
 
 ```lua
 require('revuey').setup({
@@ -512,7 +530,8 @@ for authors.
   unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
   ones only, none. `]m`/`[m` and the comments list (`cl`, a "GitHub threads" part) include them.
   The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
-  when the list was cut and `(stale)` when the last fetch failed and these are the threads from
+  when the list was cut, `(new)` when threads were added, answered or resolved on GitHub since
+  (`R` shows them), and `(stale)` when the last fetch failed and these are the threads from
   before).
 - **Read-only.** Threads are never changed from revuey (posting a review, below, only adds to
   them). `gx` on a thread opens it in the browser (elsewhere
@@ -525,8 +544,8 @@ for authors.
 - **When.** After the PR lookup, in the background (opening a review never waits for GitHub): one
   `gh api graphql` call for the scope's open PRs, more only for long lists (50 threads per page,
   each thread's first 20 comments, then 100 at a time; at most 10 rounds, after which a thread
-  says `… N more on GitHub`). Cached per PR for `forge.ttl` like the PR lookup; scope switches and
-  refreshes reuse the cache, `R` fetches again. Failures are quiet as above: threads already
+  says `… N more on GitHub`). Fetched the first time a scope shows the PR, then kept: scope
+  switches and refreshes reuse them, `R` fetches again (as does submitting a review). Failures are quiet as above: threads already
   shown stay, nothing else changes, and the reason is in the log file.
 
 ```lua
