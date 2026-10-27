@@ -207,21 +207,25 @@ end
 -- ---------------------------------------------------------------------------
 -- A comment's write-ahead record lives on the comment; a review made in one step (with a verdict
 -- and maybe no comment at all) needs one of its own: `<state>.forge.json` next to the comments
--- file, {reviews = {[id] = {id, pr, repo, commit, event, body, started_at}}}.
+-- file, {reviews = {[id] = {id, kind = 'atomic'|'submit', pr, repo, commit?, event, body,
+-- threads? (the payloads sent), review_id? (a submit), started_at}}}.
 
 function M.ledger_path(store)
   return (store.path:gsub('%.comments%.json$', '')) .. '.forge.json'
 end
 
+---The ledger, or nil and why when the file exists but cannot be read (then nothing is sent: its
+---entries would be lost).
 function M.ledger_read(store)
   local fd = io.open(M.ledger_path(store), 'r')
   if not fd then
     return { reviews = {} }
   end
-  local ok, data = pcall(vim.json.decode, fd:read('*a'), { luanil = { object = true, array = true } })
+  local text = fd:read('*a')
   fd:close()
+  local ok, data = pcall(vim.json.decode, text or '', { luanil = { object = true, array = true } })
   if not ok or type(data) ~= 'table' or type(data.reviews) ~= 'table' then
-    return { reviews = {} }
+    return nil, ('%s cannot be read (fix or remove it; it records reviews sent without an answer)'):format(M.ledger_path(store))
   end
   if vim.islist(data.reviews) then
     data.reviews = {}
@@ -237,8 +241,12 @@ function M.ledger_write(store, data)
   if not fd then
     return false, tostring(err)
   end
-  fd:write(vim.json.encode({ reviews = next(data.reviews) and data.reviews or vim.empty_dict() }))
-  fd:close()
+  local wok, werr = fd:write(vim.json.encode({ reviews = next(data.reviews) and data.reviews or vim.empty_dict() }))
+  local cok, cerr = fd:close()
+  if not wok or not cok then
+    os.remove(tmp)
+    return false, tostring(werr or cerr)
+  end
   local ok, rerr = os.rename(tmp, path)
   if not ok then
     os.remove(tmp)
@@ -248,7 +256,10 @@ function M.ledger_write(store, data)
 end
 
 local function ledger_set(store, id, e)
-  local data = M.ledger_read(store)
+  local data, err = M.ledger_read(store)
+  if not data then
+    return false, err
+  end
   data.reviews[id] = e
   return M.ledger_write(store, data)
 end
@@ -300,6 +311,10 @@ function M.preflight(r, targets, review_ids)
       if t.pf and t.pf.pending then
         to_read[#to_read + 1] = t.pf.pending
       end
+      -- the viewer's latest reviews: one may be a review sent without an answer
+      for _, rv in ipairs(t.pf and t.pf.recent or {}) do
+        to_read[#to_read + 1] = rv
+      end
     end
     for _, rv in ipairs(to_read) do
       if rv.cursor then
@@ -318,8 +333,11 @@ end
 local function thread_comments(t, c)
   local ids = {}
   local fr = c.forge_reply or {}
-  if fr.comment_id then
-    ids[fr.comment_id] = true
+  -- GitHub's replyTo is the thread's first comment (recorded at `cr` as root_id)
+  for _, k in ipairs({ 'root_id', 'comment_id' }) do
+    if fr[k] then
+      ids[fr[k]] = true
+    end
   end
   for _, th in ipairs(forge.threads_for(t.pr) or {}) do
     if th.id == fr.thread_id then
@@ -367,20 +385,41 @@ function M.reconcile(r, included)
     end
   end
   local todo, left = {}, {}
-  local ledger = M.ledger_read(store)
+  local ledger = assert(r.ledger)
   local lres, ledger_dirty = {}, false
   r.warnings = r.warnings or {}
+  local function found_review(t, what)
+    -- a review of revuey's was published without an answer: never the same verdict twice
+    if not t.found_review then
+      t.found_review = true
+      table.insert(r.warnings, ('PR #%d: %s; it is not sent again.'):format(t.pr.number, what))
+    end
+  end
   for id, e in pairs(ledger.reviews) do
     local t = by_pr[(e.repo or '') .. '#' .. tostring(e.pr)]
     if t then
-      local x = post.find_atomic(e, t.pf)
+      local x
+      if e.kind == 'submit' then
+        -- a submit whose answer was lost: its review now submitted, still pending, or gone
+        local rv = r.reviews[e.review_id]
+        if rv and rv.state ~= 'PENDING' then
+          x = { found = rv }
+        elseif rv or rv == false then
+          x = { absent = true }
+        else
+          x = { unknown = 'GitHub could not say what became of it' }
+        end
+      else
+        x = post.find_atomic(e, t.pf)
+      end
       lres[id] = x
       if x.unknown then
         t.blocked = t.blocked or ('a review sent earlier got no answer, and ' .. x.unknown)
+        t.ledger_blocked = t.ledger_blocked or {}
+        table.insert(t.ledger_blocked, id)
       else
         if x.found then
-          t.found_review = true
-          table.insert(r.warnings, ('PR #%d: the %s review sent earlier without an answer was made after all.'):format(t.pr.number, post.VERDICT_TEXT[(e.event or ''):lower()] or e.event))
+          found_review(t, ('the %s review sent earlier without an answer was made after all'):format(post.VERDICT_TEXT[(e.event or ''):lower()] or e.event))
         end
         ledger.reviews[id] = nil
         ledger_dirty = true
@@ -461,6 +500,7 @@ function M.reconcile(r, included)
     elseif x.found then
       set_record(store, c.id, posted_fields(fp, o.review, x.found))
       dirty = true
+      found_review(o.t, 'a review revuey added comments to was submitted meanwhile')
     elseif x.absent then
       set_record(store, c.id, nil)
       dirty = true
@@ -477,6 +517,17 @@ function M.reconcile(r, included)
   end
   if ledger_dirty then
     M.ledger_write(store, ledger)
+  end
+  for _, t in ipairs(r.targets) do
+    if t.blocked and #t.unknown == 0 and not t.ledger_blocked then
+      -- blocked by a pending review read in part: its pending records are stuck too
+      for _, c in ipairs(included) do
+        local fp = c.forge_post
+        if post.state(c) == 'pending' and fp.pr == t.pr.number and fp.repo == t.pr.repo then
+          table.insert(t.unknown, c)
+        end
+      end
+    end
   end
   return todo, left
 end
@@ -516,13 +567,23 @@ function M.prepare(s, verdict)
       end
     end
   end
+  local ledger, lerr = M.ledger_read(store)
+  if not ledger then
+    return nil, lerr
+  end
+  r.ledger = ledger
   local review_ids, seen = {}, {}
-  for _, c in ipairs(included) do
-    local id = SENT[post.state(c)] and c.forge_post.review_id
+  local function want(id)
     if id and not seen[id] then
       seen[id] = true
       review_ids[#review_ids + 1] = id
     end
+  end
+  for _, c in ipairs(included) do
+    want(SENT[post.state(c)] and c.forge_post.review_id or nil)
+  end
+  for _, e in pairs(ledger.reviews) do
+    want(e.kind == 'submit' and e.review_id or nil)
   end
   local ok, err = M.preflight(r, targets, review_ids)
   if not ok then
@@ -592,14 +653,14 @@ function M.check_binding(r, access)
   local keys, want = {}, {}
   for _, t in ipairs(r.targets) do
     local p = t.pf and t.pf.pending
-    if p and p.commit and p.commit ~= t.tip and not t.refused then
+    if p and p.commit ~= t.tip and not t.refused then
       local keep = {}
       for _, x in ipairs(r.plan.items[t]) do
         local it = x.item
         local file = it.kind == 'thread' and access.file(it.path) or nil
         if it.kind == 'reply' then
           keep[#keep + 1] = x
-        elseif it.side == 'LEFT' or not file or not file.new_blob then
+        elseif it.side == 'LEFT' or not file or not file.new_blob or not p.commit then
           want[#want + 1] = { x = x, t = t }
         else
           local k = p.commit .. ':' .. it.path
@@ -636,6 +697,7 @@ function M.check_binding(r, access)
           t.pr.number,
           post.short(t.pf.pending.commit),
           w.key and (blobs[w.key] and 'this file differs from the reviewed one' or 'this file is missing there, or that commit is not in this clone')
+            or not t.pf.pending.commit and 'GitHub did not say which commit, so its lines cannot be checked'
             or 'the old side may be numbered differently'
         ),
       })
@@ -756,45 +818,109 @@ local function release(r)
   end
 end
 
+---Back at the confirmation (after the body editor): the comments planned must still be what was
+---checked; one deleted, taken out of the review or edited meanwhile is dropped from this submit
+---and listed with the reason.
+local function revalidate(r)
+  pcall(comments.reload, r.store)
+  for _, t in ipairs(r.targets) do
+    local keep = {}
+    for _, x in ipairs(r.plan.items[t] or {}) do
+      local cur = comments.get(r.store, x.c.id)
+      local why
+      if not cur then
+        why = 'deleted while the confirmation was open'
+      elseif not cur.in_review then
+        why = 'taken out of the review while the confirmation was open'
+      elseif post.norm_body(cur.body) ~= post.norm_body(x.item.body) then
+        why = 'edited while the confirmation was open: submit again to send the new text'
+      end
+      if why then
+        table.insert(r.plan.refused, { c = cur or x.c, why = why })
+      else
+        keep[#keep + 1] = x
+      end
+    end
+    r.plan.items[t] = keep
+  end
+end
+
+---Drop revuey's unanswered records of the blocked PRs (their comments' records and their ledger
+---entries), after the user agreed: they may exist on GitHub.
+local function forget_blocked(r)
+  local n = 0
+  local data = M.ledger_read(r.store)
+  for _, t in ipairs(r.targets) do
+    if t.blocked then
+      for _, c in ipairs(t.unknown or {}) do
+        set_record(r.store, c.id, nil)
+        n = n + 1
+      end
+      for _, id in ipairs(t.ledger_blocked or {}) do
+        if data and data.reviews[id] then
+          data.reviews[id] = nil
+          n = n + 1
+        end
+      end
+    end
+  end
+  if data then
+    M.ledger_write(r.store, data)
+  end
+  save(r.store)
+  return n
+end
+
 local function confirm(r)
   local s = r.s
   if s.cleaned then
     release(r)
     return notify('the review closed before the confirmation: nothing was sent', vim.log.levels.WARN)
   end
+  revalidate(r)
   local res = M.result(r)
-  local go = 0
+  local go, blocked = 0, false
   for _, x in ipairs(res.prs) do
     go = go + (x.go and 1 or 0)
+    blocked = blocked or x.blocked ~= nil
   end
   local text = table.concat(post.summary(res), '\n')
-  if go == 0 then
-    if #res.prs == 0 or not vim.iter(res.prs):any(function(x)
-      return x.blocked ~= nil
-    end) then
-      release(r)
-      local lines = post.summary(res)
-      table.remove(lines, 1)
-      return notify('nothing to submit.' .. table.concat(lines, '\n'), vim.log.levels.WARN)
-    end
-    M.ask(text .. '\n\nNothing can be submitted now (nothing has been sent).', '&Cancel', 1)
+  if go == 0 and not blocked then
     release(r)
-    return notify('nothing sent')
+    local lines = post.summary(res)
+    table.remove(lines, 1)
+    return notify('nothing to submit.' .. table.concat(lines, '\n'), vim.log.levels.WARN)
   end
-  local body_label = (r.body and r.body ~= '') and '&Edit body' or '&Write body'
-  local nb = needs_body(res)
-  if nb then
+  local nb = go > 0 and needs_body(res)
+  if go == 0 then
+    text = text .. '\n\nNothing can be submitted now (nothing has been sent).'
+  elseif nb then
     text = text .. '\n\nA Comment review with no comments needs a body.'
   end
-  local choices = nb and (body_label .. '\n&Cancel') or ('&Submit\n' .. body_label .. '\n&Cancel')
-  local default = nb and 1 or ((#res.left_out > 0 or go < #vim.tbl_filter(function(x)
-    return not x.nothing
-  end, res.prs)) and 3 or 1)
-  local choice = M.ask(text, choices, default)
-  if nb then
-    choice = choice == 1 and 2 or (choice == 2 and 3 or 0)
+  local actions = {}
+  if go > 0 and not nb then
+    actions[#actions + 1] = { '&Submit', 'submit' }
   end
-  if choice == 1 then
+  if go > 0 then
+    actions[#actions + 1] = { (r.body and r.body ~= '') and '&Edit body' or '&Write body', 'body' }
+  end
+  if blocked then
+    actions[#actions + 1] = { '&Forget unconfirmed', 'forget' }
+  end
+  actions[#actions + 1] = { '&Cancel', 'cancel' }
+  local default = #actions
+  if actions[1][2] == 'submit' and #res.left_out == 0 and not blocked and go == #vim.tbl_filter(function(x)
+    return not x.nothing
+  end, res.prs) then
+    default = 1
+  elseif nb then
+    default = 1
+  end
+  local choice = M.ask(text, table.concat(vim.tbl_map(function(a)
+    return a[1]
+  end, actions), '\n'), default)
+  local action = actions[choice] and actions[choice][2] or 'cancel'
+  if action == 'submit' then
     M.job.phase = 'send'
     git.async(function()
       M.execute(r, res)
@@ -803,8 +929,22 @@ local function confirm(r)
       log.write('forge', 'submit error: ' .. tostring(err))
       notify('submit failed: ' .. tostring(err), vim.log.levels.ERROR)
     end)
-  elseif choice == 2 then
+  elseif action == 'body' then
     M.write_body(r)
+  elseif action == 'forget' then
+    local sure = M.ask('Forget revuey\'s records of what it sent to the blocked PRs without an answer?\n\n'
+      .. 'They may exist on GitHub: check the PRs first. A later submit may post those comments (or the '
+      .. 'verdict) a second time.', '&Forget\n&Cancel', 2)
+    release(r)
+    if sure == 1 then
+      local n = forget_blocked(r)
+      notify(('forgot %d unconfirmed record%s: they may exist on GitHub; submit again to continue'):format(n, n == 1 and '' or 's'), vim.log.levels.WARN)
+      if not s.cleaned then
+        require('revuey.comments_view').refresh(s)
+      end
+    else
+      notify('nothing sent')
+    end
   else
     release(r)
     notify('nothing sent')
@@ -894,20 +1034,39 @@ end
 ---A review created and submitted in one step: written ahead (the ledger entry and every
 ---comment's record), then one `addPullRequestReview` with the event and the threads.
 ---@return string status ok|failed|lost, string? why
+local function ledger_drop(store, id)
+  local data = M.ledger_read(store)
+  if data and data.reviews[id] then
+    data.reviews[id] = nil
+    M.ledger_write(store, data)
+  end
+end
+
 local function run_atomic(r, t, items, event)
   local store = r.store
   local lid = comments.new_id()
-  local entry_ = { id = lid, pr = t.pr.number, repo = t.pr.repo, commit = t.tip, event = event, body = r.body or '', started_at = os.time() }
+  local payloads = vim.tbl_map(function(x)
+    return payload_of(x.item)
+  end, items)
+  local entry_ = { id = lid, kind = 'atomic', pr = t.pr.number, repo = t.pr.repo, commit = t.tip, event = event, body = r.body or '',
+    threads = payloads, started_at = os.time() }
   local ok, err = ledger_set(store, lid, entry_)
   if not ok then
     return 'failed', 'could not write the local record first: ' .. tostring(err)
   end
   local now = comments.now_ms()
-  for _, x in ipairs(items) do
-    set_record(store, x.c.id, { state = 'sending', pr = t.pr.number, repo = t.pr.repo, ledger = lid, payload = payload_of(x.item), sent_at = now })
+  local prev = {}
+  for i, x in ipairs(items) do
+    prev[i] = vim.deepcopy((comments.get(store, x.c.id) or {}).forge_post)
+    set_record(store, x.c.id, { state = 'sending', pr = t.pr.number, repo = t.pr.repo, ledger = lid, payload = payloads[i], sent_at = now })
   end
   local dok, derr = durable_save(store)
   if not dok then
+    -- nothing was sent: undo the records and the ledger entry
+    for i, x in ipairs(items) do
+      set_record(store, x.c.id, prev[i])
+    end
+    ledger_drop(store, lid)
     return 'failed', 'could not save the local records first: ' .. tostring(derr)
   end
   local m = forge.build_atomic_mutation({ pr_id = t.pf.id, commit = t.tip, event = event, body = r.body,
@@ -916,11 +1075,14 @@ local function run_atomic(r, t, items, event)
     end, items) })
   local data, gerr, errors = forge.run_graphql(m, host_of(t))
   local rv = data and type(data.s) == 'table' and forge.normalize_review(data.s.pullRequestReview)
-  local why = forge.alias_error(errors, 's')
+  local why, refused = forge.alias_error(errors, 's')
   if rv then
+    if rv.cursor then
+      forge.fetch_pending_comments(rv, host_of(t))
+    end
     local entries = {}
-    for _, x in ipairs(items) do
-      entries[#entries + 1] = { key = x, payload = payload_of(x.item), pool = rv.comments, complete = rv.cursor == nil }
+    for i, x in ipairs(items) do
+      entries[#entries + 1] = { key = x, payload = payloads[i], pool = rv.comments, complete = rv.cursor == nil }
     end
     local res = post.reconcile(entries)
     for _, x in ipairs(items) do
@@ -929,31 +1091,58 @@ local function run_atomic(r, t, items, event)
         set_record(store, x.c.id, posted_fields(cur.forge_post or {}, rv, res[x].found))
       end
     end
-    local data_ = M.ledger_read(store)
-    data_.reviews[lid] = nil
-    M.ledger_write(store, data_)
+    ledger_drop(store, lid)
     save(store)
     return 'ok'
-  elseif why then
+  elseif why and refused then
     -- refused: nothing was made
     for _, x in ipairs(items) do
       set_record(store, x.c.id, nil)
     end
-    local data_ = M.ledger_read(store)
-    data_.reviews[lid] = nil
-    M.ledger_write(store, data_)
+    ledger_drop(store, lid)
     save(store)
     return 'failed', why
   end
-  return 'lost', gerr or 'no answer'
+  return 'lost', why or gerr or 'no answer'
+end
+
+---Read a pending review's comment ids again, whole (just before it is submitted). Returns the
+---set, or nil and why.
+local function reread_ids(t, review_id)
+  local q, aliases = forge.build_preflight_query({}, { review_id })
+  local data, err, errors = forge.run_graphql(q, host_of(t))
+  if not data then
+    return nil, err
+  end
+  local _, _, reviews = forge.normalize_preflight(data, aliases, errors)
+  local rv = reviews[review_id]
+  if not rv then
+    return nil, 'it could not be read'
+  end
+  if rv.cursor then
+    local done, perr = forge.fetch_pending_comments(rv, host_of(t))
+    if not done then
+      return nil, perr
+    end
+  end
+  local ids = {}
+  for _, pc in ipairs(rv.comments) do
+    ids[pc.id] = true
+  end
+  return ids
 end
 
 ---The pending flow: the user's pending review (or a new one), the threads and replies in
----batches, each written ahead, then the submit only when every add was answered.
+---batches, each written ahead, then the submit only when every add was answered and the review
+---holds nothing the confirmation did not show.
 ---@return string status ok|failed|lost, string? why
 local function run_pending(r, t, items, event)
   local store = r.store
   local review_id = t.pf.pending and t.pf.pending.id or nil
+  local shown = {} -- the pending review's comments the confirmation showed, then those added
+  for _, pc in ipairs(t.pf.pending and t.pf.pending.comments or {}) do
+    shown[pc.id] = true
+  end
   if not review_id and #items > 0 then
     -- GitHub allows one pending review per user and PR: a lost answer here is found (and
     -- reused) by the next prepare, never made twice
@@ -962,11 +1151,11 @@ local function run_pending(r, t, items, event)
     if rv and type(rv.id) == 'string' then
       review_id = rv.id
     else
-      local why = forge.alias_error(errors, 'r')
-      if why then
+      local why, refused = forge.alias_error(errors, 'r')
+      if why and refused then
         return 'failed', 'GitHub refused to start a review: ' .. why
       end
-      return 'lost', 'GitHub did not answer when the pending review was started (' .. tostring(err or 'no answer')
+      return 'lost', 'GitHub did not answer when the pending review was started (' .. tostring(why or err or 'no answer')
         .. '); nothing was added to it. The next submit finds it if it was made'
     end
   end
@@ -986,15 +1175,17 @@ local function run_pending(r, t, items, event)
     end
     -- written ahead: what is sent, where, and which same-text comments were there before
     local now = comments.now_ms()
-    for _, x in ipairs(batch) do
+    local prev = {}
+    for bi, x in ipairs(batch) do
+      prev[bi] = vim.deepcopy((comments.get(store, x.c.id) or {}).forge_post)
       local before = vim.deepcopy(x.before or {})
       vim.list_extend(before, added_bodies[post.norm_body(x.item.body)] or {})
       set_record(store, x.c.id, { state = 'sending', pr = t.pr.number, repo = t.pr.repo, review_id = review_id, payload = payload_of(x.item), before = before, sent_at = now })
     end
     local dok, derr = durable_save(store)
     if not dok then
-      for _, x in ipairs(batch) do
-        set_record(store, x.c.id, nil)
+      for bi, x in ipairs(batch) do
+        set_record(store, x.c.id, prev[bi])
       end
       return 'failed', 'could not save the local records first: ' .. tostring(derr)
     end
@@ -1010,20 +1201,21 @@ local function run_pending(r, t, items, event)
         end
       end
       local gh = data and forge.added(data[alias])
-      local why = forge.alias_error(errors, alias)
+      local why, refused = forge.alias_error(errors, alias)
       if gh then
         update_record(store, x.c.id, { state = 'pending', thread_id = gh.thread_id or it.thread_id, comment_id = gh.comment_id, database_id = gh.database_id, url = gh.url })
+        shown[gh.comment_id or ''] = true
         local k = post.norm_body(it.body)
         added_bodies[k] = added_bodies[k] or {}
         table.insert(added_bodies[k], gh.comment_id)
-      elseif why then
+      elseif why and refused then
         set_record(store, x.c.id, nil)
         failed = failed + 1
         t.failed = t.failed or {}
         table.insert(t.failed, { c = x.c, why = 'GitHub refused it: ' .. why })
         log.write('forge', ('PR #%d: adding %s failed: %s'):format(t.pr.number, comments.location(x.c), why))
       else
-        lost = err or 'no answer' -- stays `sending`: the next prepare reconciles it
+        lost = why or err or 'no answer' -- stays `sending`: the next prepare reconciles it
       end
     end
     save(store)
@@ -1034,13 +1226,41 @@ local function run_pending(r, t, items, event)
   if failed > 0 then
     return 'failed', ('%d comment%s refused by GitHub; not submitted (what went in stays in your pending review)'):format(failed, failed == 1 and ' was' or 's were')
   end
+  -- the review must hold exactly what the confirmation showed (another tool may have added
+  -- comments meanwhile: they would be published unseen)
+  local ids, rerr = reread_ids(t, review_id)
+  if not ids then
+    return 'failed', 'could not read your pending review again before submitting (' .. tostring(rerr) .. '); not submitted'
+  end
+  local extra = 0
+  for id in pairs(ids) do
+    if not shown[id] then
+      extra = extra + 1
+    end
+  end
+  if extra > 0 then
+    return 'failed', ('your pending review changed since the confirmation (%d comment%s added elsewhere); not submitted: submit again to see %s'):format(
+      extra, extra == 1 and '' or 's', extra == 1 and 'it' or 'them')
+  end
+  -- written ahead: a submit whose answer is lost is found by the next prepare, never repeated
+  local lid = comments.new_id()
+  local lok, lerr = ledger_set(store, lid, { id = lid, kind = 'submit', pr = t.pr.number, repo = t.pr.repo, review_id = review_id,
+    event = event, body = r.body or '', started_at = os.time() })
+  if not lok then
+    return 'failed', 'could not write the local record first: ' .. tostring(lerr)
+  end
   local m = forge.build_submit_mutation({ review_id = review_id, pr_id = t.pf.id, commit = t.tip, event = event, body = r.body })
   local data, err, errors = forge.run_graphql(m, host_of(t))
   local rv = data and type(data.s) == 'table' and type(data.s.pullRequestReview) == 'table' and data.s.pullRequestReview
   if not (rv and type(rv.id) == 'string') then
-    local why = forge.alias_error(errors, 's')
-    return why and 'failed' or 'lost', why or ('no answer to the submit (' .. tostring(err) .. '); the next submit checks it')
+    local why, refused = forge.alias_error(errors, 's')
+    if why and refused then
+      ledger_drop(store, lid)
+      return 'failed', why
+    end
+    return 'lost', 'no answer to the submit (' .. tostring(why or err) .. '); the next submit checks it'
   end
+  ledger_drop(store, lid)
   local now = comments.now_ms()
   for _, c in pairs(store.comments) do
     if not c.deleted and post.state(c) == 'pending' and c.forge_post.review_id == rv.id then
@@ -1107,8 +1327,8 @@ function M.forget(s)
     local st = post.state(c)
     if c.forge then
       return notify('this is a GitHub thread, not a comment revuey sent')
-    elseif st ~= 'sending' and st ~= 'unknown' then
-      return notify(st == 'pending' and 'this comment is in your pending review on GitHub; delete it there' or 'revuey has no unanswered record of this comment')
+    elseif st ~= 'sending' and st ~= 'unknown' and st ~= 'pending' then
+      return notify('revuey has no record of this comment on GitHub to forget')
     end
     local store = require('revuey.comments_view').sync_store(s)
     set_record(store, c.id, nil)

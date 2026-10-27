@@ -269,6 +269,7 @@ function M.item(t, pr)
       hidden = math.max(0, (t.total or 0) - #t.comments),
       comment_id = last.id,
       database_id = last.database_id,
+      root_id = c1.id, -- GitHub's replyTo for a reply in this thread
     },
     anchor = {
       path = t.path,

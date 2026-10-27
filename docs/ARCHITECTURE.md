@@ -1221,7 +1221,8 @@ are in `reports/Terminal code review tool landscape.md`.
       reviews(last: 30) { totalCount nodes { ...review } } }` with `fragment review on
       PullRequestReview { id state viewerDidAuthor createdAt body commit { oid } comments(first:
       100) { totalCount pageInfo nodes { id fullDatabaseId url path line startLine originalLine
-      subjectType body replyTo { id } } } }`, and `node(id) { ... on PullRequestReview {
+      originalStartLine subjectType body replyTo { id } } } }`, and `node(id) { ... on
+      PullRequestReview {
       ...review } }` for every review revuey sent comments to. Every review read is paged to
       the end (`node(id) { ... on PullRequestReview { comments(first, after) } }`); one that
       cannot be is incomplete. A review is gone only on a NOT_FOUND error at its alias (checked
@@ -1246,7 +1247,11 @@ are in `reports/Terminal code review tool landscape.md`.
         JSON-encoded bodies, under 60KB: the query is one argument); a refused alias carries
         `path: [alias]` (`forge.alias_error`). Then `submitPullRequestReview(input:
         {pullRequestReviewId, event, body?})`, only when every add of that PR was answered and
-        accepted; else that PR is not submitted and the reason is reported.
+        accepted, and only when a re-read of the pending review (whole) holds nothing the
+      confirmation did not show (another tool may have added comments meanwhile): else that PR
+      is not submitted and the reason is reported. Only GitHub errors of a refusal type
+      (`forge.REFUSALS`: UNPROCESSABLE, FORBIDDEN, NOT_FOUND...) count as refused; any other
+      error at an alias may hide a change and is treated as a lost answer.
       All documents were validated offline against GitHub's published schema; the preflight
       was run read-only against a public PR.
     - **Write-ahead.** Before each mutation its records are saved and must be on disk (a save
@@ -1254,16 +1259,23 @@ are in `reports/Terminal code review tool landscape.md`.
       pr, repo, review_id (pending flow) | ledger (atomic), payload = {kind, path, line,
       start_line, side, start_side, subject, thread_id, body}, before = ids of same-text
       comments already in the pending review, sent_at}`; per atomic review an entry in
-      `<state>.forge.json` (`{id, pr, repo, commit, event, body, started_at}`), since a verdict
-      alone has no comment to hold a record. An answer turns the records into `pending` (with
+      `<state>.forge.json` (`{id, kind = 'atomic', pr, repo, commit, event, body, threads (the
+      payloads), started_at}`), since a verdict alone has no comment to hold a record; and
+      before every `submitPullRequestReview` an entry `{kind = 'submit', review_id, event,
+      body}`. A write-ahead that cannot be saved sends nothing and is undone. The ledger is
+      written to a temp file (write and close checked) and renamed; one that cannot be parsed
+      stops every submit (its entries would be lost). An answer turns the records into `pending` (with
       GitHub's ids) or `posted`; a refusal drops them; a lost answer or a crash leaves them
       `sending`.
     - **Reconcile** (`forge_post_view.reconcile`, pure core `forge_post.reconcile` and
       `find_atomic`), at the start of every prepare. Recorded ids are checked first and claim
       their comments; then each `sending`/`unknown` record's stored payload (never the comment
       as it is now) is matched against the complete comments of the review it went to
-      (`payload_matches`: same body, path, line and start line, or FILE; a reply in the same
-      thread). Found exactly once, unclaimed, not in `before`, and no other record matching it:
+      (`payload_matches`: same body and path, and the lines it was made on, `originalLine` and
+      `originalStartLine`, since `line` follows the PR head and is null once outdated; or FILE;
+      a reply to the thread's first comment, recorded at `cr` as `root_id`, or to any comment of
+      it that is cached). A miss is never proof of absence while that review has a comment with
+      the same body on that file. Found exactly once, unclaimed, not in `before`, and no other record matching it:
       recorded (pending, or posted if that review was submitted). Definitely absent (a complete
       read without it, or NOT_FOUND): forgotten, and planned again only while `in_review`.
       Anything else (a partial or failed read, several candidates, a candidate claimed or there
@@ -1272,17 +1284,22 @@ are in `reports/Terminal code review tool landscape.md`.
       RIGHT payload with the same text on the same line number are both unknown. A pending
       record is never forgotten without NOT_FOUND or a complete read showing it gone; a
       pending review that cannot be read whole blocks its PR. An atomic ledger entry is found
-      among the PR's latest reviews (the viewer's, same commit, state and body, created after
-      `started_at` minus 10 minutes of clock skew): exactly one: posted (its comments matched
-      for ids; a review that exists has all its threads); none while the reviews read reach
-      back past that time: absent; else unknown and blocked. A found review is never made a
-      second time: a verdict alone is not offered again. `:RevueySubmit forget` on a comment
-      drops an unanswered record (`sending`/`unknown`) with a warning that it may exist on
-      GitHub; `ci` off on an unknown one means it is dropped if the next reconcile finds it
+      among the PR's latest reviews, read whole (the viewer's, same commit, state and body,
+      created after `started_at` minus 10 minutes of clock skew, and holding every thread sent:
+      an empty Approve made elsewhere is not it): exactly one: posted; none while the reviews
+      read reach back past that time: absent; else unknown and blocked. A submit entry is found
+      when its review is no longer PENDING. Whenever a review of revuey's turns out submitted
+      (a ledger entry, or a review its pending records went to), the PR gets no second review
+      with the same verdict (`found_review`). `:RevueySubmit forget` on a comment
+      drops its record (any state) with a warning that it may exist on GitHub; the blocked
+      confirmation offers `Forget unconfirmed`, which (after a second warning) drops the
+      blocked PRs' unanswered and stuck records and ledger entries, the only way out of an
+      entry with no comment (a verdict alone); `ci` off on an unknown one means it is dropped if the next reconcile finds it
       absent. A pending comment edited here since is shown with GitHub's text.
     - **The user's pending review.** Its comments that revuey did not add are listed in the
       confirmation by `path:line` ("submitted too"), with the count. When it is bound to another
-      commit than the reviewed tip (`commit.oid`), GitHub numbers its threads in that commit:
+      commit than the reviewed tip (`commit.oid`; or no commit at all: line comments refused),
+      GitHub numbers its threads in that commit:
       the confirmation says so, replies still go in, new-side line and file comments only when
       `git cat-file --batch-check <commit>:<path>` is the review's blob (same file, same
       numbers), old-side ones never (the base may differ).
@@ -1310,7 +1327,9 @@ are in `reports/Terminal code review tool landscape.md`.
       (`sending`/`unknown`) with `maybe on GitHub #N (unconfirmed)`.
     - **Concurrency.** One submit at a time per Neovim (`forge_post_view.job`, across its
       reviews); an error in the confirmation or the body editor releases it, and the body editor
-      returns to the confirmation however it is closed. Two Neovims on one review do not share
+      returns to the confirmation however it is closed. Back at the confirmation, each planned
+      comment is checked again: one deleted, taken out of the review or edited meanwhile is
+      dropped from this submit and listed. Two Neovims on one review do not share
       the lock (a limitation, in the README). Closing the review before the confirmation sends
       nothing; once sending, a submit runs to the end and records what it learns in the
       comments file (the store outlives the UI).

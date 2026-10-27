@@ -533,8 +533,13 @@ GitHub #42`, or posted); proven absent (the review read whole without it), it is
 sent again if it is still in the review. Anything else (GitHub unreadable, a pending review too
 long to read whole, two comments it cannot tell apart, a comment of yours from elsewhere with
 the same text) marks it `maybe on GitHub #42 (unconfirmed)` and blocks that PR: nothing more
-goes to it until a later `gP` can tell. Check the PR on GitHub; `:RevueySubmit forget` on such a
-comment drops revuey's record of it (it may exist on GitHub, so it could be posted twice). A
+goes to it until a later `gP` can tell. Check the PR on GitHub; then `Forget unconfirmed` in the
+confirmation drops revuey's records of what it sent to the blocked PRs (comments and reviews),
+and `:RevueySubmit forget` on a comment drops its record; either may make a later submit post
+it twice, so both warn first. A submit with no answer is found the same way and never sent
+twice. Just before your pending review is submitted, revuey reads it again: if another tool
+added comments to it while the confirmation was open, nothing is submitted (the next `gP`
+shows them). Comments you take out, edit or delete while the confirmation is open are not sent. A
 comment in your pending review that you take out with `ci` stays there until you delete it on
 GitHub; then revuey forgets it. A failed or cancelled submit leaves your pending review as it
 is. One submit runs at a time per Neovim; two Neovims on the same review do not see each

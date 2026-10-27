@@ -425,7 +425,23 @@ function M.payload_matches(pc, p, thread_comments)
   if p.subject == 'FILE' then
     return pc.subject == 'FILE'
   end
-  return pc.subject ~= 'FILE' and pc.line == p.line and (pc.start_line or pc.line) == (p.start_line or p.line)
+  -- the lines it was made on (`original*`): `line` follows the PR head, moves after a push and is
+  -- null once outdated
+  local line = pc.original_line or pc.line
+  local start = pc.original_start_line or pc.start_line or line
+  return pc.subject ~= 'FILE' and line == p.line and start == (p.start_line or p.line)
+end
+
+---Does the pool have a comment with this payload's body and path (whatever its lines)? Then a
+---miss is never proof of absence.
+local function similar(pool, p, claimed, before)
+  for _, pc in ipairs(pool or {}) do
+    if not claimed[pc.id] and not (before or {})[pc.id] and norm_body(pc.body) == norm_body(p.body)
+      and (p.kind == 'reply' and pc.reply_to ~= nil or (p.kind ~= 'reply' and pc.path == p.path)) then
+      return true
+    end
+  end
+  return false
 end
 
 ---@class revuey.ReconcileEntry
@@ -491,7 +507,7 @@ function M.reconcile(entries)
         out[e.key] = { unknown = 'GitHub could not be read' }
       elseif #c.list == 1 and users[c.list[1].id] == 1 and not c.taken then
         out[e.key] = { found = c.list[1] }
-      elseif #c.list == 0 and not c.taken and e.complete then
+      elseif #c.list == 0 and not c.taken and e.complete and not similar(e.pool, e.payload, claimed, e.before) then
         out[e.key] = { absent = true }
       elseif #c.list == 0 and not c.taken then
         out[e.key] = { unknown = 'its review could not be read whole' }
@@ -521,17 +537,45 @@ function M.find_atomic(entry, pf)
     return { unknown = 'GitHub could not be read' }
   end
   local since = M.iso(entry.started_at - M.SKEW)
-  local hits = {}
+  local hits, unsure = {}, false
   for _, rv in ipairs(pf.recent) do
     if rv.mine and rv.commit == entry.commit and rv.state == M.EVENT_STATE[entry.event]
       and norm_body(rv.body) == norm_body(entry.body) and rv.created_at >= since then
-      hits[#hits + 1] = rv
+      -- with threads, it is ours only when every one sent is in it (read whole): an empty
+      -- review of the same verdict made elsewhere is not
+      local ok = true
+      if entry.threads and #entry.threads > 0 then
+        if rv.cursor then
+          unsure, ok = true, false
+        else
+          local used = {}
+          for _, p in ipairs(entry.threads) do
+            local hit
+            for _, pc in ipairs(rv.comments) do
+              if not used[pc.id] and M.payload_matches(pc, p) then
+                hit = pc
+                break
+              end
+            end
+            if not hit then
+              ok = false
+              break
+            end
+            used[hit.id] = true
+          end
+        end
+      end
+      if ok then
+        hits[#hits + 1] = rv
+      end
     end
   end
   if #hits == 1 then
     return { found = hits[1] }
   elseif #hits > 1 then
     return { unknown = 'several reviews of yours could be it' }
+  elseif unsure then
+    return { unknown = 'a review that could be it could not be read whole' }
   end
   if pf.recent_all or (pf.recent_since and pf.recent_since < since) then
     return { absent = true }
