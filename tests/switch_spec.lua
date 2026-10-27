@@ -82,15 +82,19 @@ h.test('worktree list parsing: branch -> path; detached and bare worktrees have 
   h.eq({ ['stack/cart'] = '/repo', ['stack/ui'] = '/repo-wt' }, switch.parse_worktrees(out))
 end)
 
-h.test('messages: dirty, untracked, another worktree, agent, navigate', function()
+h.test('messages: dirty, untracked, another worktree, the agent note, navigate', function()
   h.eq('revuey: not switching to stack/math: uncommitted changes in a.ts, b.ts, c.ts and 2 more. Commit or stash them first (revuey never stashes).',
     switch.msg.dirty('stack/math', { 'a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts' }))
   h.eq('revuey: not switching to stack/ui: it has files at the paths of untracked or ignored src/x.ts. Move or remove them first.',
     switch.msg.untracked('stack/ui', { 'src/x.ts' }))
   h.eq('revuey: not switching: stack/ui is checked out in another worktree, at /tmp/wt', switch.msg.elsewhere('stack/ui', '/tmp/wt'))
-  local prompt, items = switch.msg.agent('stack/math')
-  h.eq('An agent is connected to this review. Switching the worktree to stack/math changes the files it may be working on.', prompt)
-  h.eq({ 'Switch to stack/math', 'Cancel' }, items)
+  h.eq(nil, switch.msg.agent, 'no question for a connected agent')
+  h.eq('told the connected agent', switch.msg.told('told'))
+  h.eq('the connected agent is told when you stop switching', switch.msg.told('later'))
+  h.eq('could not tell the connected agent (see revuey.log)', switch.msg.told('failed'))
+  h.eq(nil, switch.msg.told(nil))
+  h.eq(nil, switch.msg.told('unchanged'))
+  h.eq('revuey: switched to stack/cart; told the connected agent', switch.msg.done({ kind = 'switch', branch = 'stack/cart' }, switch.msg.told('told')))
   h.eq('revuey: showing stack/ui, branch not switched: not switching to stack/ui: uncommitted changes in a.ts. Commit or stash them first (revuey never stashes).',
     switch.msg.navigate('stack/ui', switch.msg.dirty('stack/ui', { 'a.ts' })))
   h.eq('revuey: switched to stack/cart (tracks origin/stack/cart); stack/cart is not at origin/stack/cart\'s commit',
@@ -139,6 +143,24 @@ h.test('messages: unsaved buffers, busy, hook', function()
   h.eq('revuey: not switching to stack/math: unsaved changes in buffers for src/a.ts. Write or discard them first.', switch.msg.unsaved('stack/math', { 'src/a.ts' }))
   h.eq('revuey: a switch is already running; this one is dropped', switch.msg.busy())
   h.eq('revuey: switched to stack/math, but git reported an error (a hook?): hookfail', switch.msg.hook('stack/math', 'hookfail'))
+end)
+
+h.test('the switched event: its fields, the agent\'s line (watch --messages) and the event line', function()
+  local comments = require('revuey.comments')
+  local ev = comments.switch_event({ repo = '/r', branch = 'stack/math' }, {
+    session = '42', worktree = '/r', from = 'stack/cart', to = 'stack/math', layer = 'stack/math', index = 1, count = 3,
+    pr = { number = 12, url = 'https://github.com/o/r/pull/12', title = 'Math', checks = {} },
+  }, 1000)
+  h.eq({ 'switched', '42', '/r', 'stack/cart', 'stack/math', 'stack/math', 1, 3 },
+    { ev.kind, ev.session, ev.worktree, ev.from, ev.to, ev.layer, ev.layer_index, ev.layer_count })
+  h.eq({ number = 12, url = 'https://github.com/o/r/pull/12', title = 'Math' }, ev.pr, 'only what the agent needs of the PR')
+  h.eq('revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/o/r/pull/12): the worktree has stack/math'
+    .. ' checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on',
+    comments.message_line(ev, 'bin'))
+  h.eq('switch stack/cart -> stack/math (layer 1 of 3, PR #12)  #' .. ev.id, comments.event_line(ev))
+  -- detached before; a remote layer (its name differs from the branch); no PR known
+  ev = comments.switch_event({ repo = '/r' }, { to = 'stack/cart', layer = 'origin/stack/cart', index = 2, count = 3 })
+  h.ok(comments.message_line(ev):find('^revuey switched a detached HEAD %-> stack/cart %(layer 2 of 3, origin/stack/cart%): '), comments.message_line(ev))
 end)
 
 -- ---------------------------------------------------------------------------
@@ -261,6 +283,69 @@ local function row_of_layer(s, index)
       return r
     end
   end
+end
+
+-- the agent link: a watcher record (presence) or a real `bin/revuey watch --messages`
+
+local sessions = require('revuey.sessions')
+local agent_link = require('revuey.agent_link')
+
+---Make an agent count as connected to the review (a fresh watcher record for its session).
+local function link_agent(s)
+  sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
+    started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms() })
+  h.ok(agent_link.poll(s), 'agent not connected')
+end
+
+---The `switched` events in the feeds of the state dir for the worktree `dir`, oldest first.
+local function switch_events(dir)
+  local out = {}
+  local real = vim.uv.fs_realpath(dir)
+  for name, ty in vim.fs.dir(state_dir) do
+    if ty == 'file' and name:match('%.events%.jsonl$') then
+      local text = table.concat(vim.fn.readfile(vim.fs.joinpath(state_dir, name)), '\n') .. '\n'
+      for _, ev in ipairs(require('revuey.comments').decode_events(text)) do
+        if ev.kind == 'switched' and vim.uv.fs_realpath(ev.worktree or '') == real then
+          out[#out + 1] = ev
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    return a.id < b.id
+  end)
+  return out
+end
+
+local watchers = {}
+h.teardown(function()
+  for _, w in ipairs(watchers) do
+    pcall(function()
+      w.proc:kill('sigterm')
+      w.proc:wait(5000)
+    end)
+  end
+end)
+
+---Start `bin/revuey watch --messages` in `dir` (what the skill's agent runs) and wait until it follows the feed.
+local function start_watch(dir)
+  local w = { out = '', err = '' }
+  watchers[#watchers + 1] = w
+  w.proc = vim.system({ h.root .. '/bin/revuey', 'watch', '--messages' }, {
+    cwd = dir,
+    env = { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath },
+    text = true,
+    stdout = function(_, data)
+      w.out = w.out .. (data or '')
+    end,
+    stderr = function(_, data)
+      w.err = w.err .. (data or '')
+    end,
+  })
+  h.ok(vim.wait(10000, function()
+    return w.err:find('watching session', 1, true) ~= nil
+  end, 20), 'watch did not attach: ' .. w.err)
+  return w
 end
 
 -- local stacks (stack/math <- stack/cart (checked out) <- stack/ui)
@@ -457,37 +542,121 @@ h.test('submodules: a pointer left behind by a switch never blocks the next one'
   view.close()
 end)
 
-h.test('an agent connected to the review: asks first; cancel keeps the branch; the answer is re-checked', function()
+h.test('an agent connected: gS switches without asking, and the agent gets from, to, layer and PR', function()
   local dir = fixture('--stack', 'agent')
   local s = open(dir)
-  local sessions = require('revuey.sessions')
-  sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
-    started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms() })
+  local w = start_watch(dir)
+  h.ok(vim.wait(5000, function()
+    return agent_link.poll(s)
+  end, 50), 'the watch did not count as a connected agent')
+  -- the PR lookup's cached result (never fetched for this)
+  local fv = require('revuey.forge_view')
+  local orig_pr = fv.pr
+  fv.pr = function(_, key)
+    if key == 'stack/math' then
+      return { number = 12, url = 'https://github.com/o/r/pull/12', title = 'Math' }
+    end
+  end
   local done
-  local prompts = with_select(2, function()
+  local ok, err = pcall(function()
+    local prompts = with_select(2, function()
+      done = do_switch(1, nil, 'stack/math')
+    end)
+    h.eq(0, #prompts, 'no question')
+  end)
+  fv.pr = orig_pr
+  assert(ok, err)
+  h.eq(true, done.ok, done.msg)
+  h.eq('revuey: switched to stack/math; told the connected agent', done.msg)
+  h.eq('stack/math', branch(dir))
+  local evs = switch_events(dir)
+  h.eq(1, #evs)
+  local ev = evs[1]
+  h.eq({ 'stack/cart', 'stack/math', 'stack/math', 1, 3, s.link.id }, { ev.from, ev.to, ev.layer, ev.layer_index, ev.layer_count, ev.session })
+  h.eq({ number = 12, url = 'https://github.com/o/r/pull/12', title = 'Math' }, ev.pr)
+  h.eq(vim.uv.fs_realpath(dir), vim.uv.fs_realpath(ev.review.repo))
+  -- the agent's watch prints it, once
+  local line = 'revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/o/r/pull/12): the worktree has stack/math checked out now'
+  h.ok(vim.wait(10000, function()
+    return w.out:find(line, 1, true) ~= nil
+  end, 20), 'watch printed: ' .. w.out .. w.err)
+  local _, n = w.out:gsub('revuey switched', '')
+  h.eq(1, n, w.out)
+  w.proc:kill('sigterm')
+  h.eq(0, w.proc:wait(5000).code)
+  view.close()
+end)
+
+h.test('no agent connected: gS switches and nothing is sent', function()
+  local dir = fixture('--stack', 'no-agent')
+  local s = open(dir)
+  h.eq(false, agent_link.poll(s))
+  local done = do_switch(1, nil, 'stack/math')
+  h.eq(true, done.ok, done.msg)
+  h.eq('revuey: switched to stack/math', done.msg)
+  h.eq({}, switch_events(dir))
+  view.close()
+end)
+
+h.test('telling the agent fails: the switch still happens, the failure is logged and said', function()
+  local dir = fixture('--stack', 'agent-fail')
+  local s = open(dir)
+  link_agent(s)
+  local cfg = require('revuey.config').options
+  local orig_log = cfg.log_file
+  cfg.log_file = h.tmpdir('switch-log') .. '/revuey.log'
+  local log = require('revuey.log')
+  local comments = require('revuey.comments')
+  local orig = comments.append_event
+  local done, done2
+  local ok, err = pcall(function()
+    comments.append_event = function()
+      error('disk full')
+    end
+    done = do_switch(1, nil, 'stack/math')
+    comments.append_event = function()
+      return false, 'EACCES: permission denied'
+    end
+    done2 = do_switch(2, nil, 'stack/cart')
+  end)
+  comments.append_event = orig
+  cfg.log_file = orig_log
+  assert(ok, err)
+  h.eq(true, done.ok, done.msg)
+  h.eq('revuey: switched to stack/math; could not tell the connected agent (see revuey.log)', done.msg)
+  h.eq(true, done2.ok, done2.msg)
+  h.eq('revuey: switched to stack/cart; could not tell the connected agent (see revuey.log)', done2.msg)
+  h.eq('stack/cart', branch(dir))
+  local a, b = log.entries[#log.entries - 1], log.entries[#log.entries]
+  h.eq({ 'agent', 'agent' }, { a.scope, b.scope })
+  h.ok(a.msg:find('switch to stack/math', 1, true) and a.msg:find('disk full', 1, true), a.msg)
+  h.ok(b.msg:find('switch to stack/cart', 1, true) and b.msg:find('EACCES', 1, true), b.msg)
+  h.eq({}, switch_events(dir))
+  view.close()
+end)
+
+h.test('an agent connected: refusals still refuse (nothing told), no question', function()
+  local dir = fixture('--stack', 'agent-refused')
+  local s = open(dir)
+  link_agent(s)
+  h.write(dir, 'src/math.ts', 'dirty\n')
+  local done
+  local prompts = with_select(1, function()
     done = do_switch(1)
   end)
-  h.eq(1, #prompts)
-  h.eq('An agent is connected to this review. Switching the worktree to stack/math changes the files it may be working on.', prompts[1].prompt)
+  h.eq(0, #prompts)
   h.eq(false, done.ok)
-  h.eq('stack/cart', branch(dir))
-  -- the worktree changed while the question was open: refused after the yes
-  local orig = vim.ui.select
-  vim.ui.select = function(items, _, cb)
-    h.write(dir, 'src/math.ts', 'edited meanwhile\n')
-    cb(items[1], 1)
-  end
-  done = do_switch(1)
-  vim.ui.select = orig
-  h.eq(false, done.ok)
-  h.ok(done.msg:find('uncommitted changes in src/math.ts', 1, true), done.msg)
+  h.eq('revuey: not switching to stack/math: uncommitted changes in src/math.ts. Commit or stash them first (revuey never stashes).', done.msg)
   h.git(dir, 'checkout', '-q', '--', 'src/math.ts')
-  prompts = with_select(1, function()
-    done = do_switch(1, nil, 'stack/math')
-  end)
-  h.eq(1, #prompts)
-  h.eq(true, done.ok)
-  h.eq('stack/math', branch(dir))
+  vim.cmd('tabnew ' .. vim.fn.fnameescape(dir .. '/src/cart.ts'))
+  local b = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(b, 0, 0, false, { '// my unsaved edit' })
+  vim.cmd('tabprevious')
+  done = do_switch(1)
+  h.eq('revuey: not switching to stack/math: unsaved changes in buffers for src/cart.ts. Write or discard them first.', done.msg)
+  vim.api.nvim_buf_delete(b, { force = true })
+  h.eq('stack/cart', branch(dir))
+  h.eq({}, switch_events(dir))
   view.close()
 end)
 
@@ -615,37 +784,93 @@ h.test(']s / [s stay view-only by default; with switch_on_navigate they switch, 
   view.close()
 end)
 
-h.test('switch_on_navigate with an agent connected: asks once per review, not on every ]s', function()
+h.test('switch_on_navigate with an agent connected: no question; switches less than SWITCH_COALESCE_MS apart are told as one', function()
   local dir = fixture('--stack', 'navigate-agent')
   local s = open(dir)
-  local sessions = require('revuey.sessions')
-  sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
-    started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms() })
-  require('revuey.config').options.stack.switch_on_navigate = true
-  local prompts
+  link_agent(s)
+  local cfg = require('revuey.config').options
+  local orig_ms = agent_link.SWITCH_COALESCE_MS
+  cfg.stack.switch_on_navigate = true
+  local function head_is(name)
+    return function()
+      return head_layer(s) == name
+    end
+  end
   local ok, err = pcall(function()
-    prompts = with_select(1, function()
-      nav(s, '[s', function()
-        return head_layer(s) == 'stack/math'
-      end)
-      nav(s, ']s', function()
-        return head_layer(s) == 'stack/cart'
-      end)
-      nav(s, ']s', function()
-        return head_layer(s) == 'stack/ui'
-      end)
+    agent_link.SWITCH_COALESCE_MS = 60000 -- every switch below is "rapid"
+    local first
+    local prompts = with_select(2, function()
+      first = nav(s, '[s', head_is('stack/math'))
+      nav(s, ']s', head_is('stack/cart'))
+      nav(s, ']s', head_is('stack/ui'))
     end)
+    h.eq(0, #prompts, 'no question')
+    h.eq('stack/ui', branch(dir))
+    h.ok(vim.tbl_contains(vim.tbl_map(function(m)
+      return m.msg
+    end, first), 'revuey: switched to stack/math; the connected agent is told when you stop switching'), vim.inspect(first))
+    h.eq({}, switch_events(dir), 'nothing told while switching')
+    -- gS sends what waits along with its own switch, as one message from where the agent last heard
+    local done = do_switch(1, nil, 'stack/math')
+    h.eq('revuey: switched to stack/math; told the connected agent', done.msg)
+    local evs = switch_events(dir)
+    h.eq(1, #evs)
+    h.eq({ 'stack/cart', 'stack/math', 1 }, { evs[1].from, evs[1].to, evs[1].layer_index })
+    -- a quiet period after a switch sends it
+    agent_link.SWITCH_COALESCE_MS = 50
+    nav(s, ']s', head_is('stack/cart'))
+    h.ok(vim.wait(5000, function()
+      return #switch_events(dir) == 2
+    end, 20), 'not told after the quiet period')
+    evs = switch_events(dir)
+    h.eq({ 'stack/math', 'stack/cart', 2 }, { evs[2].from, evs[2].to, evs[2].layer_index })
+    -- passing through layers: the agent hears where the user ends up
+    agent_link.SWITCH_COALESCE_MS = 60000
+    nav(s, ']s', head_is('stack/ui'))
+    nav(s, '[s', head_is('stack/cart'))
+    done = do_switch(1, nil, 'stack/math')
+    h.eq(3, #switch_events(dir))
+    h.eq({ 'stack/cart', 'stack/math' }, { switch_events(dir)[3].from, switch_events(dir)[3].to })
+    -- one still waiting when the review closes is sent then
+    nav(s, ']s', head_is('stack/cart'))
+    h.eq(3, #switch_events(dir))
+    view.close()
+    evs = switch_events(dir)
+    h.eq(4, #evs)
+    h.eq({ 'stack/math', 'stack/cart' }, { evs[4].from, evs[4].to })
   end)
-  require('revuey.config').options.stack.switch_on_navigate = false
+  cfg.stack.switch_on_navigate = false
+  agent_link.SWITCH_COALESCE_MS = orig_ms
+  if view.session then
+    view.close()
+  end
   assert(ok, err)
-  h.eq(1, #prompts, 'one question for three switches')
-  h.eq('stack/ui', branch(dir))
-  -- gS still asks
-  prompts = with_select(2, function()
-    h.eq(false, do_switch(1).ok)
+end)
+
+h.test('switch_on_navigate: a coalesced switch back to where the agent last heard of tells nothing', function()
+  local dir = fixture('--stack', 'navigate-back')
+  local s = open(dir)
+  link_agent(s)
+  local cfg = require('revuey.config').options
+  local orig_ms = agent_link.SWITCH_COALESCE_MS
+  cfg.stack.switch_on_navigate = true
+  local ok, err = pcall(function()
+    agent_link.SWITCH_COALESCE_MS = 60000
+    nav(s, '[s', function()
+      return head_layer(s) == 'stack/math'
+    end)
+    -- gS back to stack/cart: merged with the waiting one, it is no change for the agent
+    local done = do_switch(2, nil, 'stack/cart')
+    h.eq('revuey: switched to stack/cart', done.msg)
+    view.close()
+    h.eq({}, switch_events(dir))
   end)
-  h.eq(1, #prompts)
-  view.close()
+  cfg.stack.switch_on_navigate = false
+  agent_link.SWITCH_COALESCE_MS = orig_ms
+  if view.session then
+    view.close()
+  end
+  assert(ok, err)
 end)
 
 h.test('one switch at a time: a second request while one runs is dropped with a message', function()
@@ -902,6 +1127,33 @@ h.test('a remote layer whose local name is taken by an unrelated branch: asks; c
   h.eq(tip, vim.trim(h.git(dir, 'rev-parse', 'stack/cart')), 'the local branch is not moved')
   h.eq('', config(dir, 'branch.stack/cart.merge'))
   h.eq('', config(dir, 'branch.stack/cart.revueyParent'), 'no parent setting for an unrelated branch')
+  view.close()
+end)
+
+h.test('an agent connected: the conflicting-name question is still asked; the agent is told once the user picks', function()
+  local dir = fixture('--remote-stack', 'agent-conflict')
+  h.git(dir, 'branch', '-q', '--no-track', 'stack/cart', 'origin/main')
+  local s = open(dir)
+  link_agent(s)
+  local done
+  local prompts = with_select(2, function()
+    done = do_switch(2)
+  end)
+  h.eq(1, #prompts)
+  h.eq('A local branch stack/cart already exists and tracks no remote branch, not origin/stack/cart. revuey will not change it.', prompts[1].prompt)
+  h.eq(false, done.ok)
+  h.eq(nil, branch(dir), 'still detached')
+  h.eq({}, switch_events(dir))
+  prompts = with_select(1, function()
+    done = do_switch(2)
+  end)
+  h.eq(1, #prompts)
+  h.eq(true, done.ok, done.msg)
+  h.eq("revuey: switched to stack/cart; stack/cart is not at origin/stack/cart's commit; told the connected agent", done.msg)
+  local evs = switch_events(dir)
+  h.eq(1, #evs)
+  h.eq(nil, evs[1].from, 'detached before')
+  h.eq({ 'stack/cart', 'origin/stack/cart', 2 }, { evs[1].to, evs[1].layer, evs[1].layer_index })
   view.close()
 end)
 

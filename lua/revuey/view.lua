@@ -3030,10 +3030,10 @@ end
 ---`stack.switch_on_navigate`): plain `git switch` (`--track` for a remote-tracking layer with no
 ---local branch). Refuses on a dirty worktree, unsaved buffers of its files, files the switch
 ---would write over, and a branch checked out in another worktree; asks before using an unrelated
----local branch of the same name, and when an agent is connected (with `navigate`: once per
----review). One switch at a time: a request while one runs is dropped with a message. Afterwards
----the review refreshes onto the new HEAD layer (`@`, working tree), revuey's hidden LSP buffers
----reload, and `:checktime` lets the user's own buffers follow their autoread settings.
+---local branch of the same name. One switch at a time: a request while one runs is dropped with
+---a message. Afterwards a connected agent is told (agent_link.tell_switch; `navigate` switches
+---coalesce), the review refreshes onto the new HEAD layer (`@`, working tree), revuey's hidden
+---LSP buffers reload, and `:checktime` lets the user's own buffers follow their autoread settings.
 ---@param index? integer layer of the open review (default: the viewed one)
 ---@param o? {navigate?:boolean, on_done?:fun(ok:boolean, msg:string)}
 function M.switch_layer(index, o)
@@ -3110,20 +3110,6 @@ function M.switch_layer(index, o)
     if M.session ~= s or s.cleaned then
       return say('revuey: the review closed; not switched', vim.log.levels.INFO)
     end
-    if not (o.navigate and s.switch_agent_ok) and agent_link.poll(s) then
-      local prompt, items = switch.msg.agent(p.branch)
-      if ask(prompt, items) ~= 1 then
-        return say('revuey: not switched', o.navigate and vim.log.levels.WARN or vim.log.levels.INFO)
-      end
-      if o.navigate then
-        s.switch_agent_ok = true -- ]s/[s ask once per review
-      end
-      -- the question may have been open a while: look again
-      why = refusal(p, target_rev)
-      if why then
-        return say(why, vim.log.levels.ERROR)
-      end
-    end
     local parent = switch.parent_setting(stack.layers, index, p)
     local err, warning = switch.run(root, p)
     if err then
@@ -3142,7 +3128,27 @@ function M.switch_layer(index, o)
     if p.kind == 'switch' and tip and tip ~= layer.tip then
       note = ('%s is not at %s\'s commit'):format(p.branch, layer.name)
     end
-    local msg = warning or switch.msg.done(p, note)
+    -- the agent works in these files: say what changed under it (never fails the switch)
+    local ok_pr, pr = pcall(require('revuey.forge_view').pr, s, layer.name) -- cached only, never fetched
+    local ok_tell, told = pcall(agent_link.tell_switch, s, {
+      from = prep.current,
+      to = p.branch,
+      layer = layer.name,
+      index = index,
+      count = #stack.layers,
+      pr = ok_pr and pr or nil,
+    }, { coalesce = o.navigate })
+    if not ok_tell then
+      require('revuey.log').write('agent', 'telling the agent about the switch failed: ' .. tostring(told))
+      told = 'failed'
+    end
+    local agent_note = switch.msg.told(told)
+    local msg
+    if warning then
+      msg = warning .. (agent_note and ('; ' .. agent_note) or '')
+    else
+      msg = switch.msg.done(p, note and agent_note and (note .. '; ' .. agent_note) or note or agent_note)
+    end
     vim.notify(msg, warning and vim.log.levels.WARN or vim.log.levels.INFO)
     -- the files on disk changed: revuey's hidden buffers first (silently), then the user's
     -- buffers follow their own autoread settings

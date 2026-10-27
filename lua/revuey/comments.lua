@@ -30,6 +30,9 @@ M.EVENT_KINDS = {
   created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true,
   accepted = true, dismissed = true, -- AI review findings: triage (dismissed with status saved: restored)
 }
+-- Not about a comment (M.switch_event): the worktree was switched to another stack layer while an
+-- agent was connected. Delivered like a message by `watch --messages`, never caught up.
+M.SWITCHED = 'switched'
 
 ---@class revuey.CommentAnchor
 ---@field path string
@@ -1282,9 +1285,60 @@ function M.message_key(x)
   return tostring(x.comment_id or x.id) .. ':' .. tostring(x.sent_at)
 end
 
+---The `switched` event: the review's worktree was switched to another stack layer (`gS`,
+---`:RevueySwitch`, `]s`/`[s` with switch_on_navigate) while an agent was connected.
+---@param review table review info (repo, for watch's matching)
+---@param info {session?:string, from?:string, to:string, layer:string, index?:integer, count?:integer, worktree?:string, pr?:{number:integer, url?:string, title?:string}}
+---  `from`: the branch checked out before (nil: detached HEAD); `to`: the branch now checked out;
+---  `layer`: the stack layer's name (`origin/x` for a remote layer); `index`/`count`: its position
+function M.switch_event(review, info, now)
+  now = now or M.now_ms()
+  local pr = info.pr and { number = info.pr.number, url = info.pr.url, title = info.pr.title } or nil
+  return {
+    id = M.new_id(now),
+    kind = M.SWITCHED,
+    at = now,
+    session = info.session,
+    review = review or {},
+    worktree = info.worktree,
+    from = info.from,
+    to = info.to,
+    layer = info.layer,
+    layer_index = info.index,
+    layer_count = info.count,
+    pr = pr,
+  }
+end
+
+---What a `switched` event says: `stack/cart -> stack/math (layer 1 of 3, PR #12 <url>)`.
+local function switch_summary(ev, with_url)
+  local parts = {}
+  if ev.layer_index and ev.layer_count then
+    parts[#parts + 1] = ('layer %d of %d'):format(ev.layer_index, ev.layer_count)
+  end
+  if ev.layer and ev.layer ~= ev.to then
+    parts[#parts + 1] = ev.layer
+  end
+  if ev.pr and ev.pr.number then
+    parts[#parts + 1] = ('PR #%d'):format(ev.pr.number) .. ((with_url and ev.pr.url) and (' ' .. ev.pr.url) or '')
+  end
+  return ('%s -> %s%s'):format(
+    ev.from or 'a detached HEAD',
+    tostring(ev.to),
+    #parts > 0 and (' (' .. table.concat(parts, ', ') .. ')') or ''
+  )
+end
+
 ---One line for agents: `revuey message <id> src/cart.ts:12-14 (new) [stack/cart]: <first
----line>  (<bin> show <id> for full context)`.
+---line>  (<bin> show <id> for full context)`. A `switched` event: `revuey switched <from> ->
+---<to> (layer i of n, PR #N <url>): <what it means>`.
 function M.message_line(ev, bin)
+  if ev.kind == M.SWITCHED then
+    return ('revuey switched %s: the worktree has %s checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on'):format(
+      switch_summary(ev, true),
+      tostring(ev.to)
+    )
+  end
   local r = ev.review or {}
   local scope = r.scope == 'full' and 'full stack' or (r.branch or r.state_branch or '?')
   local side = ev.file_level and 'file' or (ev.anchor and ev.anchor.side or 'new')
@@ -1435,6 +1489,9 @@ local VERB = {
 
 ---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
 function M.event_line(ev)
+  if ev.kind == M.SWITCHED then
+    return 'switch ' .. switch_summary(ev, false) .. '  #' .. tostring(ev.id)
+  end
   local verb = VERB[ev.kind] or ev.kind
   if ev.kind == 'resolved' and ev.status ~= 'resolved' then
     verb = 'reopen'

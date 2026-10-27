@@ -172,9 +172,9 @@ are in `reports/Terminal code review tool landscape.md`.
    attaches); a remote layer -> a local branch whose upstream is the ref (same name first) is
    switched to (`noop` when current), else a local branch of the short name (tracking something
    else or nothing) is a `conflict` the user resolves (switch to it untouched, or cancel), else
-   `git switch --track <ref>`. Refusals, checked before the question for a connected agent and
-   again after it: modified listed buffers of files in the worktree (a later `:w` would write the
-   old branch's text onto the new one); a branch in another worktree (`worktree list --porcelain`,
+   `git switch --track <ref>`. Refusals, checked after the conflict question: modified listed
+   buffers of files in the worktree (a later `:w` would write the old branch's text onto the new
+   one); a branch in another worktree (`worktree list --porcelain`,
    path named; git's own "already used by worktree" is mapped too); tracked changes (`status
    --porcelain=v1 -z --untracked-files=all --ignore-submodules=all`: submodule pointers and
    contents are left out, since `git switch` without `--recurse-submodules` leaves submodule
@@ -185,9 +185,25 @@ are in `reports/Terminal code review tool landscape.md`.
    a directory at an added path counts unless the switch removes tracked files under it. Other
    untracked files are carried over as git does. One switch per review at a time
    (`s.switching`): a request while one runs is dropped with a message (with `]s`/`[s` the view
-   still moves). A connected agent (`agent_link.poll`) gets a `vim.ui.select` confirmation, asked
-   once per review for `]s`/`[s` (`s.switch_agent_ok`) and every time for `gS`; questions run
-   inside the `git.async` coroutine (resumed from the select callback). A non-zero `git switch`
+   still moves). The conflict question runs inside the `git.async` coroutine (resumed from the
+   select callback). A connected agent is not asked about: the switch goes ahead and the agent is
+   told afterwards (`agent_link.tell_switch`, decided by a fresh `agent_link.poll`; no agent, nothing
+   is written). It gets a `switched` event in the review's feed (`comments.switch_event`: `from`,
+   the branch checked out before, absent when detached; `to`; `layer`, `layer_index`/`layer_count`;
+   `pr` {number, url, title} from `forge_view.pr`, the cached lookup, never fetched for this;
+   `session`, `worktree`, `review` for watch's routing), which `watch --messages` prints as `revuey
+   switched <from> -> <to> (layer i of n[, <remote layer>][, PR #N <url>]): ...` like a message
+   (routed by session, printed once, not stamped or stored, so a later watch never catches it up;
+   the registry's `checked_out` is the lasting record). A question used to guard this; telling
+   instead keeps the agent informed without a prompt on every switch, and it is the agent's
+   cue to re-read files. A write failure is logged (`log.write('agent', ...)`) and the done
+   message says the agent was not told; it never fails or undoes the switch. `]s`/`[s` switches
+   coalesce: each one waits `agent_link.SWITCH_COALESCE_MS` (1.5 s) in `link.switch_pending`, and a
+   later switch takes its place keeping the first `from`, so walking the stack sends one message
+   for where the user stopped rather than one per layer passed (each would tell the agent to drop
+   its work and re-read files it is about to lose again). Any later switch (`gS` too, which sends at
+   once) carries a waiting one along, and closing the review (`detach`) sends it; a net move back
+   to the branch the agent last heard of sends nothing. A non-zero `git switch`
    after which HEAD is on the branch (a failing `post-checkout` hook) is a warning and the switch
    goes on. **Parent setting:** on a local branch remote refs are layers only when a parent setting
    names them, so when the layer below is a remote-tracking layer and the layer's parent was
@@ -620,7 +636,9 @@ are in `reports/Terminal code review tool landscape.md`.
      (any branch or scope of the worktree); other events keep the `--scope` filter.
      `--messages` prints only sent events as `revuey message <id> <loc> (<side>) [<branch or full
      stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
-     `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path.
+     `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path. It also prints `switched`
+     events (a layer checked out, see "Switching layers"), routed and deduplicated (by event id)
+     like messages, live only.
    - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
      sets `acked_at`/`answered_at` on a sent comment; `comment --path p (--line N [--end M]
      [--side new|old] | --file) <text|->` leaves a new agent comment. It picks the review like
