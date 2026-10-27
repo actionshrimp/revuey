@@ -12,6 +12,21 @@ local width_of = vim.api.nvim_strwidth
 function M.inline(s, base_hl)
   local out, spans = {}, {}
   local pos, i, n = 0, 1, #s
+  -- the first `_` at or after a position that can close emphasis (not followed by a word
+  -- character), remembered for the range it answers: openers come left to right, so finding
+  -- them all is one pass (" _a _a _a..." would otherwise rescan the rest for each)
+  local us_from, us_at
+  local function us_close(from)
+    if us_from and from >= us_from and (us_at == false or from <= us_at) then
+      return us_at or nil
+    end
+    local j = s:find('_', from, true)
+    while j and s:sub(j + 1, j + 1):match('[%w_]') do
+      j = s:find('_', j + 1, true)
+    end
+    us_from, us_at = from, j or false
+    return j
+  end
   local function emit(text, hl)
     if text == '' then
       return
@@ -52,9 +67,11 @@ function M.inline(s, base_hl)
       end
     elseif (c == '*' or (c == '_' and (i == 1 or s:sub(i - 1, i - 1):match('[%s(]')))) and s:sub(i + 1, i + 1):match('%S') then
       -- *em* anywhere; _em_ only at word boundaries (snake_case stays text)
-      local j = s:find(c, i + 1, true)
-      while c == '_' and j and s:sub(j + 1, j + 1):match('[%w_]') do
-        j = s:find(c, j + 1, true)
+      local j
+      if c == '_' then
+        j = us_close(i + 1)
+      else
+        j = s:find(c, i + 1, true)
       end
       if j and s:sub(j - 1, j - 1):match('%S') then
         emit(s:sub(i + 1, j - 1), 'RevueyGuideItalic')
@@ -64,7 +81,9 @@ function M.inline(s, base_hl)
         i = i + 1
       end
     elseif c == '[' then
-      local text, e = s:match('^%[([^%]]+)%]%([^)%s]+%)()', i)
+      -- the text stops at the next bracket and the URL at the next `[`, so a body full of
+      -- unclosed `[` or `[a](` is scanned once, not once per bracket
+      local text, e = s:match('^%[([^%[%]]+)%]%([^)%s%[]+%)()', i)
       if text then
         emit(text, 'RevueyGuideLink')
         i = e

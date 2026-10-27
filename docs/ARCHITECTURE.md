@@ -1368,13 +1368,15 @@ are in `reports/Terminal code review tool landscape.md`.
       `(image: alt)`, GitHub's allowed HTML (`details`/`summary` as a `▸` line, `br`, `p`, `b`,
       `code`, `a`, headings, lists, ...) turned into Markdown or dropped keeping its text, other
       `<...>` left as typed (`Vec<String>`), entities decoded, task boxes `☑`/`☐`, setext headings,
-      `~~~` fences, blank runs collapsed. Empty once cleaned (no body, whitespace, a template's
+      `~~~` fences at any indent, blank runs collapsed, control characters (ESC sequences) and
+      surrogate or NUL character references dropped. Comments are not started inside inline code
+      spans or a tag's quoted attribute values; `<!-->` and `<!--->` are whole (empty) comments. Empty once cleaned (no body, whitespace, a template's
       comments only): nothing is shown. Nothing is fetched: links keep their text (prose drops the
       URL, as in comments), images are text.
     - **Rows** (`forge_description.render`): `PR #N · title`, the body through `prose.render`
       (the comments' Markdown renderer, `RevueyGuide*` groups) indented two cells and wrapped to
-      the guide's prose width, table rows and rules on rows of their own (prose would run them
-      into a paragraph), a blank row. Longer than `max_lines` + 1 body rows (6 by default), the
+      the guide's prose width, table rows (with or without a leading `|`) and rules on rows of
+      their own (prose would run them into a paragraph), a blank row. Longer than `max_lines` + 1 body rows (6 by default), the
       rest is a fold.
     - **Real rows, not virtual lines.** The rows are buffer lines at the top of the layout
       (`layout.compose(files, head)`), prose rows with `role = 'description'` (`kind = 'prose'`,
@@ -1384,25 +1386,44 @@ are in `reports/Terminal code review tool landscape.md`.
       row 1 is in a closed fold, so a review whose first file is reviewed (folded) would never
       show the description. Real rows are reachable with `gg`/`k`, searchable and yankable, and
       fold with the normal fold commands.
-    - **Arriving later.** Opening never waits: the first render has no description unless the
-      cache already holds it. `forge_view.update`, after the lookup, compares
-      `description_signature` with what render last drew (`f.desc_drawn`) and, when it changed
-      (arrived, edited, emptied), re-renders the diff view in place (`view.rerender`): every
-      row-keyed structure (layout map, folds, comment rows and `]m` targets, marks, extmarks,
-      word diff, LSP positions) is rebuilt as on any refresh, and `capture_view`/`restore_view`
-      keep the cursor on its code line at the same window line, so rows inserted above scroll
-      the view by exactly that many rows and nothing visible moves. Unchanged-line folds the user
-      opened are kept (`keep_context_folds`, a re-render would close them again). Not in Visual,
-      Insert or any other mode but Normal (it waits for `ModeChanged`), nor with the comment
+    - **Arriving later: only the head rows change.** Opening never waits: the first render has
+      no description unless the cache already holds it. After the lookup, `forge_view.update`
+      schedules `sync_description` out of its `git.async` task (nothing there can yield or
+      interleave with a close or another render), which compares the descriptions' signature
+      and wrap width with what was last drawn (`f.desc_drawn`) and, when they differ (arrived,
+      edited, emptied, a resize re-wraps them), calls `view.replace_description`. That replaces
+      only rows `1..old_n` of the buffer (`nvim_buf_set_lines(buf, 0, old_n, ...)`), so Neovim
+      itself moves every window's cursor, marks, the jumplist, extmarks (comment threads,
+      header chips) and folds (open or closed, context folds too) below by the delta, and the
+      row-keyed Lua state is shifted by the same delta: `layout.replace_head` (pure, equal to
+      composing with the new head), the fold levels, the hunk header marks' keys; word diff
+      pairs and comment rows are rebuilt from the new layout. Each window's view is saved and
+      put back shifted (Neovim's own topline correction depends on folds), so nothing on screen
+      moves, in a `:split` too. No git call, no capture/restore by file and line, no `zx`.
+      Chosen over the full re-render of the first version, which reran git inside the task,
+      restored only the diff window, closed opened context folds and let `zx`'s `zv` open a fold
+      at the cursor's old row number. (A full render, `R` or a scope switch, still renders
+      everything; it uses `zX` now, for the same reason.) Not in Visual, Insert or any other
+      mode but Normal (it waits for `ModeChanged`, re-armed each time), nor with the comment
       editor open (a float at a buffer row; retried every 500ms), nor in the guide view
-      (switching back renders it). The render inside a lookup does not start another
-      (`f.rerendering`). When the cursor is on the first file with the description just above,
-      the winbar says `↑ PR description`; on its rows it names the PR. Width changes re-wrap it
-      (`WinResized`).
+      (switching back renders it); a resize goes through the same gate. When the cursor is on
+      the first file with the description just above, the winbar says `↑ PR description`; on
+      its rows it names the PR. Revealing a late description on first open (an open question)
+      would be one more step in `replace_description`: setting the topline to 1 when the view is
+      still where `show` put it. A hover or other LSP request in flight while rows shift answers
+      for the row it was asked on (it may highlight the row above or below); left as is.
+    - **Cost.** Every scan in the cleaning and in `prose.inline` is linear: images and tags are
+      scanned by hand, link text stops at the next bracket and link URLs at the next `[`, a
+      `_` closer is found once for all openers, tags are looked at for at most 512 bytes; a
+      hostile 65,536-character body (`![![![...`, `[[[...`, ` _a _a ...`) cleans and renders in
+      milliseconds (it took 13-26s each before, `prose.render` included, which thread comments
+      share). `clean` is memoised per body (64 entries), since every signature check cleans the
+      scope's bodies. The panel's signature leaves the body out.
     - **Folds.** The hidden part is a level-1 fold of its own (`fold_levels`), so `zo`/`zc`/`za`
       work; `<Tab>` (toggle_fold) anywhere on the description toggles it
       (`view.toggle_description`), foldtext `… N more lines (<Tab> expands)`. The state is per
-      PR URL (`s.desc_expanded`, read back from the folds in `capture_view`, so `zo` counts),
+      PR URL (`s.desc_expanded`, read back from the folds in `capture_view` and before the head
+      rows are replaced, so `zo` counts),
       kept across refreshes and scopes; `forge.description.expanded` starts them open.
     - **Failures** as decision 13: no PR, a failed lookup, `gh` missing: nothing shown, logged. A
       failed refetch keeps the PR (stale) and so the description shown.
@@ -1411,9 +1432,12 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Tests**: the fake `gh` answers a PR node's `body` only when the query's fragment asks for
       it. `forge_description_spec.lua` covers cleaning and rows, and through the fake `gh`: shown,
       absent (no PR, empty, template-only, merged, turned off), arriving late (`slow`) under a
-      cursor, a comment and an opened context fold, Visual mode and the editor, `<Tab>`/`zc`/`R`,
-      edits and failures, scopes and the guide view; `screen_spec.lua` has it late (winbar hint),
-      collapsed and expanded.
+      cursor, a comment and an opened context fold, a closed fold above the cursor, a `:split`,
+      outside the lookup's task with no git call, Visual mode, a pending key and the editor (for
+      lookups and resizes), `<Tab>`/`zo`/`zc`/`R`, edits, an unchanged lookup touching nothing,
+      failures, scopes and the guide view, plus hostile bodies under a time bound;
+      `layout_spec.lua` checks `replace_head` against `compose`; `screen_spec.lua` has it late
+      (winbar hint), collapsed and expanded.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

@@ -31,18 +31,41 @@ for _, t in ipairs({
   TAGS[t] = true
 end
 
-local ENTITIES = { amp = '&', lt = '<', gt = '>', quot = '"', apos = "'", nbsp = ' ', mdash = '—', ndash = '–', hellip = '…', copy = '©' }
+local ENTITIES = {
+  amp = '&', lt = '<', gt = '>', quot = '"', apos = "'", nbsp = ' ', ensp = ' ', emsp = ' ', thinsp = ' ',
+  mdash = '—', ndash = '–', hellip = '…', copy = '©', reg = '®', trade = '™', deg = '°', plusmn = '±',
+  times = '×', divide = '÷', middot = '·', bull = '•', sect = '§', para = '¶', laquo = '«', raquo = '»',
+  lsquo = '‘', rsquo = '’', ldquo = '“', rdquo = '”', sbquo = '‚', bdquo = '„', prime = '′', Prime = '″',
+  larr = '←', rarr = '→', uarr = '↑', darr = '↓', harr = '↔', lArr = '⇐', rArr = '⇒', hArr = '⇔',
+  ne = '≠', le = '≤', ge = '≥', asymp = '≈', infin = '∞', minus = '−', check = '✓', cross = '✗',
+  euro = '€', pound = '£', yen = '¥', cent = '¢', micro = 'µ', frac12 = '½', frac14 = '¼', frac34 = '¾',
+  shy = '', zwj = '', zwnj = '',
+}
+
+---UTF-8 for a code point (no surrogates, no controls but tab: those are dropped).
+local function utf8_char(n)
+  if n < 32 and n ~= 9 or n == 127 or (n >= 0xD800 and n <= 0xDFFF) or n >= 0x110000 or n < 1 then
+    return ''
+  elseif n < 0x80 then
+    return string.char(n)
+  elseif n < 0x800 then
+    return string.char(0xC0 + math.floor(n / 0x40), 0x80 + n % 0x40)
+  elseif n < 0x10000 then
+    return string.char(0xE0 + math.floor(n / 0x1000), 0x80 + math.floor(n / 0x40) % 0x40, 0x80 + n % 0x40)
+  end
+  return string.char(0xF0 + math.floor(n / 0x40000), 0x80 + math.floor(n / 0x1000) % 0x40, 0x80 + math.floor(n / 0x40) % 0x40, 0x80 + n % 0x40)
+end
 
 local function entities(s)
+  if not s:find('&', 1, true) then
+    return s
+  end
   return (s:gsub('&(#?)([xX]?)(%w+);', function(hash, x, name)
     if hash == '#' then
       local n = tonumber(name, x ~= '' and 16 or 10)
-      if n and n > 0 and n < 0x110000 then
-        return vim.fn.nr2char(n)
-      end
-      return nil
+      return n and utf8_char(n) or nil
     end
-    return ENTITIES[name:lower()]
+    return ENTITIES[name] or ENTITIES[name:lower()]
   end))
 end
 
@@ -97,15 +120,92 @@ local function tag_text(tag)
   return ''
 end
 
+---Markdown images, inline `![alt](url "title")` and by reference `![alt][ref]`, as text (a
+---linked image keeps its link around the text). Scanned by hand in one pass: every search stops
+---at the next bracket or parenthesis, so a hostile body (`![![![...`) stays linear.
+local function images(s)
+  if not s:find('![', 1, true) then
+    return s
+  end
+  local out, i = {}, 1
+  while true do
+    local a = s:find('![', i, true)
+    if not a then
+      break
+    end
+    local close = s:find('[%[%]]', a + 2)
+    local e
+    if close and s:sub(close, close) == ']' then
+      e = select(2, s:find('^%([^()%[%]]*%)', close + 1)) or select(2, s:find('^%[[^%[%]]*%]', close + 1))
+    end
+    if e then
+      out[#out + 1] = s:sub(i, a - 1)
+      out[#out + 1] = image_text(s:sub(a + 2, close - 1))
+      i = e + 1
+    else
+      out[#out + 1] = s:sub(i, a)
+      i = a + 1
+    end
+  end
+  out[#out + 1] = s:sub(i)
+  return table.concat(out)
+end
+
+local TAG_MAX = 512 -- longest tag looked at (a long `<img src=... alt=...>` is ~250 bytes)
+
+---End of the HTML tag starting at `a` (`<` then a letter or `/`): its `>`, past quoted
+---attribute values (`<a title="x>y">`), or nil when it does not close on this line within
+---TAG_MAX bytes (the bound keeps `<a "<a "<a "...` linear).
+local function tag_end(s, a)
+  local j, limit = a + 1, a + TAG_MAX
+  while true do
+    local k = s:find('[\'"<>]', j)
+    if not k or k > limit then
+      return nil
+    end
+    local c = s:sub(k, k)
+    if c == '>' then
+      return k
+    elseif c == '<' then
+      return nil -- `a < b` or another tag: this one never closed
+    end
+    local q = s:find(c, k + 1, true)
+    if not q then
+      return nil
+    end
+    j = q + 1
+  end
+end
+
+---HTML tags as their text (tag_text), unknown ones and a lone `<` kept.
+local function tags(s)
+  if not s:find('<', 1, true) then
+    return s
+  end
+  local out, i = {}, 1
+  while true do
+    local a = s:find('<', i, true)
+    if not a then
+      break
+    end
+    local e = s:sub(a + 1, a + 1):match('[%a/]') and tag_end(s, a)
+    local t = e and tag_text(s:sub(a, e))
+    if t then
+      out[#out + 1] = s:sub(i, a - 1)
+      out[#out + 1] = t
+      i = e + 1
+    else
+      out[#out + 1] = s:sub(i, a)
+      i = a + 1
+    end
+  end
+  out[#out + 1] = s:sub(i)
+  return table.concat(out)
+end
+
 ---Text outside inline code: images, HTML tags, entities.
 local function plain_segment(s)
-  -- Markdown images, inline and by reference (a linked image keeps its link around the text)
-  s = s:gsub('!%[([^%]]*)%]%b()', image_text)
-  s = s:gsub('!%[([^%]]*)%]%[[^%]]*%]', image_text)
-  s = s:gsub('<[^<>]+>', function(tag)
-    return tag_text(tag)
-  end)
-  return entities(s)
+  return entities(tags(images(s)))
 end
 
 ---A line outside fenced code: inline code spans kept as they are, the rest cleaned.
@@ -131,10 +231,12 @@ local function clean_line(line)
 end
 
 ---Remove HTML comments from a line; `open` says a comment started on an earlier line. Returns
----the rest, whether a comment is still open, and whether anything was removed.
+---the rest, whether a comment is still open, and whether anything was removed. Not inside
+---inline code (`` `<!--` `` is text) or an HTML tag's attribute values (`<a title="<!--">`);
+---`<!-->` and `<!--->` are complete (empty) comments, as in CommonMark.
 local function strip_comments(line, open)
-  local out, i, removed = {}, 1, false
-  while i <= #line do
+  local out, i, removed, n = {}, 1, false, #line
+  while i <= n do
     if open then
       local e = line:find('-->', i, true)
       removed = true
@@ -143,13 +245,36 @@ local function strip_comments(line, open)
       end
       open, i = false, e + 3
     else
-      local a = line:find('<!--', i, true)
+      local a = line:find('[`<]', i)
       if not a then
         out[#out + 1] = line:sub(i)
         break
       end
       out[#out + 1] = line:sub(i, a - 1)
-      open, i, removed = true, a + 4, true
+      local c = line:sub(a, a)
+      if c == '`' then
+        local _, b = line:find('^`+', a)
+        local _, d = line:find(line:sub(a, b), b + 1, true)
+        -- a code span is kept whole; an unmatched run of backticks is text
+        out[#out + 1] = line:sub(a, d or b)
+        i = (d or b) + 1
+      elseif line:sub(a, a + 3) == '<!--' then
+        removed = true
+        local empty = line:match('^<!%-%-%->', a) or line:match('^<!%-%->', a)
+        if empty then
+          i = a + #empty
+        else
+          open, i = true, a + 4
+        end
+      elseif line:sub(a + 1, a + 1):match('[%a/]') and tag_end(line, a) then
+        -- an HTML tag: kept whole, so `<!--` in an attribute value starts no comment
+        local stop = tag_end(line, a)
+        out[#out + 1] = line:sub(a, stop)
+        i = stop + 1
+      else
+        out[#out + 1] = c
+        i = a + 1
+      end
     end
   end
   return table.concat(out), open, removed
@@ -160,7 +285,7 @@ local function fence_of(line)
   if not mark then
     indent, mark = line:match('^(%s*)(~~~+)')
   end
-  if mark and #indent <= 3 then
+  if mark then -- at any indent (a fence inside a list item is indented)
     return mark
   end
 end
@@ -173,15 +298,34 @@ local function is_list(l)
   return l:match('^%s*[-*+]%s') or l:match('^%s*%d+[.)]%s')
 end
 
+local memo, memo_n = {}, 0
+
 ---The description as the light Markdown prose.render knows ('' when nothing is left: no body,
----only a template's comments, whitespace).
+---only a template's comments, whitespace). Memoised by body.
 ---@param body? string
 ---@return string
 function M.clean(body)
   if type(body) ~= 'string' or body == '' then
     return ''
   end
-  local src = vim.split((body:gsub('\r\n?', '\n')), '\n', { plain = true })
+  -- the signature check cleans every lookup's bodies: once per distinct body
+  local hit = memo[body]
+  if hit then
+    return hit
+  end
+  local text = M.clean_uncached(body)
+  if memo_n >= 64 then
+    memo, memo_n = {}, 0
+  end
+  memo[body], memo_n = text, memo_n + 1
+  return text
+end
+
+---M.clean without the memo.
+function M.clean_uncached(body)
+  -- control characters (ESC sequences and the like) are never drawn: dropped, tabs kept
+  body = body:gsub('\r\n?', '\n'):gsub('[%z\1-\8\11\12\14-\31\127]', '')
+  local src = vim.split(body, '\n', { plain = true })
   local lines = {}
   local fence, comment = nil, false
   for _, raw in ipairs(src) do
@@ -258,18 +402,26 @@ function M.render_body(md, width)
     end
     return cur
   end
-  local fence = false
-  for _, l in ipairs(vim.split(md or '', '\n', { plain = true })) do
+  local function delimiter(l)
+    return l and l:find('-', 1, true) and l:find('|', 1, true) and l:match('^[%s|:%-]+$') ~= nil
+  end
+  local fence, in_table = false, false
+  local src = vim.split(md or '', '\n', { plain = true })
+  for k, l in ipairs(src) do
     if l:match('^%s*```') then
-      fence = not fence
+      fence, in_table = not fence, false
       table.insert(seg('md').lines, l)
     elseif fence then
       table.insert(seg('md').lines, l)
     elseif l == '---' then
+      in_table = false
       seg('rule')
-    elseif l:match('^%s*|') then
+    elseif l:match('^%s*|') or (in_table and l:find('|', 1, true)) or (l:find('|', 1, true) and delimiter(src[k + 1])) then
+      -- a table row: with a leading `|`, or any row of a table whose header has a delimiter row
+      in_table = true
       table.insert(seg('table').lines, vim.trim(l))
     else
+      in_table = false
       table.insert(seg('md').lines, l)
     end
   end
@@ -288,7 +440,7 @@ function M.render_body(md, width)
     elseif sg.kind == 'table' then
       add_blank()
       for _, l in ipairs(sg.lines) do
-        if l:match('^|?[%s:|%-]+$') and l:find('-', 1, true) then
+        if delimiter(l) or (l:match('^[%s:%-]+$') and l:find('-', 1, true)) then
           local t = ('─'):rep(math.min(width, math.max(3, vim.api.nvim_strwidth(l))))
           rows[#rows + 1] = { text = t, hls = { { 0, #t, 'RevueyForgeDescriptionRule' } } }
         else

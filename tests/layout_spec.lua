@@ -87,4 +87,28 @@ h.test('head rows (the PR description) come first; files, hunks and folds follow
   h.eq(nil, layout.compose(files, { rows = {}, blocks = {} }).description)
 end)
 
+h.test('replace_head: the same layout as composing with the new head, rows shifted by the delta', function()
+  local files = diff.parse(text)
+  local function head(n)
+    local block = { url = 'u', number = 1, title = 't', start_row = 1, end_row = n }
+    local h0 = { rows = {}, blocks = { block } }
+    for i = 1, n do
+      h0.rows[i] = { text = 'row ' .. i, entry = { kind = 'prose', role = 'description', desc = block } }
+    end
+    return n > 0 and h0 or nil
+  end
+  for _, case in ipairs({ { 0, 4 }, { 4, 7 }, { 7, 2 }, { 3, 0 }, { 0, 0 } }) do
+    local from, to = case[1], case[2]
+    local l, d, old_n = layout.replace_head(layout.compose(files, head(from)), head(to))
+    h.eq(layout.compose(files, head(to)), l, from .. ' -> ' .. to)
+    h.eq({ to - from, from }, { d, old_n })
+  end
+  -- rows appended after compose (the empty review's notes) are kept
+  local empty = layout.compose({}, head(2))
+  empty.lines[#empty.lines + 1] = 'No changes'
+  empty.map[#empty.map + 1] = { kind = 'meta', meta = 'note', file_idx = 0, path = '' }
+  local l = layout.replace_head(empty, head(5))
+  h.eq({ 'row 1', 'row 2', 'row 3', 'row 4', 'row 5', 'No changes' }, l.lines)
+end)
+
 h.run()
