@@ -29,6 +29,17 @@ for id, path in stdin:gmatch('\n@@ (h%d+) (.-) @@') do
   ids[#ids + 1] = id
   paths[id] = path
 end
+-- numbered lines (`3|+text`) the prompt showed per hunk id
+local shown_lines, cur = {}, nil
+for l in (stdin .. '\n'):gmatch('(.-)\n') do
+  local id = l:match('^@@ (h%d+) .- @@')
+  if id then
+    cur = id
+    shown_lines[id] = 0
+  elseif cur and l:match('^%d+|') then
+    shown_lines[cur] = shown_lines[cur] + 1
+  end
+end
 
 -- an AI review run (its schema has findings) answers with a review instead of a guide
 local review_mode = false
@@ -160,6 +171,36 @@ elseif scenario == 'unknown' then
   table.insert(g.sections[1].hunks, { id = 'h999' })
   table.insert(g.sections[1].hunks, { id = ids[1] }) -- duplicate
   g.sections[#g.sections + 1] = { title = 'Ghost', overview = 'Only unknown ids.', hunks = { { id = 'h998' } } }
+  tool('StructuredOutput', g)
+  result(g)
+elseif scenario == 'notes' then
+  -- line notes: two on the first core hunk with 3+ numbered lines (one a range), one on the
+  -- first follow-up hunk with lines, and three bad anchors revuey drops (unknown hunk, a line the
+  -- hunk does not have, a hunk without numbered lines)
+  local g = guide()
+  local core, rest, bare
+  for i, id in ipairs(ids) do
+    local n = shown_lines[id] or 0
+    if i % 2 == 1 and n >= 3 and not core then
+      core = id
+    elseif i % 2 == 0 and n >= 1 and not rest then
+      rest = id
+    elseif n == 0 and not bare then
+      bare = id
+    end
+  end
+  g.sections[1].line_notes = {
+    { hunk = core, line = 2, end_line = 3, text = 'Note the `sum` call: totals are built here.' },
+    { hunk = core, line = 1, text = 'The new module starts here.' },
+    { hunk = 'h999', line = 1, text = 'A hunk the diff does not have.' },
+    { hunk = core, line = 999, text = 'A line the hunk does not have.' },
+  }
+  if bare then
+    table.insert(g.sections[1].line_notes, { hunk = bare, line = 1, text = 'A file without lines.' })
+  end
+  if g.sections[2] and rest then
+    g.sections[2].line_notes = { { hunk = rest, line = 1, text = 'Wired in here.' } }
+  end
   tool('StructuredOutput', g)
   result(g)
 elseif scenario == 'diagram' then

@@ -69,6 +69,11 @@ M.defaults = {
     regenerate_guide = 'gR', -- guide view: generate a new guide
     next_section = ']]', -- guide view (in the diff view: next file)
     prev_section = '[[',
+    -- guide line notes (the guide's notes on specific lines; guide view only). ]n/[n are free in
+    -- Neovim; `gN` (select the previous search match) means nothing in a read-only review buffer.
+    next_note = ']n',
+    prev_note = '[n',
+    toggle_notes = 'gN', -- show the notes in full / collapse them to a marker
     close = 'q',
     -- comments (diff and guide views). `gc` shadows Neovim's commenting operator, which has
     -- nothing to do in a read-only review buffer; the c* keys shadow `c{motion}` likewise.

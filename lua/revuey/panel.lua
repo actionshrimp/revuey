@@ -458,6 +458,21 @@ function M.render(s, o)
       ' gd def  K hover  go open  R refresh',
       ' gG diff view  gR regenerate  q close',
     }
+    -- the guide's line notes, when it has some
+    local res = s.guide and s.guide.resolved
+    if res and (res.notes or 0) > 0 then
+      local parts = {}
+      local nx, pk, nt = first_key('next_note'), first_key('prev_note'), first_key('toggle_notes')
+      if nx or pk then
+        parts[#parts + 1] = ((nx and pk) and (nx .. ' ' .. pk) or (nx or pk)) .. ' line note'
+      end
+      if nt then
+        parts[#parts + 1] = nt .. ' show/collapse'
+      end
+      if #parts > 0 then
+        help[#help + 1] = ' ' .. table.concat(parts, '  ')
+      end
+    end
   else
     help = {
       ' <CR> show  mr reviewed  gp diff',

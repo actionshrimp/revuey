@@ -99,9 +99,10 @@ h.test('prompt: hunk ids with numbered lines, review wording, the skill, the bud
   local g, d = with:find('Review guidance from the skill `security`', 1, true), with:find('Review the following', 1, true)
   h.ok(g and d and g < d, 'guidance before the diff')
   h.ok(with:find('Look for SQL injection first.', 1, true))
-  -- the guide's prompt is unchanged: no numbers
+  -- the guide's prompt numbers lines the same way (its line notes are anchored like findings)
   local gtext = require('revuey.guide_prompt').build(ctx, hunks, { budget = 150000 })
-  h.ok(gtext:find('\n@@ ' .. m.id .. ' m.txt @@\n' .. m.header .. '\n line 2\n', 1, true), 'guide lines are not numbered')
+  h.ok(gtext:find('\n@@ ' .. m.id .. ' m.txt @@\n' .. m.header .. '\n1| line 2\n', 1, true), 'guide lines are numbered too')
+  h.ok(not gtext:find('# Code Reviewer', 1, true))
   -- over the budget the largest hunks are abridged with numbered preview lines, then refused
   local big = {}
   for i = 1, 400 do

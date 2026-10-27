@@ -1694,6 +1694,20 @@ local function guide_keymaps(buf)
   end, 'generate a new AI guide')
 end
 
+---Guide line note keys (diff/guide buffer only: they move its cursor).
+local function note_keymaps(buf)
+  local k = config.options.keymaps
+  map(buf, k.next_note, function()
+    guide_view.next_note(M.session, 1)
+  end, 'next guide line note')
+  map(buf, k.prev_note, function()
+    guide_view.next_note(M.session, -1)
+  end, 'previous guide line note')
+  map(buf, k.toggle_notes, function()
+    guide_view.toggle_notes(M.session)
+  end, 'guide line notes: show / collapse')
+end
+
 local function diff_keymaps(s)
   local k = config.options.keymaps
   local buf = s.diff_buf
@@ -1732,6 +1746,7 @@ local function diff_keymaps(s)
   map(buf, k.close, M.close, 'close review')
   stack_keymaps(buf)
   guide_keymaps(buf)
+  note_keymaps(buf)
   map(buf, k.next_section, function()
     M.next_section(1)
   end, 'next guide section (diff: next file)')
@@ -2306,6 +2321,8 @@ local function render(s, saved)
   if not cok then
     vim.notify('revuey: comments: ' .. tostring(cerr):gsub('^revuey: ', ''), vim.log.levels.ERROR)
   end
+  -- the guide's line notes (guide view only; cleared in the diff view)
+  guide_view.draw_notes(s)
   api.nvim_win_call(s.diff_win, function()
     vim.cmd('normal! zx')
   end)

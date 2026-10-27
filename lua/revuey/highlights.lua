@@ -93,6 +93,14 @@ function M.setup()
   set('RevueyGuideBanner', { link = 'DiagnosticWarn' })
   set('RevueyGuideOutdated', { link = 'DiagnosticWarn' })
   set('RevueyGuideSpinner', { link = 'Special' })
+  -- guide line notes (above the lines they point at): a violet band with a `guide` label, unlike
+  -- comment, AI finding and GitHub thread boxes (borders below their lines)
+  local violet = dark and 0xa371f7 or 0x8250df
+  local note_bg = mix(normal_bg, violet, dark and 0.16 or 0.10)
+  local normal_fg = get('Normal').fg or (dark and 0xe6edf3 or 0x1f2328)
+  set('RevueyGuideLineNote', { fg = normal_fg, bg = note_bg, italic = true })
+  set('RevueyGuideLineNoteLabel', { fg = dark and 0xd2a8ff or 0x6639ba, bg = note_bg, bold = true })
+  set('RevueyGuideLineNoteMarker', { fg = dark and 0xd2a8ff or 0x6639ba })
   -- guide overview diagram (node colour by kind) and stack layer labels
   set('RevueyDiagramNew', { link = 'Added' })
   set('RevueyDiagramChanged', { link = 'Changed' })

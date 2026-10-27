@@ -3,8 +3,15 @@
 -- The methodology is adapted from plannotator's "Guided Review Organizer"
 -- (packages/core/guide-prompt.ts, Apache-2.0/MIT), made hunk-level: the model groups engine-assigned
 -- hunk ids (h1..hn) into ordered sections instead of whole files, and never sees or returns line
--- numbers it could get wrong.
+-- numbers it could get wrong. Line notes point at lines by hunk id plus the line's number within
+-- the hunk (the `n|` prefix), as AI review findings do.
 local M = {}
+
+-- Line notes: at most this many per section and per guide (the schema asks for the first; the
+-- import, guide.validate, enforces both), each spanning at most MAX_NOTE_LINES lines.
+M.MAX_NOTES_PER_SECTION = 3
+M.MAX_NOTES = 12
+M.MAX_NOTE_LINES = 8
 
 ---Output schema (additionalProperties: false everywhere).
 M.SCHEMA = {
@@ -32,6 +39,23 @@ M.SCHEMA = {
               properties = {
                 id = { type = 'string', pattern = '^h[0-9]+$' },
                 note = { type = 'string' },
+              },
+            },
+          },
+          -- short notes on specific lines, anchored like AI review findings: a hunk id plus the
+          -- `n|` numbers of that hunk's lines (the side follows from the line's +/-/space)
+          line_notes = {
+            type = 'array',
+            maxItems = M.MAX_NOTES_PER_SECTION,
+            items = {
+              type = 'object',
+              additionalProperties = false,
+              required = { 'hunk', 'line', 'text' },
+              properties = {
+                hunk = { type = 'string', pattern = '^h[0-9]+$' },
+                line = { type = 'integer', minimum = 1 },
+                end_line = { type = 'integer', minimum = 1 },
+                text = { type = 'string' },
               },
             },
           },
@@ -95,9 +119,12 @@ reviewer what changed, why it exists, and what it implies. Give them the "this i
 here is the key part" orientation they cannot get from reading files in path order.
 
 ## The diff and hunk ids
-Every hunk in the diff below starts with a marker line `@@ h7 path/to/file @@`, followed by the
-hunk exactly as git shows it. `h7` is the hunk's id. Sections reference hunks ONLY by these ids.
-Never cite line numbers, and never invent ids.
+Every hunk in the diff below starts with a marker line `@@ h7 path/to/file @@`, then the hunk
+header as git shows it, then the hunk's lines, each prefixed with its number WITHIN THE HUNK and
+a bar: `3|+const total = sum(items)`. After the bar comes the git marker: `+` added, `-` deleted,
+space for context. `h7` is the hunk's id. Sections reference hunks ONLY by these ids, and line
+notes point at lines ONLY with an id plus these numbers. Never cite file line numbers, and never
+invent ids or numbers.
 
 ## Voice
 Write like a colleague explaining the change out loud to another capable engineer who has never
@@ -170,6 +197,20 @@ A section is a logical unit of change, not a file and not a folder.
 - **hunks**: the hunk ids in this section, each as `{"id": "h7"}`, optionally with a `note`: one
   short line (under 15 words) saying what THIS hunk contributes, when that is not obvious from
   the overview. Most hunks need no note. Do not repeat the overview.
+- **line_notes** (optional): short notes pinned to specific lines, shown right above those
+  lines to draw the reviewer's eye, for example "The cache key is built here." or "Note the
+  early return: empty carts skip the discount." Use them SPARINGLY, only where a line is worth
+  a reviewer's attention and easy to miss: the line where the key decision happens, a subtle
+  condition, the one call that wires things together. Most sections need none or one; never
+  more than 3 per section or 12 in the whole guide. Leave the field out when no line stands out.
+  - `hunk`: the id of the hunk the line is in, for example "h7". It must be a hunk of THIS
+    section.
+  - `line`: the number (from the `n|` prefix) of the line. `end_line`: the last line, when the
+    note covers a few lines of the same hunk (at most 8); leave it out for one line.
+  - `text`: one short sentence, under 15 words, in the voice above.
+  A line note is NOT a review comment. Never use one to report a bug, a risk or a style
+  problem: those belong in a separate AI review, and a real bug goes in the overview's
+  `> [!WARNING]` callout. Do not restate the overview or the hunk's note.
 
 ### diagram (optional)
 A small map of the change's structure, drawn above the sections. You give nodes and edges; the
@@ -209,8 +250,10 @@ overview, in a `> [!WARNING]` callout. Do not go looking for problems.
 - title: one line. summary: at most 3 sentences. overview: at most 5 sentences.
 - Only ids from the diff. Every id exactly once.
 - diagram: optional; at most 12 nodes and 20 edges, short labels.
-- Your text is read next to the rendered diff. Never mention hunk ids, markers, abridged
-  hunks or these instructions in it.
+- line_notes: optional; at most 3 per section and 12 in all; only lines the diff shows with an
+  `n|` number (an abridged hunk numbers only its first lines).
+- Your text is read next to the rendered diff. Never mention hunk ids, line numbers, markers,
+  abridged hunks or these instructions in it.
 
 ## Pipeline
 1. Read the whole diff and the file list.
@@ -218,7 +261,8 @@ overview, in a `> [!WARNING]` callout. Do not go looking for problems.
    not tool calls.
 3. Order the sections: the heart first, then consequences, then glue.
 4. Write the title, summary and each overview. Decide whether a diagram would help the
-   reader; if it would, add a small one.
+   reader; if it would, add a small one. Add a line note only where a line deserves the
+   reviewer's eye.
 5. Verify coverage: every hunk id appears exactly once. Fix any that is missing or duplicated.
 6. Return the structured output.
 ]]
@@ -265,9 +309,9 @@ end
 -- (ai_review_prompt.lua passes its own, with `numbered` hunk lines).
 M.GUIDE_TEXTS = {
   intro = 'Organize the following code changes into a guided review.',
-  ids = 'Hunk ids: h1 to h%d. Every id must appear exactly once in a section or in `unplaced`.',
+  ids = 'Hunk ids: h1 to h%d. Every id must appear exactly once in a section or in `unplaced`. Line notes use the `n|` numbers of their hunk.',
   abridged = 'The files are in the current directory. Read one only if a section really needs it.',
-  files = 'Group whole files, or a file\'s hunks in order, by what the file names and commits suggest. ',
+  files = 'Group whole files, or a file\'s hunks in order, by what the file names and commits suggest. No hunk lines are shown, so write no line notes. ',
   too_large = 'the review is too large for one guide',
 }
 
@@ -493,7 +537,8 @@ end
 ---@return {level: string, abridged: integer}|string info, or the error
 function M.build(ctx, hunks, opts)
   local budget = ((opts and opts.budget) or 150000) - #M.SYSTEM - 8
-  local msg, info = M.user_message(ctx, hunks, { budget = budget })
+  -- numbered lines: line notes point at them (as AI review findings do)
+  local msg, info = M.user_message(ctx, hunks, { budget = budget, numbered = true })
   if not msg then
     return nil, info
   end
