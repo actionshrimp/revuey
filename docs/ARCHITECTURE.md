@@ -990,7 +990,9 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Run.** `vim.system` with stdin closed (wt sees no terminal), detached (its own process
       group: `:Revuey pr cancel`, or a progress UI cancelling the message, sends SIGTERM then
       SIGKILL to the group via `ai.terminate`, so hook processes such as `npm install` stop
-      too; `ai.live` kills it on `VimLeavePre`). One setup at a time (`pr_view.current`,
+      too, and reports it once wt has exited and its stderr is read to the end, so a
+      `Running pre-start` line still in the pipe names the half-made worktree; after 3s
+      regardless; `ai.live` kills it on `VimLeavePre`). One setup at a time (`pr_view.current`,
       claimed before the first yield); a second request is refused with a message. stdout is
       one JSON line `{action: created|existing, branch, path}`; stderr carries progress and
       hook output (kept as chunks, the latest 256KB; split at `\n` and `\r`, so a progress

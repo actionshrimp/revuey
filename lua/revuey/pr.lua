@@ -308,6 +308,7 @@ end
 ---@field proc? vim.SystemObj
 ---@field line? string wt's latest non-empty stderr line (cleaned)
 ---@field created? string the worktree the pre-start hooks run in, once wt said so
+---@field cancelling? boolean cancel sent; reported once wt exits (M.CANCEL_REPORT_MS at most)
 ---@field started integer hrtime
 
 -- stderr kept for the failure message and the log: the latest this many bytes (npm install
@@ -318,6 +319,8 @@ M.STDERR_MAX = 256 * 1024
 M.PARTIAL_MAX = 4096
 -- the end of a failed run's stderr written to revuey.log, one log entry per line
 M.LOG_MAX = 4096
+-- a cancelled run is reported when wt exits, or after this long (past ai.terminate's SIGKILL)
+M.CANCEL_REPORT_MS = 3000
 
 ---Run `wt switch pr:<n>` in the background (stdin closed, so wt never waits for an answer; its
 ---own process group, so cancelling stops the hooks it started too). `on_line(line)` gets each
@@ -340,12 +343,19 @@ function M.run(opts)
       opts.on_done(err, result)
     end)
   end
+  local function cancelled()
+    finish({ kind = 'cancelled', text = 'cancelled', path = job.created })
+  end
+  -- Reported once wt has exited and its stderr is read to the end, not at the signal: the
+  -- `Running pre-start ... @ <path>` line can be in the pipe, unread, when cancel comes. If
+  -- the pipe never closes (a hook that left the group keeps it open), report after SIGKILL.
   function job.cancel(_)
-    if job.done then
+    if job.done or job.cancelling then
       return
     end
+    job.cancelling = true
     ai.terminate(job.proc)
-    finish({ kind = 'cancelled', text = 'cancelled', path = job.created })
+    vim.defer_fn(cancelled, M.CANCEL_REPORT_MS)
   end
   local function on_stderr(data)
     chunks[#chunks + 1] = data
@@ -368,7 +378,7 @@ function M.run(opts)
         job.line = t
         local p = t:match('^Running pre%-start .- @ (.+)$')
         job.created = p and vim.trim(p) or job.created
-        if opts.on_line and not job.done then
+        if opts.on_line and not job.done and not job.cancelling then
           pcall(opts.on_line, t)
         end
       end
@@ -396,6 +406,9 @@ function M.run(opts)
       end
       if job.done then
         return
+      end
+      if job.cancelling then
+        return cancelled() -- stderr's scheduled callbacks ran first: job.created is final
       end
       if res.code == 0 then
         local r = M.parse_result(res.stdout)
