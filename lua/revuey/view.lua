@@ -2094,12 +2094,55 @@ end
 
 ---Remember the descriptions' folds as the user left them (`zo`/`zc` count too). In the diff window.
 function sync_description_folds(s)
+  if not api.nvim_buf_is_valid(s.diff_buf) then
+    return
+  end
+  local wins = vim.fn.win_findbuf(s.diff_buf)
   for _, b in ipairs(description_blocks(s)) do
     if b.fold then
+      -- every window shows it as recorded unless the user changed it in one: take that one
+      local was = description_expanded(s, b.url)
+      local now = was
+      for _, win in ipairs(wins) do
+        local open = api.nvim_win_call(win, function()
+          return vim.fn.foldclosed(b.fold[1]) == -1
+        end)
+        if open ~= was then
+          now = open
+        end
+      end
       s.desc_expanded = s.desc_expanded or {}
-      s.desc_expanded[b.url] = vim.fn.foldclosed(b.fold[1]) == -1
+      s.desc_expanded[b.url] = now
     end
   end
+end
+
+---Unchanged-line folds (level 3) that are open, by file and line: `zX` in render closes them
+---again, so render reopens them. In the diff window.
+local function open_context_folds(s)
+  local out = {}
+  for row, lvl in pairs(s.folds or {}) do
+    local e = lvl == '>3' and s.layout.map[row]
+    if e and e.path and vim.fn.foldclosed(row) == -1 then
+      out[e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')] = true
+    end
+  end
+  return out
+end
+
+---Reopen them in the new layout (only where nothing around them is closed).
+local function reopen_context_folds(s, open)
+  if not next(open) then
+    return
+  end
+  api.nvim_win_call(s.diff_win, function()
+    for row, lvl in pairs(s.folds or {}) do
+      local e = lvl == '>3' and s.layout.map[row]
+      if e and e.path and open[e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')] and vim.fn.foldclosed(row) == row then
+        pcall(vim.cmd, row .. 'foldopen')
+      end
+    end
+  end)
 end
 
 ---<Tab> (toggle_fold) on a long PR description: expand or collapse it. Returns false when the
@@ -2133,12 +2176,13 @@ local function capture_view(s)
   if not api.nvim_win_is_valid(s.diff_win) then
     return saved
   end
+  sync_description_folds(s)
   api.nvim_win_call(s.diff_win, function()
     local v = vim.fn.winsaveview()
     saved.offset = v.lnum - v.topline
     saved.col = v.col
     saved.row = v.lnum
-    sync_description_folds(s)
+    saved.ctx_open = open_context_folds(s)
     for fi, f in ipairs(s.review.files) do
       local r = s.layout.files[fi]
       if r then
@@ -2427,7 +2471,8 @@ local function render(s, saved)
   guide_view.draw_notes(s)
   api.nvim_win_call(s.diff_win, function()
     -- zX, not zx: zx ends with zv, which would open a fold at the cursor's old row number (rows
-    -- above it may have come or gone); restore_view puts the cursor back afterwards
+    -- above it may have come or gone); restore_view puts the cursor back afterwards, and the
+    -- unchanged-line folds the user had opened are opened again (saved.ctx_open)
     vim.cmd('normal! zX')
   end)
   -- collapsed hunks first: closing a hunk inside an already collapsed file would not work
@@ -2468,6 +2513,9 @@ local function render(s, saved)
     end
   end
   description_folds(s)
+  if saved and saved.ctx_open then
+    reopen_context_folds(s, saved.ctx_open)
+  end
   if saved then
     restore_view(s, saved)
   end
@@ -2508,11 +2556,7 @@ function M.replace_description(s)
   end
   local buf = s.diff_buf
   -- how the user left the descriptions' folds (zo/zc), before their rows go
-  if api.nvim_win_is_valid(s.diff_win) then
-    api.nvim_win_call(s.diff_win, function()
-      sync_description_folds(s)
-    end)
-  end
+  sync_description_folds(s)
   s.desc_width = prose_width(s)
   local head = require('revuey.forge_view').description_head(s, s.desc_width)
   local L, d, old_n = layout_mod.replace_head(s.layout, head)

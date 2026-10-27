@@ -42,9 +42,9 @@ local ENTITIES = {
   shy = '', zwj = '', zwnj = '',
 }
 
----UTF-8 for a code point (no surrogates, no controls but tab: those are dropped).
+---UTF-8 for a code point (no surrogates, no C0/C1 controls but tab: those are dropped).
 local function utf8_char(n)
-  if n < 32 and n ~= 9 or n == 127 or (n >= 0xD800 and n <= 0xDFFF) or n >= 0x110000 or n < 1 then
+  if n < 32 and n ~= 9 or (n >= 127 and n <= 0x9F) or (n >= 0xD800 and n <= 0xDFFF) or n >= 0x110000 or n < 1 then
     return ''
   elseif n < 0x80 then
     return string.char(n)
@@ -324,7 +324,8 @@ end
 ---M.clean without the memo.
 function M.clean_uncached(body)
   -- control characters (ESC sequences and the like) are never drawn: dropped, tabs kept
-  body = body:gsub('\r\n?', '\n'):gsub('[%z\1-\8\11\12\14-\31\127]', '')
+  -- (C1 controls too: U+0080-U+009F, two bytes in UTF-8, CSI U+009B among them)
+  body = body:gsub('\r\n?', '\n'):gsub('[%z\1-\8\11\12\14-\31\127]', ''):gsub('\194[\128-\159]', '')
   local src = vim.split(body, '\n', { plain = true })
   local lines = {}
   local fence, comment = nil, false
