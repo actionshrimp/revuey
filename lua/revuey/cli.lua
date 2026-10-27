@@ -8,7 +8,8 @@
 --       attach to the worktree's review session and follow the comment event feed: first the
 --       sent messages not yet acknowledged (catch-up), then new events as they happen, one line
 --       each, flushed per line (Claude Code's Monitor tool treats each stdout line as an event).
---       --messages prints only messages sent to the agent, as one actionable line. Registers a
+--       --messages prints only messages sent to the agent, as one actionable line, and switches
+--       of the worktree to another stack layer (`revuey switched ...`). Registers a
 --       watcher with a heartbeat (presence in the review). Exits cleanly on SIGTERM (via
 --       bin/revuey).
 --   show <id>          one message in Markdown: location, review, code, comment, thread
@@ -85,6 +86,9 @@ For coding agents (no UI; run inside the reviewed worktree):
       A printed message is not printed again by the next watch (--replay: print every message
       not yet answered or acknowledged). Messages of another running review (even a suspended
       one) are left to it; a review that ended is replaced by the next one of its scope.
+      When the user checks out another stack layer in the review, a line says so:
+        revuey switched <from> -> <to> (layer <i> of <n>, PR #<N> <url>): ...
+      (live only: a watch started later does not print earlier switches).
       Lines are flushed one by one (fit for Claude Code's Monitor tool); SIGTERM exits 0.
       Without --messages every comment event is printed; --json prints full events.
       Several reviews in this worktree: pick one with --session <id> (see `revuey sessions`).
@@ -644,12 +648,14 @@ function M.watch(o)
   end
 
   local function emit(ev, file)
-    local is_msg = ev.kind == 'sent'
+    -- a switch of the worktree to another layer is for the agent like a message (routed and
+    -- printed once, live only: it is not stored, so there is no catch-up)
+    local is_msg = ev.kind == 'sent' or ev.kind == comments.SWITCHED
     if is_msg then
       if not M.matches(ev.review, ctx, 'all') or not for_me(ev) then
         return
       end
-      local key = comments.message_key(ev)
+      local key = ev.kind == 'sent' and comments.message_key(ev) or ('switched:' .. tostring(ev.id))
       if seen[key] then
         return
       end
@@ -678,7 +684,7 @@ function M.watch(o)
       line = comments.event_line(ev)
     end
     out(line .. '\n')
-    if is_msg then
+    if ev.kind == 'sent' then
       stamp_delivered(file, ev)
     end
   end

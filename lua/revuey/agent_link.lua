@@ -2,10 +2,13 @@
 -- registers the running review in the session registry (rewritten when the scope or branch
 -- changes, removed on close and on exit), and polls the watchers for presence, shown in the
 -- panel header ("● agent connected" / "○ no agent") and on sent comments. Sending itself is in
--- comments_view.lua (it saves the comment and appends a `sent` event to the feed).
+-- comments_view.lua (it saves the comment and appends a `sent` event to the feed). A switch of
+-- the worktree to another stack layer is told to a connected agent here (`tell_switch`: a
+-- `switched` event in the feed).
 local api = vim.api
 local sessions = require('revuey.sessions')
 local config = require('revuey.config')
+local log = require('revuey.log')
 
 local M = {}
 
@@ -189,12 +192,100 @@ function M.attach(s)
   M.poll(s)
 end
 
----Stop polling and remove the registry entry.
+-- ---------------------------------------------------------------------------
+-- Telling the agent about a switch
+-- ---------------------------------------------------------------------------
+
+-- `]s`/`[s` switches (stack.switch_on_navigate) less than this apart become one message: the
+-- agent hears where the user stopped, not every layer passed on the way.
+M.SWITCH_COALESCE_MS = 1500
+
+---Append the `switched` event; a failure is logged, never raised.
+---@return boolean ok
+local function deliver(p)
+  local comments = require('revuey.comments')
+  local ok, res, err = pcall(function()
+    return comments.append_event(p.events, comments.switch_event(p.review, p.info))
+  end)
+  if ok and res ~= false then
+    return true
+  end
+  log.write('agent', ('could not tell the agent about the switch to %s: %s'):format(p.info.to, tostring(ok and err or res)))
+  return false
+end
+
+local function take_pending(l)
+  local p = l.switch_pending
+  l.switch_pending = nil
+  if p and p.timer then
+    pcall(function()
+      p.timer:stop()
+      p.timer:close()
+    end)
+    p.timer = nil
+  end
+  return p
+end
+
+---Send a coalesced switch now (nothing when the user ended up where the agent last heard of).
+local function flush(l)
+  local p = take_pending(l)
+  if p and p.info.from ~= p.info.to then
+    deliver(p)
+  end
+end
+
+---Tell the connected agent that the worktree now has another layer checked out: a `switched`
+---event (comments.switch_event) in the review's feed, which `bin/revuey watch --messages`
+---prints. Nothing is sent without a connected agent. With `coalesce` (`]s`/`[s`) it waits
+---SWITCH_COALESCE_MS for another switch, which takes its place (keeping the first `from`); any
+---switch sends a waiting one along with it, as one message.
+---@param info {from?:string, to:string, layer:string, index?:integer, count?:integer, pr?:table}
+---@param o? {coalesce?:boolean}
+---@return 'told'|'later'|'failed'|'unchanged'|nil what happened (nil: no agent connected)
+function M.tell_switch(s, info, o)
+  local l = s and s.link
+  if not l or s.cleaned then
+    return nil
+  end
+  local waiting = take_pending(l)
+  if waiting then
+    info.from = waiting.info.from -- the branch the agent last heard of
+  end
+  if not M.poll(s) then
+    return nil
+  end
+  info.session, info.worktree = l.id, s.review.root
+  local comments = require('revuey.comments')
+  local p = {
+    info = info,
+    review = comments.review_info(s.review),
+    events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path),
+  }
+  if o and o.coalesce then
+    local timer = vim.uv.new_timer()
+    p.timer = timer
+    l.switch_pending = p
+    timer:start(M.SWITCH_COALESCE_MS, 0, vim.schedule_wrap(function()
+      if l.switch_pending == p then
+        flush(l)
+      end
+    end))
+    return 'later'
+  end
+  if info.from == info.to then
+    return 'unchanged'
+  end
+  return deliver(p) and 'told' or 'failed'
+end
+
+---Stop polling and remove the registry entry (a switch waiting to be told is sent first).
 function M.detach(s)
   local l = s and s.link
   if not l then
     return
   end
+  flush(l)
   if l.timer then
     pcall(function()
       l.timer:stop()

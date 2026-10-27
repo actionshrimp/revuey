@@ -229,8 +229,13 @@ lower layer, `gS` (on a layer row in the panel, or in the diff for the layer bei
   git does, and show up in the new layer's working-tree review. Submodules are left out of the
   check: `git switch` leaves submodule checkouts as they are, so run `git submodule update` when a
   layer bumps one.
-- **An agent connected to the review** (`● agent connected`): revuey asks first, since switching
-  branches changes the files under an agent that may be working.
+- **An agent connected to the review** (`● agent connected`): revuey switches without asking,
+  then tells the agent (its `bin/revuey watch --messages` prints a `revuey switched` line with the
+  branch before and after, the layer and its pull request when revuey already knows it), so it
+  re-reads the files and works on the new layer. The message says so: `revuey: switched to
+  stack/math; told the connected agent`. If the note cannot be written, the switch stands and the
+  message says the agent was not told (details in `revuey.log`). With no agent connected nothing
+  is sent.
 - **One at a time:** a `gS` (or `]s`) while a switch runs is dropped with a message.
 
 Afterwards the review refreshes: the layer gets `@`, the working tree and the `●` markers, and the
@@ -251,9 +256,11 @@ behind a restack of the remote stack). If the remote branch a parent setting nam
 pruned, a note says so (`:RevueyStackParent --clear` removes the setting). The remote layers *above* it are not
 shown while you are on the branch: review from a detached worktree to see the whole remote stack.
 
-`stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks (an
-agent confirmation is asked once per review); when a switch is refused the view still moves, and a
-message says the branch did not.
+`stack = { switch_on_navigate = true }` makes `]s`/`[s` switch too, with the same checks; when a
+switch is refused the view still moves, and a message says the branch did not. A connected agent
+is told once you stop: switches less than 1.5 s apart become one message, from the branch the
+agent last heard of to the one you stopped on (nothing when that is where it was), sent after the
+pause, with your next `gS`, or when the review closes.
 
 ### Someone else's stack (no local branches)
 
@@ -1014,6 +1021,14 @@ anchor, the code, the message and the review: repo, branch, scope, base):
 revuey message 19a3f0c2d4e1a8b7f src/cart.ts:12-14 (new) [stack/cart]: Why multiply here?  (/home/me/dev/revuey/main/bin/revuey show 19a3f0c2d4e1a8b7f for full context)
 ```
 
+When you [check out another layer](#checking-out-a-layer) (`gS`, `:RevueySwitch`, `]s`/`[s`
+with `switch_on_navigate`), the watch prints a line saying so (a `switched` event in the feed;
+live only, never caught up by a later watch):
+
+```
+revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on
+```
+
 How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the
 comments and event feed paths, Neovim's PID and RPC socket); it falls back to revuey's state dir
@@ -1319,9 +1334,11 @@ In the same review (needs `claude` too):
   parent setting keeping the layer below after commits and reopening), stray remote refs never
   becoming layers, no self-parent, a deleted and reused branch name, a conflicting name, dirty,
   untracked, ignored and file-for-directory refusals, unsaved buffers, a branch in another
-  worktree, a failing hook, a submodule bump, the agent confirmation (re-checked after, once per
-  review for `]s`), `switch_on_navigate`, one switch at a time, the registry and `sessions`,
-  hidden LSP buffers and `:RevueySwitch`.
+  worktree, a failing hook, a submodule bump, telling a connected agent (no question; the
+  `switched` event's fields and a real `watch --messages` printing it; nothing without an agent; a
+  failed write logged while the switch stands; refusals and the conflicting-name question
+  unchanged; `]s`/`[s` switches coalesced), `switch_on_navigate`, one switch at a time, the
+  registry and `sessions`, hidden LSP buffers and `:RevueySwitch`.
 - **Editing from the review** (`edit_spec.lua`, `edit_float_spec.lua`): which rows can be edited
   for each row kind, layer, mode and full-stack attribution, and the row-to-line mapping after
   earlier edits (unit); guide re-anchoring by overlap (a confident match, ambiguous splits and

@@ -1,7 +1,8 @@
 -- Checking out a stack layer in the current worktree (`gS`, `:RevueySwitch`): the decision
 -- (`plan`, pure), the checks (dirty worktree, untracked files the target would overwrite, a
 -- branch checked out in another worktree), the message texts, and the plain `git switch` run.
--- No UI calls: the view asks the questions (a conflicting local name, a connected agent).
+-- No UI calls: the view asks the question (a conflicting local name) and tells a connected agent
+-- (agent_link.tell_switch).
 --
 -- Rules (ARCHITECTURE decision 7, "Switching layers"):
 --   * a local layer: `git switch <branch>`;
@@ -191,11 +192,16 @@ function M.msg.conflict(p)
     { ('Switch to the local %s anyway'):format(p.branch), 'Cancel' }
 end
 
----The question when an agent is connected to the review.
----@return string prompt, string[] items
-function M.msg.agent(target)
-  return ('An agent is connected to this review. Switching the worktree to %s changes the files it may be working on.'):format(target),
-    { ('Switch to %s'):format(target), 'Cancel' }
+---The note on the done message for what agent_link.tell_switch did (nil: nothing to say).
+---@param told? 'told'|'later'|'failed'|'unchanged'
+function M.msg.told(told)
+  if told == 'told' then
+    return 'told the connected agent'
+  elseif told == 'later' then
+    return 'the connected agent is told when you stop switching'
+  elseif told == 'failed' then
+    return 'could not tell the connected agent (see revuey.log)'
+  end
 end
 
 function M.msg.done(p, note)

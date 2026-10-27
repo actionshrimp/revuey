@@ -43,6 +43,22 @@ revuey message <id> src/cart.ts:12-14 (new) [stack/cart]: <first line>  (REVUEY 
 `[...]` is the branch (stack layer) the user was reviewing, or `full stack`; `follow-up` marks
 a reply in an earlier thread.
 
+When the user checks out another stack layer in the review (the worktree's branch changes under
+you), the watch prints a different line instead:
+
+```
+revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/o/r/pull/12): the worktree has stack/math checked out now and ...
+```
+
+It is a notice, not a message: there is nothing to `reply` to or `ack`. The files on disk are now
+the new branch's (`from` is what was checked out before, `to` what is now; the PR is shown when
+revuey knows it). Re-read from disk any file you read before using it again, and treat the new
+layer as what the user is reviewing from now on: later messages come from it. If you were in the
+middle of a change for a message from the old branch, stop and reply to that message that the
+branch changed under you (the `[branch]` rule below applies). Do not switch branches yourself. Several quick switches arrive as one line
+(from where you last heard to where the user stopped). `inbox` does not list these, and a watch
+started later does not print earlier ones (`REVUEY sessions` shows what is checked out).
+
 No Monitor tool (another harness): run `REVUEY inbox --session <id>` when the user says they sent something,
 or poll it every 30 seconds while they review.
 
