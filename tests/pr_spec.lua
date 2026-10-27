@@ -524,8 +524,15 @@ h.test(':Revuey pr cancel stops wt and the hook it runs (process group); the hal
   reset('hang', 'feat')
   require('revuey').pr('7', { cwd = d })
   vim.wait(5000, function()
-    return vim.uv.fs_stat(log .. '.kids') ~= nil and #vim.fn.readfile(log .. '.kids') > 0
+    return pr_view.current and pr_view.current.job ~= nil
   end, 10)
+  -- wt writes .kids after its `Running pre-start ... @ <path>` line. Wait for it without running
+  -- the event loop, so that line is still unread in the pipe when cancel comes (as it can be
+  -- for a user): the message must name the worktree all the same.
+  local deadline = vim.uv.hrtime() + 5e9
+  while not (vim.uv.fs_stat(log .. '.kids') and #vim.fn.readfile(log .. '.kids') > 0) and vim.uv.hrtime() < deadline do
+    vim.uv.sleep(10)
+  end
   local wt_pid = tonumber(vim.fn.readfile(log .. '.pid')[1])
   local kid = tonumber(vim.fn.readfile(log .. '.kids')[1])
   h.ok(wt_pid and kid, 'running')
