@@ -150,6 +150,59 @@ h.test('render: title row, indented body, a blank row; past max_lines + 1 rows t
   h.eq('RevueyForgeDraft', r.rows[1].hls[3][3])
 end)
 
+h.test('clean: comments are not started inside inline code or a tag\'s attributes; <!--> is a whole comment', function()
+  h.eq('Strip `<!--` comments\n\nThe rest.', fd.clean('Strip `<!--` comments\n\nThe rest.'))
+  h.eq('Use ``a `<!--` b`` here', fd.clean('Use ``a `<!--` b`` here'))
+  h.eq('link rest', fd.clean('<a href="x<!--">link</a> rest'))
+  h.eq('a  b\nnext', fd.clean('a <!--> b\nnext'))
+  h.eq('a  b\nnext', fd.clean('a <!---> b\nnext'))
+  h.eq('a < b and c', fd.clean('a < b <!-- x --> and c'):gsub('  ', ' '))
+  h.eq('`x`\ny', fd.clean('`x` <!-- hidden\nstill -->y'))
+end)
+
+h.test('clean: surrogates and controls dropped, named entities, indented fences, tables without a leading |', function()
+  h.eq('x', fd.clean('&#xD800;x&#0;'))
+  h.eq('→ × • — … ≤ ✓', fd.clean('&rarr; &times; &bull; &mdash; &hellip; &le; &check;'))
+  h.eq('a[31mred b', fd.clean('a\27[31mred\7 b'))
+  h.eq('- item\n\n```\n    <!-- kept -->\n```', fd.clean('- item\n\n    ```\n    <!-- kept -->\n    ```'))
+  h.eq({ 'a | b', '─────────', '1 | 2', '', 'after' }, texts(fd.render_body(fd.clean('a | b\n--- | ---\n1 | 2\n\nafter'), 40)))
+  h.eq({ 'no | table here' }, texts(fd.render_body('no | table here', 40)), 'a | in prose is not a table')
+end)
+
+h.test('hostile bodies clean and render in well under a second; clean is memoised per body', function()
+  local prose = require('revuey.prose')
+  local bodies = {
+    images = ('!['):rep(32768), brackets = ('['):rep(65536), links = ('[a]('):rep(16384),
+    image_links = ('![a]('):rep(13107), underscores = (' _a'):rep(21845), tags = ('<a "'):rep(16384),
+    comments = ('<!--`'):rep(13107), entities = ('&#'):rep(32768),
+  }
+  for name, body in pairs(bodies) do
+    local t = vim.uv.hrtime()
+    local md = fd.clean(body)
+    fd.render({ number = 1, title = 't' }, md ~= '' and md or 'x', 80)
+    local ms = (vim.uv.hrtime() - t) / 1e6
+    h.ok(ms < 1000, ('%s: %.0fms'):format(name, ms))
+  end
+  -- prose.render alone (GitHub thread comments use it too)
+  for name, body in pairs({ brackets = bodies.brackets, links = bodies.links, underscores = bodies.underscores }) do
+    local t = vim.uv.hrtime()
+    prose.render(body, 80)
+    local ms = (vim.uv.hrtime() - t) / 1e6
+    h.ok(ms < 1000, ('prose %s: %.0fms'):format(name, ms))
+  end
+  -- every signature check cleans the bodies: only once per distinct body
+  local orig, n = fd.clean_uncached, 0
+  fd.clean_uncached = function(b)
+    n = n + 1
+    return orig(b)
+  end
+  local body = 'memo me ' .. vim.uv.hrtime()
+  fd.clean(body)
+  fd.clean(body)
+  fd.clean_uncached = orig
+  h.eq(1, n)
+end)
+
 h.test('the PR lookup asks for the body; normalize keeps it', function()
   local q = forge.build_query({ { repo = { host = 'github.com', owner = 'acme', name = 'shop' }, branch = 'x' } })
   h.ok(q:match('fragment pr on PullRequest {[^}]-%f[%w]body%f[%W]'), q)
@@ -474,8 +527,19 @@ h.test('arriving late: the view and cursor stay on the code; comments, ]m, marks
   h.eq(r18, cursor(s))
   keys(s, '[m', s.layout.files[2].start_row)
   h.eq(r18, cursor(s))
-  -- marks: mr on a hunk line marks that hunk, at its new rows
+  -- marks: mr on a hunk line marks that hunk, at its new rows; its header chip is updated in
+  -- place (one header mark per hunk, on the hunk's row)
   keys(s, 'mr', row_of(s, 'src/cart.ts', 'add', 3))
+  local headers = {}
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.diff_buf, -1, 0, -1, { details = true })) do
+    if m[4].hl_group == 'RevueyHunkHeader' then
+      headers[#headers + 1] = m[2] + 1
+    end
+  end
+  table.sort(headers)
+  h.eq(vim.tbl_map(function(x)
+    return x.row
+  end, s.layout.hunks), headers)
   h.eq(1, select(1, require('revuey.units').progress(s.review.state, review_mod.units(s.review).by_file[1])))
   consistent(s)
   -- the winbar's hint: with the first file at the top, the description is just above
@@ -715,6 +779,236 @@ h.test('scopes: the viewed layer\'s PR; full stack: each open layer\'s PR, botto
     return b.number
   end, s.layout.description.blocks))
   consistent(s)
+  view.close()
+end)
+
+local function plain_repo(name)
+  local base, changed = {}, {}
+  for i = 1, 80 do
+    base[i] = 'line ' .. i
+    changed[i] = (i == 2 or i == 39 or i == 41 or i == 78) and ('changed ' .. i) or base[i]
+  end
+  local d = h.repo(name, { ['a.txt'] = table.concat(base, '\n') .. '\n' }, { ['a.txt'] = table.concat(changed, '\n') .. '\n' })
+  h.git(d, 'remote', 'add', 'origin', GH_URL)
+  return d
+end
+
+local function feat(body)
+  return { ['acme/shop:feat'] = { pr({ number = 5, title = 'Feat', head = 'feat', body = body }) } }
+end
+
+h.test('arriving late: a closed unchanged-line fold above the cursor stays closed, the screen still', function()
+  reset()
+  setup({ context_lines = 30 })
+  local d = plain_repo('fd-zv')
+  h.use_fake_gh(h.tmpdir('fd-gh-zv') .. '/calls.ndjson', feat(LONG), 'slow')
+  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local s = open(d, { base = 'main' })
+  local r20 = row_of(s, 'a.txt', 'ctx', 20)
+  h.ok(closed(s, r20) ~= -1, 'folded')
+  local r39 = row_of(s, 'a.txt', 'add', 39)
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_call(s.diff_win, function()
+    vim.fn.winrestview({ topline = 1, lnum = r39 })
+  end)
+  local winline = vim.api.nvim_win_call(s.diff_win, vim.fn.winline)
+  idle(s)
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.ok(s.layout.description, 'arrived')
+  h.ok(closed(s, row_of(s, 'a.txt', 'ctx', 20)) ~= -1, 'the fold above is still closed')
+  h.eq(39, s.layout.map[cursor(s)].new_lnum)
+  h.eq(winline, vim.api.nvim_win_call(s.diff_win, vim.fn.winline), 'the cursor did not move on screen')
+  consistent(s)
+  view.close()
+  setup()
+end)
+
+h.test('arriving late: another window on the review keeps its line too', function()
+  reset()
+  local d = plain_repo('fd-split')
+  h.use_fake_gh(h.tmpdir('fd-gh-split') .. '/calls.ndjson', feat(LONG), 'slow')
+  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local s = open(d, { base = 'main' })
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.cmd('split')
+  local w2 = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_cursor(w2, { row_of(s, 'a.txt', 'add', 41), 0 })
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of(s, 'a.txt', 'add', 39), 0 })
+  vim.api.nvim_set_current_win(s.diff_win)
+  idle(s)
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.ok(s.layout.description)
+  h.eq(41, s.layout.map[vim.api.nvim_win_get_cursor(w2)[1]].new_lnum, 'the split follows its line')
+  h.eq(39, s.layout.map[cursor(s)].new_lnum)
+  pcall(vim.api.nvim_win_close, w2, true)
+  view.close()
+end)
+
+h.test('arriving late: drawn outside the lookup\'s task, with no git call (a committed-mode layer)', function()
+  reset()
+  local calls = h.tmpdir('fd-gh-task') .. '/calls.ndjson'
+  h.use_fake_gh(calls, prs({ cart = LONG }), 'slow')
+  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local s = open(stack_fixture('fd-task'), { mode = 'committed' })
+  h.eq('committed', s.review.mode)
+  local git = require('revuey.git')
+  local drawing, seen, in_task = false, {}, {}
+  local wrapped = {}
+  for _, name in ipairs({ 'rerender', 'replace_description' }) do
+    local fn = view[name]
+    if fn then
+      wrapped[name] = fn
+      view[name] = function(...)
+        drawing = true
+        in_task[#in_task + 1] = coroutine.running() ~= nil
+        local r = { pcall(fn, ...) }
+        drawing = false
+        assert(r[1], r[2])
+        return unpack(r, 2)
+      end
+    end
+  end
+  local git_orig = {}
+  for _, name in ipairs({ 'blob', 'read_file', 'system' }) do
+    git_orig[name] = git[name]
+    git[name] = function(...)
+      if drawing then
+        seen[#seen + 1] = name
+      end
+      return git_orig[name](...)
+    end
+  end
+  local r = row_of(s, 'src/cart.ts', 'add', 13)
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.diff_win, { r, 0 })
+  local ok, err = pcall(idle, s)
+  for name, fn in pairs(wrapped) do
+    view[name] = fn
+  end
+  for name, fn in pairs(git_orig) do
+    git[name] = fn
+  end
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  assert(ok, err)
+  h.ok(s.layout.description, 'arrived')
+  h.eq({ false }, in_task, 'drawn once, not inside the lookup task')
+  h.eq({}, seen, 'no git call while drawing it')
+  h.eq(13, s.layout.map[cursor(s)].new_lnum)
+  view.close()
+end)
+
+h.test('a lookup that changes nothing touches nothing; a pending key in Normal mode does not stop it', function()
+  reset()
+  local d = plain_repo('fd-same')
+  local calls = h.tmpdir('fd-gh-same') .. '/calls.ndjson'
+  h.use_fake_gh(calls, feat(LONG))
+  local s = open(d, { base = 'main' })
+  idle(s)
+  local tick, rc = vim.b[s.diff_buf].changedtick, s.render_count
+  for _ = 1, 3 do
+    fv.update(s, true)
+    idle(s)
+  end
+  h.eq(tick, vim.b[s.diff_buf].changedtick, 'buffer untouched')
+  h.eq(rc, s.render_count, 'not rendered again')
+  -- Normal mode while a mapping waits for its next key: still drawn
+  reset()
+  h.use_fake_gh(calls, feat('Two.'))
+  local gm = vim.api.nvim_get_mode
+  vim.api.nvim_get_mode = function()
+    return { mode = 'n', blocking = true }
+  end
+  local ok, err = pcall(function()
+    fv.update(s, true)
+    idle(s)
+  end)
+  vim.api.nvim_get_mode = gm
+  assert(ok, err)
+  h.ok(vim.wait(1000, function()
+    return lines(s)[2] == '  Two.'
+  end, 10), lines(s)[2])
+  view.close()
+end)
+
+h.test('a resize re-wraps it, but waits for a closed comment editor and Normal mode', function()
+  reset()
+  local d = plain_repo('fd-resize')
+  h.use_fake_gh(h.tmpdir('fd-gh-resize') .. '/calls.ndjson', feat(('word '):rep(60)))
+  local s = open(d, { base = 'main' })
+  idle(s)
+  local n0 = desc_rows(s)
+  local editor = require('revuey.comment_editor')
+  editor.current = { done = false }
+  vim.api.nvim_win_set_width(s.panel_win, 10) -- the diff window gets wider
+  vim.api.nvim_exec_autocmds('WinResized', {})
+  vim.wait(200)
+  h.eq(n0, desc_rows(s), 'not while the editor is open')
+  consistent(s)
+  editor.current = nil
+  h.ok(vim.wait(2000, function()
+    return desc_rows(s) < n0
+  end, 10), 're-wrapped once it closed: ' .. desc_rows(s))
+  consistent(s)
+  -- Visual mode: after it
+  local n1 = desc_rows(s)
+  local gm = vim.api.nvim_get_mode
+  vim.api.nvim_get_mode = function()
+    return { mode = 'v', blocking = false }
+  end
+  vim.api.nvim_win_set_width(s.panel_win, 30)
+  local ok, err = pcall(vim.api.nvim_exec_autocmds, 'WinResized', {})
+  vim.api.nvim_get_mode = gm
+  assert(ok, err)
+  h.eq(n1, desc_rows(s), 'not in Visual mode')
+  vim.api.nvim_exec_autocmds('ModeChanged', {})
+  h.ok(vim.wait(1000, function()
+    return desc_rows(s) > n1
+  end, 10), 'after the mode changed')
+  consistent(s)
+  view.close()
+end)
+
+h.test('zo/zc as the user left them survive a changed description and R; the mode wait re-arms', function()
+  reset()
+  local d = plain_repo('fd-zo')
+  local calls = h.tmpdir('fd-gh-zo') .. '/calls.ndjson'
+  h.use_fake_gh(calls, feat(LONG))
+  local s = open(d, { base = 'main' })
+  idle(s)
+  local b = s.layout.description.blocks[1]
+  keys(s, 'zo', b.fold[1])
+  h.eq(-1, closed(s, b.fold[1]))
+  -- an edit on GitHub: the rows are replaced, still expanded
+  reset()
+  h.use_fake_gh(calls, feat(LONG .. '\n\nOne more paragraph.'))
+  fv.update(s, true)
+  idle(s)
+  h.ok(table.concat(lines(s), '\n'):find('One more paragraph.', 1, true))
+  h.eq(-1, closed(s, s.layout.description.blocks[1].fold[1]), 'expanded after the change')
+  -- zc, then R (a full render): still collapsed
+  keys(s, 'zc', s.layout.description.blocks[1].fold[1])
+  refresh(s)
+  h.ok(closed(s, s.layout.description.blocks[1].fold[1]) ~= -1, 'collapsed after R')
+  -- two changes, each while in Visual mode: each drawn once the mode changes
+  for i = 1, 2 do
+    reset()
+    h.use_fake_gh(calls, feat('Version ' .. i .. '.'))
+    local gm = vim.api.nvim_get_mode
+    vim.api.nvim_get_mode = function()
+      return { mode = 'v', blocking = false }
+    end
+    local ok, err = pcall(function()
+      fv.update(s, true)
+      idle(s)
+    end)
+    vim.api.nvim_get_mode = gm
+    assert(ok, err)
+    h.ok(lines(s)[2] ~= '  Version ' .. i .. '.', 'waits ' .. i)
+    vim.api.nvim_exec_autocmds('ModeChanged', {})
+    h.ok(vim.wait(1000, function()
+      return lines(s)[2] == '  Version ' .. i .. '.'
+    end, 10), 'drawn ' .. i .. ': ' .. lines(s)[2])
+  end
   view.close()
 end)
 

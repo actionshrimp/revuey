@@ -24,7 +24,7 @@ local M = {}
 
 local cleanup -- forward declaration
 local find_guide_anchor -- forward declaration
-local description_folds, sync_description_folds, open_context_folds, reopen_context_folds -- forward declarations
+local description_folds, sync_description_folds -- forward declarations
 
 local ns = api.nvim_create_namespace('revuey.diff')
 local WINBAR = "%!v:lua.require'revuey.view'.winbar()"
@@ -2074,18 +2074,22 @@ local function description_expanded(s, url)
   return e
 end
 
----After render's folds: a collapsed description folds the rows past its preview.
+---After render's folds (or new description rows): a collapsed description folds the rows past
+---its preview, an expanded one does not. In every window on the review buffer.
 function description_folds(s)
-  if #description_blocks(s) == 0 or not api.nvim_win_is_valid(s.diff_win) then
+  if #description_blocks(s) == 0 or not api.nvim_buf_is_valid(s.diff_buf) then
     return
   end
-  api.nvim_win_call(s.diff_win, function()
-    for _, b in ipairs(description_blocks(s)) do
-      if b.fold and not description_expanded(s, b.url) and vim.fn.foldclosed(b.fold[1]) == -1 then
-        pcall(vim.cmd, b.fold[1] .. 'foldclose')
+  for _, win in ipairs(vim.fn.win_findbuf(s.diff_buf)) do
+    api.nvim_win_call(win, function()
+      for _, b in ipairs(description_blocks(s)) do
+        local is_closed = b.fold and vim.fn.foldclosed(b.fold[1]) ~= -1
+        if b.fold and is_closed == description_expanded(s, b.url) then
+          pcall(vim.cmd, b.fold[1] .. (is_closed and 'foldopen' or 'foldclose'))
+        end
       end
-    end
-  end)
+    end)
+  end
 end
 
 ---Remember the descriptions' folds as the user left them (`zo`/`zc` count too). In the diff window.
@@ -2096,38 +2100,6 @@ function sync_description_folds(s)
       s.desc_expanded[b.url] = vim.fn.foldclosed(b.fold[1]) == -1
     end
   end
-end
-
----Unchanged-line folds (level 3) that are open, by file and line (a re-render closes them
----again). In the diff window.
-function open_context_folds(s)
-  local out = {}
-  for row, lvl in pairs(s.folds or {}) do
-    local e = lvl == '>3' and s.layout.map[row]
-    if e and e.path and vim.fn.foldclosed(row) == -1 then
-      out[#out + 1] = e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')
-    end
-  end
-  return out
-end
-
----Open those folds again in the new layout (only where nothing around them is collapsed).
-function reopen_context_folds(s, keys)
-  if #keys == 0 then
-    return
-  end
-  local want = {}
-  for _, k in ipairs(keys) do
-    want[k] = true
-  end
-  api.nvim_win_call(s.diff_win, function()
-    for row, lvl in pairs(s.folds or {}) do
-      local e = lvl == '>3' and s.layout.map[row]
-      if e and e.path and want[e.path .. ':' .. (e.old_lnum or '') .. ':' .. (e.new_lnum or '')] and vim.fn.foldclosed(row) == row then
-        pcall(vim.cmd, row .. 'foldopen')
-      end
-    end
-  end)
 end
 
 ---<Tab> (toggle_fold) on a long PR description: expand or collapse it. Returns false when the
@@ -2153,7 +2125,7 @@ end
 
 ---Fill the diff buffer for the session's review.
 ---Snapshot of what the user is looking at, to restore after a re-render.
-local function capture_view(s, keep_context)
+local function capture_view(s)
   if s.view_mode == 'guide' then
     return M.capture_guide(s)
   end
@@ -2167,9 +2139,6 @@ local function capture_view(s, keep_context)
     saved.col = v.col
     saved.row = v.lnum
     sync_description_folds(s)
-    if keep_context then
-      saved.ctx_open = open_context_folds(s)
-    end
     for fi, f in ipairs(s.review.files) do
       local r = s.layout.files[fi]
       if r then
@@ -2457,7 +2426,9 @@ local function render(s, saved)
   -- the guide's line notes (guide view only; cleared in the diff view)
   guide_view.draw_notes(s)
   api.nvim_win_call(s.diff_win, function()
-    vim.cmd('normal! zx')
+    -- zX, not zx: zx ends with zv, which would open a fold at the cursor's old row number (rows
+    -- above it may have come or gone); restore_view puts the cursor back afterwards
+    vim.cmd('normal! zX')
   end)
   -- collapsed hunks first: closing a hunk inside an already collapsed file would not work
   restore_hunk_folds(s)
@@ -2497,9 +2468,6 @@ local function render(s, saved)
     end
   end
   description_folds(s)
-  if saved and saved.ctx_open then
-    reopen_context_folds(s, saved.ctx_open)
-  end
   if saved then
     restore_view(s, saved)
   end
@@ -2513,14 +2481,84 @@ local function render(s, saved)
   require('revuey.forge_view').update(s)
 end
 
----Re-render in place, keeping the view (used when a guide finishes, the window is resized or a
----PR description arrives). `keep_context_folds`: unchanged-line folds the user opened stay open.
----@param o? {keep_context_folds?:boolean}
-function M.rerender(s, o)
+---Re-render in place, keeping the view (used when a guide finishes or the window is resized).
+function M.rerender(s)
   s = s or M.session
   if s and not s.cleaned and api.nvim_buf_is_valid(s.diff_buf) then
-    render(s, capture_view(s, o and o.keep_context_folds))
+    render(s, capture_view(s))
   end
+end
+
+---The PR description's wrap width for the diff window (the guide's prose width).
+function M.description_width(s)
+  return prose_width(s)
+end
+
+---Put the PR description rows the lookup has now (forge_view.description_head) in place of the
+---ones shown, without rendering again: only the head rows of the buffer are replaced
+---(`nvim_buf_set_lines(buf, 0, old_n, ...)`), so Neovim moves every window's cursor and
+---topline, marks, the jumplist, extmarks and folds below by the rows added or removed, and the
+---row-keyed state is shifted by the same delta (layout.replace_head, fold levels, hunk header
+---marks) or rebuilt from the layout (word diff pairs, comment rows). No git call, no restore.
+---Diff view only; the caller (forge_view.sync_description) checks the mode and the editor.
+function M.replace_description(s)
+  if s.cleaned or (s.view_mode or 'diff') ~= 'diff' or not s.layout or s.layout.kind ~= 'diff'
+    or not api.nvim_buf_is_valid(s.diff_buf) then
+    return false
+  end
+  local buf = s.diff_buf
+  -- how the user left the descriptions' folds (zo/zc), before their rows go
+  if api.nvim_win_is_valid(s.diff_win) then
+    api.nvim_win_call(s.diff_win, function()
+      sync_description_folds(s)
+    end)
+  end
+  s.desc_width = prose_width(s)
+  local head = require('revuey.forge_view').description_head(s, s.desc_width)
+  local L, d, old_n = layout_mod.replace_head(s.layout, head)
+  local hm = {}
+  for row, id in pairs(s.hunk_marks or {}) do
+    hm[row + d] = id
+  end
+  s.hunk_marks = hm
+  s.layout = L
+  s.folds = layout_mod.fold_levels(L, config.options.fold_context_threshold, 3)
+  local n = L.description and L.description.end_row or 0
+  -- every window's view, to put back shifted by the rows added above (Neovim moves cursors
+  -- and marks itself, but its topline correction depends on the folds; this is exact)
+  local views = {}
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    views[win] = api.nvim_win_call(win, vim.fn.winsaveview)
+  end
+  api.nvim_buf_clear_namespace(buf, ns, 0, old_n)
+  vim.bo[buf].modifiable = true
+  api.nvim_buf_set_lines(buf, 0, old_n, false, vim.list_slice(L.lines, 1, n))
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].modified = false
+  for row = 1, n do
+    for _, hl in ipairs(L.map[row].hls or {}) do
+      pcall(api.nvim_buf_set_extmark, buf, ns, row - 1, hl[1], { end_col = hl[2], hl_group = hl[3], priority = 20 })
+    end
+  end
+  make_word_spans(s)
+  local ok, err = pcall(comments_view.render, s)
+  if not ok then
+    vim.notify('revuey: comments: ' .. tostring(err):gsub('^revuey: ', ''), vim.log.levels.ERROR)
+  end
+  description_folds(s)
+  for win, v in pairs(views) do
+    if api.nvim_win_is_valid(win) then
+      local function moved(row)
+        -- rows below the head move by d; a row inside the old head stays (clamped to the new one)
+        return row > old_n and row + d or math.max(1, math.min(row, math.max(n, 1)))
+      end
+      api.nvim_win_call(win, function()
+        vim.fn.winrestview({ lnum = moved(v.lnum), col = v.col, curswant = v.curswant, topline = moved(v.topline), topfill = v.topfill, leftcol = v.leftcol })
+      end)
+    end
+  end
+  s.desc_replaced = (s.desc_replaced or 0) + 1
+  return true
 end
 
 ---Cheap fingerprint of the working tree as far as this review is concerned: size+mtime of every
@@ -2696,8 +2734,9 @@ function M.show(review, opts)
       end
       if s.view_mode ~= 'guide' then
         -- the PR description is wrapped to the window (and its comments with it)
+        -- (through the same gate as a lookup: not in Visual/Insert mode or under the editor)
         if s.layout.description and prose_width(s) ~= s.desc_width then
-          return M.rerender(s, { keep_context_folds = true })
+          require('revuey.forge_view').sync_description(s)
         end
         -- comment threads are wrapped to the window
         if s.cm and ((s.cm.store and next(s.cm.store.comments)) or (s.cm.forge_items and next(s.cm.forge_items))) then

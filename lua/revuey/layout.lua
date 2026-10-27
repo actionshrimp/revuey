@@ -298,6 +298,52 @@ function M.compose_guide(files, doc)
   }
 end
 
+---The same diff layout with other head rows (the PR description changed, arrived or went):
+---equal to `compose(files, head)` without composing again. Every row index after the head moves
+---by the returned delta (new head rows minus old), which the buffer's lines do too when only
+---the head is replaced (`nvim_buf_set_lines(buf, 0, old_n, ...)`).
+---@param layout revuey.Layout a diff layout (from compose)
+---@param head? {rows:{text:string, entry:table}[], blocks:table[]}
+---@return revuey.Layout, integer delta, integer old_n
+function M.replace_head(layout, head)
+  local old_n = layout.description and layout.description.end_row or 0
+  local rows = head and head.rows or {}
+  local d = #rows - old_n
+  local lines, map = {}, {}
+  for i, r in ipairs(rows) do
+    lines[i], map[i] = r.text, r.entry
+  end
+  for i = old_n + 1, #layout.lines do
+    lines[#lines + 1] = layout.lines[i]
+    map[#map + 1] = layout.map[i]
+  end
+  local files = {}
+  for fi, r in ipairs(layout.files) do
+    local hr = {}
+    for k, row in ipairs(r.hunk_rows) do
+      hr[k] = row + d
+    end
+    files[fi] = { start_row = r.start_row + d, end_row = r.end_row + d, hunk_rows = hr }
+  end
+  local hunks = {}
+  for k, x in ipairs(layout.hunks) do
+    hunks[k] = { row = x.row + d, file_idx = x.file_idx, first_change = x.first_change + d }
+  end
+  local base = {}
+  for fi, per in pairs(layout.hunk_base) do
+    base[fi] = {}
+    for hi, row in pairs(per) do
+      base[fi][hi] = row + d
+    end
+  end
+  local blocks = {}
+  for k, b in ipairs(layout.blocks) do
+    blocks[k] = { start_row = b.start_row + d, end_row = b.end_row + d }
+  end
+  local description = #rows > 0 and { start_row = 1, end_row = #rows, blocks = head.blocks or {} } or nil
+  return { kind = 'diff', lines = lines, map = map, files = files, hunks = hunks, hunk_base = base, blocks = blocks, description = description }, d, old_n
+end
+
 ---Find the composed row for a new-side (path, lnum), only for add/ctx rows. Returns nil if not shown.
 ---@param layout revuey.Layout
 ---@param files revuey.FileDiff[]

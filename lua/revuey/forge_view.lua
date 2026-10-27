@@ -26,7 +26,8 @@ local function shown_sig(f)
   for key, t in pairs(f.targets or {}) do
     local pr, stale = forge.get(t)
     if pr then
-      parts[#parts + 1] = key .. '=' .. vim.json.encode(pr) .. (stale and '?' or '')
+      -- the panel never shows the description: leave the body out (it can be 64KB)
+      parts[#parts + 1] = key .. '=' .. vim.json.encode(vim.tbl_extend('force', pr, { body = #(pr.body or '') })) .. (stale and '?' or '')
     end
   end
   table.sort(parts)
@@ -46,9 +47,6 @@ function M.update(s, force)
     return
   end
   local f = state(s)
-  if f.rerendering then
-    return -- the re-render that draws a description, from inside a lookup
-  end
   force = force or s.forge_force
   s.forge_force = nil
   if f.busy then
@@ -115,8 +113,11 @@ function M.update(s, force)
       f.again = true
     end
     -- the description of the scope's open PR (same lookup, same cache): rows above the first file
+    -- (scheduled: out of this task, so nothing in it can yield or interleave)
     if s.review == review then
-      M.sync_description(s)
+      vim.schedule(function()
+        M.sync_description(s)
+      end)
     end
     -- then the review threads of the scope's open PRs (their own TTL cache)
     local prs = M.threads_enabled() and s.review == review and M.scope_prs(s) or {}
@@ -264,6 +265,12 @@ function M.description_signature(s)
   return table.concat(parts, '\n')
 end
 
+---What the diff view draws for the descriptions: their signature and the wrap width (none: '').
+local function drawn_key(s, width)
+  local sig = M.description_signature(s)
+  return sig ~= '' and (sig .. '\n@' .. tostring(width)) or ''
+end
+
 ---Rows to put above the first file of the diff layout (layout.compose's `head`): each
 ---description's title, body and a blank row, as prose rows (`role = 'description'`, which every
 ---diff feature skips), and a block per PR `{url, number, title, start_row, end_row, fold?}`
@@ -274,7 +281,7 @@ function M.description_head(s, width)
   if not f then
     return nil -- no lookup yet (or the forge is off): nothing to show
   end
-  f.desc_drawn = M.description_signature(s)
+  f.desc_drawn = drawn_key(s, width)
   local list = M.descriptions(s)
   if #list == 0 then
     return nil
@@ -300,26 +307,26 @@ function M.description_head(s, width)
   return head
 end
 
----After a lookup: when the descriptions changed (one arrived, was edited, went away), draw them
----again by re-rendering the diff view in place (its cursor and view are kept on the code, so
----rows inserted above never move it). Not in the guide view (it has none; switching back
----renders them), and only from Normal mode: in Visual or Insert mode it waits for the mode to
----change, so a selection or an edit never sees the rows move; with the comment editor open (a
----float at a buffer row), once it is closed.
+---After a lookup (scheduled out of its task) or a resize: when the descriptions changed (one
+---arrived, was edited, went away, or the width re-wraps them), replace their rows in place
+---(view.replace_description: the head rows only, so nothing below moves on screen). Not in the
+---guide view (it has none; switching back renders them). Only in Normal mode: in Visual,
+---Insert or another mode it waits for the mode to change, so a selection or an edit never sees
+---the rows move; with the comment editor open (a float at a buffer row), until it is closed.
 function M.sync_description(s)
   local f = s and s.forge
   if not f or s.cleaned or (s.view_mode or 'diff') ~= 'diff' or not s.layout then
     return
   end
-  if M.description_signature(s) == (f.desc_drawn or '') then
+  local view = require('revuey.view')
+  if drawn_key(s, view.description_width(s)) == (f.desc_drawn or '') then
     return
   end
   local api = vim.api
-  if not (s.diff_buf and api.nvim_buf_is_valid(s.diff_buf) and s.diff_win and api.nvim_win_is_valid(s.diff_win)) then
+  if not (s.diff_buf and api.nvim_buf_is_valid(s.diff_buf)) then
     return
   end
-  local mode = api.nvim_get_mode()
-  if mode.blocking or mode.mode ~= 'n' then
+  if api.nvim_get_mode().mode ~= 'n' then
     if not f.desc_wait then
       f.desc_wait = true
       api.nvim_create_autocmd('ModeChanged', {
@@ -347,9 +354,7 @@ function M.sync_description(s)
     end
     return
   end
-  f.rerendering = true -- render asks for a lookup: not from inside this one
-  local ok, err = pcall(require('revuey.view').rerender, s, { keep_context_folds = true })
-  f.rerendering = false
+  local ok, err = pcall(view.replace_description, s)
   if not ok then
     log.write('forge', 'description: ' .. tostring(err))
   end
