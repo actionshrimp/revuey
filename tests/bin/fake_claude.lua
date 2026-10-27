@@ -30,12 +30,15 @@ for id, path in stdin:gmatch('\n@@ (h%d+) (.-) @@') do
   paths[id] = path
 end
 -- numbered lines (`3|+text`) the prompt showed per hunk id
-local shown_lines, cur = {}, nil
+-- and the ids sent as an abridged preview, with their real line counts
+local shown_lines, abridged, cur = {}, {}, nil
 for l in (stdin .. '\n'):gmatch('(.-)\n') do
   local id = l:match('^@@ (h%d+) .- @@')
   if id then
     cur = id
     shown_lines[id] = 0
+  elseif cur and l:match('%[abridged: .-, (%d+) lines%]$') then
+    abridged[cur] = tonumber(l:match('%[abridged: .-, (%d+) lines%]$'))
   elseif cur and l:match('^%d+|') then
     shown_lines[cur] = shown_lines[cur] + 1
   end
@@ -200,6 +203,26 @@ elseif scenario == 'notes' then
   end
   if g.sections[2] and rest then
     g.sections[2].line_notes = { { hunk = rest, line = 1, text = 'Wired in here.' } }
+  end
+  tool('StructuredOutput', g)
+  result(g)
+elseif scenario == 'notes_abridged' then
+  -- on the first abridged hunk: a note on a numbered preview line, and one on a line the hunk
+  -- has but the prompt never showed (revuey must drop it)
+  local g = guide()
+  local id
+  for _, x in ipairs(ids) do
+    if abridged[x] and abridged[x] > (shown_lines[x] or 0) and not id then
+      id = x
+    end
+  end
+  if id then
+    g.sections = { { title = 'Everything', overview = 'All of it.', hunks = vim.tbl_map(function(x)
+      return { id = x }
+    end, ids), line_notes = {
+      { hunk = id, line = 2, text = 'A line of the preview.' },
+      { hunk = id, line = shown_lines[id] + 1, text = 'Past the preview.' },
+    } } }
   end
   tool('StructuredOutput', g)
   result(g)

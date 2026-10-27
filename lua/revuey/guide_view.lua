@@ -375,13 +375,36 @@ function M.note_rows(s)
   return out
 end
 
----Text width for a note: the diff window minus the gutter, at most the prose width.
+---Text width for a note: the diff window minus the gutter, at most the prose width (and never
+---wider than the window, however narrow).
 local function note_width(s)
   local w = (s.diff_win and api.nvim_win_is_valid(s.diff_win)) and api.nvim_win_get_width(s.diff_win) or 100
-  return math.max(30, math.min(w - (2 * (s.numw or 3) + 4) - 1, s.prose_width or 100))
+  return math.max(1, math.min(w - (2 * (s.numw or 3) + 4) - 1, s.prose_width or 100))
 end
 
 M.NOTE_LABEL = ' ▼ guide '
+
+---Cut virtual text chunks to `width` cells (a word or the label wider than a narrow window).
+local function fit(line, width)
+  local out, used = {}, 0
+  for _, ch in ipairs(line) do
+    local w = api.nvim_strwidth(ch[1])
+    if used + w <= width then
+      out[#out + 1] = ch
+      used = used + w
+    else
+      local text = ch[1]
+      while text ~= '' and used + api.nvim_strwidth(text) > width do
+        text = vim.fn.strcharpart(text, 0, vim.fn.strchars(text) - 1)
+      end
+      if text ~= '' then
+        out[#out + 1] = { text, ch[2] }
+      end
+      break
+    end
+  end
+  return out
+end
 
 local function chunks(line, base)
   return require('revuey.comments_view').chunks(line, base)
@@ -429,17 +452,19 @@ function M.draw_notes(s)
           label = label .. '· ' .. (n.last - n.first + 1) .. ' lines '
         end
         local lw = api.nvim_strwidth(label)
-        -- inline markdown (backticks, bold) like the guide's prose; the band fills the width
-        local rendered = prose.render(n.text, math.max(width - lw - 2, 10))
-        while #rendered > 1 and rendered[#rendered].text == '' do
-          rendered[#rendered] = nil
+        -- inline markdown only (backticks, bold): no blocks, so "```lua" or "> [!WARNING]" stay
+        -- plain text; the raw text when the markup leaves nothing. The band fills the width.
+        local plain, spans = prose.inline(n.text)
+        if not plain:find('%S') then
+          plain, spans = n.text, {}
         end
+        local rendered = prose.wrap(plain, spans, math.max(width - lw - 2, 1))
         for i, l in ipairs(rendered) do
           local line = { { i == 1 and label or string.rep(' ', lw), 'RevueyGuideLineNoteLabel' }, { ' ', 'RevueyGuideLineNote' } }
           vim.list_extend(line, chunks(l, 'RevueyGuideLineNote'))
           local used = lw + 1 + api.nvim_strwidth(l.text)
-          line[#line + 1] = { string.rep(' ', math.max(width - used, 1)), 'RevueyGuideLineNote' }
-          vl[#vl + 1] = line
+          line[#line + 1] = { string.rep(' ', math.max(width - used, 0)), 'RevueyGuideLineNote' }
+          vl[#vl + 1] = fit(line, width)
         end
       end
       pcall(api.nvim_buf_set_extmark, buf, M.ns_notes, row - 1, 0, {
@@ -502,7 +527,7 @@ function M.next_note(s, dir)
     row, target = t, t
   end
   if not target then
-    return
+    return vim.notify('revuey: no more line notes ' .. (dir > 0 and 'below' or 'above'), vim.log.levels.INFO)
   end
   api.nvim_set_current_win(s.diff_win)
   api.nvim_win_call(s.diff_win, function()

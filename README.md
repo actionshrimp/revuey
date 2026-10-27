@@ -639,7 +639,9 @@ code stays yours. Claude points at a line by its hunk id and the line's number w
 as AI review findings do; a note on a line the prompt did not show (or an unknown hunk) is
 dropped, never moved, and the "guide ready" message counts the drops. Guides made before line
 notes existed load as they are, without notes. After an edit, a note on an edited hunk stays
-only where its lines are found again unchanged; the banner counts the ones that were lost.
+only where its lines and the two lines around them are found again unchanged, in one place (a
+note is never handed to a copy of a short line like `return nil`); the banner counts the ones
+that were lost.
 
 **Overview diagram.** When the structure is worth seeing (several modules calling each other, a
 data flow, a new component wired into existing ones), the guide starts with a small diagram
@@ -707,7 +709,8 @@ hooks), plugins and MCP servers. revuey never reads your credentials. The prompt
 commit subjects, a file list and the diff, with each hunk marked by an id (`@@ h7 path @@`) and
 its lines numbered within the hunk (`3|+text`, for line notes); Claude only refers to hunks by
 id, and revuey checks the answer (unknown ids are dropped, missed hunks go to an "Other changes"
-section, line notes on lines that were not shown are dropped). The whole prompt stays under `ai.max_prompt_chars`
+section, line notes on lines that were not shown are dropped). The line numbers cost about 5-7%
+of the diff's share of the budget, so a diff just under the limit may now be sent abridged. The whole prompt stays under `ai.max_prompt_chars`
 (150k characters): the largest hunks are sent as a short index entry, and if that is not
 enough, only the file list; a review too big even for that is refused (review one layer). The
 Claude session is kept (named "revuey guide: <branch>" in `claude --resume`) and its id is

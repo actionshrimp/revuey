@@ -370,19 +370,28 @@ are in `reports/Terminal code review tool landscape.md`.
      note with a bad anchor, no line, no text, an exact duplicate, or past the caps: 3 per
      section (also the schema's `maxItems`) and 12 per guide, in the model's order. Ranges are
      clamped to 8 lines and text to one line of 200 characters. A note stays with the hunk it
-     points into, whichever section shows that hunk, and counts towards that section's cap.
+     points into, whichever section shows that hunk, and counts towards that section's cap
+     (the prompt says so: usually a hunk of the section, else shown with that hunk).
      Drops are counted by reason (`warnings.notes`, the same reasons and wording as findings,
      `guide.dropped_text`) and named in the "guide ready" message.
      The record (version 2) stores each note on its hunk anchor with the lines it pointed at
-     (`lines`); version 1 records have none and load unchanged (`sanitize_notes` also drops
-     malformed notes of hand-edited files). `guide.resolve` keeps notes of hash-matched hunks
-     as they are; on a hunk re-anchored by overlap a note stays only where its stored lines are
-     found again unchanged, at its old offset or at a unique other one, else it is lost and
-     counted (`notes_lost`, in the stale banner). Not regenerated automatically.
+     (`lines`) and up to 2 hunk lines either side (`before`, `after`); version 1 records have
+     none and load unchanged (`sanitize_notes` also drops malformed notes of hand-edited files
+     and keeps at most 12 per record). `guide.resolve` keeps notes of hash-matched hunks as
+     they are. On a hunk re-anchored by overlap, or merged into one an earlier anchor of the
+     section shows, a note stays only where its lines plus that context match at exactly one
+     place in the whole hunk (its old line is just one candidate) and the matched text is not
+     weak (`comments.distinctive_words`, as for comments and GitHub threads). Without stored
+     context the lines alone must be unique and not weak. A short line (`return nil`) has
+     copies, and a note on the wrong line is worse than a lost one. Everything else is lost
+     and counted (`notes_lost`, in the stale banner), as are the notes of hunks that vanished.
+     Not regenerated automatically.
      Rendering (`guide_view.draw_notes`, namespace `revuey.guide.notes`, after comments on every
      render): `virt_lines_above` on the note's first row, a band (`RevueyGuideLineNote`, a
      violet tint mixed into `Normal`'s background, per light/dark) with a `▼ guide` label
-     (`· N lines` for a range) and inline markdown, wrapped to the text width. Choices: above
+     (`· N lines` for a range) and inline markdown only (no code blocks or callouts, so a note
+     can never render as a warning; the raw text when the markup leaves nothing), wrapped to
+     the text width and cut to the window when it is narrower than a word. Choices: above
      the line (the reader meets the note before the code, and comments, AI findings and GitHub
      threads all hang below their last line, so they never collide); no box and no author
      line, so it never reads as a comment; shown by default (that is the point of a note);
