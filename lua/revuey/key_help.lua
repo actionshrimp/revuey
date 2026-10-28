@@ -26,11 +26,13 @@ local function comment_items(s, row, out, seen)
   end
   local comments = require('revuey.comments')
   local cv = require('revuey.comments_view')
-  local origin = require('revuey.ai_review').origin
+  local ai_review = require('revuey.ai_review')
   for _, id in ipairs(ids) do
     local cmt = (c.store and comments.get(c.store, id)) or (c.forge_items and c.forge_items[id])
     if cmt then
-      local list = cmt.forge and FORGE or ((origin(cmt) and cmt.status ~= 'accepted') and TRIAGE or OWN)
+      -- accepted (and maybe resolved since), a finding or agent comment is yours: not triage
+      local triage = ai_review.origin(cmt) and cmt.status ~= 'accepted' and not ai_review.accepted_from(cmt)
+      local list = cmt.forge and FORGE or (triage and TRIAGE or OWN)
       for _, a in ipairs(list) do
         local key = keys.first(a[1])
         if key and not seen[key] and (not a.resolved or cmt.status == 'resolved') then
