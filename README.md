@@ -421,7 +421,9 @@ and review state on the layer's row, and a section with the details of the layer
 - **When.** What you see from GitHub changes only when you ask: the PRs are looked up when the
   review opens (one call for every layer, in the background), and again only on `R`. Switching
   layers (`]s`/`[s`, `gs`, `gS`), refreshes after a save or a git change, focus, resizes and
-  redraws never fetch (a layer that appears in the stack later is looked up once). One lookup
+  redraws never fetch. A branch looked up under a new name is looked up once at the next
+  refresh: a layer that appears in the stack later, or a branch whose push or upstream config
+  changed (`git push -u` to another name). One lookup
   runs at a time per review; `gh` is stopped after `forge.timeout` seconds (15) and when the
   review closes, and a lookup that ends after that is ignored.
 - **News on GitHub.** While the review is shown and Neovim has focus, every `forge.ttl` seconds
@@ -430,11 +432,13 @@ and review state on the layer's row, and a section with the details of the layer
   decision, CI state, threads added or resolved. A PR that changed is marked (`↻` on its row,
   `(new on GitHub · R)` on the detail heading, `(new)` on the threads line, `new on GitHub · R to
   refresh` on the description) and nothing shown is replaced until you press `R`, which fetches
-  everything and clears the marks. Back from another window or tab (`FocusGained`), it checks at
-  once if one is due. Not detected: an edited review comment, a PR opened for a branch that had
+  everything and clears the marks (other layers' too). Back from another window or tab
+  (`FocusGained`), it checks at once if one is due; none runs while a review is being submitted. Not detected: an edited review comment, a PR opened for a branch that had
   none (`R` finds it), changes to other layers' PRs while one layer is viewed. A failed check is
   only logged. `forge.check = false` turns it off. Each check costs one GraphQL rate-limit point
-  (of 5,000 an hour).
+  (of 5,000 an hour). **`forge.ttl` changed meaning:** it used to be how long PR data was cached
+  before a redraw refetched it (60); it is now the interval between checks, and at least 60
+  seconds (an old `ttl = 0` meaning "always fresh" checks every minute, not nonstop).
 - **Failures are quiet.** No `gh`, not logged in, offline, timed out, rate limited or unexpected
   output: nothing new is shown (PRs already shown stay, marked stale), and the reason is written
   to the log file (`log_file`, default `stdpath('log')/revuey.log`, moved to `revuey.log.1` at
@@ -442,7 +446,7 @@ and review state on the layer's row, and a section with the details of the layer
 
 ```lua
 require('revuey').setup({
-  -- ttl: seconds between checks for news on GitHub (nothing is refetched until `R`)
+  -- ttl: seconds between checks for news on GitHub, at least 60 (nothing is refetched until `R`)
   forge = { enabled = true, ttl = 180, check = true, timeout = 15, cmd = 'gh', hosts = { 'git.example.com' } },
   keymaps = { forge_open = 'gx' },
 })

@@ -129,7 +129,7 @@ M.defaults = {
     -- Every `ttl` seconds while the review is shown and Neovim focused, one small query asks
     -- GitHub whether the scope's PRs changed (head, state, reviews, threads, checks, description)
     -- and marks the ones that did ("↻", "new on GitHub · R"); nothing shown is replaced until `R`.
-    -- `check = false` turns the check off.
+    -- At least 60 (it used to be a cache TTL). `check = false` turns the check off.
     ttl = 180,
     check = true,
     timeout = 15, -- seconds before a gh call is stopped

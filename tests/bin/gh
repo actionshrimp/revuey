@@ -22,6 +22,7 @@
 #   REVUEY_FAKE_GH_CHECK_SCENARIO  fail: the change check's queries fail (lookups still answer);
 #                        the check is answered from the PRs and threads files (change them
 #                        between checks to change a PR's signals)
+#   REVUEY_FAKE_GH_CHECK_DELAY  seconds the change check's queries wait before answering
 #   REVUEY_FAKE_GH_POST  JSON file: the GitHub side of posting a review (viewer, PRs with node ids,
 #                        heads and pending reviews, REST PR files, review states, failures); it is
 #                        also the fake's state: review mutations rewrite it (see fake_gh.lua)

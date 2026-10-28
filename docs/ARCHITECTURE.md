@@ -784,8 +784,10 @@ are in `reports/Terminal code review tool landscape.md`.
       behind commits made on GitHub; concurrent, memoised in `forge.ancestry`; an unknown commit
       counts as unrelated), among PRs whose head owner is the candidate's
       (null for a deleted fork: never ours). The first candidate with a PR wins.
-    - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed?}` (a
-      repo's entry also holds its parent's PRs). Nothing in it expires: when it is filled is
+    - **Cache.** `forge.cache[host/owner/name] = {at, branches = {branch -> PRs}, failed =
+      {branch -> reason}}` (a repo's entry also holds its parent's PRs). Failures are per
+      branch: a fetch covers only the targets a review has not fetched, so a first lookup of
+      one new target must neither mark nor clear the other layers' stale. Nothing in it expires: when it is filled is
       decision 20 (the first time a review needs a target, `R`, after a submit; never a redraw,
       refresh or timer). A failure keeps the last good `branches`, so what was shown stays,
       marked stale (`?`, `(stale)`). `forge_view.update` runs from view's `render` (open, scope
@@ -1481,8 +1483,11 @@ are in `reports/Terminal code review tool landscape.md`.
       (count, resolved and comment counts of the first 100; none when the last threads fetch
       failed, a cut list has no count). A difference marks the PR in `forge.changed[repo#N] =
       {signal = true}`; nothing in the caches is touched, so nothing shown changes. A PR lookup
-      that works clears the PR signals of the PRs it read, a complete threads fetch the thread
-      signals.
+      that works clears the PR signals of the PRs it read (and the thread signals of a PR it
+      reads merged or closed: its threads are neither shown nor fetched again, so nothing else
+      would clear them), a complete threads fetch the thread signals. Threads are compared only
+      for a PR shown open. `R` in a layer also refetches the threads of other layers' open PRs
+      that have thread marks (left by a full-stack check), so `R` clears every mark.
     - **Why these signals, not `updatedAt`.** Measured read-only on 125 recently updated PRs of
       neovim, vscode, TypeScript, ruff and deno (October 2026): `updatedAt` equals the time of an
       issue comment, a comment or description edit, a review, a label, a milestone, an assignee,
@@ -1503,6 +1508,13 @@ are in `reports/Terminal code review tool landscape.md`.
       flips from UNKNOWN on its own right after a fetch), a PR opened for a branch that had none
       (the check covers PRs shown; `R` looks), and changes to other layers' PRs while one layer
       is viewed (their chips are not checked).
+    - **Uncertain, not verifiable read-only:** whether `lastEditedAt` moves on a title edit
+      (`title` is its own signal, so either way a title edit is seen) and whether the viewer's
+      own pending review counts in `reviews.totalCount` (checks are suppressed while a submit
+      runs, and the refetch after it clears marks; a pending review started on github.com may
+      show as news). The PR baselines come from the lookup and the thread baselines from the
+      threads fetch that follows it: a reply posted between the two calls (a second or so)
+      reads as a `reviews` change at the next check, a false mark that `R` clears.
     - **Cost.** Measured with `rateLimit { cost }`: the check costs 1 point for 1 to 20 PRs with
       their threads' flags and counts (a 20-PR answer is about 10KB; about 2s including `gh`
       start-up), so 20 points an hour at most of the 5,000. REST conditional requests (`gh api -i
@@ -1522,7 +1534,9 @@ are in `reports/Terminal code review tool landscape.md`.
       flight; `FocusGained`, `TabEnter` and `BufWinEnter` call it too, so a check that came due
       while away runs at once on coming back. One check at a time, its own generation,
       `forge.timeout`, its `gh` killed and the timer stopped and closed by `detach` (review
-      cleanup). A fetch that starts (`R`, a first fetch) drops a check in flight: compared
+      cleanup). The interval is at least `forge.MIN_INTERVAL` (60s; tests lower it): `ttl`
+      used to be a cache TTL, and an old `ttl = 0` would otherwise check back to back. No check
+      runs while a submit (`gP`) is in progress (`forge_post_view.job`). A fetch that starts (`R`, a first fetch) drops a check in flight: compared
       against data the fetch replaces, its marks would announce news already shown. A failed check is logged and marks nothing (stale keeps its meaning: a failed
       fetch); the next one waits for the interval. `forge.check = false` starts no timer. When
       a check marks something new, the panel is redrawn (`keep_view`, only when its signature,
@@ -1537,14 +1551,21 @@ are in `reports/Terminal code review tool landscape.md`.
       description `new on GitHub · R`. A failed fetch keeps the existing dim marks: `?` on the
       chip, `(stale)` on the heading and the threads line, and now `· stale` on the description
       title and `stale` in its winbar. Both can show at once (`#12 ✓↻?`, a failed `R` after
-      news); `R` that works clears both.
+      news); `R` that works clears both. The detail heading's marks are right-aligned beside `PR
+      #N` and must never cover it or the state: the longest form that fits the panel is used,
+      `(new on GitHub · R) (stale)`, then `↻ R (stale)`, then `↻?`, then none. The threads
+      line keeps its marks' colours when it wraps.
     - **Tests** (`forge_check_spec.lua`, fake `gh` answering the check from the same PRs and
       threads files, so a test changes a signal by rewriting them; `REVUEY_FAKE_GH_CHECK_SCENARIO
       = fail`): no fetch on redraws, refreshes, resizes, focus, fetched scopes or hours later;
       first fetches of a never-shown layer's threads; the quiet check (no redraw, no body);
       each signal marking only its PR in one full-stack query; the marks everywhere, the data
       unchanged until `R`, which clears them; a failed `R`; a failed check; focus and
-      visibility; the real timer and its stop on close; `forge.check = false`.
+      visibility; the real timer and its handle stopped and closed on close; `forge.check =
+      false`; the interval's floor; a merged PR's thread marks cleared by `R`; `R` in a layer
+      clearing other layers' thread marks; a slow check (`REVUEY_FAKE_GH_CHECK_DELAY`) dropped
+      when `R` starts; the heading in 40-, 34- and 26-cell panels; stale per branch after a
+      `git push -u`-like config change.
       `forge_post_spec.lua` checks the refetch after a submit clears the marks.
 
 ## Code layout conventions

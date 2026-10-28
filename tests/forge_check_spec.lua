@@ -243,10 +243,24 @@ h.test('signals and compare: each signal on its own; threads by count, resolved 
   h.eq({ resolved = true }, forge.compare(shown, conn({ { true, 1 }, { true, 2 } }), true))
   h.eq({ comments = true }, forge.compare(shown, conn({ { false, 2 }, { true, 2 } }), true))
   h.eq({ threads = true, comments = true }, forge.compare(shown, conn({ { false, 1 }, { true, 2 }, { false, 1 } }), true))
+  -- a PR shown merged or closed shows no threads: they are not compared
+  local merged = vim.tbl_extend('force', shown, { state = 'MERGED', signals = vim.tbl_extend('force', shown.signals, { state = 'MERGED' }) })
+  h.eq({}, forge.compare(merged, vim.tbl_extend('force', conn({ { true, 1 }, { true, 2 } }), { state = 'MERGED' }), true))
   -- a failed threads fetch (already stale) is not compared
   forge.threads_cache[forge.thread_key(shown)].failed = 'x'
   h.eq({}, forge.compare(shown, conn({ { true, 1 } }), true))
   forge.threads_cache = {}
+end)
+
+h.test('forge.ttl: the check interval, at least 60s (an old ttl = 0 must not check nonstop)', function()
+  setup({ forge = { ttl = 0 } })
+  h.eq(60000, forge.options().interval)
+  setup({ forge = { ttl = 5 } })
+  h.eq(60000, forge.options().interval)
+  setup({ forge = { ttl = 600 } })
+  h.eq(600000, forge.options().interval)
+  setup()
+  h.eq(180000, forge.options().interval, 'default')
 end)
 
 h.test('build_check_query: one repository per repo, an alias per PR, signals only (no body, no thread content)', function()
@@ -497,6 +511,141 @@ h.test('check: a failed R keeps the data, marked stale and still new; R that wor
   view.close()
 end)
 
+h.test('check: a PR merged on GitHub with a thread resolved: R clears every mark', function()
+  reset()
+  local calls = h.tmpdir('fc-gh-merged') .. '/calls.ndjson'
+  h.use_fake_gh(calls, base_prs(), nil, base_threads())
+  local d = stack_fixture('fc-merged')
+  local s = open(d)
+  idle(s)
+  local prs, threads = base_prs(), base_threads()
+  prs['acme/shop:stack/cart'][1].state = 'MERGED'
+  threads['acme/shop#12'][1].isResolved = true
+  write_prs(calls, prs)
+  write_threads(calls, threads)
+  check_now(s)
+  h.eq({ ['github.com/acme/shop#12'] = { state = true, resolved = true } }, forge.changed)
+  press_R(s)
+  h.eq({}, forge.changed, 'a merged PR\'s threads are never fetched again: its thread marks go with the lookup')
+  h.ok(not panel_has(s, '↻') and not panel_has(s, 'new on GitHub'), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('check: R in a layer clears the thread marks a full-stack check left on other layers', function()
+  reset()
+  local calls = h.tmpdir('fc-gh-otherlayer') .. '/calls.ndjson'
+  h.use_fake_gh(calls, base_prs(), nil, base_threads())
+  local d = stack_fixture('fc-otherlayer')
+  local s = open(d)
+  idle(s)
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  local threads = base_threads()
+  threads['acme/shop#11'][1].isResolved = true
+  write_threads(calls, threads)
+  check_now(s)
+  h.eq({ ['github.com/acme/shop#11'] = { resolved = true } }, forge.changed)
+  view.set_scope({ kind = 'layer', index = 2 })
+  idle(s)
+  h.ok(panel_has(s, 'stack/math | #11 ○↻ '), table.concat(panel_lines(s), '\n'))
+  press_R(s)
+  h.eq({}, forge.changed)
+  h.ok(panel_has(s, 'stack/math | #11 ○ '), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('check: a check in flight when R starts is dropped (its marks would outlive the news)', function()
+  reset()
+  local calls = h.tmpdir('fc-gh-race') .. '/calls.ndjson'
+  h.use_fake_gh(calls, base_prs(), nil, base_threads())
+  local d = stack_fixture('fc-race')
+  local s = open(d)
+  idle(s)
+  local prs = base_prs()
+  prs['acme/shop:stack/cart'][1].title = 'Renamed'
+  write_prs(calls, prs)
+  vim.env.REVUEY_FAKE_GH_CHECK_DELAY = '2'
+  now = now + forge.options().interval
+  h.ok(fv.maybe_check(s), 'check started')
+  h.ok(vim.wait(5000, function()
+    return s.forge.check_job ~= nil
+  end, 10), 'check running')
+  press_R(s) -- shows "Renamed" at once
+  vim.wait(2500) -- past the slow check's answer
+  idle(s)
+  vim.env.REVUEY_FAKE_GH_CHECK_DELAY = nil
+  h.eq({}, forge.changed)
+  h.ok(panel_has(s, '   Renamed') and not panel_has(s, '↻'), table.concat(panel_lines(s), '\n'))
+  view.close()
+end)
+
+h.test('check: the detail heading keeps PR #N and its state visible in a narrow panel', function()
+  reset()
+  local calls = h.tmpdir('fc-gh-narrow') .. '/calls.ndjson'
+  local prs = base_prs()
+  prs['acme/shop:stack/cart'][1].isDraft = true
+  h.use_fake_gh(calls, prs, nil, base_threads())
+  local d = stack_fixture('fc-narrow')
+  for _, width in ipairs({ 40, 34, 26 }) do
+    setup({ panel_width = width })
+    reset()
+    write_prs(calls, prs)
+    local s = open(d)
+    idle(s)
+    local changed = vim.deepcopy(prs)
+    changed['acme/shop:stack/cart'][1].title = 'Renamed'
+    write_prs(calls, changed)
+    check_now(s)
+    vim.env.REVUEY_FAKE_GH = 'fail'
+    press_R(s)
+    vim.env.REVUEY_FAKE_GH = nil
+    local raw = vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)
+    local row = find(raw, ' PR #12')
+    h.ok(row, table.concat(raw, '\n'))
+    local ns = vim.api.nvim_get_namespaces()['revuey.panel']
+    local virt = ''
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf, ns, { row - 1, 0 }, { row - 1, -1 }, { details = true })) do
+      for _, ch in ipairs(m[4].virt_text or {}) do
+        virt = virt .. ch[1]
+      end
+    end
+    local win = vim.api.nvim_win_get_width(s.panel_win)
+    h.ok(vim.fn.strdisplaywidth(raw[row]) + vim.fn.strdisplaywidth(virt) < win,
+      ('width %d: %q beside %q in %d cells'):format(width, virt, raw[row], win))
+    h.ok(virt:find('draft', 1, true), 'state shown: ' .. virt)
+    h.ok(virt:find('↻', 1, true) or virt:find('new on GitHub', 1, true), 'news shown: ' .. virt)
+    view.close()
+  end
+  setup()
+end)
+
+h.test('stale per branch: a first lookup of a new target neither clears nor sets the others\' stale', function()
+  reset()
+  setup({ forge = { threads = { enabled = false } } })
+  local calls = h.tmpdir('fc-gh-perbranch') .. '/calls.ndjson'
+  h.use_fake_gh(calls, base_prs(), nil, base_threads())
+  local d = stack_fixture('fc-perbranch')
+  local s = open(d)
+  idle(s)
+  vim.env.REVUEY_FAKE_GH = 'fail'
+  press_R(s)
+  vim.env.REVUEY_FAKE_GH = nil
+  h.ok(panel_has(s, 'stack/cart | #12 ○? '), table.concat(panel_lines(s), '\n'))
+  local before = kinds(calls).lookup
+  -- `git push -u`-like: stack/ui now tracks another name: a new target, looked up once
+  h.git(d, 'config', 'branch.stack/ui.remote', 'origin')
+  h.git(d, 'config', 'branch.stack/ui.merge', 'refs/heads/ui-elsewhere')
+  view.refresh({ force = true })
+  idle(s)
+  h.eq(before + 1, kinds(calls).lookup, 'the new target, once')
+  local q = kinds(calls).queries[#kinds(calls).queries].q
+  h.ok(q:find('ui-elsewhere', 1, true) and not q:find('stack/cart', 1, true), q)
+  h.ok(panel_has(s, 'stack/cart | #12 ○? '), 'still stale: ' .. table.concat(panel_lines(s), '\n'))
+  h.ok(panel_has(s, 'stack/ui | #13 ○ '), 'fetched fresh: ' .. table.concat(panel_lines(s), '\n'))
+  view.close()
+  setup()
+end)
+
 h.test('check: a failing check is quiet (logged, nothing marked) and waits for the next interval', function()
   reset()
   local calls = h.tmpdir('fc-gh-cfail') .. '/calls.ndjson'
@@ -558,6 +707,7 @@ h.test('check: the timer runs checks on its own and stops when the review closes
   forge.now = function()
     return vim.uv.hrtime() / 1e6
   end
+  forge.MIN_INTERVAL = 0 -- the real clock, a short interval (users get at least 60s)
   setup({ forge = { ttl = 0.2 } })
   local calls = h.tmpdir('fc-gh-timer') .. '/calls.ndjson'
   h.use_fake_gh(calls, base_prs(), nil, base_threads())
@@ -569,12 +719,15 @@ h.test('check: the timer runs checks on its own and stops when the review closes
     return kinds(calls).check >= 1
   end, 20), 'no check from the timer')
   local f = s.forge
+  local timer = f.timer
   view.close()
   h.eq(nil, f.timer, 'timer stopped')
+  h.ok(not timer:is_active() and timer:is_closing(), 'the timer handle stopped and closed')
   vim.wait(300)
   local n = kinds(calls).check
   vim.wait(800)
   h.eq(n, kinds(calls).check, 'no check after close')
+  forge.MIN_INTERVAL = 60 * 1000
   setup()
 end)
 
