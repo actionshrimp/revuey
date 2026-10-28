@@ -348,6 +348,95 @@ h.test('live: a comment appears in the running review at once; re-anchoring stor
   end
 end)
 
+h.test('ca/cn on an agent comment: accepted it is yours (ci, export, events); dismissed it stays local; replies are not', function()
+  local w_events = watch()
+  local function key(k, row)
+    vim.api.nvim_set_current_win(s.diff_win)
+    vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+    vim.api.nvim_feedkeys(vim.keycode(k), 'mtx', false)
+  end
+  local function said(text)
+    for _, m in ipairs(msgs) do
+      if m.msg:find(text, 1, true) then
+        return true
+      end
+    end
+    return false
+  end
+  local r1 = run({ 'comment', '--path', 'm.txt', '--line', '22', 'Agent draft: rename this.' }, { env = vim.tbl_extend('force', ENV, { REVUEY_AGENT_NAME = 'claude' }) })
+  local r2 = run({ 'comment', '--path', 'm.txt', '--line', '23', 'Agent draft: not needed.' })
+  h.eq({ 0, 0 }, { r1.code, r2.code }, r1.stderr .. r2.stderr)
+  local acc, dis = id_of(r1), id_of(r2)
+  h.ok(vim.wait(5000, function()
+    return vlines(row_of('ctx', 22)):find('Agent draft: rename', 1, true) ~= nil and vlines(row_of('ctx', 23)):find('not needed', 1, true) ~= nil
+  end, 20), vlines(row_of('ctx', 22)))
+  -- untriaged: the accept / dismiss hint, and not postable
+  h.ok(vlines(row_of('ctx', 22)):find('ca accept · cn dismiss', 1, true), vlines(row_of('ctx', 22)))
+  msgs = {}
+  key('ci', row_of('ctx', 22))
+  h.ok(said('only your own comments are posted (this one is by claude): accept it first with ca'), vim.inspect(msgs))
+  h.eq(false, comments.get(s.cm.store, acc).in_review)
+  -- ca: yours, the agent kept as where it came from
+  key('ca', row_of('ctx', 22))
+  local c = comments.get(s.cm.store, acc)
+  h.eq({ { kind = 'user' }, 'accepted', 'claude' }, { c.author, c.status, c.agent.author.name })
+  h.ok(c.agent.accepted_at, vim.inspect(c.agent))
+  h.ok(vlines(row_of('ctx', 22)):find('╭─ You', 1, true) and vlines(row_of('ctx', 22)):find('accepted from agent', 1, true), vlines(row_of('ctx', 22)))
+  msgs = {}
+  key('ca', row_of('ctx', 22))
+  h.ok(said('already accepted'), vim.inspect(msgs))
+  key('ci', row_of('ctx', 22))
+  h.eq(true, comments.get(s.cm.store, acc).in_review, 'accepted: it can be added to the review')
+  key('ci', row_of('ctx', 22))
+  -- resolve and reopen: accepted again
+  key('cx', row_of('ctx', 22))
+  key('cx', row_of('ctx', 22))
+  h.eq('accepted', comments.get(s.cm.store, acc).status)
+  -- cn: dismissed (collapsed, still local, still the agent's), then restored
+  key('cn', row_of('ctx', 23))
+  local d = comments.get(s.cm.store, dis)
+  h.eq({ 'dismissed', 'agent' }, { d.status, d.author.kind })
+  h.ok(d.agent.dismissed_at, vim.inspect(d.agent))
+  msgs = {}
+  key('ci', row_of('ctx', 23))
+  h.ok(said('only your own comments are posted'), vim.inspect(msgs))
+  key('cn', row_of('ctx', 23))
+  h.eq({ 'saved', nil }, { comments.get(s.cm.store, dis).status, comments.get(s.cm.store, dis).agent.dismissed_at })
+  key('cn', row_of('ctx', 23))
+  -- export: provenance; a dismissed one is left out unless --all
+  local export = require('revuey.comments_export')
+  local md = export.markdown({ { review = s.cm.store.review or {}, comments = export.select(s.cm.store) } })
+  h.ok(md:find('accepted from a comment by claude (agent)', 1, true), md)
+  h.ok(not md:find('not needed', 1, true), md)
+  md = export.markdown({ { review = s.cm.store.review or {}, comments = export.select(s.cm.store, { all = true }) } })
+  h.ok(md:find('Agent draft: not needed.', 1, true) and md:find('dismissed', 1, true), md)
+  local untriaged = export.markdown({ { review = {}, comments = { comments.get(s.cm.store, ids.new) } } })
+  h.ok(untriaged:find('a draft for the user, not accepted yet', 1, true), untriaged)
+  -- show: the user's comment now, accepted from the agent's
+  local shown = export.message(comments.get(s.cm.store, acc), s.cm.store.review or {}, 'revuey')
+  h.ok(shown:find('## Comment (Reviewer)', 1, true) and shown:find('accepted a comment by claude, an agent', 1, true), shown)
+  -- the agent's event feed tells it (accept / dismiss / restore); inbox has no message for it
+  h.ok(vim.wait(5000, function()
+    return w_events.out:find('accept m.txt:22', 1, true) ~= nil and w_events.out:find('dismiss m.txt:23', 1, true) ~= nil
+      and w_events.out:find('restore m.txt:23', 1, true) ~= nil
+  end, 20), w_events.out)
+  h.eq('no unacknowledged messages', vim.trim(run({ 'inbox', '--session', ME }).stdout))
+  -- an agent reply in the user's thread is an answer to the user: nothing to accept
+  local mine = comments.new(comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+    { path = 'm.txt', side = 'new', start_line = 19 }, cv.context(s).get_line), 'Mine.')
+  comments.put(s.cm.store, mine)
+  comments.save(s.cm.store)
+  h.eq(0, run({ 'reply', mine.id, 'An agent answer.' }).code)
+  h.ok(vim.wait(5000, function()
+    return vlines(row_of('ctx', 19)):find('An agent answer.', 1, true) ~= nil
+  end, 20), vlines(row_of('ctx', 19)))
+  msgs = {}
+  key('ca', row_of('ctx', 19))
+  h.ok(said('no AI review finding or agent comment on this line'), vim.inspect(msgs))
+  h.eq({ 'user', 'saved' }, { comments.get(s.cm.store, mine.id).author.kind, comments.get(s.cm.store, mine.id).status })
+  h.eq(0, stop(w_events).code, w_events.err)
+end)
+
 h.test('two reviews running: --session picks one; without it the command asks', function()
   -- a second review of this worktree (committed mode, its own state dir), live: a pid and a socket
   local other_dir = h.tmpdir('agent-comment-other')

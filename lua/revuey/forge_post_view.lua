@@ -7,7 +7,8 @@
 --      against those reads); then forge_post.plan routes and checks what is to be added.
 --   2. confirm: exactly what each PR's review will publish, what is already pending, what is
 --      left out and why, PRs that are blocked; nothing has been sent yet. Cancel: GitHub is
---      untouched.
+--      untouched. "Add to pending review" (`:RevueySubmit pending`, the verdict prompt's last
+--      choice, or the confirmation's button) adds the same comments without submitting.
 --   3. execute: per PR, with no pending review of the user's and nothing but line comments, one
 --      `addPullRequestReview` with the event and all threads (created and submitted at once);
 --      else the pending flow: the user's pending review (or a new one), threads and replies in
@@ -17,7 +18,8 @@
 --
 -- A comment's record (`forge_post`) and its states:
 --   nil      -> sending   written ahead of the mutation that adds it
---   sending  -> pending   answered, in a pending review (ids recorded)
+--   sending  -> pending   answered, in a pending review (ids recorded); where "add to pending
+--                         review" stops
 --   sending  -> posted    answered, in a submitted review (created and submitted at once)
 --   sending  -> nil       GitHub refused it (reported), or a later reconcile proves it absent
 --   sending  -> unknown   a later reconcile cannot tell (its PR is blocked until it can)
@@ -44,12 +46,14 @@ function M.ask(msg, choices, default)
   return vim.fn.confirm(msg, choices, default or 1)
 end
 
----Pick a verdict (vim.ui.select); tests pass one instead.
+---Pick a verdict (vim.ui.select), or "add to pending review" (`pending`: no verdict, nothing
+---submitted); tests pass one instead.
 function M.pick_verdict(cb)
-  vim.ui.select(post.VERDICTS, {
+  local items = vim.list_extend(vim.deepcopy(post.VERDICTS), { post.PENDING })
+  vim.ui.select(items, {
     prompt = 'Review verdict',
     format_item = function(v)
-      return post.VERDICT_TEXT[v]
+      return post.VERDICT_TEXT[v] or post.PENDING_TEXT
     end,
   }, function(v)
     cb(v)
@@ -533,8 +537,9 @@ function M.reconcile(r, included)
 end
 
 ---Read GitHub (files, preflight), reconcile and plan. Sends nothing. Call inside git.async.
----Returns the prepared run, or nil and a message.
-function M.prepare(s, verdict)
+---`pending`: "add to pending review" (no verdict: `verdict` is nil). Returns the prepared run,
+---or nil and a message.
+function M.prepare(s, verdict, pending)
   local store = require('revuey.comments_view').sync_store(s)
   local f = s.forge
   if not (f and f.ready) then
@@ -546,7 +551,7 @@ function M.prepare(s, verdict)
   end
   local full = s.review.stack ~= nil and require('revuey.forge_view').current_key(s) == nil
   local included = M.included(store)
-  local r = { s = s, store = store, verdict = verdict, targets = targets, full = full, warnings = {} }
+  local r = { s = s, store = store, verdict = verdict, pending = pending or nil, targets = targets, full = full, warnings = {} }
   -- every PR's files (only when a line or file comment may go to it), concurrently
   local need_files = false
   for _, c in ipairs(included) do
@@ -590,12 +595,14 @@ function M.prepare(s, verdict)
     return nil, 'could not read the pull requests from GitHub: ' .. tostring(err)
   end
   local todo, left = M.reconcile(r, included)
-  if full and #todo == 0 then
+  if (full or pending) and #todo == 0 then
     local any = false
     for _, t in ipairs(targets) do
       any = any or #t.already > 0 or #t.unknown > 0
     end
-    if not any then
+    if not any and pending then
+      return nil, ('nothing to add to your pending review: no comment is added to the review (%s adds one)'):format(post.key('comment_include', 'ci'))
+    elseif not any then
       return nil, 'nothing added to the review in the full stack (ci adds a comment); submit a verdict alone from a layer\'s scope'
     end
   end
@@ -619,6 +626,12 @@ function M.prepare(s, verdict)
   for _, t in ipairs(targets) do
     local items = r.plan.items[t] or {}
     local p = t.pf and t.pf.pending
+    -- "add to pending review" (from the verdict's confirmation too) is always the pending flow
+    t.add_mode = p and 'add_existing' or 'add_new'
+    -- a refusal only the verdict causes (your own PR): adding to a pending review is not refused
+    if verdict and t.refused and t.refused ~= post.target_refusal(t, r.viewer, nil) then
+      r.verdict_refused = true
+    end
     if p then
       t.mode = #items > 0 and 'existing' or 'submit'
     else
@@ -718,7 +731,7 @@ end
 ---What each PR's review will publish, and what is left out (for forge_post.summary). Each PR
 ---entry has `go` when it will be submitted.
 function M.result(r)
-  local out = { verdict = r.verdict, body = r.body, prs = {}, left_out = {}, warnings = vim.deepcopy(r.warnings or {}) }
+  local out = { verdict = r.verdict, pending = r.pending, body = r.body, prs = {}, left_out = {}, warnings = vim.deepcopy(r.warnings or {}) }
   for _, x in ipairs(r.plan.refused) do
     out.left_out[#out.left_out + 1] = x
   end
@@ -728,7 +741,8 @@ function M.result(r)
     end
     local p = t.pf and t.pf.pending
     local mine = {}
-    local x = { target = t, threads = 0, replies = 0, entries = {}, already = {}, unknown = {}, others = {}, pending_total = 0, mode = t.mode, blocked = t.blocked }
+    local x = { target = t, threads = 0, replies = 0, entries = {}, already = {}, unknown = {}, others = {}, pending_total = 0,
+      mode = r.pending and t.add_mode or t.mode, blocked = t.blocked }
     local function count(c)
       if c.forge_reply then
         x.replies = x.replies + 1
@@ -740,9 +754,17 @@ function M.result(r)
       mine[a.pc.id] = true
       count(a.c)
       if post.norm_body(a.c.body) ~= post.norm_body(a.pc.body) then
-        -- edited here after it went in: GitHub publishes its own text
+        -- edited after it went in, here or on GitHub (what was sent tells which): GitHub
+        -- publishes its own text; the local comment is left as it is
         local gh = comments.first_line(a.pc.body)
-        x.already[#x.already + 1] = entry(a.c, ('(in your pending review, edited here since: GitHub has "%s")'):format(#gh > 40 and (gh:sub(1, 39) .. '…') or gh))
+        local sent = type(a.c.forge_post) == 'table' and type(a.c.forge_post.payload) == 'table' and a.c.forge_post.payload.body
+        local where = 'edited here since'
+        if sent and post.norm_body(sent) == post.norm_body(a.c.body) then
+          where = 'edited on GitHub since'
+        elseif sent and post.norm_body(sent) ~= post.norm_body(a.pc.body) then
+          where = 'edited here and on GitHub since'
+        end
+        x.already[#x.already + 1] = entry(a.c, ('(in your pending review, %s: GitHub has "%s")'):format(where, #gh > 40 and (gh:sub(1, 39) .. '…') or gh))
       else
         x.already[#x.already + 1] = entry(a.c, '(in your pending review already)')
       end
@@ -779,6 +801,16 @@ function M.result(r)
         x.nothing = true
         out.prs[#out.prs + 1] = x
       end
+    elseif r.pending then
+      -- nothing is submitted: only PRs with comments to add go; the others are named in a full
+      -- stack, and shown with what they hold already in a layer's scope
+      x.go = not x.blocked and #x.entries > 0
+      if not r.full or ours then
+        out.prs[#out.prs + 1] = x
+      else
+        x.nothing = true
+        out.prs[#out.prs + 1] = x
+      end
     elseif t.found_review and not ours and x.pending_total == 0 then
       -- the review sent earlier without an answer was made: never a second one unasked
       x.nothing = true
@@ -801,7 +833,7 @@ end
 
 ---Does a submit of `res` need a body first? A Comment review with nothing in it.
 local function needs_body(res)
-  if res.verdict ~= 'comment' or (res.body and res.body ~= '') then
+  if res.pending or res.verdict ~= 'comment' or (res.body and res.body ~= '') then
     return false
   end
   for _, x in ipairs(res.prs) do
@@ -871,6 +903,33 @@ local function forget_blocked(r)
   return n
 end
 
+---What "Add to pending review" would add, from a verdict's confirmation: the result with no
+---verdict (the same plan), or nil when it adds nothing or a PR is refused only for the verdict
+---(then `:RevueySubmit pending` plans it without one).
+local function pending_offer(r)
+  if r.pending or r.verdict_refused then
+    return nil
+  end
+  r.pending = true
+  local ok, res = pcall(M.result, r)
+  r.pending = nil
+  if not ok then
+    error(res, 0)
+  end
+  local parts, n = {}, 0
+  for _, x in ipairs(res.prs) do
+    if x.go then
+      n = n + #x.entries
+      parts[#parts + 1] = ('%d to PR #%d'):format(#x.entries, x.target.pr.number)
+    end
+  end
+  if n == 0 then
+    return nil
+  end
+  return res, ('Add to pending review: the + comment%s (%s) go%s into your pending review on GitHub; nothing is submitted%s.'):format(
+    n == 1 and '' or 's', table.concat(parts, ', '), n == 1 and 'es' or '', (r.body and r.body ~= '') and ' and the body is not sent' or '')
+end
+
 local function confirm(r)
   local s = r.s
   if s.cleaned then
@@ -889,27 +948,43 @@ local function confirm(r)
     release(r)
     local lines = post.summary(res)
     table.remove(lines, 1)
-    return notify('nothing to submit.' .. table.concat(lines, '\n'), vim.log.levels.WARN)
+    return notify((r.pending and 'nothing to add to your pending review.' or 'nothing to submit.') .. table.concat(lines, '\n'), vim.log.levels.WARN)
   end
   local nb = go > 0 and needs_body(res)
+  local offer, offer_text
+  if go > 0 then
+    offer, offer_text = pending_offer(r)
+  end
   if go == 0 then
-    text = text .. '\n\nNothing can be submitted now (nothing has been sent).'
+    text = text .. '\n\nNothing can be ' .. (r.pending and 'added' or 'submitted') .. ' now (nothing has been sent).'
   elseif nb then
     text = text .. '\n\nA Comment review with no comments needs a body.'
   end
-  local actions = {}
-  if go > 0 and not nb then
-    actions[#actions + 1] = { '&Submit', 'submit' }
+  if offer_text then
+    text = text .. '\n\n' .. offer_text
   end
-  if go > 0 then
-    actions[#actions + 1] = { (r.body and r.body ~= '') and '&Edit body' or '&Write body', 'body' }
+  local actions = {}
+  if r.pending then
+    if go > 0 then
+      actions[#actions + 1] = { '&Add to pending review', 'pending' }
+    end
+  else
+    if go > 0 and not nb then
+      actions[#actions + 1] = { '&Submit', 'submit' }
+    end
+    if go > 0 then
+      actions[#actions + 1] = { (r.body and r.body ~= '') and '&Edit body' or '&Write body', 'body' }
+    end
+    if offer then
+      actions[#actions + 1] = { '&Add to pending review', 'pending' }
+    end
   end
   if blocked then
     actions[#actions + 1] = { '&Forget unconfirmed', 'forget' }
   end
   actions[#actions + 1] = { '&Cancel', 'cancel' }
   local default = #actions
-  if actions[1][2] == 'submit' and #res.left_out == 0 and not blocked and go == #vim.tbl_filter(function(x)
+  if (actions[1][2] == 'submit' or actions[1][2] == 'pending') and #res.left_out == 0 and not blocked and go == #vim.tbl_filter(function(x)
     return not x.nothing
   end, res.prs) then
     default = 1
@@ -920,7 +995,11 @@ local function confirm(r)
     return a[1]
   end, actions), '\n'), default)
   local action = actions[choice] and actions[choice][2] or 'cancel'
-  if action == 'submit' then
+  if action == 'submit' or action == 'pending' then
+    if action == 'pending' and not r.pending then
+      -- from a verdict's confirmation: exactly the + comments its text named
+      r.pending, res = true, offer
+    end
     M.job.phase = 'send'
     git.async(function()
       M.execute(r, res)
@@ -1134,9 +1213,10 @@ end
 
 ---The pending flow: the user's pending review (or a new one), the threads and replies in
 ---batches, each written ahead, then the submit only when every add was answered and the review
----holds nothing the confirmation did not show.
+---holds nothing the confirmation did not show. `add_only` ("add to pending review"): stops after
+---the adds, the records `pending`, nothing submitted.
 ---@return string status ok|failed|lost, string? why
-local function run_pending(r, t, items, event)
+local function run_pending(r, t, items, event, add_only)
   local store = r.store
   local review_id = t.pf.pending and t.pf.pending.id or nil
   local shown = {} -- the pending review's comments the confirmation showed, then those added
@@ -1226,6 +1306,9 @@ local function run_pending(r, t, items, event)
   if failed > 0 then
     return 'failed', ('%d comment%s refused by GitHub; not submitted (what went in stays in your pending review)'):format(failed, failed == 1 and ' was' or 's were')
   end
+  if add_only then
+    return 'ok'
+  end
   -- the review must hold exactly what the confirmation showed (another tool may have added
   -- comments meanwhile: they would be published unseen)
   local ids, rerr = reread_ids(t, review_id)
@@ -1273,20 +1356,24 @@ end
 
 ---Send what the confirmation showed, PR by PR (`res`: M.result). Call inside git.async.
 function M.execute(r, res)
-  local event = forge.EVENTS[r.verdict]
-  local done, bad = {}, {}
+  local event = not r.pending and forge.EVENTS[r.verdict] or nil
+  local done, bad, added = {}, {}, 0
   for _, x in ipairs(res.prs) do
     if x.go then
       local t = x.target
       local items = r.plan.items[t] or {}
       local status, why
-      if t.mode == 'atomic' then
+      if r.pending then
+        -- "add to pending review": the pending flow, never the review made and submitted at once
+        status, why = run_pending(r, t, items, nil, true)
+      elseif t.mode == 'atomic' then
         status, why = run_atomic(r, t, items, event)
       else
         status, why = run_pending(r, t, items, event)
       end
       if status == 'ok' then
         done[#done + 1] = '#' .. t.pr.number
+        added = added + #items
       else
         bad[#bad + 1] = ('PR #%d: %s'):format(t.pr.number, why or status)
         log.write('forge', bad[#bad])
@@ -1294,11 +1381,14 @@ function M.execute(r, res)
     end
   end
   release(r)
-  if #done > 0 then
+  if #done > 0 and r.pending then
+    notify(('added %d comment%s to your pending review on %s; not submitted: submit it on GitHub, in Graphite or with %s'):format(
+      added, added == 1 and '' or 's', table.concat(done, ', '), post.key('forge_submit', 'gP')))
+  elseif #done > 0 then
     notify(('%s review submitted to %s'):format(post.VERDICT_TEXT[r.verdict], table.concat(done, ', ')))
   end
   if #bad > 0 then
-    notify('not submitted: ' .. table.concat(bad, '; '), vim.log.levels.ERROR)
+    notify((r.pending and 'not all added to your pending review: ' or 'not submitted: ') .. table.concat(bad, '; '), vim.log.levels.ERROR)
   end
   local s = r.s
   if not s.cleaned then
@@ -1340,7 +1430,8 @@ function M.forget(s)
 end
 
 ---`:RevueySubmit [verdict]` / the forge_submit key: prepare (reads), confirm, then send.
----@param verdict? string approve|comment|request_changes (asked when nil), or `forget`
+---@param verdict? string approve|comment|request_changes (asked when nil), `pending` (add to
+---your pending review, nothing submitted), or `forget`
 function M.start(s, verdict)
   if verdict == 'forget' then
     return M.forget(s)
@@ -1361,15 +1452,16 @@ function M.start(s, verdict)
       end
     end)
   end
-  local v = post.norm_verdict(verdict)
-  if not v then
-    return notify('unknown verdict ' .. tostring(verdict) .. ' (approve, comment or request-changes; or forget)', vim.log.levels.ERROR)
+  local pending = post.is_pending(verdict)
+  local v = not pending and post.norm_verdict(verdict) or nil
+  if not v and not pending then
+    return notify('unknown verdict ' .. tostring(verdict) .. ' (approve, comment or request-changes; pending: add to your pending review; or forget)', vim.log.levels.ERROR)
   end
   local r = { s = s }
   M.job = { r = r, phase = 'prepare' }
   notify('reading the pull request on GitHub…')
   git.async(function()
-    local p, err = M.prepare(s, v)
+    local p, err = M.prepare(s, v, pending)
     if not p then
       release(r)
       return notify(err, vim.log.levels.WARN)

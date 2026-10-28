@@ -87,8 +87,9 @@ M.defaults = {
     comment_next = ']m', -- ]m/[m shadow the method motions, which mean nothing in a diff
     comment_prev = '[m',
     comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
-    -- AI review findings (:RevueyAIReview): accept one as your own comment, or dismiss it
-    -- (again: restore). `cs` sends one to the agent session to follow up, as any comment.
+    -- AI review findings (:RevueyAIReview) and a coding agent's comments (`bin/revuey
+    -- comment`): accept one as your own comment, or dismiss it (again: restore). `cs` sends one
+    -- to the agent session to follow up, as any comment.
     comment_accept = 'ca',
     comment_dismiss = 'cn',
     -- "add to review": include the comment on this line in the review posted to GitHub (or take
@@ -108,9 +109,10 @@ M.defaults = {
     -- `gH` (select-line mode) means nothing in a read-only review buffer. In the diff, `gx` on a
     -- thread opens it on GitHub.
     forge_threads = 'gH',
-    -- submit the review to GitHub (:RevueySubmit): pick a verdict, the comments added with
-    -- comment_include go into your pending review, then a confirmation before anything is
-    -- published. `gP` (put before) means nothing in a read-only review buffer.
+    -- submit the review to GitHub (:RevueySubmit): pick a verdict (or "add to my pending
+    -- review": nothing submitted), then a confirmation of exactly what the comments added with
+    -- comment_include do before anything is sent. `gP` (put before) means nothing in a
+    -- read-only review buffer.
     forge_submit = 'gP',
     -- edit the real file at this line in a float (working-tree mode, checked-out layer only).
     -- `ge` (backward to the end of a word) means little in a read-only review buffer.

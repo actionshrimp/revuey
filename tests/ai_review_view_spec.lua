@@ -268,7 +268,7 @@ h.test('ca accepts a finding (it becomes your comment); cn dismisses and restore
   vim.api.nvim_win_set_cursor(s.diff_win, { row_of('ctx', 17), 0 })
   msgs = {}
   keys('ca')
-  h.ok(told('no AI review finding on this line'), vim.inspect(msgs))
+  h.ok(told('no AI review finding or agent comment on this line'), vim.inspect(msgs))
 end)
 
 h.test('cs sends a finding to the agent session (follow-up); a re-run asks, then replaces only untouched findings', function()

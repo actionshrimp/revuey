@@ -570,11 +570,12 @@ are in `reports/Terminal code review tool landscape.md`.
    `comments_view.lua` UI glue; `comment_editor.lua` the float; `cli.lua` the shell side).
    - **Model.** `{id, anchor, body (md), author {kind = user|ai|agent, name?}, status (draft|saved|resolved,
      dismissed|accepted for AI review findings, decision 15), in_review, thread [{id, author, body, created_at, updated_at}],
-     created_at, updated_at (ms), file_level, outdated (derived), ai? (an AI finding: decision 15)}`, plus `draft`/`reply_draft` for unsaved
+     created_at, updated_at (ms), file_level, outdated (derived), ai? (an AI finding: decision 15),
+     agent? (an agent's comment the user triaged: `{author, accepted_at?, dismissed_at?}`)}`, plus `draft`/`reply_draft` for unsaved
      edits of a saved comment, and the delivery fields of a comment sent to an agent (decision 12):
      `sent_at`, `sent_reply` (the follow-up reply sent, else the body), `acked_at`, `answered_at`. Ids are 11 hex digits of milliseconds and 5 random ones: sortable and
      unique. The UI makes `user` comments; `bin/revuey comment` makes `agent` ones (saved, `in_review =
-     false`); agent replies are `agent` too; AI review findings (`ai`, `dismissed`/`accepted`) and the
+     false`: drafts for the user, triaged with `ca`/`cn` like AI findings, decision 15); agent replies are `agent` too; AI review findings (`ai`, `dismissed`/`accepted`) and the
      forge's "add to review" (`in_review`) fill the rest. Agent and AI authors are labelled
      (`claude (agent)` when named) and highlighted `RevueyCommentAgent` in threads, `by …` in the
      list and the Markdown export.
@@ -701,7 +702,8 @@ are in `reports/Terminal code review tool landscape.md`.
      like messages, live only.
    - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
      sets `acked_at`/`answered_at` on a sent comment; `comment --path p (--line N [--end M]
-     [--side new|old] | --file) <text|->` leaves a new agent comment. It picks the review like
+     [--side new|old] | --file) <text|->` leaves a new agent comment, a draft for the user: never
+     postable until they accept it (`ca`, decision 15), and never posted by the agent. It picks the review like
      `watch`/`inbox` (`--session`, else the only live one, else exit 2) and loads its diff
      headlessly with `review.load` from the session's `load` (exact: same base, merge base, stack
      target, mode and hunk options; one `git diff` plus the working-tree snapshot, well under a
@@ -737,7 +739,8 @@ are in `reports/Terminal code review tool landscape.md`.
      runs `inbox` once on connect (messages a crashed agent was shown), puts `cd <worktree> &&`
      before every command (Monitor has its own cwd), treats only the Comment and the user's
      thread entries as requests, and answers instead of editing when the message's branch is
-     not checked out. `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey`
+     not checked out. It tells the agent that its comments are drafts the user accepts, edits
+     and posts, and that it never posts to GitHub itself. `bin/revuey install-skill` links it into `$HOME/.claude/skills/revuey`
      (`--copy` copies and writes `.revuey-bin`); an existing install is replaced only with
      `--force` or a yes on a terminal, a directory being moved to `~/.claude/revuey-skill-backups/<time>/` (outside `skills/`); a link to
      the same checkout by another path counts as installed; installing from a worktree or temp
@@ -947,8 +950,17 @@ are in `reports/Terminal code review tool landscape.md`.
       `accepted`, the AI author kept in `ai.author`: the user's own comment from then on (open
       like `saved`; edit, resolve, later "add to review"). `cn` (`toggle_dismiss`): `dismissed`
       (hidden from lists and counts like resolved, drawn collapsed) or back to `saved`; refused
-      for an accepted finding. Both act only on AI findings covering the cursor row (a user
-      comment on the same line is skipped) and append `accepted`/`dismissed` events (a
+      for an accepted finding. **Agent comments** (`bin/revuey comment`, author `agent`) are
+      triaged by the same code (`ai_review.origin`): the agent kept in `agent = {author,
+      accepted_at, dismissed_at}`, chip "accepted from agent"; untriaged ones show the `ca`/`cn`
+      hint (`agent_untriaged`) but are never counted, listed or replaced with AI findings
+      (`untriaged`, `pending` and re-runs stay AI-only, so an AI review named like the agent
+      cannot delete them). A dismissed one keeps its agent author, so `ci` still refuses it.
+      Agent replies (`bin/revuey reply`) are thread entries answering the user, not comments:
+      nothing to accept (and local replies in a comment's thread are never posted, decision 18).
+      Exports note "a draft for the user, not accepted yet" / "accepted from a comment by X
+      (agent)", and `show` says the user accepted it as their own. Both act only on AI findings
+      and agent comments covering the cursor row (a user comment on the same line is skipped) and append `accepted`/`dismissed` events (a
       `dismissed` event with status `saved` reads "restore"). Follow-up is the agent link:
       `cs`/`cr` work unchanged, and `show` labels the comment as an AI review finding the user
       sent. `cx` works as on any comment; reopening an accepted finding makes it `accepted`
@@ -969,8 +981,9 @@ are in `reports/Terminal code review tool landscape.md`.
       again (the record has none), and the full scope gets the branch tags (`attribution.load`); `import-review [--name] [--session] <file|->` (`--schema` prints the schema)
       imports into the session's comments file, printing imported, dropped, skipped and
       replaced counts.
-    - Posting: an accepted finding is the user's comment and can be added to a review posted to
-      GitHub (decision 18); an untriaged or dismissed one cannot.
+    - Posting: an accepted finding or agent comment is the user's comment and can be added to a
+      review posted to GitHub (decision 18); an untriaged or dismissed one cannot (`ci` says to
+      accept it with `ca` first).
 
 16. **Remote PR review via worktrunk** (`pr.lua` argument, command line, result and error
     parsing plus the background run; `pr_view.lua` progress, cancel, approval terminal and
@@ -1184,10 +1197,12 @@ are in `reports/Terminal code review tool landscape.md`.
     one REST read). Opt-in per comment, local until submit.
     - **Add to review.** `ci` (`keymaps.comment_include`) toggles the comment model's
       `in_review` (merged like any change, no event). `forge_post.includable`: the user's own
-      comments only (`author.kind = 'user'`, so an AI finding after `ca`, and `cr` replies), not
-      drafts, resolved or dismissed ones, GitHub threads or posted comments. Chips `in review`,
+      comments only (`author.kind = 'user'`, so an AI finding or agent comment after `ca`, and
+      `cr` replies), not drafts, resolved or dismissed ones, GitHub threads or posted comments;
+      an agent's comment is refused with "accept it first with ca". Chips `in review`,
       `in your pending review on GitHub #N`, `posted to GitHub #N` (thread header and list); the
-      panel's key help shows `gP submit review (N in review)`. The submit takes the store of the
+      panel's key help shows `gP submit review` whenever the scope has an open PR
+      (`scope_targets`; a verdict alone needs no comment), with `(N in review)` when N > 0. The submit takes the store of the
       scope shown (comments of other scopes stay where they are).
     - **Where a comment goes** (`forge_post.locate`, against the PR's files from REST `GET
       repos/o/n/pulls/N/files`, paged by 100 up to GitHub's 3,000: `filename`, `status`,
@@ -1314,6 +1329,31 @@ are in `reports/Terminal code review tool landscape.md`.
       record dropped, what went in stays pending, and the PR is not submitted; the next `gP`
       shows the pending ones (`=`) and adds the rest. An atomic review GitHub refuses makes
       nothing. A failed submit leaves the review pending.
+    - **Add to pending review** (`pending`: no verdict, never submitted), for drafts the user
+      finishes on github.com or in Graphite. Entry points: the verdict prompt's last choice,
+      `:RevueySubmit pending` (`forge_post.is_pending`), and a button in a verdict's
+      confirmation. A verdict is not asked for because there is none to give: the review's
+      verdict is chosen where it is submitted. The prompt choice and the command avoid a
+      meaningless verdict; the button lets a user who picked one change their mind after
+      seeing the plan. The button is offered only when the same plan adds something
+      (`pending_offer`: the result recomputed with `r.pending`) and no PR is refused only for
+      the verdict (`verdict_refused`: approving one's own PR refuses its comments in that plan;
+      `:RevueySubmit pending` plans without the verdict); its text names how many `+` comments
+      go to which PR, and says a written body is not sent. The plan is the same (`target_refusal`
+      without a verdict), the confirmation the same (`= / + / ?`, others' pending comments
+      "stay as they are", `add_existing`/`add_new` instead of the submit modes). Execution is
+      always the pending flow (`run_pending(..., add_only)`), never the atomic mutation, which
+      submits: `addPullRequestReview(input: {pullRequestId, commitOID})` only when the user has no
+      pending review, then the batched adds, written ahead as always; it stops there (no
+      re-read, no submit ledger entry), and records end `pending`. Only PRs with `+` comments go;
+      blocked PRs are blocked as for a submit (`Forget unconfirmed`). Write-ahead, reconcile,
+      dedupe (`before`) and blocking are unchanged, so a later `gP` Submit finds the records by
+      id in the pending review (`=`) and only submits, and a submit on GitHub or in Graphite is
+      found by the next prepare (the recorded review no longer PENDING: posted, and that PR
+      gets no second review with the same verdict). A pending comment edited on GitHub keeps
+      its id, so it is matched by id (never re-added, never unknown); the confirmation compares
+      the local body, the sent payload and GitHub's body to say `edited here since`, `edited on
+      GitHub since` or both, and shows GitHub's text; the local comment is never overwritten.
     - **Commit binding.** A new review (atomic or pending) gets `commitOID` = the reviewed tip,
       after the preflight showed `headRefOid` equal to it. A push between the preflight and the
       send binds the review to the older commit, whose lines are the ones checked.
@@ -1339,8 +1379,8 @@ are in `reports/Terminal code review tool landscape.md`.
       nothing; once sending, a submit runs to the end and records what it learns in the
       comments file (the store outlives the UI).
     - **Not done:** GitHub's per-file "viewed" state (roadmap); editing a pending or posted
-      comment does not update GitHub; local replies in a comment's own thread are not posted
-      (only its body).
+      comment does not update GitHub (nor an edit on GitHub the local copy); local replies in a
+      comment's own thread are not posted (only its body); a body for "add to pending review".
     - **Tests**: the fake `gh` takes a post file (`REVUEY_FAKE_GH_POST`: viewer, PRs with node
       ids, heads and pending reviews, REST files, review states, failures) that it also keeps as
       its state, records every mutation alias as `{op, alias, input}` (the input object parsed)
@@ -1351,7 +1391,12 @@ are in `reports/Terminal code review tool landscape.md`.
       after that, refuse a side, fail later comment pages or return a PR null that is not
       NOT_FOUND. It refuses REST writes. The reviewer's repros (R1-R8), a crash between the
       write-ahead and the answer, lost atomic reviews found and not found, and a Graphite
-      comment with the same text as a lost add are specs.
+      comment with the same text as a lost add are specs. "Add to pending review": an accepted,
+      edited agent comment added to a new pending review then submitted by a later `gP`; the
+      button in a verdict's confirmation reusing a Graphite review, then a submit made "on
+      GitHub" (the fake's pending review moved to `history`) found and marked posted; an edit
+      made on GitHub to a pending comment (and here, and both); the full stack; the own-PR,
+      verdict-alone, body and blocked cases.
 
 19. **The PR description** (`forge.lua` the field; `forge_description.lua` pure cleaning, rows and
     fold; `forge_view.lua` which PRs, signature and the redraw; `layout.lua` head rows and their

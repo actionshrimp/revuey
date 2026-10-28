@@ -140,10 +140,10 @@ vim.api.nvim_create_user_command('RevueySubmit', function(cmd)
   require('revuey').submit(cmd.args ~= '' and cmd.args or nil)
 end, {
   nargs = '?',
-  desc = 'Submit the review to GitHub: the comments added with ci, as one review; [approve|comment|request-changes] (asked when left out); forget: drop an unanswered record',
+  desc = 'Submit the review to GitHub: the comments added with ci, as one review; [approve|comment|request-changes] (asked when left out); pending: add them to your pending review without submitting; forget: drop an unanswered record',
   complete = function(arg)
     return vim.tbl_filter(function(x)
       return vim.startswith(x, arg)
-    end, { 'approve', 'comment', 'request-changes', 'forget' })
+    end, { 'approve', 'comment', 'request-changes', 'pending', 'forget' })
   end,
 })

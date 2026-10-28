@@ -60,10 +60,13 @@ local function status_note(c)
   elseif c.status == 'dismissed' then
     notes[#notes + 1] = 'dismissed'
   elseif c.status == 'accepted' then
-    notes[#notes + 1] = 'accepted from an AI review'
+    local from = type(c.agent) == 'table' and c.agent.accepted_at and c.agent.author
+    notes[#notes + 1] = from and ('accepted from a comment by ' .. author_name(from) .. ' (agent)') or 'accepted from an AI review'
   end
   if c.ai and c.status ~= 'accepted' then
     notes[#notes + 1] = (c.ai.severity or 'minor') .. (c.status == 'saved' and ', not triaged yet' or '')
+  elseif not c.ai and c.status == 'saved' and c.author and c.author.kind == 'agent' then
+    notes[#notes + 1] = 'a draft for the user, not accepted yet'
   end
   return #notes > 0 and (' (' .. table.concat(notes, '; ') .. ')') or ''
 end
@@ -185,7 +188,8 @@ function M.message(c, r, bin)
     add(('- Sent: %s (%s)'):format(os.date('!%Y-%m-%d %H:%M:%S UTC', math.floor(c.sent_at / 1000)), DELIVERY[d] or d))
   end
   if c.status ~= 'saved' then
-    add('- Status: ' .. tostring(c.status))
+    local from = c.status == 'accepted' and type(c.agent) == 'table' and c.agent.accepted_at and c.agent.author
+    add('- Status: ' .. tostring(c.status) .. (from and (' (the user accepted a comment by ' .. author_name(from) .. ', an agent, as their own)') or ''))
   end
   add('')
   add('Side: new is the code after the change, old the code before it. The file is in the repo; read more of it as needed.')

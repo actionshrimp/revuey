@@ -26,6 +26,17 @@ M.MAX_BODY = 60000 -- bytes of a comment body (GitHub allows 65,536 characters)
 M.VERDICTS = { 'comment', 'approve', 'request_changes' }
 M.VERDICT_TEXT = { comment = 'Comment', approve = 'Approve', request_changes = 'Request changes' }
 
+---"Add to pending review": no verdict, nothing submitted (`:RevueySubmit pending`, the verdict
+---prompt's last choice, the confirmation's button).
+M.PENDING = 'pending'
+M.PENDING_TEXT = 'Add to my pending review (no verdict, not submitted)'
+
+---Is this argument "add to pending review" (`pending`, `add`, `add-to-pending`)?
+function M.is_pending(v)
+  v = (v or ''):lower():gsub('[%s%-]', '_')
+  return v == 'pending' or v == 'add' or v == 'add_to_pending' or v == 'add_to_pending_review'
+end
+
 ---Normalise a verdict argument (`approve`, `request-changes`, `changes`...), or nil.
 function M.norm_verdict(v)
   v = (v or ''):lower():gsub('[%s%-]', '_')
@@ -39,6 +50,14 @@ local function short(oid)
 end
 M.short = short
 
+---The first key of a keymap (config), else `default`: for messages.
+function M.key(name, default)
+  local ok, config = pcall(require, 'revuey.config')
+  local k = ok and config.options and config.options.keymaps and config.options.keymaps[name]
+  k = type(k) == 'table' and k[1] or k
+  return (type(k) == 'string' and k ~= '') and k or default
+end
+
 ---Where a comment is with GitHub (forge_post_view: the state machine): nil, 'sending' (written
 ---ahead of a mutation, no answer yet), 'unknown' (no answer, and a reconcile could not tell),
 ---'pending' (in the viewer's pending review), 'posted'.
@@ -47,7 +66,7 @@ function M.state(c)
 end
 
 ---Can this comment be added to a review? Only the user's own saved comments (an AI review
----finding once accepted with `ca` is the user's), not drafts, resolved or dismissed ones, and
+---finding or an agent's comment once accepted with `ca` is the user's), not drafts, resolved or dismissed ones, and
 ---not what is already on GitHub. Returns true, or false and why.
 ---@return boolean ok, string? why
 function M.includable(c)
@@ -63,6 +82,9 @@ function M.includable(c)
   local kind = c.author and c.author.kind or 'user'
   if kind == 'ai' then
     return false, 'an AI review finding: accept it first (it becomes your comment)'
+  elseif kind == 'agent' then
+    return false, ('only your own comments are posted (this one is by %s): accept it first with %s (it becomes your comment; %s edits it)'):format(
+      c.author.name or kind, M.key('comment_accept', 'ca'), M.key('comment_edit', 'ce'))
   elseif kind ~= 'user' then
     return false, 'only your own comments are posted (this one is by ' .. (c.author.name or kind) .. ')'
   end
@@ -614,6 +636,9 @@ local MODE_TEXT = {
   existing = 'added to your pending review on GitHub, then submitted',
   new_pending = 'a new pending review, filled, then submitted',
   submit = 'your pending review on GitHub, submitted',
+  -- "add to pending review": never submitted
+  add_existing = 'added to your pending review on GitHub, not submitted',
+  add_new = 'a new pending review of yours, filled, not submitted',
 }
 
 ---The confirmation text of a prepared submit (nothing has been sent yet): the verdict and, per
@@ -625,12 +650,16 @@ local MODE_TEXT = {
 ---@return string[] lines
 function M.summary(r)
   local L = {}
-  L[#L + 1] = ('Submit a "%s" review to GitHub%s'):format(M.VERDICT_TEXT[r.verdict] or r.verdict, r.body and r.body ~= '' and ' with a body' or '')
+  if r.pending then
+    L[#L + 1] = 'Add to your pending review on GitHub: nothing is submitted (no verdict)'
+  else
+    L[#L + 1] = ('Submit a "%s" review to GitHub%s'):format(M.VERDICT_TEXT[r.verdict] or r.verdict, r.body and r.body ~= '' and ' with a body' or '')
+  end
   for _, x in ipairs(r.prs) do
     local t = x.target
     L[#L + 1] = ''
     if x.nothing then
-      L[#L + 1] = ('PR #%d: nothing to post, no review'):format(t.pr.number)
+      L[#L + 1] = r.pending and ('PR #%d: nothing to add'):format(t.pr.number) or ('PR #%d: nothing to post, no review'):format(t.pr.number)
     else
       local parts = {}
       if x.threads > 0 then
@@ -643,6 +672,8 @@ function M.summary(r)
       if x.blocked then
         L[#L + 1] = '  BLOCKED, not submitted: ' .. x.blocked
         L[#L + 1] = '  Check the PR on GitHub; `:RevueySubmit forget` on a comment drops revuey\'s record of it (it may exist on GitHub).'
+      elseif r.pending and #x.entries == 0 then
+        L[#L + 1] = '  nothing new to add'
       elseif x.mode then
         L[#L + 1] = '  ' .. MODE_TEXT[x.mode]
       end
@@ -656,7 +687,8 @@ function M.summary(r)
         L[#L + 1] = '  ? ' .. e
       end
       if #x.others > 0 then
-        L[#L + 1] = ('  Your pending review on GitHub already has %s from elsewhere; they are submitted too:'):format(count(x.pending_total, 'comment', 'comments'))
+        L[#L + 1] = ('  Your pending review on GitHub already has %s from elsewhere; %s:'):format(count(x.pending_total, 'comment', 'comments'),
+          r.pending and 'they stay as they are' or 'they are submitted too')
         for _, e in ipairs(x.others) do
           L[#L + 1] = '    ' .. e
         end

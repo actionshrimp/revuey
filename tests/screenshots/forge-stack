@@ -36,7 +36,7 @@
 35| ]s [s layer  gs full stack             │  8     -   console.log(capitalize("total"), formatCurrency(total));           
 36| gS check out layer                     │      8 +   const cart = new Cart().addItem({ name: "apple", price: 0.5, quanti
 37| gx PR in browser  <Tab> PR details     │      9 +   console.log(capitalize("total"), formatCurrency(cart.total()), oldT
-38|~                                       │  9  10     console.log("area", circleArea(2));                                
+38| gP submit review                       │  9  10     console.log("area", circleArea(2));                                
 39|revuey://files [-]    1,1            All revuey://stack/cart..stack/math [-]                          1,1            Top
 40|                                                                                                                        
 
@@ -78,6 +78,6 @@
 35|CCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 36|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 37|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKUUUUUKKKKKUUUUUUUUU
-38|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4HHHHHHHHHH@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+38|CCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@4HHHHHHHHHH@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 39|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
 40|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
