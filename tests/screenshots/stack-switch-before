@@ -24,7 +24,7 @@
 23| gG AI guide                            │     19 +   }                                                                  
 24| ]s [s layer  gs full stack             │     20 + }                                                                    
 25| gS check out layer                     │                                                                               
-26|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
+26| g? all keys                            │  M     ▾ src/index.ts   +3 −2                                                 
 27|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
 28|~                                       │  2   2   import { formatCurrency } from "./format";                           
 29|revuey://files [-]    2,1            All revuey://stack/cart..stack/math [-]                          1,1            Top
@@ -56,7 +56,7 @@
 23|CCCCCCCCCCCC99999999999999999999999999994GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 24|CCCCCCCCCCCCCCCCCCCCCCCCCCC99999999999994GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 25|CCCCCCCCCCCCCCCCCCC9999999999999999999994DDDDDDDDDD999999999999999999999999999999999999999999999999999999999999999999999
-26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4KKKKKKKKKKQQQQQQQQQQQQ<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+26|CCCCCCCCCCCC99999999999999999999999999994KKKKKKKKKKQQQQQQQQQQQQ<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEFFFFFFFFFF
 28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGGGGGGG999999999999999999999999999999999999999999999999999999999999999999999
 29|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR0000000000000000000000000000000000000000000000000000000000000000000000000000000

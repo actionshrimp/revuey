@@ -662,7 +662,11 @@ h.test('check: a failing check is quiet (logged, nothing marked) and waits for t
   restore()
   h.eq({}, msgs, 'no message')
   h.eq({}, forge.changed)
-  h.ok(not panel_has(s, '(stale)') and not panel_has(s, '?'), 'a failed check marks nothing')
+  -- (no `?` mark: the help line ` g? all keys` aside)
+  local marks = vim.tbl_filter(function(l)
+    return l ~= ' g? all keys'
+  end, panel_lines(s))
+  h.ok(not panel_has(s, '(stale)') and not find(marks, '?'), 'a failed check marks nothing')
   local e = log.entries[#log.entries]
   h.ok(e and e.msg:find('change check failed', 1, true), vim.inspect(log.entries))
   h.ok(not fv.maybe_check(s), 'not retried at once')

@@ -71,6 +71,10 @@ function M.setup()
   set('RevueyPanelDir', { link = 'Comment' })
   set('RevueyPanelCurrent', { link = 'CursorLine' })
   set('RevueyWinbar', { link = 'WinBar' })
+  -- the winbar's key hint (key_help) and the g? float
+  set('RevueyKeyHint', { link = 'Comment' })
+  set('RevueyKeyHintKey', { link = 'Special' })
+  set('RevueyKeyHelpGroup', { link = 'Title' })
   -- guide view
   set('RevueyGuideTitle', { link = 'Title' })
   set('RevueyGuideSection', { bg = mix(normal_bg, dark and 0xffffff or 0x000000, 0.08), bold = true })

@@ -524,8 +524,25 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
   h.eq({ 'revuey: no more line notes below' }, said)
   keys(s, '[n')
   h.eq(marks[2].row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  -- on a note, the winbar names its keys (key_help); off it, the guide's counters come back
+  -- (this window is 39 cells: the first keys are drawn, all of them are in s.key_hint)
+  local function winbar()
+    vim.g.statusline_winid = s.diff_win
+    return vim.api.nvim_eval_statusline(view.winbar(), { winid = s.diff_win, use_winbar = true }).str
+  end
+  local function hint()
+    return table.concat(vim.tbl_map(function(it)
+      return it.key .. ' ' .. it.label
+    end, s.key_hint.items), ' · ')
+  end
+  h.ok(vim.endswith(winbar(), ' ]n/[n next/prev '), winbar())
+  h.eq(']n/[n next/prev · gN hide notes', hint())
   -- gN collapses the notes to a marker at the end of their first line, and back
   keys(s, 'gN')
+  h.eq(']n/[n next/prev · gN show notes', hint())
+  vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
+  h.ok(not winbar():find('next/prev', 1, true) and winbar():find('✓', 1, true), winbar())
+  vim.api.nvim_win_set_cursor(s.diff_win, { marks[2].row, 0 })
   h.eq({ { marks[1].row, 'marker', '◆ guide' }, { marks[2].row, 'marker', '◆ guide' }, { marks[3].row, 'marker', '◆ guide' } },
     vim.tbl_map(function(m)
       return { m.row, m.kind, m.text }

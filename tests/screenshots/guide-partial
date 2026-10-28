@@ -17,7 +17,7 @@
 16| ]c [c hunk  <Tab> fold  gp diff        │      2 + file                                                                 
 17| gd def  K hover  go open  R refresh    │                                                                               
 18| gG diff view  gR regenerate  q close   │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1                             
-19|~                                       │ 17  17   line 17                                                              
+19| g? all keys                            │ 17  17   line 17                                                              
 20|~                                       │ 18  18   line 18                                                              
 21|~                                       │ 19  19   line 19                                                              
 22|~                                       │ 20     - line 20                                                              
@@ -59,7 +59,7 @@
 16|88888888888888888888888888888888777777774MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 17|88888888888888888888888888888888888877774==========777777777777777777777777777777777777777777777777777777777777777777777
 18|88888888888888888888888888888888888887774>>>>>>>>>>HHHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIJJJKKLLLJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-19|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
+19|88888888888877777777777777777777777777774MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
 20|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
 21|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
 22|========================================4QQQQQQQRRRSSSSSTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

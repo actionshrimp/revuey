@@ -75,6 +75,9 @@ M.defaults = {
     prev_note = '[n',
     toggle_notes = 'gN', -- show the notes in full / collapse them to a marker
     close = 'q',
+    -- every revuey key in a float, as configured (diff, guide and panel). `g?` (rot13) means
+    -- nothing in a read-only review buffer.
+    help = 'g?',
     -- comments (diff and guide views). `gc` shadows Neovim's commenting operator, which has
     -- nothing to do in a read-only review buffer; the c* keys shadow `c{motion}` likewise.
     comment_add = 'gc', -- on a line, a visual selection, or a file header (whole file)

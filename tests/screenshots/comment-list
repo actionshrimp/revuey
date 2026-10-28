@@ -19,7 +19,7 @@
 18| gd def  K hover  g│  3 (new)  Looks off by one.                                                     │                  
 19| gu committed/worki╰───────────────────────────────────────────────────────────── <CR> jump  q close ╯                  
 20| gG AI guide                            │     10 +                                                                      
-21|~                                       │     11 + export class Cart {                                                  
+21| g? all keys                            │     11 + export class Cart {                                                  
 22|~                                       │     12 +   private items: LineItem[] = [];                                    
 23|~                                       │     13 +                                                                      
 24|~                                       │     14 +   addItem(item: LineItem): this {                                    
@@ -55,7 +55,7 @@
 18|@@@@@@@@@@@@@@@@@@@BPPPPPPPPPBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB==================
 19|@@@@@@@@@@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB22222222222222222222B==================
 20|@@@@@@@@@@@@888888888888888888888888888849999:::<<<=====================================================================
-21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
+21|@@@@@@@@@@@@888888888888888888888888888849999:::<<<=====================================================================
 22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
 23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================
 24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA49999:::<<<=====================================================================

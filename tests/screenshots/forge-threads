@@ -1,6 +1,6 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//s/c/math                                                                                              X
-02| Files                       ○ no agent │ A src/cart.ts +20 −0                                                      1/2 
+02| Files                       ○ no agent │ A src/cart.ts +20 −0                                       cr reply · gx open 
 03| Stack: 3 layers on main                │  A     ▾▍src/cart.ts   +20 −0  added                                          
 04|    stack/math                1c 1f ✓0/1│          ╭─ erin · 2026-01-01 · GitHub #42 · file ─────────────────────────── 
 05| ▶@ stack/cart          #42 ○ 2c 2f ✓0/2│          │ Needs a test for an empty cart.                                    
@@ -35,7 +35,7 @@
 34| gx PR in browser  <Tab> PR details     │          │ Should the total be rounded to cents?                              
 35| gH GitHub threads (all/open/none)      │          │ ↳ alice · 2026-01-03                                               
 36| gP submit review                       │          │   Good point, will do.                                             
-37|~                                       │          ╰─                                                                   
+37| g? all keys                            │          ╰─                                                                   
 38|~                                       │     19 +   }                                                                  
 39|~                                       │     20 + }                                                                    
 40|~                                       │                                                                               
@@ -46,7 +46,7 @@
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01|000000000001211111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-02|333333333333333333333333333333333333333345667777777777776666885555555555555555555555555555555555555555555555555555555555
+02|333333333333333333333333333333333333333345667777777777776666885555555555555555555555555555555555555557755555555577555555
 03|22222222222222222222222299999999999999994:::::::::;<<<<<<<<<<<===>>>???>>>>>>>==========================================
 04|9@A944444444449999999999999999BBBBBBBBBB4CCCCCCCCCCBBB@@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9
 05|9@A922222222229999999999@@@BB4BBBBBBBBBB4CCCCCCCCCCBB4444444444444444444444444444444999999999999999999999999999999999999
@@ -81,7 +81,7 @@
 34|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCBB44444444444RRRRR444444444444444444444999999999999999999999999999999
 35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999994CCCCCCCCCCBBBB@@@@@BBBBBBBBBBBBB99999999999999999999999999999999999999999999999
 36|BBBBBBBBBBBBBBBBB999999999999999999999994CCCCCCCCCCBBBB44444444444444444444999999999999999999999999999999999999999999999
-37|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+37|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
 38|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 39|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 40|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCC999999999999999999999999999999999999999999999999999999999999999999999

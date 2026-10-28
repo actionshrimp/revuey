@@ -1621,6 +1621,42 @@ are in `reports/Terminal code review tool landscape.md`.
       `git push -u`-like config change.
       `forge_post_spec.lua` checks the refetch after a submit clears the marks.
 
+21. **Finding the keys** (`keys.lua` the list of keys with their descriptions; `key_help.lua` the
+    winbar hint and the `g?` float).
+    - **One list.** `keys.lua` names every keymap option once, in the `g?` groups (Comments,
+      Review and posting, Navigation, Layers and switching, GitHub, Guide, Files and folds,
+      Other), with a one-line `desc` for the float and an optional longer `readme` text. The
+      README's Keymaps tables are generated from it (`scripts/readme-keys.lua`, between
+      markers) and `key_help_spec.lua` fails when they differ or when a keymap option is
+      missing, so the float, the README and the config cannot drift apart. Keys are always read
+      from `config.keymaps` (a list: all its keys; `false`: left out). The panel's help lines are
+      templates (`keys.line`: `{option}` is its key, a part with a disabled key is dropped); their
+      short labels stay the panel's own (40 cells), and they add one line, ` g? all keys`.
+    - **The hint asks the actions' own rules.** `comments_view.can(s, comment, action)` is the
+      check `ce`/`cr`/`cx`/`cd`/`ci`/`cs`/`ca`/`cn`/`cz`/`gx` apply (and the actions now call it
+      for their refusals: `cx` on a draft, `ci` through `forge_post.includable` unless the
+      comment is in the review already, a GitHub thread's local reply only on a shown line,
+      `ai_review.can_accept` / `can_dismiss`), returning a label for the state (`ci remove from
+      review`, `cx reopen`, `cn restore`, `cz collapse`). `key_help` only chooses which actions
+      to offer per kind, in order: your comment (`ce cr ci cx cz cd`), an untriaged or dismissed
+      AI finding or agent comment (`ca cn`, `cx` only to reopen, `cs`, `cz`), a GitHub thread
+      (`cr gx cz`), a guide line note (`]n`/`[n` where a note is above / below, `gN` show or
+      hide). `cz` is offered only when the thread is cut (`render` records it) or expanded.
+      Several items on a row: every key that works on any of them, the first item's label.
+    - **Cheap.** The hint reads the row's `cover` list and the comments store already in memory
+      (no git, no network, no file read); `key_help.update` runs on `CursorMoved`, after a
+      comments render and after the notes are drawn, and redraws the winbar only when the text
+      changed. About 5µs per row (measured in `screen_spec`), so there is no debounce;
+      `screen_spec` moves over a file of comments within the main-loop gap budget.
+    - **Winbar priority.** The hint is about the cursor row and shows only while the diff window
+      is current; the winbar's right side (the file count `2/7`, `↑ PR description`, the guide's
+      `§1/2  ✓ 0/2`) is ambient and also in the panel, so the hint replaces it while it shows. A
+      `new on GitHub · R` / `stale` mark on the description rows stays (it is news). The left
+      (file or section at the top, or the PR on description rows) keeps at least 20 cells: in a
+      narrow window the hint's last keys are dropped first (they are ordered by use; `cd`, which
+      asks anyway, is last), then the name is cut from its start at a `%<` (status letter and
+      counts stay). At least one key is always shown.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
 - Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,

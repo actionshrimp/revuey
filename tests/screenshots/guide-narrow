@@ -22,7 +22,7 @@
 21| ]c [c hunk  <Tab> fold  gp diff        │      5 + export interface LineItem {                      
 22| gd def  K hover  go open  R refresh    │      6 +   name: string;                                  
 23| gG diff view  gR regenerate  q close   │      7 +   price: number;                                 
-24|~                                       │      8 +   quantity: number;                              
+24| g? all keys                            │      8 +   quantity: number;                              
 25|~                                       │      9 + }                                                
 26|~                                       │     10 +                                                  
 27|~                                       │     11 + export class Cart {                              
@@ -64,7 +64,7 @@
 21|88888888888888888888888888888888777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 22|88888888888888888888888888888888888877774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 23|88888888888888888888888888888888888887774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-24|========================================4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+24|88888888888877777777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 25|========================================4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 26|========================================4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 27|========================================4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO

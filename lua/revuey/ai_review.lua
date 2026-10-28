@@ -456,22 +456,49 @@ function M.accepted_from(c)
   end
 end
 
+---Can `c` be accepted (`ca`)? true, or false and why. The rule M.accept applies (the key hint
+---asks it too).
+---@return boolean ok, string? why
+function M.can_accept(c)
+  if not M.origin(c) then
+    return false, 'not an AI finding or an agent\'s comment'
+  end
+  if c.status == 'accepted' then
+    return false, 'already accepted'
+  elseif c.status == 'resolved' then
+    return false, 'resolved: reopen it first (cx)'
+  elseif c.status == 'draft' then
+    return false, 'save the draft first'
+  end
+  return true
+end
+
+---Can `c` be dismissed or restored (`cn`)? true, or false and why (M.toggle_dismiss's rule).
+---@return boolean ok, string? why
+function M.can_dismiss(c)
+  if not M.origin(c) then
+    return false, 'not an AI finding or an agent\'s comment'
+  end
+  if c.status == 'accepted' then
+    return false, 'already accepted: it is your comment now (resolve or delete it instead)'
+  elseif c.status == 'resolved' then
+    return false, 'resolved: reopen it first (cx)'
+  elseif c.status ~= 'saved' and c.status ~= 'dismissed' then
+    return false, 'not a finding to dismiss (' .. tostring(c.status) .. ')'
+  end
+  return true
+end
+
 ---Accept a finding or an agent's comment: it becomes the user's own comment (status
 ---`accepted`; the original author is kept in `ai.author` / `agent.author`). Returns the updated
 ---comment, or nil and a message.
 function M.accept(store, id, now)
   local cur = comments.get(store, id)
+  local ok, why = M.can_accept(cur)
+  if not ok then
+    return nil, why
+  end
   local origin = M.origin(cur)
-  if not origin then
-    return nil, 'not an AI finding or an agent\'s comment'
-  end
-  if cur.status == 'accepted' then
-    return nil, 'already accepted'
-  elseif cur.status == 'resolved' then
-    return nil, 'resolved: reopen it first (cx)'
-  elseif cur.status == 'draft' then
-    return nil, 'save the draft first'
-  end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
   local rec = origin == 'ai' and c.ai or (type(c.agent) == 'table' and c.agent or {})
@@ -490,17 +517,11 @@ end
 ---dismissed one.
 function M.toggle_dismiss(store, id, now)
   local cur = comments.get(store, id)
+  local ok, why = M.can_dismiss(cur)
+  if not ok then
+    return nil, why
+  end
   local origin = M.origin(cur)
-  if not origin then
-    return nil, 'not an AI finding or an agent\'s comment'
-  end
-  if cur.status == 'accepted' then
-    return nil, 'already accepted: it is your comment now (resolve or delete it instead)'
-  elseif cur.status == 'resolved' then
-    return nil, 'resolved: reopen it first (cx)'
-  elseif cur.status ~= 'saved' and cur.status ~= 'dismissed' then
-    return nil, 'not a finding to dismiss (' .. tostring(cur.status) .. ')'
-  end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
   local rec

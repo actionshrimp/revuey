@@ -33,7 +33,7 @@
 32| gS check out layer                     │     19 +   }                                                                  
 33| gx PR in browser  <Tab> PR details     │     20 + }                                                                    
 34| gP submit review (2 in review)         │                                                                               
-35|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
+35| g? all keys                            │  M     ▾ src/index.ts   +3 −2                                                 
 36|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
 37|~                                       │  2   2   import { formatCurrency } from "./format";                           
 38|~                                       │  3   3   import { capitalize } from "./utils/strings";                        
@@ -75,7 +75,7 @@
 32|AAAAAAAAAAAAAAAAAAA9999999999999999999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 33|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 34|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9999999994BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
-35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4??????????SSSSSSSSSSSS<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+35|AAAAAAAAAAAA99999999999999999999999999994??????????SSSSSSSSSSSS<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 36|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCDDDDDDDDDD
 37|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999
 38|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4EEEEEEEEEE999999999999999999999999999999999999999999999999999999999999999999999

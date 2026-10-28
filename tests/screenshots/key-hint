@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//f/cart..main                                                                                          X
+02| Files                       ○ no agent │ A src/cart.ts +27 −0  ce edit · cr reply · ci remove from review · cx resolve 
+03| feature/cart → main                    │      5▍+ export interface LineItem {                                          
+04| 7 files  +57 −22  ✓ 0/7                │          ╭─ You · just now · in review ────────────────────────────────────── 
+05| base ee2e6fcf  head 6b2be8a3           │          │ Note 5                                                             
+06| working tree  ● uncommitted            │          ╰─                                                                   
+07|                                        │      6 +   name: string;                                                      
+08|   M  logo.png  assets               bin│      7▍+   price: number;                                                     
+09|   A  cart.ts  src            ✎13 +27 −0│          ╭─ You · just now ────────────────────────────────────────────────── 
+10|   A  Total.tsx  src/components    +5 −0│          │ Note 7                                                             
+11|   M  index.ts  src                +9 −6│          ╰─                                                                   
+12|   D  legacy.ts  src               +0 −6│      8 +   quantity: number;                                                  
+13|   M  math.ts  src                +14 −8│      9▍+ }                                                                    
+14|   R  text.ts  src                 +2 −2│          ╭─ You · just now ────────────────────────────────────────────────── 
+15|                                        │          │ Note 9                                                             
+16| <CR> show  mr reviewed  gp diff        │          ╰─                                                                   
+17| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
+18| gd def  K hover  go open  R refresh    │     11▍+ export class Cart {                                                  
+19| gu committed/working tree  q close     │          ╭─ You · just now ────────────────────────────────────────────────── 
+20| gG AI guide                            │          │ Note 11                                                            
+21| g? all keys                            │          ╰─                                                                   
+22|~                                       │     12 +   private items: LineItem[] = [];                                    
+23|~                                       │     13▍+                                                                      
+24|~                                       │          ╭─ You · just now ────────────────────────────────────────────────── 
+25|~                                       │          │ Note 13                                                            
+26|~                                       │          ╰─                                                                   
+27|~                                       │     14 +   addItem(item: LineItem): this {                                    
+28|~                                       │     15▍+     this.items.push(item);                                           
+29|~                                       │          ╭─ You · just now ────────────────────────────────────────────────── 
+30|~                                       │          │ Note 15                                                            
+31|~                                       │          ╰─                                                                   
+32|~                                       │     16 +     return this;                                                     
+33|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              10,1            8%
+34|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777776666885577555555557755555555577555555555555555555555577555555555
+03|22222222222222222222999999999999999999994::::;;;<==>>>>>>>>>>>>>>>>>>>>>>>>>>>??????????????????????????????????????????
+04|9999999999@@@AAAABBBBBBB99999999999999994CCCCCCCCCCDDD222BBBBBBBBBBBBBBEEEEEEEEEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+05|BBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999999994CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
+06|FFFFFFFFFFFFFBBBBBBBBBBBBBBB9999999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+07|99999999999999999999999999999999999999994GGGGHHH===?????????????????????????????????????????????????????????????????????
+08|9@9FI944444444BBBBBBBB999999999999999BBB4GGGGHHHF==?????????????????????????????????????????????????????????????????????
+09|JKJKLJMMMMMMMNNNNNJJJJJJJJJJJJFFFF@@@AAA4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+10|9@9@I9444444444BBBBBBBBBBBBBBBB9999@@AAA4CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
+11|9@9FI944444444BBBBB9999999999999999@@AAA4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+12|9@9AI9444444444BBBBB999999999999999@@AAA4GGGGHHH===?????????????????????????????????????????????????????????????????????
+13|9@9FI94444444BBBBB9999999999999999@@@AAA4GGGGHHHF==?????????????????????????????????????????????????????????????????????
+14|9@9FI94444444BBBBB99999999999999999@@AAA4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+15|99999999999999999999999999999999999999994CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
+16|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+17|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994GGGGHHH===?????????????????????????????????????????????????????????????????????
+18|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994GGGGHHHF==?????????????????????????????????????????????????????????????????????
+19|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+20|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
+21|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
+23|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHHF==?????????????????????????????????????????????????????????????????????
+24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+25|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
+26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
+28|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHHF==?????????????????????????????????????????????????????????????????????
+29|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+30|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
+31|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+32|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
+33|00000000000000000000000000000000000000000OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+34|PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
