@@ -623,7 +623,8 @@ sent (not your comment as it is now): found once, it is recorded (`in your pendi
 GitHub #42`, or posted); proven absent (the review read whole without it), it is forgotten and
 sent again if it is still in the review. Anything else (GitHub unreadable, a pending review too
 long to read whole, two comments it cannot tell apart, a comment of yours from elsewhere with
-the same text) marks it `maybe on GitHub #42 (unconfirmed)` and blocks that PR: nothing more
+the same text, or any comment of yours on its lines or in its thread, which may be it edited on
+GitHub) marks it `maybe on GitHub #42 (unconfirmed)` and blocks that PR: nothing more
 goes to it until a later `gP` can tell. Check the PR on GitHub; then `Forget unconfirmed` in the
 confirmation drops revuey's records of what it sent to the blocked PRs (comments and reviews),
 and `:RevueySubmit forget` on a comment drops its record; either may make a later submit post
@@ -632,7 +633,9 @@ twice. Just before your pending review is submitted, revuey reads it again: if a
 added comments to it while the confirmation was open, nothing is submitted (the next `gP`
 shows them). Comments you take out, edit or delete while the confirmation is open are not sent. A
 comment in your pending review that you take out with `ci` stays there until you delete it on
-GitHub; then revuey forgets it. A failed or cancelled submit leaves your pending review as it
+GitHub; then revuey forgets it. One that was in your pending review and is gone from it (you
+deleted it on GitHub, or discarded the review) is taken out of the review, listed with that
+reason, and not added again unless you `ci` it again. A failed or cancelled submit leaves your pending review as it
 is. One submit runs at a time per Neovim; two Neovims on the same review do not see each
 other's submit, so do not submit from both at once. In the full-stack scope only PRs with
 comments from revuey get the verdict; a pending review of yours on another PR of the stack is

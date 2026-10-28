@@ -363,6 +363,25 @@ h.test('re-import: untouched findings of the same author are replaced; triaged o
   h.eq(1, rec.replaced)
 end)
 
+h.test('re-import: an agent comment named like the AI reviewer is never replaced; it is not counted to triage', function()
+  local cpath = comments.path_for(r.state._path)
+  local store = comments.load(cpath)
+  -- `bin/revuey comment` with REVUEY_AGENT_NAME=claude: author {kind = 'agent', name = 'claude'}
+  local agent = comments.new(comments.file_anchor('m.txt'), 'An agent draft.', { author = { kind = 'agent', name = 'claude' } })
+  agent.author = { kind = 'agent', name = 'claude' }
+  comments.put(store, agent)
+  comments.save(store)
+  h.eq({ false, true }, { ai_review.untriaged(agent), ai_review.agent_untriaged(agent) })
+  assert(import({ summary = '', verdict = 'approve', findings = {} }, store))
+  local disk = comments.load(cpath, { readonly = true })
+  local kept = comments.get(disk, agent.id)
+  h.ok(kept and not kept.deleted, 'the agent comment survives the re-run')
+  h.eq({ 'agent', 'saved', 'An agent draft.' }, { kept.author.kind, kept.status, kept.body })
+  h.eq(0, #vim.tbl_filter(function(c)
+    return c.id == agent.id
+  end, ai_review.pending(disk)), 'not an AI finding to triage')
+end)
+
 h.test('import: a diff hash for another diff is refused; nothing is stored', function()
   local cpath = comments.path_for(r.state._path)
   local store = comments.load(cpath)
