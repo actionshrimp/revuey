@@ -168,6 +168,21 @@ function M.update(s, force)
     end
     -- then the review threads of the scope's open PRs (those never fetched in this review)
     local prs = M.threads_enabled() and s.review == review and M.scope_prs(s) or {}
+    if force and M.threads_enabled() and s.review == review then
+      -- `R` also renews the threads of other layers' open PRs a check marked (a full-stack
+      -- check, then a layer): `R` clears every mark
+      local seen = {}
+      for _, pr in ipairs(prs) do
+        seen[pr.url] = true
+      end
+      for _, t in pairs(f.targets or {}) do
+        local pr = forge.get(t)
+        if pr and pr.state == 'OPEN' and not seen[pr.url] and forge.change(pr, forge.SIGNALS_THREADS) then
+          seen[pr.url] = true
+          prs[#prs + 1] = pr
+        end
+      end
+    end
     if #prs > 0 then
       local todo = {}
       for _, pr in ipairs(prs) do
@@ -255,6 +270,12 @@ end
 function M.maybe_check(s)
   local f = s and s.forge
   if not f or s.cleaned or not M.check_enabled() or f.unfocused or f.busy or f.checking or not f.ready then
+    return false
+  end
+  local post = package.loaded['revuey.forge_post_view']
+  if post and post.job then
+    -- a submit in progress: its own pending review would read as news (the refetch after it
+    -- clears marks anyway)
     return false
   end
   if forge.now() - (f.checked_at or 0) < forge.options().interval or not visible(s) then
@@ -732,11 +753,40 @@ function M.render_detail(s, add, add_virt, width)
   if m.marker then
     virt[#virt + 1] = { m.marker, m.marker_hl }
   end
-  if changed then
-    virt[#virt + 1] = { (#virt > 0 and ' ' or '') .. '(' .. forge.NEW_TEXT .. ' · R)', 'RevueyForgeChanged' }
+  -- the marks in the words that fit beside `PR #N` and its state (right-aligned virtual text
+  -- would cover them): `(new on GitHub · R) (stale)`, then `↻ R (stale)`, then `↻?`, then none
+  local function vw(chunks)
+    local n = 0
+    for _, ch in ipairs(chunks) do
+      n = n + vim.fn.strdisplaywidth(ch[1])
+    end
+    return n
   end
-  if stale then
-    virt[#virt + 1] = { (#virt > 0 and ' ' or '') .. '(stale)', 'RevueyForgeDim' }
+  local room = width - vim.fn.strdisplaywidth(head) - 1
+  local sep = #virt > 0 and ' ' or ''
+  local NEW, DIM = 'RevueyForgeChanged', 'RevueyForgeDim'
+  local function marks(new_text, stale_text, glued)
+    local out = {}
+    if changed then
+      out[#out + 1] = { sep .. new_text, NEW }
+    end
+    if stale then
+      out[#out + 1] = { (changed and (glued and '' or ' ') or sep) .. stale_text, DIM }
+    end
+    return out
+  end
+  if changed or stale then
+    for _, m in ipairs({
+      marks('(' .. forge.NEW_TEXT .. ' · R)', '(stale)'),
+      marks(forge.GLYPH_NEW .. ' R', '(stale)'),
+      marks(forge.GLYPH_NEW, '?', true),
+    }) do
+      local cand = vim.list_extend(vim.deepcopy(virt), m)
+      if vw(cand) <= room then
+        virt = cand
+        break
+      end
+    end
   end
   if #virt > 0 then
     add_virt(row, virt)
@@ -762,10 +812,11 @@ function M.render_detail(s, add, add_virt, width)
     local lines = panel.wrap(text, width, indent)
     for i, line in ipairs(lines) do
       local hls = { { #indent, #line, item.hl } }
-      if item.marks and #lines == 1 then
-        -- the threads line's marks in their own colours (when it is not wrapped)
-        for _, m in ipairs(item.marks) do
-          hls[#hls + 1] = { #indent + m[1], #indent + m[2], m[3] }
+      -- the threads line's marks in their own colours, on whichever wrapped line they are
+      for _, m in ipairs(item.marks or {}) do
+        local a = line:find(m.text, #indent + 1, true)
+        if a then
+          hls[#hls + 1] = { a - 1, a - 1 + #m.text, m.hl }
         end
       end
       if i == 1 and item.glyph and (item.kind == 'review' or item.kind == 'requested') then

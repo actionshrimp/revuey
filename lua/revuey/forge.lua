@@ -536,8 +536,10 @@ end
 -- Fetching and cache
 -- ---------------------------------------------------------------------------
 
----Cache per queried repo: { at = ms, failed? = reason, branches = { [branch] = revuey.PR[] } }.
----A failure keeps the last good `branches` (shown as stale) until a fetch works. Nothing here
+---Cache per queried repo: { at = ms, branches = { [branch] = revuey.PR[] }, failed = { [branch] =
+---reason } }. A failure keeps the last good `branches` (shown as stale) until a fetch of that
+---branch works: per branch, since fetches cover only the targets a review has not fetched (a
+---first lookup of one new layer must not mark or clear the others). Nothing here
 ---expires: what is shown changes only when forge_view fetches (the first time a review needs a
 ---PR, `R`, after a submit).
 M.cache = {}
@@ -551,6 +553,9 @@ M.changed = {}
 ---facts, kept for the session).
 M.ancestry = {}
 
+---The shortest interval between change checks, in ms (tests lower it).
+M.MIN_INTERVAL = 60 * 1000
+
 ---Clock in ms (tests replace it): the change check's interval.
 function M.now()
   return vim.uv.hrtime() / 1e6
@@ -560,8 +565,10 @@ local function opts()
   local o = require('revuey.config').options.forge or {}
   return {
     enabled = o.enabled ~= false,
-    -- `ttl` (its old name kept): seconds between change checks while a review is shown
-    interval = (tonumber(o.ttl) or 180) * 1000,
+    -- `ttl` (its old name kept): seconds between change checks while a review is shown, at
+    -- least MIN_INTERVAL (an old `ttl = 0` meant "always fresh": it must not mean a check
+    -- after every other)
+    interval = math.max(M.MIN_INTERVAL, (tonumber(o.ttl) or 180) * 1000),
     check = o.enabled ~= false and o.check ~= false,
     timeout = (o.timeout or 15) * 1000,
     cmd = o.cmd or 'gh',
@@ -626,7 +633,7 @@ function M.get(t)
       local stale = false
       for _, repo in ipairs(c.repos) do
         local e = M.cache[M.repo_key(repo)]
-        stale = stale or (e ~= nil and e.failed ~= nil)
+        stale = stale or (e ~= nil and e.failed[c.branch] ~= nil)
       end
       return pr, stale
     end
@@ -791,16 +798,14 @@ function M.fetch(targets, o)
     if not data then
       log.write('forge', 'PR lookup failed: ' .. tostring(err))
     end
-    local touched = {}
     for _, p in ipairs(list) do
       local key = M.repo_key(p.repo)
-      if not touched[key] then
-        touched[key] = true
-        local old = M.cache[key]
-        -- results of other branches of this repo stay; on failure the last good results stay
-        -- too (shown as stale)
-        M.cache[key] = { at = now, failed = not data and (err or 'failed') or nil, branches = old and old.branches or {} }
-      end
+      -- results of other branches of this repo stay, and so do their failures; on failure the
+      -- last good results of this branch stay too (shown as stale)
+      local e = M.cache[key] or { branches = {}, failed = {} }
+      e.at = now
+      e.failed[p.branch] = not data and (err or 'failed') or nil
+      M.cache[key] = e
     end
     for alias, p in pairs(data and aliases or {}) do
       local key = M.repo_key(p.repo)
@@ -821,6 +826,11 @@ function M.fetch(targets, o)
       M.cache[key].branches[p.branch] = prs
       for _, pr in ipairs(prs) do
         M.clear_changed(pr, M.SIGNALS_PR)
+        if pr.state ~= 'OPEN' then
+          -- merged or closed: its threads are no longer shown or fetched, so nothing else would
+          -- ever clear their marks
+          M.clear_changed(pr, M.SIGNALS_THREADS)
+        end
       end
     end
   end
@@ -1273,7 +1283,8 @@ function M.compare(pr, n, threads)
       out[name] = true
     end
   end
-  local base = threads and M.cached_thread_signals(pr)
+  -- threads only of a PR shown open (merged and closed PRs show none, and `R` fetches none)
+  local base = threads and pr.state == 'OPEN' and M.cached_thread_signals(pr)
   local conn = type(n.reviewThreads) == 'table' and n.reviewThreads
   if base and conn then
     local list = {}
@@ -1844,12 +1855,12 @@ function M.detail(pr, parent, threads)
     local text = 'threads: ' .. table.concat(parts, ', ')
     local marks = {}
     if threads.changed then
-      -- short: the heading above says "new on GitHub · R" (a 40-cell panel would wrap more)
-      marks[#marks + 1] = { #text + 1, #text + 6, 'RevueyForgeChanged' }
+      -- short: the heading above says what to do (a 40-cell panel would wrap more)
+      marks[#marks + 1] = { text = '(new)', hl = 'RevueyForgeChanged' }
       text = text .. ' (new)'
     end
     if threads.stale then
-      marks[#marks + 1] = { #text + 1, #text + 8, 'RevueyForgeDim' }
+      marks[#marks + 1] = { text = '(stale)', hl = 'RevueyForgeDim' }
       text = text .. ' (stale)'
     end
     add('threads', text, threads.open > 0 and 'RevueyForgePending' or 'RevueyForgeDim')

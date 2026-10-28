@@ -522,11 +522,17 @@ end
 -- answered from the same files as the lookup and the threads, so a test changes a PR's signals
 -- by rewriting them: the PR node as canned (no body) plus `reviewThreads` (totalCount, the first
 -- N threads' isResolved and comment counts). A number not in the PRs file answers null (with a
--- NOT_FOUND error, exit 1). `REVUEY_FAKE_GH_CHECK_SCENARIO=fail` fails check queries only.
+-- NOT_FOUND error, exit 1). `REVUEY_FAKE_GH_CHECK_SCENARIO=fail` fails check queries only;
+-- `REVUEY_FAKE_GH_CHECK_DELAY` (seconds) makes them slow.
 if query and query:find('fragment check on PullRequest', 1, true) then
   if (os.getenv('REVUEY_FAKE_GH_CHECK_SCENARIO') or '') == 'fail' then
     io.stderr:write('error connecting to api.github.com\n')
     os.exit(1)
+  end
+  -- `REVUEY_FAKE_GH_CHECK_DELAY` seconds before answering (a slow check, to race it)
+  local delay = tonumber(os.getenv('REVUEY_FAKE_GH_CHECK_DELAY') or '')
+  if delay then
+    vim.uv.sleep(math.floor(delay * 1000))
   end
   local function load(env)
     local f = os.getenv(env)
