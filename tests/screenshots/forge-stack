@@ -37,7 +37,7 @@
 36| gS check out layer                     │      8 +   const cart = new Cart().addItem({ name: "apple", price: 0.5, quanti
 37| gx PR in browser  <Tab> PR details     │      9 +   console.log(capitalize("total"), formatCurrency(cart.total()), oldT
 38| gP submit review                       │  9  10     console.log("area", circleArea(2));                                
-39|revuey://files [-]    1,1            All revuey://stack/cart..stack/math [-]                          1,1            Top
+39|revuey://files [-]    1,1            Top revuey://stack/cart..stack/math [-]                          1,1            Top
 40|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|

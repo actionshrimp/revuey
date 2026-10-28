@@ -1274,59 +1274,125 @@ The review opens in a new tab:
 
 Every diff line is a real buffer line, and its text is exactly the source text. The `+`/`-` markers,
 old/new line numbers and file status are drawn in the `statuscolumn`. The winbar shows the file at
-the top of the window. Reviewed files and very large files start folded.
+the top of the window, and the keys that work on a comment or note under the cursor ([Finding the
+keys](#finding-the-keys)). Reviewed files and very large files start folded.
 
 ## Keymaps
 
-Diff buffer:
+### Finding the keys
+
+- **`g?`** opens every revuey key in a float (`q`, `<Esc>` or `g?` closes it), grouped as below
+  and read from your `keymaps` config, so a rebound key shows its new key and a disabled one
+  (`false`) is left out. It works in the diff view, the guide view and the file panel, whose last
+  help line says ` g? all keys`.
+- **The winbar** names the keys that work on the line under the cursor while it is on a comment,
+  an AI finding, an agent's comment, a GitHub thread or a guide line note, for what it is now:
+  `ce edit · cr reply · ci add to review · cx resolve · cd delete` on your comment (`ci remove from
+  review` once added, no `ci` once posted, `cx reopen` when resolved), `ca accept · cn dismiss · cs
+  ask agent` on an untriaged finding or agent comment, `cr reply · gx open` on a GitHub thread
+  (`cz expand` when a thread or comment is cut), `]n/[n next/prev · gN hide notes` on a guide
+  note. Only keys that would work are named, most useful first. While the hint shows it takes the
+  winbar's right side (the file count, `↑ PR description`, the guide's `§`/`✓` counters: the panel
+  has them too; a `new on GitHub · R` mark stays). In a narrow window the last keys are left out
+  first, keeping 20 cells for the file or section on the left; a longer name is then cut from its
+  start. The hint shows while the diff window has focus.
+
+Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the list `g?` shows:
+`nvim --headless --clean -l scripts/readme-keys.lua`):
+
+<!-- keys:begin -->
+**Comments**
+
+| Key | Action |
+|---|---|
+| `gc` | [Comment](#comments) on this line (visual: the selected lines; a file or hunk header: the whole file) |
+| `ce` | Edit the comment on this line |
+| `cr` | Reply to the comment (on a GitHub thread: a local reply) |
+| `cx` | Resolve the comment, or reopen a resolved one |
+| `cd` | Delete the comment (asks first) |
+| `cz` | Expand / collapse a long or resolved comment |
+| `ca` | [AI review](#ai-review) finding or [agent comment](#connect-an-agent) on this line: accept it as your comment |
+| `cn` | Dismiss the AI finding or agent comment (again: restore) |
+| `ga` | [Ask the agent](#connect-an-agent) about this line or the selection |
+| `cs` | Send the comment on this line to the agent |
+| `<C-a>` | In the comment editor: save and send to the agent |
+| `]m` / `[m` | Next / previous comment (takes a count) |
+| `gC` | Hide / show the comment threads |
+| `cl` | List all comments (`<CR>` jumps) |
+
+**Review and posting**
+
+| Key | Action |
+|---|---|
+| `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk you can see, skipping collapsed files). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches (a collapsed file in the selection counts whole). A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
+| `ci` | Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out |
+| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation |
+
+**Navigation**
 
 | Key | Action |
 |---|---|
 | `]c` / `[c` | Next / previous hunk (skips collapsed files and hunks; takes a count) |
 | `]f` / `[f` | Next / previous file |
-| `<CR>` / `go` | Open the working-tree file at this line (in a split below) |
+| `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
 | `K` | LSP hover |
-| `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk you can see, skipping collapsed files). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). In visual mode: every hunk the selection touches (a collapsed file in the selection counts whole). A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
-| `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On a long [PR description](#the-pr-description): expand / collapse it. On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
-| `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
-
-`<Tab>` and `<S-Tab>` are buffer-local, so in revuey's diff/guide buffer they override your own
-`<Tab>`/`<C-i>`/`<S-Tab>` mappings (only there). A count (`3<Tab>`) always means jump forward. Set
-`keymaps = { toggle_fold = false, toggle_all_folds = false }` to leave those keys alone.
-| `za` etc. | Normal fold commands: each file is a fold, each hunk a fold inside it, and long unchanged runs are folded |
 | `gp` | Focus the file panel |
-| `gu` | Toggle working tree (default) / committed only |
-| `ge` | [Edit](#editing-from-the-review) the real file at this line in a float (checked-out layer, working-tree mode) |
-| `R` | Refresh (re-runs git; also automatic in working-tree mode) |
+
+**Layers and switching**
+
+| Key | Action |
+|---|---|
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
 | `gS` | [Check out](#checking-out-a-layer) the layer being viewed in this worktree (`git switch`) |
 | `!` | [Stack notes](#stack-notes) in full, with actions (also in the file panel) |
+| `gu` | Toggle working tree (default) / committed only |
+
+**GitHub**
+
+| Key | Action |
+|---|---|
+| `gx` | On a GitHub thread: open it in the browser (elsewhere: Neovim's `gx`) |
+| `gH` | [GitHub review threads](#review-threads-from-github): all / open only / hidden |
+
+**Guide**
+
+| Key | Action |
+|---|---|
 | `gG` | Toggle the AI guide view (offers to generate a guide when there is none) |
 | `gR` | Generate a new AI guide (asks first when one exists) |
-| `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
 | `]n` / `[n` | Guide view: next / previous [line note](#ai-guide) (takes a count) |
 | `gN` | Guide view: collapse the line notes to markers, or show them in full |
-| `gc` | [Comment](#comments) on this line (visual: the selected lines; a file or hunk header: the whole file) |
-| `ce` / `cr` / `cx` / `cd` | Edit / reply to / resolve or reopen / delete the comment on this line |
-| `cz` | Expand / collapse a long or resolved comment |
-| `ga` / `cs` | [Ask the agent](#connect-an-agent) about this line or the selection / send the comment on this line to it |
-| `]m` / `[m` | Next / previous comment (takes a count) |
-| `gC` | Hide / show comment threads |
-| `cl` | List all comments (`<CR>` jumps) |
-| `gH` | [GitHub review threads](#review-threads-from-github): all / open only / hidden |
-| `gx` | On a GitHub thread: open it in the browser (elsewhere: Neovim's `gx`) |
-| `ci` | Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out |
-| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation |
-| `ca` / `cn` | [AI review](#ai-review) finding or [agent comment](#connect-an-agent) on this line: accept it as your comment / dismiss it (again: restore) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
+
+**Files and folds**
+
+| Key | Action |
+|---|---|
+| `<CR>` / `go` | Open the working-tree file at this line (in a split below) |
+| `ge` | [Edit](#editing-from-the-review) the real file at this line in a float (checked-out layer, working-tree mode) |
+| `<Tab>` | On a file header or hunk header: collapse / expand that file or hunk (does not mark it reviewed). On a long [PR description](#the-pr-description): expand / collapse it. On any other line it is `<C-i>` (jump forward, takes a count), since most terminals send the same key for both |
+| `<S-Tab>` | Collapse every file, or expand them all when all are collapsed |
+| `za` etc. | Normal fold commands: each file is a fold, each hunk a fold inside it, and long unchanged runs are folded |
+
+**Other**
+
+| Key | Action |
+|---|---|
+| `R` | Refresh (re-runs git; also automatic in working-tree mode) |
+| `g?` | All keys in a float, as configured (`q` closes) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
+<!-- keys:end -->
+
+`<Tab>` and `<S-Tab>` are buffer-local, so in revuey's diff/guide buffer they override your own
+`<Tab>`/`<C-i>`/`<S-Tab>` mappings (only there). A count (`3<Tab>`) always means jump forward. Set
+`keymaps = { toggle_fold = false, toggle_all_folds = false }` to leave those keys alone.
 
 File panel:
 - `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
 - Moving the cursor previews files in the diff.
-- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gP`, `gp` (back to the diff) and `q` work as in the diff buffer.
+- `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gP`, `g?`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - `gS` on a layer row checks that layer out (elsewhere: the viewed layer). While the panel has focus, a dim
   line under the layer row the cursor is on says what `gS` would do there (`gS creates local branch
   stack/cart` on a remote-only layer).
@@ -1365,7 +1431,8 @@ stack's `RevueyLayerLabel`, the stack notes' `RevueyStackNote` (dim) and `Revuey
 `RevueyForgeChanges`, `RevueyForgePending`, `RevueyForgeNone`, `RevueyForgeDraft`, `RevueyForgeMerged`,
 `RevueyForgeClosed`, `RevueyForgeNumber`, `RevueyForgeDim` and `RevueyForgeWarn`, GitHub review threads'
 `RevueyForgeBorder`, `RevueyForgeAuthor` and `RevueyForgeSign`, the PR description's
-`RevueyForgeDescriptionTitle`, `RevueyForgeDescriptionMore` and `RevueyForgeDescriptionRule`, and others (see
+`RevueyForgeDescriptionTitle`, `RevueyForgeDescriptionMore` and `RevueyForgeDescriptionRule`, the winbar's
+key hint `RevueyKeyHint` and `RevueyKeyHintKey` (also the keys in the `g?` float, with `RevueyKeyHelpGroup`), and others (see
 `lua/revuey/highlights.lua`).
 
 ## Try it

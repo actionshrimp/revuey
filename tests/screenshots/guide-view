@@ -22,7 +22,7 @@
 21| ]c [c hunk  <Tab> fold  gp diff        │      4 +   return <strong className="total">{formatCurrency(props.amount)}</strong>;    
 22| gd def  K hover  go open  R refresh    │      5 + }                                                                              
 23| gG diff view  gR regenerate  q close   │                                                                                         
-24|~                                       │  D       src/legacy.ts  @@ -1,6 +0,0 @@   +0 −6  deleted                                
+24| g? all keys                            │  D       src/legacy.ts  @@ -1,6 +0,0 @@   +0 −6  deleted                                
 25|~                                       │  1     - // Old helpers kept for backwards compatibility.                               
 26|~                                       │  2     - export function oldTotal(prices: number[]): number {                           
 27|~                                       │  3     -   var t = 0;                                                                   
@@ -64,7 +64,7 @@
 21|99999999999999999999999999999999;;;;;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 22|999999999999999999999999999999999999;;;;4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 23|9999999999999999999999999999999999999;;;4==========;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-24|========================================4>>>>>>>>>>GGGGGGGGGGGGGIIIIIIIIIIIIIIIIIHHHJJKKKKKKKKKKKKHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+24|999999999999;;;;;;;;;;;;;;;;;;;;;;;;;;;;4>>>>>>>>>>GGGGGGGGGGGGGIIIIIIIIIIIIIIIIIHHHJJKKKKKKKKKKKKHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 25|========================================4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
 26|========================================4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
 27|========================================4PPPPPPPQQQRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR

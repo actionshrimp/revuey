@@ -20,7 +20,7 @@
 19| gd def  K hover  go open  R refresh    │     12 +   private items: LineItem[] = [];                                    
 20| gu committed/working tree  q close     │     13 +                                                                      
 21| gG AI guide                            │     14 +   addItem(item: LineItem): this {                                    
-22|~                                       │     15 +     this.items.push(item);                                           
+22| g? all keys                            │     15 +     this.items.push(item);                                           
 23|~                                       │     16 +     return this;                                                     
 24|~                                       │     17 +   }                                                                  
 25|~                                       │     18 +                                                                      
@@ -52,7 +52,7 @@
 19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 20|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 21|@@@@@@@@@@@@============================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+22|@@@@@@@@@@@@============================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP

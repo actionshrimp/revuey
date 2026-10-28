@@ -23,7 +23,7 @@
 22| gG AI guide                            │                                                                     
 23| ]s [s layer  gs full stack  ! notes    │                                                                     
 24| gS check out layer                     │                                                                     
-25|~                                       │                                                                     
+25| g? all keys                            │                                                                     
 26|~                                       │                                                                     
 27|~                                       │                                                                     
 28|~                                       │                                                                     
@@ -57,7 +57,7 @@
 22|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 24|BBBBBBBBBBBBBBBBBBB?????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-25|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+25|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 28|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC

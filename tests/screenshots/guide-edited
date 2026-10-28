@@ -18,7 +18,7 @@
 17| ]c [c hunk  <Tab> fold  gp diff        │            Introduces the new total helper.                                   
 18| gd def  K hover  go open  R refresh    │      1 + new                                                                  
 19| gG diff view  gR regenerate  q close   │      2 + file                                                                 
-20|~                                       │                                                                               
+20| g? all keys                            │                                                                               
 21|~                                       │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1  ✎ edited since guide       
 22|~                                       │ 17  17   line 17                                                              
 23|~                                       │ 18  18   line 18                                                              
@@ -60,7 +60,7 @@
 17|88888888888888888888888888888888777777774==========77@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@77777777777777777777777777777777777
 18|88888888888888888888888888888888888877774MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 19|88888888888888888888888888888888888887774MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-20|========================================4==========777777777777777777777777777777777777777777777777777777777777777777777
+20|88888888888877777777777777777777777777774==========777777777777777777777777777777777777777777777777777777777777777777777
 21|========================================4@@@@@@@@@@HHHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIJJJKKLLLQQQQQQQQQQQQQQQQQQQQQQJJJJJJJ
 22|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
 23|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777

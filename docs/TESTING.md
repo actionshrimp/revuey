@@ -107,6 +107,9 @@ attached (`screen_spec.lua`), which may be resized freely.
   there. `make test` gives every spec `REVUEY_TEST_RUN=<run dir>`, which everything it starts
   inherits, and `scripts/check-leaks.sh` fails the run (and kills them) when any such process is
   still alive at the end.
+- The README's Keymaps tables are generated from `lua/revuey/keys.lua` (the list `g?` shows):
+  after changing a key or its description run `nvim --headless --clean -l scripts/readme-keys.lua`;
+  `key_help_spec.lua` fails while the README differs or a keymap option is missing from the list.
 - Skip with `h.skip(reason)` inside a test, or `h.skip_spec(reason)` at the top of a spec to skip all of it. Both print
   `  skip <spec> :: <test> — <reason>` (`<test>` is `(all tests)` for a whole spec).
 

@@ -420,8 +420,9 @@ function M.draw_notes(s)
   end
   api.nvim_buf_clear_namespace(buf, M.ns_notes, 0, -1)
   s.guide_note_rows = {}
+  s.guide_note_cover = {} -- rows a note is on (the winbar's key hint)
   if s.view_mode ~= 'guide' then
-    return
+    return require('revuey.key_help').update(s)
   end
   local notes = M.note_rows(s)
   local width = note_width(s)
@@ -433,6 +434,9 @@ function M.draw_notes(s)
       s.guide_note_rows[#s.guide_note_rows + 1] = n.first
     end
     table.insert(by_row[n.first], n)
+    for r = n.first, n.last do
+      s.guide_note_cover[r] = true
+    end
   end
   for _, row in ipairs(order) do
     local list = by_row[row]
@@ -474,6 +478,7 @@ function M.draw_notes(s)
       })
     end
   end
+  require('revuey.key_help').update(s)
 end
 
 ---`gN` (guide view): show the line notes in full, or collapse them to a marker at the end of

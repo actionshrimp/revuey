@@ -428,6 +428,10 @@ local function thread_lines(s, c, p, width)
   end
   local limit = resolved and 1 or max
   if not expanded and #body > limit then
+    local cut = cm(s).cut
+    if cut then
+      cut[c.id] = true -- cz shows more (the key hint offers it)
+    end
     local hidden = #body - limit
     for i = 1, limit do
       lines[#lines + 1] = body[i]
@@ -544,7 +548,7 @@ function M.render(s, o)
   local idx = row_index(s)
   local buf = s.diff_buf
   api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
-  c.place, c.signs, c.cover, c.jump, c.counts = {}, {}, {}, {}, {}
+  c.place, c.signs, c.cover, c.jump, c.counts, c.cut = {}, {}, {}, {}, {}, {}
   c.orphans = 0
   local attach = {} -- row -> list of {c, p, group}
   local changed = false
@@ -671,6 +675,8 @@ function M.render(s, o)
   if #api.nvim_list_uis() > 0 and s.diff_win and api.nvim_win_is_valid(s.diff_win) then
     pcall(api.nvim__redraw, { win = s.diff_win, statuscolumn = true, valid = false })
   end
+  -- the winbar's key hint follows what is on the cursor row now
+  require('revuey.key_help').update(s)
 end
 
 ---Place the GitHub review threads of the scope's open PRs (forge_view.thread_items) and add them
@@ -979,6 +985,63 @@ function M.with_comment(s, fn, row, local_first)
   end)
 end
 
+---Would `action` work on comment (or GitHub thread item) `cmt` as it is now? The rules the
+---actions below apply, so the winbar's key hint (key_help) offers only what would work.
+---Returns true and a short label ("add to review", "reopen"), or false and why.
+---Actions: edit, reply, resolve, delete, include, send, accept, dismiss, expand, open.
+---@return boolean ok, string label_or_why
+function M.can(s, cmt, action)
+  local c = cm(s)
+  if action == 'expand' then
+    if c.expanded[cmt.id] then
+      return true, 'collapse'
+    end
+    if c.cut and c.cut[cmt.id] then
+      return true, 'expand'
+    end
+    return false, 'nothing more to show'
+  end
+  if cmt.forge then
+    if action == 'reply' then
+      local rows = c.forge_rows and c.forge_rows[cmt.id]
+      if not (c.forge_place and c.forge_place[cmt.id]) or not rows or rows.group then
+        return false, 'this GitHub thread is not on a line shown here, so a local reply has nowhere to go'
+      end
+      return true, 'reply'
+    elseif action == 'open' then
+      return true, 'open'
+    elseif action == 'include' then
+      local _, why = require('revuey.forge_post').includable(cmt)
+      return false, why
+    end
+    return false, 'GitHub threads are read-only here'
+  end
+  local ai_review = require('revuey.ai_review')
+  if action == 'edit' or action == 'reply' or action == 'delete' then
+    return true, action
+  elseif action == 'send' then
+    return true, 'ask agent'
+  elseif action == 'resolve' then
+    if cmt.status == 'draft' then
+      return false, 'save the draft first'
+    end
+    return true, cmt.status == 'resolved' and 'reopen' or 'resolve'
+  elseif action == 'include' then
+    if cmt.in_review then
+      return true, 'remove from review'
+    end
+    local ok, why = require('revuey.forge_post').includable(cmt)
+    return ok, ok and 'add to review' or why
+  elseif action == 'accept' then
+    local ok, why = ai_review.can_accept(cmt)
+    return ok, ok and 'accept' or why
+  elseif action == 'dismiss' then
+    local ok, why = ai_review.can_dismiss(cmt)
+    return ok, ok and (cmt.status == 'dismissed' and 'restore' or 'dismiss') or why
+  end
+  return false, 'not a comment action'
+end
+
 ---A GitHub thread under the cursor for an action that only works on local comments: says so
 ---(and how to act on it) and returns true.
 local function forge_refused(cmt, what)
@@ -1128,12 +1191,9 @@ function M.reply_forge(s, item)
   local c = cm(s)
   local p = c.forge_place and c.forge_place[item.id]
   local rows = c.forge_rows and c.forge_rows[item.id]
-  if not p or not rows or rows.group then
-    return vim.notify(
-      'revuey: this GitHub thread is not on a line shown here, so a local reply has nowhere to go; '
-        .. 'gx opens it on GitHub',
-      vim.log.levels.INFO
-    )
+  local can, why = M.can(s, item, 'reply')
+  if not can then
+    return vim.notify('revuey: ' .. why .. '; gx opens it on GitHub', vim.log.levels.INFO)
   end
   local store = M.sync_store(s)
   local anchor, file_level
@@ -1190,8 +1250,9 @@ function M.resolve(s)
     if forge_refused(cmt, 'resolve') then
       return
     end
-    if cmt.status == 'draft' then
-      return vim.notify('revuey: save the draft first', vim.log.levels.INFO)
+    local can, why = M.can(s, cmt, 'resolve')
+    if not can then
+      return vim.notify('revuey: ' .. why, vim.log.levels.INFO)
     end
     local cur = still_there(cm(s).store, cmt.id)
     if not cur then
@@ -1277,7 +1338,7 @@ function M.toggle_include(s)
   M.with_comment(s, function(cmt)
     local post = require('revuey.forge_post')
     if cmt.forge then
-      local _, why = post.includable(cmt)
+      local _, why = M.can(s, cmt, 'include')
       return vim.notify('revuey: cannot add this to the review: ' .. why, vim.log.levels.INFO)
     end
     local store = cm(s).store
@@ -1285,11 +1346,9 @@ function M.toggle_include(s)
     if not cur then
       return M.refresh(s)
     end
-    if not cur.in_review then
-      local ok, why = post.includable(cur)
-      if not ok then
-        return vim.notify('revuey: cannot add this comment to the review: ' .. why, vim.log.levels.INFO)
-      end
+    local can, why = M.can(s, cur, 'include')
+    if not can then
+      return vim.notify('revuey: cannot add this comment to the review: ' .. why, vim.log.levels.INFO)
     end
     local copy = vim.deepcopy(cur)
     copy.in_review = not cur.in_review

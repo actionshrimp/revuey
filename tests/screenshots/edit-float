@@ -15,7 +15,7 @@
 14| gd def  K hover  go open  R refresh    │ 19  19   line 19                                                              
 15| gu committed/working tree  q close     │ 20     - line 20                                                              
 16| gG AI guide                            │╭ m.txt:17-23 ────────────────────────────────────────────────────────────────╮
-17|~                                       ││  1 +-- 13 lines: line 1·····················································│
+17| g? all keys                            ││  1 +-- 13 lines: line 1·····················································│
 18|~                                       ││ 14 line 14                                                                  │
 19|~                                       ││ 15 line 15                                                                  │
 20|~                                       ││ 16 line 16                                                                  │
@@ -57,7 +57,7 @@
 14|77777777777777777777777777777777777766661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
 15|77777777777777777777777777777777777666661QQQQQQQDDDRRRRRRREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 16|77777777777766666666666666666666666666661S5555555555555SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
-17|========================================1STTTTUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUS
+17|77777777777766666666666666666666666666661STTTTUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUS
 18|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 19|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 20|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

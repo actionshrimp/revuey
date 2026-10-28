@@ -450,14 +450,23 @@ function M.render(s, o)
     add(t, { { 0, #t, 'RevueyCommentOutdated' } })
   end
   add('')
+  -- the keys as configured (keys.line: `{option}` is its key; a disabled one leaves its part out)
+  local keys = require('revuey.keys')
   local help
+  local function from_templates(list)
+    local out = {}
+    for _, t in ipairs(list) do
+      out[#out + 1] = keys.line(t)
+    end
+    return out
+  end
   if s.view_mode == 'guide' then
-    help = {
-      ' ]] [[ section  mr reviewed',
-      ' ]c [c hunk  <Tab> fold  gp diff',
-      ' gd def  K hover  go open  R refresh',
-      ' gG diff view  gR regenerate  q close',
-    }
+    help = from_templates({
+      ' {next_section} {prev_section} section  {toggle_reviewed} reviewed',
+      ' {next_hunk} {prev_hunk} hunk  {toggle_fold} fold  {focus_panel} diff',
+      ' {definition} def  {hover} hover  {open_file#2} open  {refresh} refresh',
+      ' {toggle_guide} diff view  {regenerate_guide} regenerate  {close} close',
+    })
     -- the guide's line notes, when it has some
     local res = s.guide and s.guide.resolved
     if res and (res.notes or 0) > 0 then
@@ -474,18 +483,18 @@ function M.render(s, o)
       end
     end
   else
-    help = {
-      ' <CR> show  mr reviewed  gp diff',
-      ' ]c [c hunk  ]f [f file  <Tab> fold',
-      ' gd def  K hover  go open  R refresh',
-      ' gu committed/working tree  q close',
-      ' gG AI guide',
-    }
+    help = from_templates({
+      ' <CR> show  {toggle_reviewed} reviewed  {focus_panel} diff',
+      ' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold',
+      ' {definition} def  {hover} hover  {open_file#2} open  {refresh} refresh',
+      ' {toggle_mode} committed/working tree  {close} close',
+      ' {toggle_guide} AI guide',
+    })
   end
   local nk = M.notes_key()
   local has_notes = nk and (#(r.stack and r.stack.notes or r.notes or {}) > 0 or #(r.stack and r.stack.ignored or r.notes_ignored or {}) > 0)
   if r.stack then
-    help[#help + 1] = ' ]s [s layer  gs full stack' .. (has_notes and ('  ' .. nk .. ' notes') or '')
+    help[#help + 1] = keys.line(' {next_layer} {prev_layer} layer  {toggle_stack} full stack' .. (has_notes and ('  ' .. nk .. ' notes') or ''))
     local sk = first_key('switch_layer')
     if sk then
       help[#help + 1] = ' ' .. sk .. ' check out layer'
@@ -515,6 +524,8 @@ function M.render(s, o)
     local n_review = s.cm and s.cm.store and fpv.count(s.cm.store) or 0
     help[#help + 1] = (' %s submit review'):format(sk) .. (n_review > 0 and (' (%d in review)'):format(n_review) or '')
   end
+  -- every other key: the g? float (the winbar names the keys of the comment under the cursor)
+  help[#help + 1] = keys.line(' {help} all keys')
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })
   end

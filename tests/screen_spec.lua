@@ -818,4 +818,70 @@ h.test('AI review: panel block and an untriaged finding', function()
   screenshot('ai-review')
 end)
 
+-- Finding the keys: the winbar names the keys of the comment under the cursor (your comment,
+-- added to the review), `g?` lists every key; moving over comments stays within the main-loop
+-- budget (the hint reads the row's cached cover lists).
+h.test('keys: the winbar hint on a comment, the g? float, the cost of the hint', function()
+  start(fixture, 'main', 34, 120)
+  local cost = child.lua([[
+    local s = require('revuey.view').session
+    local cv = require('revuey.comments_view')
+    local comments = require('revuey.comments')
+    local units = require('revuey.review').units(s.review)
+    local function row_of(path, lnum)
+      for row, e in ipairs(s.layout.map) do
+        if e.path == path and e.kind == 'add' and e.new_lnum == lnum then
+          return row
+        end
+      end
+    end
+    local store = cv.sync_store(s)
+    -- a comment on every other line of src/cart.ts, then one added to the review
+    local mine
+    for l = 1, 25, 2 do
+      local a = comments.anchor_from_rows(s.review.files, units, { s.layout.map[row_of('src/cart.ts', l)] }, cv.context(s).get_line)
+      local c = comments.new(a, 'Note ' .. l)
+      if l == 5 then
+        c.in_review, mine = true, c
+      end
+      comments.put(store, c)
+    end
+    comments.save(store)
+    cv.refresh(s)
+    -- the hint's cost per cursor row (no git, no network: the row's cover list)
+    local kh = require('revuey.key_help')
+    local n, t0 = 2000, vim.uv.hrtime()
+    for i = 1, n do
+      vim.api.nvim_win_set_cursor(s.diff_win, { row_of('src/cart.ts', (i % 25) + 1), 0 })
+      kh.update(s)
+    end
+    local per = (vim.uv.hrtime() - t0) / n / 1e3
+    vim.api.nvim_win_set_cursor(s.diff_win, { row_of('src/cart.ts', 1), 0 })
+    vim.cmd('normal! zt')
+    _G.revuey_maxgap = 0
+    return per
+  ]])
+  io.write(('    (key hint: %.1fus per cursor row)\n'):format(cost))
+  -- holding j over the comments: the main loop stays responsive
+  for _ = 1, 30 do
+    child.type_keys('j')
+  end
+  local gap = child.lua_get('_G.revuey_maxgap')
+  local max_gap = tonumber(os.getenv('REVUEY_TEST_MAX_GAP_MS')) or 50
+  io.write(('    (largest main-loop gap moving over comments: %.0fms, budget %dms)\n'):format(gap, max_gap))
+  h.ok(gap < max_gap, ('main loop blocked for %.0fms'):format(gap))
+  child.lua([[
+    local s = require('revuey.view').session
+    for row, e in ipairs(s.layout.map) do
+      if e.path == 'src/cart.ts' and e.kind == 'add' and e.new_lnum == 5 then
+        vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+      end
+    end
+  ]])
+  screenshot('key-hint')
+  child.type_keys('g?')
+  screenshot('key-help')
+  child.type_keys('q')
+end)
+
 h.run()

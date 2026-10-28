@@ -17,6 +17,7 @@ local attribution = require('revuey.attribution')
 local units = require('revuey.units')
 local comments_view = require('revuey.comments_view')
 local agent_link = require('revuey.agent_link')
+local key_help = require('revuey.key_help')
 -- the editor never waits long for another process's lock: busy saves retry from a timer
 require('revuey.lock').interactive = true
 
@@ -520,11 +521,19 @@ function M.winbar()
   local esc = function(str)
     return (str:gsub('%%', '%%%%'))
   end
+  -- the keys that work on the cursor row (key_help): they take the right side, whose counters
+  -- the panel shows too; narrow, their last keys go first, then the name is cut at its start
+  local hint = key_help.current(s, win)
   local te = s.layout.map[top]
   if te and te.role == 'description' and te.desc then
     local mark = te.desc.mark == 'new' and '%#RevueyForgeChanged#new on GitHub · R  '
       or te.desc.mark == 'stale' and '%#RevueyForgeDim#stale  ' or ''
-    return ' %#RevueyForgeNumber#PR #' .. te.desc.number .. ' %#RevueyWinbar#' .. esc(te.desc.title or '') .. '%*%=' .. mark .. '%*description '
+    local left = ' %#RevueyForgeNumber#PR #' .. te.desc.number .. ' '
+    local title = '%#RevueyWinbar#' .. esc(te.desc.title or '')
+    if #hint > 0 then
+      return key_help.compose(left .. '%<' .. title, mark, hint, api.nvim_win_get_width(win))
+    end
+    return left .. title .. '%*%=' .. mark .. '%*description '
   end
   local fi = file_at_row(s, top)
   local f = s.review.files[fi]
@@ -536,6 +545,9 @@ function M.winbar()
   local p = progress_chunk(review_mod.file_progress(s.review, fi))
   if p then
     parts[#parts + 1] = '  %#' .. p[2] .. '#' .. p[1]:sub(3)
+  end
+  if #hint > 0 then
+    return key_help.compose(parts[1] .. '%<' .. table.concat(parts, '', 2), '', hint, api.nvim_win_get_width(win))
   end
   parts[#parts + 1] = '%*%='
   local d = s.layout.description
@@ -570,6 +582,11 @@ function M.guide_winbar(s, win)
     local si = section_at_row(s, top)
     local sec = si and res.sections[si]
     parts[#parts + 1] = '%#RevueyWinbar#' .. esc(sec and (si .. '. ' .. sec.title) or res.title)
+    -- the keys on the cursor row take the right side (section and progress are in the panel)
+    local hint = key_help.current(s, win)
+    if #hint > 0 then
+      return key_help.compose(parts[1] .. '%<' .. parts[2], '', hint, api.nvim_win_get_width(win))
+    end
     local done, total = guide_view.progress(s)
     parts[#parts + 1] = '%*%=' .. (si and ('§' .. si .. '/' .. #res.sections .. '  ') or '')
     parts[#parts + 1] = ((total > 0 and done == total) and '%#RevueyReviewed#' or '%#Comment#') .. '✓ ' .. done .. '/' .. total .. ' '
@@ -1780,6 +1797,7 @@ local function diff_keymaps(s)
     end
   end
   map(buf, k.toggle_all_folds, M.toggle_all_folds, 'collapse / expand every file (guide: section)')
+  map(buf, k.help, key_help.toggle, 'all revuey keys (a float)')
   M.comment_keymaps(s)
   map(buf, k.focus_panel, function()
     if api.nvim_win_is_valid(s.panel_win) then
@@ -1991,6 +2009,7 @@ local function panel_keymaps(s)
   end, 'refresh review')
   map(buf, k.toggle_mode, M.toggle_mode, 'toggle working tree / committed only')
   map(buf, k.close, M.close, 'close review')
+  map(buf, k.help, key_help.toggle, 'all revuey keys (a float)')
   map(buf, k.focus_panel, function()
     api.nvim_set_current_win(s.diff_win)
   end, 'focus diff')
@@ -2758,6 +2777,7 @@ function M.show(review, opts)
     buffer = s.diff_buf,
     callback = function()
       local row = cursor_row(s)
+      key_help.update(s)
       if s.view_mode == 'guide' then
         local si = section_at_row(s, row)
         if si ~= s.current_section then
