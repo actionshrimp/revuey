@@ -50,6 +50,15 @@ h.test('the README Keymaps tables are the ones keys.lua makes (scripts/readme-ke
   h.eq(keys.markdown(), body, 'README is out of date: nvim --headless --clean -l scripts/readme-keys.lua')
 end)
 
+h.test('keys.markdown: a `|` in a description is escaped (it would end the cell)', function()
+  table.insert(keys.GROUPS[1], { names = { 'comment_add' }, desc = 'a | b' , readme = false })
+  table.insert(keys.GROUPS[1], { fixed = 'zz', desc = 'one | two' })
+  local md = keys.markdown()
+  table.remove(keys.GROUPS[1])
+  table.remove(keys.GROUPS[1])
+  h.ok(md:find('| `zz` | One \\| two |', 1, true), md)
+end)
+
 h.test('keys.line: panel help from the config; a rebound key shows, a disabled one leaves its part out', function()
   h.eq(' ]c [c hunk  ]f [f file  <Tab> fold', keys.line(' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold'))
   h.eq(' gd def  K hover  go open  R refresh', keys.line(' {definition} def  {hover} hover  {open_file#2} open  {refresh} refresh'))
@@ -121,6 +130,11 @@ h.test('hint: your own comment, by state (added, posted, pending, resolved, draf
   -- an accepted finding is yours
   h.eq('ce edit · cr reply · ci add to review · cx resolve · cd delete',
     hint({ mk({ status = 'accepted', ai = { severity = 'major', accepted_at = 1, author = { kind = 'ai' } } }) }))
+  -- accepted, then resolved: still yours (ce, cr, cd), not triage
+  h.eq('ce edit · cr reply · cx reopen · cd delete',
+    hint({ mk({ status = 'resolved', ai = { severity = 'major', accepted_at = 1, author = { kind = 'ai' } } }) }))
+  h.eq('ce edit · cr reply · cx reopen · cd delete',
+    hint({ mk({ status = 'resolved', agent = { accepted_at = 1, author = { kind = 'agent', name = 'claude' } } }) }))
   -- a local reply to a GitHub thread
   h.eq('ce edit · cr reply · ci add to review · cx resolve · cd delete', hint({ mk({ forge_reply = { pr = 12, thread_id = 'T1' } }) }))
 end)
@@ -348,6 +362,16 @@ h.test('moving the cursor over a comment, a finding, an agent draft and a GitHub
   h.ok(vim.endswith(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 12)), 'ca accept · cn dismiss · cs ask agent '), 'an agent draft')
   wb = winbar_at(s, row_of(s, 'src/cart.ts', 'add', 20))
   h.ok(vim.endswith(wb, 'cr reply · gx open '), 'a GitHub thread\n' .. wb)
+  -- a comment longer than comments.max_lines: the render cuts it, so cz is offered; cz expands it
+  local long = {}
+  for i = 1, 10 do
+    long[#long + 1] = 'Line ' .. i .. ' of a long comment.'
+  end
+  put(s, 16, table.concat(long, '\n\n'))
+  winbar_at(s, row_of(s, 'src/cart.ts', 'add', 16))
+  h.eq('ce edit · cr reply · ci add to review · cx resolve · cz expand · cd delete', text(s.key_hint.items))
+  vim.api.nvim_feedkeys('cz', 'mtx', false)
+  h.eq('ce edit · cr reply · ci add to review · cx resolve · cz collapse · cd delete', text(s.key_hint.items))
   -- moving off clears it
   h.ok(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 2)):find('%d+/%d+ $'))
   h.eq({}, s.key_hint.items)
@@ -358,6 +382,29 @@ h.test('moving the cursor over a comment, a finding, an agent draft and a GitHub
   vim.g.statusline_winid = s.diff_win
   h.ok(not view.winbar():find('ce', 1, true), view.winbar())
   vim.api.nvim_set_current_win(s.diff_win)
+end)
+
+-- The actions refuse and act as comments_view.can says (so an action that stops asking it, or
+-- drifts from it, is caught here and not only through the hint).
+h.test('actions follow can(): cx refuses a draft; ci takes a non-includable comment out of the review', function()
+  local s = open(d)
+  local draft = put(s, 14, 'Half a thought', { status = 'draft' })
+  local msgs, restore = h.capture_notify()
+  vim.api.nvim_set_current_win(s.diff_win)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of(s, 'src/cart.ts', 'add', 14), 0 })
+  vim.api.nvim_feedkeys('cx', 'mtx', false)
+  restore()
+  h.eq('draft', comments.get(s.cm.store, draft.id).status)
+  h.eq('revuey: save the draft first', msgs[#msgs] and msgs[#msgs].msg, vim.inspect(msgs))
+  -- resolved (not includable) but in the review: ci takes it out
+  local out = put(s, 18, 'Done here', { status = 'resolved', in_review = true })
+  h.eq(false, (require('revuey.forge_post').includable(out)))
+  msgs, restore = h.capture_notify()
+  vim.api.nvim_win_set_cursor(s.diff_win, { row_of(s, 'src/cart.ts', 'add', 18), 0 })
+  vim.api.nvim_feedkeys('ci', 'mtx', false)
+  restore()
+  h.eq(false, comments.get(s.cm.store, out.id).in_review, vim.inspect(msgs))
+  h.ok(msgs[#msgs].msg:find('taken out of the review', 1, true), vim.inspect(msgs))
 end)
 
 h.test('g? opens the key list (rebinds shown), closes with g?, q and <Esc>; also from the panel', function()

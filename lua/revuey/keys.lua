@@ -143,6 +143,8 @@ function M.markdown()
       if keys and e.readme ~= false then
         local cell = '`' .. keys .. '`' .. (e.where and (' ' .. e.where) or '')
         local text = e.readme or (e.desc:gsub('^%l', string.upper))
+        -- a `|` would end the table cell
+        text = text:gsub('|', '\\|')
         rows[#rows + 1] = '| ' .. cell .. ' | ' .. text .. ' |'
       end
     end
