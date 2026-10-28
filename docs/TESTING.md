@@ -59,8 +59,12 @@ is available.
   GitHub did the work), answer nothing without applying it (`fail.lost_unapplied`), stay down
   afterwards (`fail.down_after_lost`), refuse threads on one side (`fail.add_side`), fail later
   comment pages (`fail.pages`), and answer a review `node` or a PR with a null that is not
-  NOT_FOUND (`fail.review_null`, `fail.pr_null`). Posting is only ever tested
-  against this fake: no spec or manual check sends a mutation to GitHub.
+  NOT_FOUND (`fail.review_null`, `fail.pr_null`). What the user does on github.com or in
+  Graphite is simulated by rewriting the post file between submits: a pending review submitted
+  there is moved to the PR's `history` with its new state (`submit_elsewhere` in
+  `forge_post_spec.lua`), a pending comment edited there gets a new `body`. Posting is only ever
+  tested against this fake: no spec or manual check sends a mutation to GitHub, and "add to
+  pending review" is asserted to send no `submitPullRequestReview` and no `event`.
 - **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
   threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the
   file at the PR head (the thread's lines ±110, enough for placement's ±100-line search and the

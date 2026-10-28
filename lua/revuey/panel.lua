@@ -506,12 +506,14 @@ function M.render(s, o)
   if tk and forge_view.has_threads(s) then
     help[#help + 1] = ' ' .. tk .. ' GitHub threads (all/open/none)'
   end
-  -- comments added to the review to post on GitHub
+  -- posting to GitHub: whenever the scope has an open PR (a verdict alone needs no comment),
+  -- with the comments added to the review
   local sk = require('revuey.config').options.keymaps.forge_submit
   sk = type(sk) == 'table' and sk[1] or sk
-  local n_review = s.cm and s.cm.store and require('revuey.forge_post_view').count(s.cm.store) or 0
-  if sk and n_review > 0 then
-    help[#help + 1] = (' %s submit review (%d in review)'):format(sk, n_review)
+  local fpv = require('revuey.forge_post_view')
+  if sk and forge_view.enabled() and #fpv.scope_targets(s) > 0 then
+    local n_review = s.cm and s.cm.store and fpv.count(s.cm.store) or 0
+    help[#help + 1] = (' %s submit review'):format(sk) .. (n_review > 0 and (' (%d in review)'):format(n_review) or '')
   end
   for _, h in ipairs(help) do
     add(h, { { 0, #h, 'Comment' } })

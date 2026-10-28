@@ -59,7 +59,7 @@ Requirements:
 | `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
 | `:RevueyAIReview cancel` | Stop a running AI review. |
 | `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
-| `:RevueySubmit [approve\|comment\|request-changes]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
+| `:RevueySubmit [approve\|comment\|request-changes\|pending]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `pending` adds them to your pending review on GitHub without submitting it. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
@@ -565,9 +565,30 @@ Your comments stay local until you post them. `ci` on a comment adds it to the r
 review", marked `in review`; again takes it out); `gP` or `:RevueySubmit [approve|comment|request-changes]`
 posts every comment added in the scope you are viewing as **one GitHub review** with a verdict,
 through your `gh`. Nothing is added unless you pick it. Only your own saved comments can be
-added: an AI review finding once you accept it (`ca`), and the local replies `cr` makes on
-GitHub threads (posted as replies in their threads); not agent comments, drafts or resolved
-comments.
+added: an AI review finding or an [agent's comment](#connect-an-agent) once you accept it
+(`ca`), and the local replies `cr` makes on GitHub threads (posted as replies in their threads);
+not untriaged agent comments or findings, drafts or resolved comments. The panel shows
+`gP submit review` whenever the scope has an open PR (a verdict needs no comment), with
+`(2 in review)` once comments are added.
+
+**Add to pending review** (no verdict, nothing submitted): pick it as the last choice of the
+verdict prompt, run `:RevueySubmit pending`, or press `Add to pending review` in a verdict's
+confirmation (offered when it would add something; its text says how many `+` comments go to
+which PR). The comments go into your pending review on GitHub (the one you started in GitHub's
+UI or in Graphite, reused, never a second one; else a new one) and stop there: only you can see
+them, and you edit and submit the review on github.com or in Graphite, or with a later `gP`.
+Everything below applies as for a submit (the same reading first, the same confirmation of
+exactly what is added, the same records), except that nothing is submitted and the PR's other
+pending comments stay as they are. A review you then submit on GitHub, or with `gP`, is found by
+the next `gP`, which marks the comments `posted` and sends nothing twice; a pending comment you
+edit on GitHub is still recognised by its id (the confirmation says `edited on GitHub since`
+and shows GitHub's text; your local copy is never overwritten).
+
+A typical flow with a coding agent: ask it to review the PR into revuey; it leaves its points as
+local comments ([`bin/revuey comment`](#connect-an-agent)), which are drafts for you. `ca` makes
+one yours (`accepted from agent`), `ce` edits it, `cn` dismisses one, `ci` adds yours to the
+review, and `gP` → `Add to pending review` puts them in your pending review, where you finish
+the review in GitHub's or Graphite's UI. Nothing reaches GitHub until you confirm a `gP`.
 
 What happens, in order:
 
@@ -575,19 +596,22 @@ What happens, in order:
    (its head commit, your pending review, its latest reviews) and every review it sent comments
    to before, and settles what became of those (below). Each comment is checked against GitHub's
    diff (below); what can't be posted is left out with the reason.
-2. **Confirmation.** The verdict, and per PR exactly what will happen: the comments and replies
+2. **Confirmation.** The verdict (or "Add to your pending review"), and per PR exactly what will happen: the comments and replies
    revuey will add (`+`), those already in your pending review (`=`, with GitHub's text when you
-   edited one since), the comments your pending review has from elsewhere (submitted too), the
+   edited one since, here or on GitHub), the comments your pending review has from elsewhere (submitted too), the
    commit it is bound to when that is not the one you reviewed, PRs that are blocked and why,
    and everything left out with the reason; in the full-stack scope every PR of the stack
    (`PR #13: nothing to post, no review`). `Write body` adds a review body (a Comment review
-   with nothing in it needs one). Cancel leaves GitHub untouched.
+   with nothing in it needs one). `Add to pending review` adds the `+` comments without
+   submitting (not offered when a PR is refused only for the verdict, such as approving your
+   own PR: use `:RevueySubmit pending`). Cancel leaves GitHub untouched.
 3. **Sending.** On a PR where you have no pending review and everything is a line comment, one
    request creates and submits the review with all its comments: it exists whole, or not at all.
    Otherwise (your pending review there, started in GitHub's UI or another tool such as
    Graphite, which is reused and never replaced or emptied; or replies to threads and file
-   comments, which need it) the comments go into the pending review, then it is submitted, only
-   when every comment went in. Before each request revuey saves what it sends, so a request that
+   comments, which need it; or `Add to pending review`, which always works this way) the comments
+   go into the pending review, then it is submitted, only when every comment went in (with `Add
+   to pending review`, never). Before each request revuey saves what it sends, so a request that
    gets no answer (a timeout) or a Neovim that dies meanwhile leaves a record.
 4. **Posted.** Posted comments are marked `posted to GitHub #42` and the threads are fetched
    again: from then on the GitHub thread stands for the comment (your local copy is not drawn
@@ -920,7 +944,8 @@ and optionally a suggested change.
 ```
 
 - `ca` **accepts** it: it becomes your own comment ("accepted from AI review"), to edit, resolve
-  or later post like any other.
+  or later post like any other. The same keys triage an agent's comments
+  ([`bin/revuey comment`](#connect-an-agent)): accepted, one is marked "accepted from agent".
 - `cn` **dismisses** it: it stays, collapsed to one line and marked "dismissed", and no longer
   counts; `cn` again restores it.
 - `cs` sends it to the [connected agent](#connect-an-agent) to **follow up** ("is this real?
@@ -1144,9 +1169,14 @@ Then, in a Claude Code session running in your repo:
 3. Send comments and questions from revuey. Claude reads each one with `bin/revuey show <id>`,
    answers with `bin/revuey reply <id> "…"`, or acknowledges it with `bin/revuey ack <id>` when
    it just acts on it. It only edits files when a message asks for a change.
-4. Ask Claude to leave you a comment ("point out in revuey where the retry logic lives") and it
-   adds a new thread with `bin/revuey comment`; it shows up at once, labelled with the agent's
-   name (`agent`, or `$REVUEY_AGENT_NAME`) and highlighted as the agent's.
+4. Ask Claude to leave you a comment ("point out in revuey where the retry logic lives", or
+   "review this PR and leave comments") and it adds a new thread with `bin/revuey comment`; it
+   shows up at once, labelled with the agent's name (`agent`, or `$REVUEY_AGENT_NAME`) and
+   highlighted as the agent's. It is a **draft for you**: `ca` accepts it (it becomes your
+   comment, "accepted from agent", to edit with `ce` and add to a review with `ci`), `cn`
+   dismisses it (collapsed, kept; again restores it). Until you accept it, it cannot be posted;
+   [`gP`](#posting-a-review-to-github) can then add it to your pending review on GitHub, to
+   finish there, or submit it. The agent never posts anything itself.
 
 **From the shell** (any agent; run inside the reviewed worktree):
 
@@ -1187,7 +1217,12 @@ hash (from the working tree in working-tree mode, the old blob for `old`); the r
 finds the comment's hunk on its next render and stores it, as for its own comments. Its
 `created` event and the comment itself are never delivered back to the agent: `watch` (without
 `--all`) skips the agent's own comments, and only comments the user sends are messages. It is
-local only: nothing is posted to GitHub.
+local only: nothing is posted to GitHub. Your `ca`/`cn` on it append `accepted`/`dismissed`
+events (`watch` prints `accept …`, `dismiss …`, `restore …`); exports mark it `a draft for the
+user, not accepted yet`, or once accepted `accepted from a comment by claude (agent)`, and
+leave dismissed ones out unless `--all`. Replies an agent makes in your threads (`reply`) are
+answers to you, not drafts: they are not triaged or posted (`ca` there says there is nothing
+to accept; copy what you want into your own comment).
 
 A `watch --messages` line looks like this (`--json` prints the full event instead, with the
 anchor, the code, the message and the review: repo, branch, scope, base):
@@ -1280,8 +1315,8 @@ Diff buffer:
 | `gH` | [GitHub review threads](#review-threads-from-github): all / open only / hidden |
 | `gx` | On a GitHub thread: open it in the browser (elsewhere: Neovim's `gx`) |
 | `ci` | Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out |
-| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict, then a confirmation |
-| `ca` / `cn` | [AI review](#ai-review) finding on this line: accept it as your comment / dismiss it (again: restore) |
+| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation |
+| `ca` / `cn` | [AI review](#ai-review) finding or [agent comment](#connect-an-agent) on this line: accept it as your comment / dismiss it (again: restore) |
 | `<CR>` on the guide's diagram | On a box: jump to its section. On the "Overview" heading: fold / unfold the diagram (like `<Tab>`) |
 | `q` | Close the review (quits Neovim when started via `bin/revuey`) |
 

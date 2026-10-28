@@ -277,6 +277,14 @@ local function fill(width, used)
   return string.rep('─', math.max(1, width - used))
 end
 
+---The chip of an accepted comment: where it came from.
+function M.accepted_label(c)
+  if require('revuey.ai_review').accepted_from(c) == 'agent' then
+    return 'accepted from agent'
+  end
+  return 'accepted from AI review'
+end
+
 local function author_label(a)
   a = a or {}
   if a.kind == 'user' or not a.kind then
@@ -358,8 +366,8 @@ local function thread_lines(s, c, p, width)
   elseif c.status == 'dismissed' then
     chip('dismissed', 'RevueyCommentResolved')
   elseif c.status == 'accepted' then
-    chip('accepted from AI review', 'RevueyCommentMeta')
-  elseif require('revuey.ai_review').untriaged(c) then
+    chip(M.accepted_label(c), 'RevueyCommentMeta')
+  elseif require('revuey.ai_review').untriaged(c) or require('revuey.ai_review').agent_untriaged(c) then
     local k = config.options.keymaps
     local hint = {}
     for _, x in ipairs({ { k.comment_accept, 'accept' }, { k.comment_dismiss, 'dismiss' } }) do
@@ -1190,33 +1198,32 @@ function M.resolve(s)
       return M.refresh(s)
     end
     local copy = vim.deepcopy(cur)
-    -- reopening an accepted AI finding makes it accepted again (still your comment)
-    local reopened = (cur.ai and cur.ai.accepted_at) and 'accepted' or 'saved'
+    -- reopening an accepted AI finding or agent comment makes it accepted again (still yours)
+    local reopened = require('revuey.ai_review').accepted_from(cur) and 'accepted' or 'saved'
     copy.status = cur.status == 'resolved' and reopened or 'resolved'
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
   end, nil, true)
 end
 
----Comments covering the cursor row that are AI findings (with_comment, but only those: a user
----comment on the same line never gets in the way).
+---Comments covering the cursor row that are AI findings or a coding agent's comments
+---(with_comment, but only those: a user comment on the same line never gets in the way).
 local function with_finding(s, fn)
   local c = cm(s)
   local row = api.nvim_win_get_cursor(s.diff_win)[1]
+  local origin = require('revuey.ai_review').origin
   local any = false
   for _, id in ipairs(c.cover and c.cover[row] or {}) do
-    local x = comments.get(c.store, id)
-    if x and x.ai then
+    if origin(comments.get(c.store, id)) then
       any = true
     end
   end
   if not any then
-    return vim.notify('revuey: no AI review finding on this line', vim.log.levels.INFO)
+    return vim.notify('revuey: no AI review finding or agent comment on this line', vim.log.levels.INFO)
   end
   local saved = c.cover[row]
   c.cover[row] = vim.tbl_filter(function(id)
-    local x = comments.get(c.store, id)
-    return x ~= nil and x.ai ~= nil
+    return origin(comments.get(c.store, id)) ~= nil
   end, saved)
   local ok, err = pcall(M.with_comment, s, fn, row)
   c.cover[row] = saved
@@ -1225,8 +1232,8 @@ local function with_finding(s, fn)
   end
 end
 
----`ca`: accept the AI finding on this line: it becomes your own comment (kept for the forge's
----"add to review" later).
+---`ca`: accept the AI finding or the agent's comment on this line: it becomes your own comment
+---(edit it with `ce`, add it to the review with `ci`).
 function M.accept(s)
   if not s then
     return
@@ -1244,7 +1251,8 @@ function M.accept(s)
   end)
 end
 
----`cn`: dismiss the AI finding on this line (kept, collapsed), or restore a dismissed one.
+---`cn`: dismiss the AI finding or agent comment on this line (kept, collapsed), or restore a
+---dismissed one.
 function M.dismiss(s)
   if not s then
     return
@@ -1264,7 +1272,7 @@ end
 
 ---`ci`: add the comment on this line to the review to post on GitHub, or take it out again
 ---(a local flag until the review is submitted: `:RevueySubmit`). Only your own saved comments
----(an AI finding once accepted) and local replies to GitHub threads.
+---(an AI finding or agent comment once accepted) and local replies to GitHub threads.
 function M.toggle_include(s)
   M.with_comment(s, function(cmt)
     local post = require('revuey.forge_post')
@@ -1550,8 +1558,8 @@ function M.list_lines(s)
     elseif cmt.status == 'dismissed' then
       tags[#tags + 1] = 'dismissed'
     elseif cmt.status == 'accepted' then
-      tags[#tags + 1] = 'accepted from AI review'
-    elseif require('revuey.ai_review').untriaged(cmt) then
+      tags[#tags + 1] = M.accepted_label(cmt)
+    elseif require('revuey.ai_review').untriaged(cmt) or require('revuey.ai_review').agent_untriaged(cmt) then
       tags[#tags + 1] = 'to triage'
     end
     if cmt.author and cmt.author.kind and cmt.author.kind ~= 'user' then

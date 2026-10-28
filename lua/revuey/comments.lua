@@ -28,7 +28,7 @@ M.EVENT_SNIPPET_MAX = 200 -- snippet lines in an event (the comment keeps all of
 M.CONTEXT = 2 -- lines of context either side in context_hash
 M.EVENT_KINDS = {
   created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true,
-  accepted = true, dismissed = true, -- AI review findings: triage (dismissed with status saved: restored)
+  accepted = true, dismissed = true, -- AI findings, agent comments: triage (dismissed with status saved: restored)
 }
 -- Not about a comment (M.switch_event): the worktree was switched to another stack layer while an
 -- agent was connected. Delivered like a message by `watch --messages`, never caught up.
@@ -89,6 +89,9 @@ M.SWITCHED = 'switched'
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
 ---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
 ---                                 accepted_at?, dismissed_at?}
+---@field agent? table              a coding agent's comment the user triaged (`ca`/`cn`):
+---                                 {author (the agent), accepted_at?, dismissed_at?}; accepted,
+---                                 `author` is the user's
 
 ---Milliseconds since the epoch.
 function M.now_ms()

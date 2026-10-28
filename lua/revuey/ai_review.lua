@@ -8,7 +8,8 @@
 --     exactly what a selection of the same diff rows would store, so it re-anchors like any
 --     comment. Untouched findings of the previous review by the same author are replaced;
 --     findings the user already triaged are not imported again;
---   * triage: accept (the comment becomes the user's own), dismiss / restore;
+--   * triage: accept (the comment becomes the user's own), dismiss / restore; the same for a
+--     coding agent's comments (`bin/revuey comment`), which are drafts for the user too;
 --   * the review record (summary, verdict, counts, generator) next to the comments file;
 --   * skills: a SKILL.md read by revuey and passed to the model as guidance.
 -- Prompt text and schema live in ai_review_prompt.lua; the CLI call in ai.lua.
@@ -423,32 +424,75 @@ end
 -- Triage
 -- ---------------------------------------------------------------------------
 
----Accept a finding: it becomes the user's own comment (status `accepted`; the AI author is kept
----in `ai.author`). Returns the updated comment, or nil and a message.
+---Is `c` a coding agent's own comment (`bin/revuey comment`, author `agent`), not yet triaged:
+---a draft for the user to accept (it becomes theirs) or dismiss. Never an AI finding (those have
+---`ai`), and never counted with them (`untriaged`, `pending`, re-runs replace only those).
+function M.agent_untriaged(c)
+  return c ~= nil and not c.deleted and c.ai == nil and c.author ~= nil and c.author.kind == 'agent' and c.status == 'saved'
+end
+
+---What `ca`/`cn` act on: 'ai' (an AI finding), 'agent' (an agent's comment, untriaged, dismissed
+---or accepted: `agent` records it), or nil. Agent replies are thread entries, not comments, so
+---they are never here.
+function M.origin(c)
+  if not c or c.deleted then
+    return nil
+  end
+  if c.ai then
+    return 'ai'
+  end
+  if type(c.agent) == 'table' or (c.author and c.author.kind == 'agent') then
+    return 'agent'
+  end
+end
+
+---Was `c` accepted from an AI review or an agent (it is the user's comment since)? 'ai',
+---'agent' or nil.
+function M.accepted_from(c)
+  if c and c.ai and c.ai.accepted_at then
+    return 'ai'
+  elseif c and type(c.agent) == 'table' and c.agent.accepted_at then
+    return 'agent'
+  end
+end
+
+---Accept a finding or an agent's comment: it becomes the user's own comment (status
+---`accepted`; the original author is kept in `ai.author` / `agent.author`). Returns the updated
+---comment, or nil and a message.
 function M.accept(store, id, now)
   local cur = comments.get(store, id)
-  if not cur or not cur.ai then
-    return nil, 'not an AI finding'
+  local origin = M.origin(cur)
+  if not origin then
+    return nil, 'not an AI finding or an agent\'s comment'
   end
   if cur.status == 'accepted' then
     return nil, 'already accepted'
   elseif cur.status == 'resolved' then
     return nil, 'resolved: reopen it first (cx)'
+  elseif cur.status == 'draft' then
+    return nil, 'save the draft first'
   end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
-  c.ai.author = c.ai.author or c.author
-  c.ai.accepted_at = now
+  local rec = origin == 'ai' and c.ai or (type(c.agent) == 'table' and c.agent or {})
+  rec.author = rec.author or c.author
+  rec.accepted_at = now
+  rec.dismissed_at = nil
+  if origin == 'agent' then
+    c.agent = rec
+  end
   c.author = { kind = 'user' }
   c.status = 'accepted'
   return comments.put(store, c, now)
 end
 
----Dismiss a finding (kept, hidden like a resolved comment), or restore a dismissed one.
+---Dismiss a finding or an agent's comment (kept, hidden like a resolved comment), or restore a
+---dismissed one.
 function M.toggle_dismiss(store, id, now)
   local cur = comments.get(store, id)
-  if not cur or not cur.ai then
-    return nil, 'not an AI finding'
+  local origin = M.origin(cur)
+  if not origin then
+    return nil, 'not an AI finding or an agent\'s comment'
   end
   if cur.status == 'accepted' then
     return nil, 'already accepted: it is your comment now (resolve or delete it instead)'
@@ -459,12 +503,19 @@ function M.toggle_dismiss(store, id, now)
   end
   now = now or comments.now_ms()
   local c = vim.deepcopy(cur)
+  local rec
+  if origin == 'ai' then
+    rec = c.ai
+  else
+    c.agent = type(c.agent) == 'table' and c.agent or { author = c.author }
+    rec = c.agent
+  end
   if c.status == 'dismissed' then
     c.status = 'saved'
-    c.ai.dismissed_at = nil
+    rec.dismissed_at = nil
   else
     c.status = 'dismissed'
-    c.ai.dismissed_at = now
+    rec.dismissed_at = now
   end
   return comments.put(store, c, now)
 end

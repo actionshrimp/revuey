@@ -126,8 +126,9 @@ function M.comments()
   return require('revuey.view').comments_list()
 end
 
----`:RevueySubmit [approve|comment|request-changes]`: post the comments added to the review
----(`ci`) to GitHub as one review with that verdict (asked when not given), after a confirmation.
+---`:RevueySubmit [approve|comment|request-changes|pending]`: post the comments added to the
+---review (`ci`) to GitHub as one review with that verdict (asked when not given), after a
+---confirmation; `pending` adds them to your pending review on GitHub without submitting.
 ---@param verdict? string
 function M.submit(verdict)
   return require('revuey.view').submit(verdict)
