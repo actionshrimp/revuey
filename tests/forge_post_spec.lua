@@ -1413,7 +1413,7 @@ h.test('a pending review bound to another commit: noted; line comments whose fil
   view.close()
 end)
 
-h.test('submitted elsewhere, discarded, transient: a pending record is posted, forgotten (and re-added), or kept and blocked', function()
+h.test('submitted elsewhere, discarded, transient: a pending record is posted, forgotten (out of the review), or kept and blocked', function()
   local s, calls = setup_review('elsewhere', { edit = function(p, d)
     p.prs['acme/shop#12'].history = { { id = 'PRR_done', state = 'COMMENTED', commit = rev(d, 'stack/cart'), body = '', comments = {
       { id = 'PRRC_done', databaseId = 2, path = 'src/cart.ts', line = 12, body = 'Return a copy?' } } } }
@@ -1423,12 +1423,15 @@ h.test('submitted elsewhere, discarded, transient: a pending record is posted, f
   local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Discarded.', { in_review = true,
     forge_post = { state = 'pending', pr = 12, repo = 'github.com/acme/shop', review_id = 'PRR_gone', comment_id = 'PRRC_gone' } })
   local asked = answer({ 1 })
+  local msgs, restore = h.capture_notify()
   view.submit('comment')
   wait_job()
-  h.ok(asked[1].msg:find('+ src/cart.ts:13  Discarded.', 1, true), asked[1].msg)
-  h.eq({ 'posted', 'posted' }, { get(s, a.id).forge_post.state, get(s, b.id).forge_post.state })
-  h.eq({ 'addPullRequestReview' }, ops(calls))
-  h.eq(1, #mutations(calls)[1].input.threads)
+  restore()
+  -- found submitted: posted, no second review; discarded: taken out of the review, not re-added
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find('src/cart.ts:13: removed from your pending review on PR #12 on GitHub', 1, true), vim.inspect(msgs))
+  h.eq({ 'posted', nil, false }, { get(s, a.id).forge_post.state, get(s, b.id).forge_post, get(s, b.id).in_review })
+  h.eq({}, ops(calls))
   view.close()
   -- a null that is not NOT_FOUND: kept, blocked
   local s2, calls2 = setup_review('transient', { edit = function(p)
@@ -2249,6 +2252,133 @@ h.test('add to pending with one comment refused by GitHub: the rest stays pendin
   h.eq({ 'From Graphite.', 'Return a copy?' }, pending_ids(calls))
   h.eq({ 'pending', nil, true }, { get(s, a.id).forge_post.state, get(s, b.id).forge_post, get(s, b.id).in_review })
   h.eq('PENDING', fake_state(calls).reviews.PRR_g)
+  view.close()
+end)
+
+h.test('a lost add, then edited on GitHub: never proven absent (a comment at its place), so unknown and blocked, not posted twice', function()
+  local s, calls = setup_review('lostedit', { edit = function(p, d)
+    graphite()(p, d)
+    p.fail = { lost = { 'Return a copy?' } }
+  end })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  h.eq('sending', get(s, a.id).forge_post.state)
+  h.eq({ 'From Graphite.', 'Return a copy?' }, pending_ids(calls), 'GitHub applied it')
+  -- the user edits it on github.com
+  local P = fake_state(calls)
+  P.fail = nil
+  P.prs['acme/shop#12'].pending.comments[2].body = 'Return a copy? Edited on GitHub.'
+  write_state(calls, P)
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  local text = asked[1].msg
+  h.ok(text:find('? src/cart.ts:12  Return a copy?', 1, true) and text:find('BLOCKED, not submitted', 1, true), text)
+  h.ok(not text:find('+ src/cart.ts:12', 1, true), text)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
+  h.eq('unknown', get(s, a.id).forge_post.state)
+  h.eq(1, #ops(calls), 'only the lost add')
+  -- submitted on GitHub meanwhile: the same (never a second review, atomic or not)
+  submit_elsewhere(calls, 'acme/shop#12', 'COMMENTED')
+  asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('? src/cart.ts:12', 1, true) and asked[1].msg:find('BLOCKED', 1, true), asked[1].msg)
+  h.eq('&Forget unconfirmed\n&Cancel', asked[1].choices)
+  h.eq(1, #ops(calls))
+  view.close()
+end)
+
+h.test('a lost reply, then edited on GitHub: a reply in that thread keeps it unknown', function()
+  local threads = { ['acme/shop#12'] = { gh_thread('T_a', 18, { gh_comment('PRRC_a', 'Rounded?') }) } }
+  local s, calls = setup_review('lostreply', { threads = threads, edit = function(p, d)
+    graphite()(p, d)
+    p.fail = { lost = { 'Agreed.' } }
+  end })
+  local a = add_comment(s, 'src/cart.ts', 'add', 18, 18, 'Agreed.', {
+    in_review = true, forge_reply = { thread_id = 'T_a', pr = 12, repo = 'github.com/acme/shop', comment_id = 'PRRC_a', root_id = 'PRRC_a' } })
+  answer({ 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  h.eq('sending', get(s, a.id).forge_post.state)
+  local P = fake_state(calls)
+  P.fail = nil
+  P.prs['acme/shop#12'].pending.comments[2].body = 'Agreed, edited.'
+  write_state(calls, P)
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.ok(asked[1].msg:find('BLOCKED', 1, true) and not asked[1].msg:find('+ src/cart.ts:18', 1, true), asked[1].msg)
+  h.eq('unknown', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('add to pending, then deleted on GitHub (or the review discarded): taken out of the review with the reason, never re-added unasked', function()
+  local s, calls = setup_review('ghdelete', { edit = graphite() })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Second.', { in_review = true })
+  answer({ 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  h.eq({ 'pending', 'pending' }, { get(s, a.id).forge_post.state, get(s, b.id).forge_post.state })
+  -- the user deletes "Return a copy?" on github.com
+  local P = fake_state(calls)
+  table.remove(P.prs['acme/shop#12'].pending.comments, 2)
+  write_state(calls, P)
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  local text = asked[1].msg
+  h.ok(text:find('= src/cart.ts:13  Second.', 1, true) and not text:find('+ src/cart.ts:12', 1, true), text)
+  h.ok(text:find('src/cart.ts:12: removed from your pending review on PR #12 on GitHub (deleted there, or the review discarded): taken out of the review (ci adds it again)', 1, true), text)
+  h.eq({ nil, false }, { get(s, a.id).forge_post, get(s, a.id).in_review })
+  -- the whole review discarded: the other one too; nothing to add
+  P = fake_state(calls)
+  P.prs['acme/shop#12'].pending = nil
+  P.reviews.PRR_g = nil
+  write_state(calls, P)
+  local msgs, restore = h.capture_notify()
+  asked = answer({})
+  view.submit('pending')
+  wait_job()
+  restore()
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find('nothing to add to your pending review.', 1, true) and msgs[#msgs].msg:find('src/cart.ts:13: removed from your pending review', 1, true), vim.inspect(msgs))
+  h.eq({ nil, false }, { get(s, b.id).forge_post, get(s, b.id).in_review })
+  h.eq(2, #ops(calls), 'nothing added again (the first two adds only)')
+  -- added to the review again on purpose (ci): a new add
+  local cur = vim.deepcopy(get(s, a.id))
+  cur.in_review = true
+  comments.put(s.cm.store, cur)
+  comments.save(s.cm.store)
+  asked = answer({ 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  h.ok(asked[1].msg:find('+ src/cart.ts:12  Return a copy?', 1, true), asked[1].msg)
+  h.eq('pending', get(s, a.id).forge_post.state)
+  view.close()
+end)
+
+h.test('add to pending is offered in a full stack where another PR has two pending reviews of yours (only a verdict refusal hides it)', function()
+  local s, calls = setup_review('addtwo', { edit = function(p, d)
+    p.prs['acme/shop#13'].pending = { id = 'PRR_a', commit = rev(d, 'stack/ui'), comments = {} }
+    p.prs['acme/shop#13'].pending_extra = { id = 'PRR_b', commit = rev(d, 'stack/ui'), comments = {} }
+    p.reviews.PRR_a, p.reviews.PRR_b = 'PENDING', 'PENDING'
+  end })
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  add_comment(s, 'src/index.ts', 'add', 8, 8, 'One item only?', { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 23, 23, 'Join with a comma?', { in_review = true })
+  local asked = answer({ 'Add to pending review' })
+  view.submit('approve')
+  wait_job()
+  h.ok(asked[1].msg:find('more than one pending review', 1, true), asked[1].msg)
+  h.ok(asked[1].msg:find('Add to pending review: the + comment (1 to PR #12)', 1, true), asked[1].msg)
+  h.eq('&Submit\n&Write body\n&Add to pending review\n&Cancel', asked[1].choices)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread' }, ops(calls))
+  h.eq('PR_12', mutations(calls)[1].input.pullRequestId)
   view.close()
 end)
 

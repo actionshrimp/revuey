@@ -1295,9 +1295,17 @@ are in `reports/Terminal code review tool landscape.md`.
       `originalStartLine`, since `line` follows the PR head and is null once outdated; or FILE;
       a reply to the thread's first comment, recorded at `cr` as `root_id`, or to any comment of
       it that is cached). A miss is never proof of absence while that review has a comment with
-      the same body on that file. Found exactly once, unclaimed, not in `before`, and no other record matching it:
-      recorded (pending, or posted if that review was submitted). Definitely absent (a complete
-      read without it, or NOT_FOUND): forgotten, and planned again only while `in_review`.
+      the same body on that file, or any comment at its place (`same_place`: the same path and
+      original lines, or FILE; a reply in the same thread), whatever its body: it may be that
+      comment edited on GitHub after the answer was lost (else such an add would be "absent" and
+      posted twice). Comments with an item's text or at its place that were in the pending
+      review before the send are in `before`, so they raise no doubt. Found exactly once,
+      unclaimed, not in `before`, and no other record matching it: recorded (pending, or posted
+      if that review was submitted). Definitely absent (a complete read without it, or
+      NOT_FOUND): forgotten, and planned again only while `in_review`; except a `pending`
+      record (it was there, so the user deleted it on GitHub or discarded the review, most
+      likely on purpose): forgotten, taken out of the review and listed as left out with the
+      reason, never re-added unasked (`ci` adds it again).
       Anything else (a partial or failed read, several candidates, a candidate claimed or there
       before, one another record matches too): `unknown`, and its PR is blocked (listed with
       `?`, no Submit for it). GitHub's review comments do not say their side, so a LEFT and a

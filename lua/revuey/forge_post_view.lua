@@ -25,7 +25,8 @@
 --   sending  -> unknown   a later reconcile cannot tell (its PR is blocked until it can)
 --   unknown  -> pending / posted / nil   a later reconcile decides; or `:RevueySubmit forget`
 --   pending  -> posted    its review was submitted (here, or elsewhere)
---   pending  -> nil       its review is gone (NOT_FOUND) or a complete read lacks it
+--   pending  -> nil       its review is gone (NOT_FOUND) or a complete read lacks it: deleted or
+--                         discarded on GitHub, so also taken out of the review (`in_review`)
 -- Nothing is ever deleted on GitHub.
 local api = vim.api
 local comments = require('revuey.comments')
@@ -505,6 +506,18 @@ function M.reconcile(r, included)
       set_record(store, c.id, posted_fields(fp, o.review, x.found))
       dirty = true
       found_review(o.t, 'a review revuey added comments to was submitted meanwhile')
+    elseif x.absent and post.state(c) == 'pending' then
+      -- it was in the pending review and is not any more: deleted there, or the review was
+      -- discarded, most likely on purpose; taken out of the review rather than added again
+      local cur = set_record(store, c.id, nil)
+      if cur and cur.in_review then
+        cur = vim.deepcopy(cur)
+        cur.in_review = false
+        comments.put(store, cur)
+      end
+      dirty = true
+      left[#left + 1] = { c = cur or c, why = ('removed from your pending review on PR #%d on GitHub (deleted there, or the review discarded): taken out of the review (%s adds it again)'):format(
+        o.t.pr.number, post.key('comment_include', 'ci')) }
     elseif x.absent then
       set_record(store, c.id, nil)
       dirty = true
@@ -596,7 +609,8 @@ function M.prepare(s, verdict, pending)
   end
   local todo, left = M.reconcile(r, included)
   if (full or pending) and #todo == 0 then
-    local any = false
+    -- (comments left out, such as one removed from the pending review on GitHub, are said)
+    local any = #left > 0
     for _, t in ipairs(targets) do
       any = any or #t.already > 0 or #t.unknown > 0
     end
@@ -629,7 +643,7 @@ function M.prepare(s, verdict, pending)
     -- "add to pending review" (from the verdict's confirmation too) is always the pending flow
     t.add_mode = p and 'add_existing' or 'add_new'
     -- a refusal only the verdict causes (your own PR): adding to a pending review is not refused
-    if verdict and t.refused and t.refused ~= post.target_refusal(t, r.viewer, nil) then
+    if verdict and t.refused and post.target_refusal(t, r.viewer, verdict) and not post.target_refusal(t, r.viewer, nil) then
       r.verdict_refused = true
     end
     if p then
@@ -641,11 +655,13 @@ function M.prepare(s, verdict, pending)
       end
       t.mode = needs_pending and 'new_pending' or 'atomic'
     end
-    -- the pending review's comments with the same text as an item: never that item
+    -- the pending review's comments with the same text as an item, or at its place: never that
+    -- item (and, when its answer is lost, no reason to doubt it is absent)
     for _, x in ipairs(items) do
       local before = {}
+      local place = x.item.kind == 'reply' and thread_comments(t, x.c) or nil
       for _, pc in ipairs(p and p.comments or {}) do
-        if post.norm_body(pc.body) == post.norm_body(x.item.body) then
+        if post.norm_body(pc.body) == post.norm_body(x.item.body) or post.same_place(pc, x.item, place) then
           before[#before + 1] = pc.id
         end
       end

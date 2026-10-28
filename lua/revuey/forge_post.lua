@@ -438,6 +438,15 @@ function M.payload_matches(pc, p, thread_comments)
   if norm_body(pc.body) ~= norm_body(p.body) then
     return false
   end
+  -- the lines it was made on (`original*`): `line` follows the PR head, moves after a push and is
+  -- null once outdated
+  return M.same_place(pc, p, thread_comments)
+end
+
+---Is a review comment where this payload went, whatever its text (it may have been edited on
+---GitHub since)? A thread: the same path and the lines it was made on (or FILE); a reply: a
+---reply in the same thread (`thread_comments`).
+function M.same_place(pc, p, thread_comments)
   if p.kind == 'reply' then
     return pc.reply_to ~= nil and (thread_comments or {})[pc.reply_to] == true
   end
@@ -447,20 +456,24 @@ function M.payload_matches(pc, p, thread_comments)
   if p.subject == 'FILE' then
     return pc.subject == 'FILE'
   end
-  -- the lines it was made on (`original*`): `line` follows the PR head, moves after a push and is
-  -- null once outdated
   local line = pc.original_line or pc.line
   local start = pc.original_start_line or pc.start_line or line
   return pc.subject ~= 'FILE' and line == p.line and start == (p.start_line or p.line)
 end
 
----Does the pool have a comment with this payload's body and path (whatever its lines)? Then a
----miss is never proof of absence.
-local function similar(pool, p, claimed, before)
+---Could a comment of the pool be this payload's, though it does not match it: one with its
+---body and path (whatever its lines), or one at its place (whatever its body: edited on GitHub
+---after an answer was lost)? Then a miss is never proof of absence. Comments claimed by a
+---recorded id, or there before it was sent, are not.
+local function similar(pool, p, claimed, before, thread_comments)
   for _, pc in ipairs(pool or {}) do
-    if not claimed[pc.id] and not (before or {})[pc.id] and norm_body(pc.body) == norm_body(p.body)
-      and (p.kind == 'reply' and pc.reply_to ~= nil or (p.kind ~= 'reply' and pc.path == p.path)) then
-      return true
+    if not claimed[pc.id] and not (before or {})[pc.id] then
+      if norm_body(pc.body) == norm_body(p.body) and (p.kind == 'reply' and pc.reply_to ~= nil or (p.kind ~= 'reply' and pc.path == p.path)) then
+        return true
+      end
+      if M.same_place(pc, p, thread_comments) then
+        return true
+      end
     end
   end
   return false
@@ -529,8 +542,10 @@ function M.reconcile(entries)
         out[e.key] = { unknown = 'GitHub could not be read' }
       elseif #c.list == 1 and users[c.list[1].id] == 1 and not c.taken then
         out[e.key] = { found = c.list[1] }
-      elseif #c.list == 0 and not c.taken and e.complete and not similar(e.pool, e.payload, claimed, e.before) then
+      elseif #c.list == 0 and not c.taken and e.complete and not similar(e.pool, e.payload, claimed, e.before, e.thread_comments) then
         out[e.key] = { absent = true }
+      elseif #c.list == 0 and not c.taken and e.complete then
+        out[e.key] = { unknown = 'GitHub has a comment where it went (edited since?) that may be it' }
       elseif #c.list == 0 and not c.taken then
         out[e.key] = { unknown = 'its review could not be read whole' }
       else
