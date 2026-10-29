@@ -31,7 +31,9 @@ write it as `cd <worktree> && REVUEY ...` (the Monitor tool, too, starts in its 
 ## 2. Watch
 
 Start the Monitor tool on `cd <worktree> && REVUEY watch --messages --session <id>` with `timeout_ms: 1800000` (the maximum) and a description like "revuey messages". When
-it expires, start it again the same way; keep doing so until the user says the review is over.
+it expires after delivering a message, start it again the same way. When it expires with nothing
+delivered (30 minutes idle), let it stop: check `REVUEY inbox --session <id>` once, then tell the
+user you've stopped listening and they can ask you to resume.
 Each message is printed once: a restarted watch does not repeat what an earlier one printed.
 Each line:
 
