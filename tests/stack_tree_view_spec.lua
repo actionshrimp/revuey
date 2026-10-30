@@ -39,6 +39,12 @@ local function open(name, scenario, o)
   local ssh_log = h.tmpdir(name .. '-ssh') .. '/ssh.log'
   h.use_fake_ssh(r.bare, ssh_log)
   local s = h.open_review({ cwd = r.dir, base = '' })
+  if o.until_ then
+    h.ok(vim.wait(15000, function()
+      return o.until_(s)
+    end, 10), 'the review did not get there')
+    return s, r, calls, ssh_log
+  end
   h.ok(vim.wait(15000, function()
     local gt = s.gh_tree
     return (not tv.enabled() or (gt and gt.fetched and not gt.running and (gt.reason or (gt.tree and not gt.loading))))
@@ -710,6 +716,44 @@ h.test('GitHub rejects the lookup with the tree in it: the PRs are looked up alo
   h.eq(nil, s.gh_tree.tree)
   h.eq(12, require('revuey.forge_view').pr(s, '') and require('revuey.forge_view').pr(s, '').number)
   h.ok(table.concat(vim.fn.readfile(log_file), '\n'):find('retrying without it', 1, true))
+  view.close()
+end)
+
+h.test('a PR chosen while closed PRs still load: the stack is rebuilt when they arrive', function()
+  vim.env.REVUEY_FAKE_GH_DELAY = '0.4'
+  local s = open('tree-phase-two', 'slow', {
+    until_ = function(s)
+      return s.gh_tree and s.gh_tree.loading == true and s.review.stack ~= nil and not s.refreshing
+    end,
+  })
+  tv.select(s, 16) -- #16's children (closed #17) are not read yet
+  h.ok(vim.wait(15000, function()
+    return not s.gh_tree.loading and not s.gh_tree.running and wait_idle(s)
+  end, 20))
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.eq({ 'origin/stack/a', 'origin/stack/old1' }, names(s))
+  h.eq(1, s.review.stack.layers[2].others, '⑂1: #17, read in phase two')
+  view.close()
+end)
+
+h.test('R: a chosen PR GitHub no longer has is dropped, back to the default route', function()
+  local s, r, calls = open('tree-sel-gone')
+  tv.select(s, 16)
+  h.ok(wait_idle(s))
+  local prs = vim.deepcopy(r.prs)
+  prs._tree['acme/shop'] = vim.tbl_filter(function(n)
+    return n.number ~= 16 and n.number ~= 17
+  end, prs._tree['acme/shop'])
+  vim.fn.writefile({ vim.json.encode(prs) }, calls .. '.prs.json')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true, forge = true })
+  vim.wait(300, function()
+    return false
+  end)
+  h.ok(wait_idle(s))
+  restore()
+  h.eq(nil, s.gh_tree.sel)
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
   view.close()
 end)
 
