@@ -7,27 +7,27 @@
 06| committed only                         │  A     ▾ src/cart.ts   +27 −0  added                                          
 07| uncommitted changes not shown          │          @@ -0,0 +1,27 @@                                                     
 08|                                        │      1 + import { multiply, sum } from "./math";                              
-09|   M  logo.png  assets               bin│      2 + import { formatCurrency } from "./format";                           
-10|   A  cart.ts  src                +27 −0│      3 + import { capitalize } from "./text";                                 
-11|   A  Total.tsx  src/components    +5 −0│      4 +                                                                      
-12|   M  index.ts  src                +9 −6│      5 + export interface LineItem {                                          
-13|   D  legacy.ts  src               +0 −6│      6 +   name: string;                                                      
-14|   M  math.ts  src                +14 −8│      7 +   price: number;                                                     
-15|   R  text.ts  src                 +2 −2│      8 +   quantity: number;                                                  
-16|                                        │      9 + }                                                                    
-17| <CR> show  mr reviewed  gp diff        │     10 +                                                                      
-18| ]c [c hunk  ]f [f file  <Tab> fold     │     11 + export class Cart {                                                  
-19| gd def  K hover  go open  R refresh    │     12 +   private items: LineItem[] = [];                                    
-20| gu committed/working tree  q close     │     13 +                                                                      
-21| gG AI guide                            │     14 +   addItem(item: LineItem): this {                                    
-22| g? all keys                            │     15 +     this.items.push(item);                                           
-23|~                                       │     16 +     return this;                                                     
-24|~                                       │     17 +   }                                                                  
-25|~                                       │     18 +                                                                      
+09| assets:                                │      2 + import { formatCurrency } from "./format";                           
+10|     M  logo.png                     bin│      3 + import { capitalize } from "./text";                                 
+11| src:                                   │      4 +                                                                      
+12|     A  cart.ts                   +27 −0│      5 + export interface LineItem {                                          
+13|     M  index.ts                   +9 −6│      6 +   name: string;                                                      
+14|     D  legacy.ts                  +0 −6│      7 +   price: number;                                                     
+15|     M  math.ts                   +14 −8│      8 +   quantity: number;                                                  
+16|     R  text.ts                    +2 −2│      9 + }                                                                    
+17| src/components:                        │     10 +                                                                      
+18|     A  Total.tsx                  +5 −0│     11 + export class Cart {                                                  
+19|                                        │     12 +   private items: LineItem[] = [];                                    
+20| <CR> show  mr reviewed  gp diff        │     13 +                                                                      
+21| ]c [c hunk  ]f [f file  <Tab> fold     │     14 +   addItem(item: LineItem): this {                                    
+22| gd def  K hover  go open  R refresh    │     15 +     this.items.push(item);                                           
+23| gu committed/working tree  q close     │     16 +     return this;                                                     
+24| gG AI guide                            │     17 +   }                                                                  
+25| g? all keys                            │     18 +                                                                      
 26|~                                       │     19 +   total(): number {                                                  
 27|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
 28|~                                       │     21 +   }                                                                  
-29|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              1,1            Top
+29|revuey://files [-]    8,1            All revuey://feature/cart..main [-]                              1,1            Top
 30|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -39,25 +39,25 @@
 06|@@@@@@@@@@@@@@@77777777777777777777777774<<<<<<<<<<AAAAAAAAAAA:::BBBCCCBBBBBBB::::::::::::::::::::::::::::::::::::::::::
 07|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD77777777774??????????EEEEEEEEEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 08|77777777777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-09|KLKMNKOOOOOOOOPPPPPPPPKKKKKKKKKKKKKKK>>>4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-10|7<7<D74444444>>>>>7777777777777777<<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-11|7<7<D7444444444>>>>>>>>>>>>>>>>7777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-12|7<7@D744444444>>>>>7777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-13|7<7=D7444444444>>>>>777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-14|7<7@D74444444>>>>>7777777777777777<<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-15|7<7@D74444444>>>>>77777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-16|77777777777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-17|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-18|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-19|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>77774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-20|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-21|>>>>>>>>>>>>77777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-22|>>>>>>>>>>>>77777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-23|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-24|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+09|7@@@@@@@777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+10|KKKLKMNKOOOOOOOOKKKKKKKKKKKKKKKKKKKKK>>>4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+11|7@@@@777777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+12|777<7<D744444447777777777777777777<<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+13|777<7@D7444444447777777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+14|777<7=D7444444444777777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+15|777<7@D744444447777777777777777777<<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+16|777<7@D7444444477777777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+17|7@@@@@@@@@@@@@@@7777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+18|777<7<D7444444444777777777777777777<<===4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+19|77777777777777777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+20|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+21|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+22|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>77774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+23|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+24|>>>>>>>>>>>>77777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|>>>>>>>>>>>>77777777777777777777777777774GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 26|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 27|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 28|????????????????????????????????????????4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-30|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+29|00000000000000000000000000000000000000000PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+30|QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ

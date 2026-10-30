@@ -6,23 +6,23 @@
 05| base ee2e6fcf  head 6b2be8a3           │          │ Note 5                                                             
 06| working tree  ● uncommitted            │          ╰─                                                                   
 07|                                        │      6 +   name: string;                                                      
-08|   M  logo.png  assets               bin│      7▍+   price: number;                                                     
-09|   A  cart.ts  src            ✎13 +27 −0│          ╭─ You · just now ────────────────────────────────────────────────── 
-10|   A  Total.tsx  src/components    +5 −0│          │ Note 7                                                             
-11|   M  index.ts  src                +9 −6│          ╰─                                                                   
-12|   D  legacy.ts  src               +0 −6│      8 +   quantity: number;                                                  
-13|   M  math.ts  src                +14 −8│      9▍+ }                                                                    
-14|   R  text.ts  src                 +2 −2│          ╭─ You · just now ────────────────────────────────────────────────── 
-15|                                        │          │ Note 9                                                             
-16| <CR> show  mr reviewed  gp diff        │          ╰─                                                                   
-17| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
-18| gd def  K hover  go open  R refresh    │     11▍+ export class Cart {                                                  
-19| gu committed/working tree  q close     │          ╭─ You · just now ────────────────────────────────────────────────── 
-20| gG AI guide                            │          │ Note 11                                                            
-21| g? all keys                            │          ╰─                                                                   
-22|~                                       │     12 +   private items: LineItem[] = [];                                    
-23|~                                       │     13▍+                                                                      
-24|~                                       │          ╭─ You · just now ────────────────────────────────────────────────── 
+08| assets:                                │      7▍+   price: number;                                                     
+09|     M  logo.png                     bin│          ╭─ You · just now ────────────────────────────────────────────────── 
+10| src:                                   │          │ Note 7                                                             
+11|     A  cart.ts               ✎13 +27 −0│          ╰─                                                                   
+12|     M  index.ts                   +9 −6│      8 +   quantity: number;                                                  
+13|     D  legacy.ts                  +0 −6│      9▍+ }                                                                    
+14|     M  math.ts                   +14 −8│          ╭─ You · just now ────────────────────────────────────────────────── 
+15|     R  text.ts                    +2 −2│          │ Note 9                                                             
+16| src/components:                        │          ╰─                                                                   
+17|     A  Total.tsx                  +5 −0│     10 +                                                                      
+18|                                        │     11▍+ export class Cart {                                                  
+19| <CR> show  mr reviewed  gp diff        │          ╭─ You · just now ────────────────────────────────────────────────── 
+20| ]c [c hunk  ]f [f file  <Tab> fold     │          │ Note 11                                                            
+21| gd def  K hover  go open  R refresh    │          ╰─                                                                   
+22| gu committed/working tree  q close     │     12 +   private items: LineItem[] = [];                                    
+23| gG AI guide                            │     13▍+                                                                      
+24| g? all keys                            │          ╭─ You · just now ────────────────────────────────────────────────── 
 25|~                                       │          │ Note 13                                                            
 26|~                                       │          ╰─                                                                   
 27|~                                       │     14 +   addItem(item: LineItem): this {                                    
@@ -31,7 +31,7 @@
 30|~                                       │          │ Note 15                                                            
 31|~                                       │          ╰─                                                                   
 32|~                                       │     16 +     return this;                                                     
-33|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              10,1            8%
+33|revuey://files [-]    9,1            All revuey://feature/cart..main [-]                              10,1            8%
 34|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -42,23 +42,23 @@
 05|BBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999999994CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
 06|FFFFFFFFFFFFFBBBBBBBBBBBBBBB9999999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
 07|99999999999999999999999999999999999999994GGGGHHH===?????????????????????????????????????????????????????????????????????
-08|9@9FI944444444BBBBBBBB999999999999999BBB4GGGGHHHF==?????????????????????????????????????????????????????????????????????
-09|JKJKLJMMMMMMMNNNNNJJJJJJJJJJJJFFFF@@@AAA4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
-10|9@9@I9444444444BBBBBBBBBBBBBBBB9999@@AAA4CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
-11|9@9FI944444444BBBBB9999999999999999@@AAA4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
-12|9@9AI9444444444BBBBB999999999999999@@AAA4GGGGHHH===?????????????????????????????????????????????????????????????????????
-13|9@9FI94444444BBBBB9999999999999999@@@AAA4GGGGHHHF==?????????????????????????????????????????????????????????????????????
-14|9@9FI94444444BBBBB99999999999999999@@AAA4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
-15|99999999999999999999999999999999999999994CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
-16|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
-17|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994GGGGHHH===?????????????????????????????????????????????????????????????????????
-18|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994GGGGHHHF==?????????????????????????????????????????????????????????????????????
-19|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
-20|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
-21|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
-22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
-23|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHHF==?????????????????????????????????????????????????????????????????????
-24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+08|9FFFFFFF999999999999999999999999999999994GGGGHHHF==?????????????????????????????????????????????????????????????????????
+09|999@9FI944444444999999999999999999999BBB4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+10|9FFFF999999999999999999999999999999999994CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
+11|JJJKJKLJMMMMMMMJJJJJJJJJJJJJJJFFFF@@@AAA4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+12|999@9FI9444444449999999999999999999@@AAA4GGGGHHH===?????????????????????????????????????????????????????????????????????
+13|999@9AI9444444444999999999999999999@@AAA4GGGGHHHF==?????????????????????????????????????????????????????????????????????
+14|999@9FI944444449999999999999999999@@@AAA4CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+15|999@9FI9444444499999999999999999999@@AAA4CCCCCCCCCCDD4444449999999999999999999999999999999999999999999999999999999999999
+16|9FFFFFFFFFFFFFFF9999999999999999999999994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+17|999@9@I9444444444999999999999999999@@AAA4GGGGHHH===?????????????????????????????????????????????????????????????????????
+18|99999999999999999999999999999999999999994GGGGHHHF==?????????????????????????????????????????????????????????????????????
+19|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
+20|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
+21|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
+22|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994GGGGHHH===?????????????????????????????????????????????????????????????????????
+23|BBBBBBBBBBBB99999999999999999999999999994GGGGHHHF==?????????????????????????????????????????????????????????????????????
+24|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCDDD222BBBBBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD9
 25|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
 26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
 27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
@@ -67,5 +67,5 @@
 30|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD4444444999999999999999999999999999999999999999999999999999999999999
 31|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDD9999999999999999999999999999999999999999999999999999999999999999999
 32|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4GGGGHHH===?????????????????????????????????????????????????????????????????????
-33|00000000000000000000000000000000000000000OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-34|PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+33|00000000000000000000000000000000000000000NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+34|OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO

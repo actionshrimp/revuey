@@ -17,6 +17,10 @@ M.defaults = {
   -- Files with more diff lines than this start collapsed (lockfiles, generated code).
   collapse_large_files = 1500,
   panel_width = 40,
+  -- The file panel lists files under a header per directory (long ones abbreviated, a prefix
+  -- shared by all of them dropped); the diff follows the same order. false: one flat list in git's
+  -- path order, each file's directory after its name.
+  panel_folders = true,
   -- Start the TypeScript/other LSP for changed files when the review opens, so `gd` is ready.
   lsp_warmup = true,
   -- Minimum age (ms) of an LSP client before the first request (tsserver answers with the import

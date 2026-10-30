@@ -1,7 +1,8 @@
 -- Finding the keys: the winbar's hint of the keys that work on the cursor row (a comment, an AI
--- finding, an agent's comment, a GitHub thread, a guide line note), and the `g?` float listing
--- every key (keys.lua). The hint asks comments_view.can, the rules the actions apply, so it
--- offers only what would work; it reads the row's cached cover lists (no git, no network).
+-- finding, an agent's comment, a GitHub thread, a guide line note; a folder header in the file
+-- panel), and the `g?` float listing every key (keys.lua). The hint asks comments_view.can, the
+-- rules the actions apply, so it offers only what would work; it reads the row's cached cover
+-- lists (no git, no network).
 local api = vim.api
 local keys = require('revuey.keys')
 
@@ -103,8 +104,41 @@ function M.update(s, quiet)
   end
 end
 
----Hint items for the winbar of `win`: only while it is the current window (the keys act there).
+---Hint items while the file panel has focus, for the diff window's winbar (the panel is too narrow
+---for them): on a folder header, `<CR>` and the folder's full path (its header may be abbreviated).
+function M.panel_items(s)
+  local win = s.panel_win
+  if not (win and api.nvim_win_is_valid(win) and api.nvim_get_current_win() == win) then
+    return {}
+  end
+  local g = s.panel_dirs and s.panel_dirs[api.nvim_win_get_cursor(win)[1]]
+  if not g then
+    return {}
+  end
+  return { { key = '<CR>', label = 'first file in ' .. g.path } }
+end
+
+---Redraw the diff window's winbar when the panel's hint changed (panel CursorMoved, focus).
+function M.update_panel(s)
+  if not s or s.cleaned or not s.diff_win or not api.nvim_win_is_valid(s.diff_win) then
+    return
+  end
+  local sig = signature(M.panel_items(s))
+  if s.key_hint_panel == sig then
+    return
+  end
+  s.key_hint_panel = sig
+  if #api.nvim_list_uis() > 0 then
+    pcall(api.nvim__redraw, { win = s.diff_win, winbar = true })
+  end
+end
+
+---Hint items for the winbar of `win`: only while it is the current window (the keys act there),
+---or while the file panel is (panel_items).
 function M.current(s, win)
+  if win == s.diff_win and s.panel_win and api.nvim_get_current_win() == s.panel_win then
+    return M.panel_items(s)
+  end
   if win ~= api.nvim_get_current_win() or win ~= s.diff_win then
     return {}
   end

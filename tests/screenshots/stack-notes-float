@@ -14,17 +14,17 @@
 13| layer 2/3 │  These branches contain older versions of commits that are now in your stack (they     │         
 14| working tr│  were amended or rebased since). They may be built on an outdated copy of your stack.  │         
 15|           │  Doesn't affect this review. If you no longer need them, delete or ignore them.        │         
-16|   A  b.txt│    dave/abc-1058-apply-price-check  old copy of stack/a             x ignore  X pattern│         
-17|           │    dave/abc-1058-report-flow  old copy of stack/a                   x ignore  X pattern│         
-18| <CR> show │    dave/abc-1061-cleanup  old copy of stack/a                       x ignore  X pattern│         
-19| ]c [c hunk│                                                                                        │         
-20| gd def  K │x ignore branch · X ignore pattern · <CR> choose · q close                              │         
-21| gu committ╰────────────────────────────────────────────────────────────────────────────────────────╯         
-22| gG AI guide                            │                                                                     
-23| ]s [s layer  gs full stack  ! notes    │                                                                     
-24| gS check out layer                     │                                                                     
-25| g? all keys                            │                                                                     
-26|~                                       │                                                                     
+16| ./        │    dave/abc-1058-apply-price-check  old copy of stack/a             x ignore  X pattern│         
+17|     A  b.t│    dave/abc-1058-report-flow  old copy of stack/a                   x ignore  X pattern│         
+18|           │    dave/abc-1061-cleanup  old copy of stack/a                       x ignore  X pattern│         
+19| <CR> show │                                                                                        │         
+20| ]c [c hunk│x ignore branch · X ignore pattern · <CR> choose · q close                              │         
+21| gd def  K ╰────────────────────────────────────────────────────────────────────────────────────────╯         
+22| gu committed/working tree  q close     │                                                                     
+23| gG AI guide                            │                                                                     
+24| ]s [s layer  gs full stack  ! notes    │                                                                     
+25| gS check out layer                     │                                                                     
+26| g? all keys                            │                                                                     
 27|~                                       │                                                                     
 28|~                                       │                                                                     
 29|~                                       │                                                                     
@@ -48,17 +48,17 @@
 13|@@@@@@@@@@?KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKCCCCCCCCC
 14|@@@@@@@@@@@KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKCCCCCCCCC
 15|???????????KMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKCCCCCCCCC
-16|9N9NO9PPPPPK9999QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQRRRRRRRRRRRRRRRRRRRRR9999999999999MMMMMMMMMMMMMMMMMMMKCCCCCCCCC
-17|???????????KKKKKSSSSSSSSSSSSSSSSSSSSSSSSSMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKKKKKKKKKKKMMMMMMMMMMMMMMMMMMMKCCCCCCCCC
-18|BBBBBBBBBBBKKKKKSSSSSSSSSSSSSSSSSSSSSMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKKKKKKKKKKKKKKKMMMMMMMMMMMMMMMMMMMKCCCCCCCCC
+16|?@@????????K9999NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNOOOOOOOOOOOOOOOOOOOOO9999999999999MMMMMMMMMMMMMMMMMMMKCCCCCCCCC
+17|999P9PQ9RRRKKKKKSSSSSSSSSSSSSSSSSSSSSSSSSMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKKKKKKKKKKKMMMMMMMMMMMMMMMMMMMKCCCCCCCCC
+18|???????????KKKKKSSSSSSSSSSSSSSSSSSSSSMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKKKKKKKKKKKKKKKMMMMMMMMMMMMMMMMMMMKCCCCCCCCC
 19|BBBBBBBBBBBKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKCCCCCCCCC
 20|BBBBBBBBBBBKMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKCCCCCCCCC
 21|BBBBBBBBBBBKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKCCCCCCCCC
-22|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-23|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-24|BBBBBBBBBBBBBBBBBBB?????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-25|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+22|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB?????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+23|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+24|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+25|BBBBBBBBBBBBBBBBBBB?????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+26|BBBBBBBBBBBB????????????????????????????4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 28|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 29|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC

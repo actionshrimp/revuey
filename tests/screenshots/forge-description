@@ -21,16 +21,16 @@
 20| layer 2/3                              │      7 + }                                                                    
 21| working tree  ● uncommitted            │      8 +                                                                      
 22|                                        │      9 + export class Cart {                                                  
-23|   A  cart.ts  src                +20 −0│     10 +   private items: LineItem[] = [];                                    
-24|   M  index.ts  src                +3 −2│     11 +                                                                      
-25|                                        │     12 +   addItem(item: LineItem): this {                                    
-26| <CR> show  mr reviewed  gp diff        │     13 +     this.items.push(item);                                           
-27| ]c [c hunk  ]f [f file  <Tab> fold     │     14 +     return this;                                                     
-28| gd def  K hover  go open  R refresh    │     15 +   }                                                                  
-29| gu committed/working tree  q close     │     16 +                                                                      
-30| gG AI guide                            │     17 +   total(): number {                                                  
-31| ]s [s layer  gs full stack             │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-32| gS check out layer                     │     19 +   }                                                                  
+23| src:                                   │     10 +   private items: LineItem[] = [];                                    
+24|     A  cart.ts                   +20 −0│     11 +                                                                      
+25|     M  index.ts                   +3 −2│     12 +   addItem(item: LineItem): this {                                    
+26|                                        │     13 +     this.items.push(item);                                           
+27| <CR> show  mr reviewed  gp diff        │     14 +     return this;                                                     
+28| ]c [c hunk  ]f [f file  <Tab> fold     │     15 +   }                                                                  
+29| gd def  K hover  go open  R refresh    │     16 +                                                                      
+30| gu committed/working tree  q close     │     17 +   total(): number {                                                  
+31| gG AI guide                            │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+32| ]s [s layer  gs full stack             │     19 +   }                                                                  
 33|revuey://files [-]    1,1            Top revuey://stack/cart..stack/math [-]                          1,1            Top
 34|                                                                                                                        
 
@@ -57,15 +57,15 @@
 20|<<<<<<<<<<;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 21|<<<<<<<<<<<<<>>>>>>>>>>>>>>>;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 22|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-23|8O8OP8QQQQQQQRRRRR8888888888888888CCCNNN4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-24|;C;<=;44444444>>>>>;;;;;;;;;;;;;;;;CCNNN4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-25|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-26|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-27|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-28|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-29|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-30|>>>>>>>>>>>>;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-31|>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-32|>>>>>>>>>>>>>>>>>>>;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-33|00000000000000000000000000000000000000000SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
-34|TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+23|;<<<<;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+24|888O8OP8QQQQQQQ8888888888888888888CCCNNN4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+25|;;;C;<=;44444444;;;;;;;;;;;;;;;;;;;CCNNN4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+26|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+27|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+28|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+29|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+30|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+31|>>>>>>>>>>>>;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+32|>>>>>>>>>>>>>>>>>>>>>>>>>>>;;;;;;;;;;;;;4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+33|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+34|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

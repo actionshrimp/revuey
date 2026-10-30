@@ -1656,10 +1656,42 @@ are in `reports/Terminal code review tool landscape.md`.
       narrow window the hint's last keys are dropped first (they are ordered by use; `cd`, which
       asks anyway, is last), then the name is cut from its start at a `%<` (status letter and
       counts stay). At least one key is always shown.
+    - **The panel's folder headers** have no keys of their own to show in the narrow panel, so
+      while the panel has focus and its cursor is on one, the diff window's winbar hint is
+      `<CR> first file in <full path>/` (`key_help.panel_items`; the header itself may be
+      abbreviated, decision 22). The panel's `CursorMoved` and focus changes redraw it.
+22. **Folders in the file panel** (`folders.lua` pure order, groups, common prefix and
+    abbreviation; `panel.lua` the rows). On by default (`panel_folders`).
+    - **One order for everything.** `review.load` sorts `r.files` with `folders.order`, so the
+      diff, `]f`/`[f`, "move on to the next unreviewed", file indexes and the panel all agree;
+      nothing maps panel rows to a different order. The order is git's path order with each
+      folder's files gathered: folders compared component by component (so `api/` and its
+      subfolders stay together before `api-client/`, which git's byte order puts between them),
+      a folder before its subfolders, the root first, files by name within each (as `ls -R`).
+      Groups are therefore contiguous by construction. Off, `r.files` keeps git's order.
+    - **Root files** go under a `./` header rather than none: every file row is then indented
+      under a label, and a root `README.md` reads as "at the root", not as part of the folder
+      above it.
+    - **A common prefix** (leading folders every group shares) is dropped from the headers and
+      named once on a dim line above them (` in src/`); the full path is in the hint. It keeps at
+      least one component of every header (`src` and `src/components` drop nothing), and is not
+      dropped for a single folder, where it would only add a line.
+    - **Abbreviation** is fish-style: first and last components whole, middle ones cut to their
+      first character (two for a dotted name, `.github` -> `.g`) from the root side until the
+      header fits, then `first/…/last`, `…/last`, and the leaf cut from the left. Display widths,
+      so CJK names fit.
+    - **Headers are labels.** `s.panel_dirs` maps header rows to their group. `j`/`k` stop on
+      them like on the panel's other label rows (title, counts): nothing is previewed, `mr` does
+      nothing; `<CR>` shows the folder's first file (a cheap, obvious meaning; marking a whole
+      folder is left for later). A folder whose files are all reviewed is dimmed, computed in the
+      same pass as the file rows. A redraw with `keep_view` keeps the cursor on its header.
+    - **Cost.** Ordering is O(n log n) once per load; grouping is one pass. Headers, the prefix and
+      their abbreviations are cached on the session per file list and panel width, so a redraw
+      (every mark) adds one table lookup per file. `folders_spec` times a 400-file panel redraw.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

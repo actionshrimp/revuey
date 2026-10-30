@@ -27,7 +27,7 @@ in the comment's thread. Design notes:
 ```
 
 `setup()` is optional. All options and their defaults are in `lua/revuey/config.lua`
-(`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `lsp_warmup`,
+(`context_lines`, `fold_context_threshold`, `collapse_large_files`, `panel_width`, `panel_folders`, `lsp_warmup`,
 `lsp_settle_ms`, `lsp_proxy`, `word_diff`, `state_dir`, `stack`, `keymaps`, `comments`, `ai`, `forge`,
 `log_file`).
 
@@ -1269,7 +1269,24 @@ by `herdr pane get`) and refuses otherwise; `none` prints the command for you to
 
 The review opens in a new tab:
 - **File panel (left):** status letter, `+/-` counts, and `✓` for reviewed files (`◐` and
-  `2/5` hunks when partly reviewed).
+  `2/5` hunks when partly reviewed). Files are listed under a header per folder, so you can see
+  which services, layers or test folders a change touches:
+  ```
+   ./
+       M  README.md            +1 −1
+   packages/api/src/routes:
+     ✓ M  billing.ts           +3 −1
+       A  refunds.ts          +40 −0
+   packages/api/test:
+       A  billing.test.ts     +12 −0
+  ```
+  Folders come in tree order (files at the repository root under `./` first, a folder before its
+  subfolders), files by name within each, and the diff and `]f`/`[f` follow the same order. A
+  header that does not fit is shortened fish-style (`packages/a/s/routes`, then
+  `packages/…/routes`, then `…/routes`); when every folder shares leading folders (everything
+  under `src/`), they are left out of the headers and named once above them (` in src/`). A
+  folder whose files are all reviewed is dimmed. `panel_folders = false` gives the flat list (git's
+  path order, each file's folder after its name).
 - **Diff (right):** one continuous buffer for all files.
 
 Every diff line is a real buffer line, and its text is exactly the source text. The `+`/`-` markers,
@@ -1390,8 +1407,10 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 `keymaps = { toggle_fold = false, toggle_all_folds = false }` to leave those keys alone.
 
 File panel:
-- `<CR>`/`o`: show the file and focus the diff. On a stack row, switch to that layer (or the full stack).
-- Moving the cursor previews files in the diff.
+- `<CR>`/`o`: show the file and focus the diff. On a folder header, its first file. On a stack row, switch to that layer (or the full stack).
+- Moving the cursor previews files in the diff. Folder headers are labels: the cursor stops on
+  them (nothing is previewed, `mr` does nothing there), and while it is on one the diff's winbar
+  shows `<CR> first file in` and the folder's full path (the header may be shortened).
 - `mr`, `gu`, `R`, `]s`, `[s`, `gs`, `!`, `gG`, `gR`, `cl`, `gP`, `g?`, `gp` (back to the diff) and `q` work as in the diff buffer.
 - `gS` on a layer row checks that layer out (elsewhere: the viewed layer). While the panel has focus, a dim
   line under the layer row the cursor is on says what `gS` would do there (`gS creates local branch

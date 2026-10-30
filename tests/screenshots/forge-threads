@@ -22,26 +22,26 @@
 21| layer 2/3                              │     11 +                                                                      
 22| working tree  ● uncommitted            │     12▍+   addItem(item: LineItem): this {                                    
 23|                                        │     13▍+     this.items.push(item);                                           
-24|   A  cart.ts  src             ✎1 +20 −0│          ╭─ dan · 2026-01-02 · GitHub #42 · resolved by alice ─────────────── 
-25|   M  index.ts  src                +3 −2│          │ Return a copy instead?                                             
-26|                                        │          │ … 2 more lines (cz expands)                                        
-27| <CR> show  mr reviewed  gp diff        │          ╰─                                                                   
-28| ]c [c hunk  ]f [f file  <Tab> fold     │     14 +     return this;                                                     
-29| gd def  K hover  go open  R refresh    │     15 +   }                                                                  
-30| gu committed/working tree  q close     │     16 +                                                                      
-31| gG AI guide                            │     17 +   total(): number {                                                  
-32| ]s [s layer  gs full stack             │     18▍+     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-33| gS check out layer                     │          ╭─ carol · 2026-01-03 · GitHub #42 ───────────────────────────────── 
-34| gx PR in browser  <Tab> PR details     │          │ Should the total be rounded to cents?                              
-35| gH GitHub threads (all/open/none)      │          │ ↳ alice · 2026-01-03                                               
-36| gP submit review                       │          │   Good point, will do.                                             
-37| g? all keys                            │          ╰─                                                                   
-38|~                                       │     19 +   }                                                                  
+24| src:                                   │          ╭─ dan · 2026-01-02 · GitHub #42 · resolved by alice ─────────────── 
+25|     A  cart.ts                ✎1 +20 −0│          │ Return a copy instead?                                             
+26|     M  index.ts                   +3 −2│          │ … 2 more lines (cz expands)                                        
+27|                                        │          ╰─                                                                   
+28| <CR> show  mr reviewed  gp diff        │     14 +     return this;                                                     
+29| ]c [c hunk  ]f [f file  <Tab> fold     │     15 +   }                                                                  
+30| gd def  K hover  go open  R refresh    │     16 +                                                                      
+31| gu committed/working tree  q close     │     17 +   total(): number {                                                  
+32| gG AI guide                            │     18▍+     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+33| ]s [s layer  gs full stack             │          ╭─ carol · 2026-01-03 · GitHub #42 ───────────────────────────────── 
+34| gS check out layer                     │          │ Should the total be rounded to cents?                              
+35| gx PR in browser  <Tab> PR details     │          │ ↳ alice · 2026-01-03                                               
+36| gH GitHub threads (all/open/none)      │          │   Good point, will do.                                             
+37| gP submit review                       │          ╰─                                                                   
+38| g? all keys                            │     19 +   }                                                                  
 39|~                                       │     20 + }                                                                    
 40|~                                       │                                                                               
 41|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
 42|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
-43|revuey://files [-]    22,1           All revuey://stack/cart..stack/math [-]                          1,1            Top
+43|revuey://files [-]    23,1           All revuey://stack/cart..stack/math [-]                          1,1            Top
 44|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -68,24 +68,24 @@
 21|@@@@@@@@@@9999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 22|@@@@@@@@@@@@@BBBBBBBBBBBBBBB9999999999994FFFFGGGKHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 23|99999999999999999999999999999999999999994FFFFGGGKHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-24|MNMNOMPPPPPPPQQQQQMMMMMMMMMMMMM@@@KKKLLL4CCCCCCCCCCBBB@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBKKKKKKKKKKKKKKKKKBBBBBBBBBBBBBBBB9
-25|9K9@A944444444BBBBB9999999999999999KKLLL4CCCCCCCCCCBB4444444444444444444444999999999999999999999999999999999999999999999
-26|99999999999999999999999999999999999999994CCCCCCCCCCBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999999999999999999999999999999999999999
-27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
-28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-29|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-30|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-31|BBBBBBBBBBBB99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-32|BBBBBBBBBBBBBBBBBBBBBBBBBBB99999999999994FFFFGGG@HHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-33|BBBBBBBBBBBBBBBBBBB9999999999999999999994CCCCCCCCCCBBB@@@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9
-34|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCBB44444444444RRRRR444444444444444444444999999999999999999999999999999
-35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999994CCCCCCCCCCBBBB@@@@@BBBBBBBBBBBBB99999999999999999999999999999999999999999999999
-36|BBBBBBBBBBBBBBBBB999999999999999999999994CCCCCCCCCCBBBB44444444444444444444999999999999999999999999999999999999999999999
-37|BBBBBBBBBBBB99999999999999999999999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
-38|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+24|9@@@@999999999999999999999999999999999994CCCCCCCCCCBBB@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBKKKKKKKKKKKKKKKKKBBBBBBBBBBBBBBBB9
+25|MMMNMNOMPPPPPPPMMMMMMMMMMMMMMMM@@@KKKLLL4CCCCCCCCCCBB4444444444444444444444999999999999999999999999999999999999999999999
+26|999K9@A9444444449999999999999999999KKLLL4CCCCCCCCCCBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999999999999999999999999999999999999999
+27|99999999999999999999999999999999999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+29|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+30|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB99994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+31|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+32|BBBBBBBBBBBB99999999999999999999999999994FFFFGGG@HHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+33|BBBBBBBBBBBBBBBBBBBBBBBBBBB99999999999994CCCCCCCCCCBBB@@@@@BBBBBBBBBBBBBBBB@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9
+34|BBBBBBBBBBBBBBBBBBB9999999999999999999994CCCCCCCCCCBB44444444444QQQQQ444444444444444444444999999999999999999999999999999
+35|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB999994CCCCCCCCCCBBBB@@@@@BBBBBBBBBBBBB99999999999999999999999999999999999999999999999
+36|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB9999994CCCCCCCCCCBBBB44444444444444444444999999999999999999999999999999999999999999999
+37|BBBBBBBBBBBBBBBBB999999999999999999999994CCCCCCCCCCBB9999999999999999999999999999999999999999999999999999999999999999999
+38|BBBBBBBBBBBB99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 39|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 40|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCC999999999999999999999999999999999999999999999999999999999999999999999
-41|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4@@@@@@@@@@SSSSSSSSSSSS===>>???=================================================
+41|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4@@@@@@@@@@RRRRRRRRRRRR===>>???=================================================
 42|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC4CCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDEEEEEEEEEE
-43|00000000000000000000000000000000000000000TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-44|UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+43|00000000000000000000000000000000000000000SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+44|TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT

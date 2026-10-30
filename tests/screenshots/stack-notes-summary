@@ -14,17 +14,17 @@
 13| layer 2/3                              │                                                                     
 14| working tree  ● uncommitted            │                                                                     
 15|                                        │                                                                     
-16|   A  b.txt                        +1 −0│                                                                     
-17|                                        │                                                                     
-18| <CR> show  mr reviewed  gp diff        │                                                                     
-19| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                     
-20| gd def  K hover  go open  R refresh    │                                                                     
-21| gu committed/working tree  q close     │                                                                     
-22| gG AI guide                            │                                                                     
-23| ]s [s layer  gs full stack  ! notes    │                                                                     
-24| gS check out layer                     │                                                                     
-25| g? all keys                            │                                                                     
-26|~                                       │                                                                     
+16| ./                                     │                                                                     
+17|     A  b.txt                      +1 −0│                                                                     
+18|                                        │                                                                     
+19| <CR> show  mr reviewed  gp diff        │                                                                     
+20| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                     
+21| gd def  K hover  go open  R refresh    │                                                                     
+22| gu committed/working tree  q close     │                                                                     
+23| gG AI guide                            │                                                                     
+24| ]s [s layer  gs full stack  ! notes    │                                                                     
+25| gS check out layer                     │                                                                     
+26| g? all keys                            │                                                                     
 27|~                                       │                                                                     
 28|~                                       │                                                                     
 29|~                                       │                                                                     
@@ -48,17 +48,17 @@
 13|AAAAAAAAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 14|AAAAAAAAAAAAACCCCCCCCCCCCCCC@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 15|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-16|:M:MN:OOOOO::::::::::::::::::::::::KKLLL4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-18|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-22|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-23|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-24|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-25|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+16|@AA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+17|:::M:MN:OOOOO::::::::::::::::::::::KKLLL4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+23|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+25|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+26|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 29|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD

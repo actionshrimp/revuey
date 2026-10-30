@@ -13,18 +13,18 @@
 12| layer 2/3                              │      8 +                                                                      
 13| working tree  ● uncommitted            │      9 + export class Cart {                                                  
 14|                                        │     10 +   private items: LineItem[] = [];                                    
-15|   A  cart.ts  src                +20 −0│     11 +                                                                      
-16|   M  index.ts  src                +3 −2│     12 +   addItem(item: LineItem): this {                                    
-17|                                        │     13 +     this.items.push(item);                                           
-18| <CR> show  mr reviewed  gp diff        │     14 +     return this;                                                     
-19| ]c [c hunk  ]f [f file  <Tab> fold     │     15 +   }                                                                  
-20| gd def  K hover  go open  R refresh    │     16 +                                                                      
-21| gu committed/working tree  q close     │     17 +   total(): number {                                                  
-22| gG AI guide                            │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-23| ]s [s layer  gs full stack             │     19 +   }                                                                  
-24| gS check out layer                     │     20 + }                                                                    
-25| g? all keys                            │                                                                               
-26|~                                       │  M     ▾ src/index.ts   +3 −2                                                 
+15| src:                                   │     11 +                                                                      
+16|     A  cart.ts                   +20 −0│     12 +   addItem(item: LineItem): this {                                    
+17|     M  index.ts                   +3 −2│     13 +     this.items.push(item);                                           
+18|                                        │     14 +     return this;                                                     
+19| <CR> show  mr reviewed  gp diff        │     15 +   }                                                                  
+20| ]c [c hunk  ]f [f file  <Tab> fold     │     16 +                                                                      
+21| gd def  K hover  go open  R refresh    │     17 +   total(): number {                                                  
+22| gu committed/working tree  q close     │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+23| gG AI guide                            │     19 +   }                                                                  
+24| ]s [s layer  gs full stack             │     20 + }                                                                    
+25| gS check out layer                     │                                                                               
+26| g? all keys                            │  M     ▾ src/index.ts   +3 −2                                                 
 27|~                                       │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
 28|~                                       │  2   2   import { formatCurrency } from "./format";                           
 29|revuey://files [-]    1,1            All revuey://stack/cart..stack/math [-]                          1,1            Top
@@ -45,19 +45,19 @@
 12|AAAAAAAAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 13|AAAAAAAAAAAAACCCCCCCCCCCCCCC@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 14|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-15|:M:MN:OOOOOOOPPPPP::::::::::::::::KKKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-16|@K@AB@44444444CCCCC@@@@@@@@@@@@@@@@KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-18|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-22|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-23|CCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-24|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4AAAAAAAAAAQQQQQQQQQQQQ===>>???=================================================
+15|@AAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+16|:::M:MN:OOOOOOO:::::::::::::::::::KKKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+17|@@@K@AB@44444444@@@@@@@@@@@@@@@@@@@KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+23|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+24|CCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+26|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4AAAAAAAAAAPPPPPPPPPPPP===>>???=================================================
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEFFFFFFFFFF
 28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-29|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
-30|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+30|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR

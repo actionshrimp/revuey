@@ -231,6 +231,19 @@ h.test('panel lists sections; selecting one jumps to it', function()
   h.eq(s.diff_win, vim.api.nvim_get_current_win())
   h.eq(s.layout.sections[2].start_row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   h.eq(2, s.current_section)
+  -- the guide view's file list has its folders too; <CR> on one shows its first file
+  local hrow
+  for row, g in pairs(s.panel_dirs) do
+    if g.dir == 'src/components' then
+      hrow = row
+    end
+  end
+  h.eq(' src/components:', vim.api.nvim_buf_get_lines(s.panel_buf, hrow - 1, hrow, false)[1])
+  vim.api.nvim_set_current_win(s.panel_win)
+  vim.api.nvim_win_set_cursor(s.panel_win, { hrow, 0 })
+  vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
+  h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  h.eq(s.layout.file_rows[s.panel_dirs[hrow].first], vim.api.nvim_win_get_cursor(s.diff_win)[1])
 end)
 
 h.test('mr marks a section reviewed, folds it, moves on; persists; resets when its hunks change', function()
@@ -475,9 +488,11 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
     local e = s.layout.map[m.row]
     return { e.path, e.line_idx, e.kind }
   end
-  h.eq({ 'src/components/Total.tsx', 1, 'add' }, at(marks[1]))
+  -- (the first core hunk with 3+ lines: the fake guide takes hunks in the diff's order, folders
+  -- first, so src/index.ts before src/components/)
+  h.eq({ 'src/index.ts', 1, 'del' }, at(marks[1]))
   h.eq('▼ guide The new module starts here.', marks[1].text)
-  h.eq({ 'src/components/Total.tsx', 2, 'add' }, at(marks[2]))
+  h.eq({ 'src/index.ts', 2, 'add' }, at(marks[2]))
   h.eq('▼ guide · 2 lines Note the sum call: totals are built here.', marks[2].text)
   h.ok(marks[2].n > 1, 'wrapped to the window')
   h.eq({ 'src/cart.ts', 1, 'add' }, at(marks[3]))

@@ -884,4 +884,34 @@ h.test('keys: the winbar hint on a comment, the g? float, the cost of the hint',
   child.type_keys('q')
 end)
 
+-- Folders: a monorepo's files under a header per folder in a narrow panel, the long headers
+-- abbreviated fish style; on a header the diff's winbar names <CR> and the folder's full path.
+h.test('panel folders: nested folders in a narrow panel, the hint on a header', function()
+  local d = h.repo('screen-folders', {
+    ['README.md'] = 'readme\n',
+    ['services/billing/src/handlers/invoices/create.ts'] = 'export const a = 1;\n',
+    ['services/billing/test/create.test.ts'] = 'test("a", () => {});\n',
+  }, {
+    ['README.md'] = 'readme, updated\n',
+    ['services/billing/src/handlers/invoices/create.ts'] = 'export const a = 2;\n',
+    ['services/billing/src/handlers/invoices/refund.ts'] = 'export const r = 1;\n',
+    ['services/billing/src/index.ts'] = 'export * from "./handlers/invoices/create";\n',
+    ['services/billing/test/create.test.ts'] = 'test("a", () => { expect(1).toBe(1); });\n',
+    ['packages/ui/components/Button.tsx'] = 'export const Button = () => null;\n',
+  })
+  start(d, 'main', 24, 90, { panel_width = 26 })
+  child.lua([[
+    local s = require('revuey.view').session
+    for row, g in pairs(s.panel_dirs) do
+      if g.dir == 'services/billing/src/handlers/invoices' then
+        vim.api.nvim_set_current_win(s.panel_win)
+        vim.api.nvim_win_set_cursor(s.panel_win, { row, 0 })
+        vim.api.nvim_exec_autocmds('CursorMoved', { buffer = s.panel_buf })
+      end
+    end
+    vim.cmd('redraw!')
+  ]])
+  screenshot('panel-folders-narrow')
+end)
+
 h.run()

@@ -6,23 +6,23 @@
 05| base ee2e6fcf  head 6b2be8a3           │          │ Why import both?                                                   
 06| working tree  ● uncommitted            │          ╰─                                                                   
 07|                                        │      2 + import { formatCurrency } from "./format";                           
-08|   M  logo.png  assets               bin│      3 + import { capitalize } from "./text";                                 
-09|   A  cart.ts  src             ✎2 +27 −0│      4▍+                                                                      
-10|   A  Total.tsx  src/components    +5 −0│          ╭─ You · just now · answered ─────────────────────────────────────── 
-11|   M  index.ts  src                +9 −6│          │ Is this tested?                                                    
-12|   D  legacy.ts  src               +0 −6│          │ ↳ claude (agent) · just now                                        
-13|   M  math.ts  src                +14 −8│          │   Yes, in cart.test.ts.                                            
-14|   R  text.ts  src                 +2 −2│          ╰─                                                                   
-15|                                        │      5 + export interface LineItem {                                          
-16| <CR> show  mr reviewed  gp diff        │      6 +   name: string;                                                      
-17| ]c [c hunk  ]f [f file  <Tab> fold     │      7 +   price: number;                                                     
-18| gd def  K hover  go open  R refresh    │      8 +   quantity: number;                                                  
-19| gu committed/working tree  q close     │      9 + }                                                                    
-20| gG AI guide                            │     10 +                                                                      
-21| g? all keys                            │     11 + export class Cart {                                                  
-22|~                                       │     12 +   private items: LineItem[] = [];                                    
-23|~                                       │     13 +                                                                      
-24|~                                       │     14 +   addItem(item: LineItem): this {                                    
+08| assets:                                │      3 + import { capitalize } from "./text";                                 
+09|     M  logo.png                     bin│      4▍+                                                                      
+10| src:                                   │          ╭─ You · just now · answered ─────────────────────────────────────── 
+11|     A  cart.ts                ✎2 +27 −0│          │ Is this tested?                                                    
+12|     M  index.ts                   +9 −6│          │ ↳ claude (agent) · just now                                        
+13|     D  legacy.ts                  +0 −6│          │   Yes, in cart.test.ts.                                            
+14|     M  math.ts                   +14 −8│          ╰─                                                                   
+15|     R  text.ts                    +2 −2│      5 + export interface LineItem {                                          
+16| src/components:                        │      6 +   name: string;                                                      
+17|     A  Total.tsx                  +5 −0│      7 +   price: number;                                                     
+18|                                        │      8 +   quantity: number;                                                  
+19| <CR> show  mr reviewed  gp diff        │      9 + }                                                                    
+20| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
+21| gd def  K hover  go open  R refresh    │     11 + export class Cart {                                                  
+22| gu committed/working tree  q close     │     12 +   private items: LineItem[] = [];                                    
+23| gG AI guide                            │     13 +                                                                      
+24| g? all keys                            │     14 +   addItem(item: LineItem): this {                                    
 25|~                                       │     15 +     this.items.push(item);                                           
 26|~                                       │     16 +     return this;                                                     
 27|~                                       │     17 +   }                                                                  
@@ -31,7 +31,7 @@
 30|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
 31|~                                       │     21 +   }                                                                  
 32|~                                       │     22 +                                                                      
-33|revuey://files [-]    7,1            All revuey://feature/cart..main [-]                              6,1             5%
+33|revuey://files [-]    9,1            All revuey://feature/cart..main [-]                              6,1             5%
 34|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -42,23 +42,23 @@
 05|CCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::::::::5DDDDDDDDDDEE5555555555555555:::::::::::::::::::::::::::::::::::::::::::::::::::
 06|FFFFFFFFFFFFFCCCCCCCCCCCCCCC::::::::::::5DDDDDDDDDDEE:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 07|::::::::::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-08|:A:FI:55555555CCCCCCCC:::::::::::::::CCC5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-09|JKJKLJMMMMMMMNNNNNJJJJJJJJJJJJJFFFAAABBB5GGGGHHHF>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-10|:A:AI:555555555CCCCCCCCCCCCCCCC::::AABBB5DDDDDDDDDDEEE222CCCCCCCCCCCCCCAAAAAAAAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE:
-11|:A:FI:55555555CCCCC::::::::::::::::AABBB5DDDDDDDDDDEE555555555555555::::::::::::::::::::::::::::::::::::::::::::::::::::
-12|:A:BI:555555555CCCCC:::::::::::::::AABBB5DDDDDDDDDDEEEEFFFFFFFFFFFFFFCCCCCCCCCCC::::::::::::::::::::::::::::::::::::::::
-13|:A:FI:5555555CCCCC::::::::::::::::AAABBB5DDDDDDDDDDEEEE555555555555555555555::::::::::::::::::::::::::::::::::::::::::::
-14|:A:FI:5555555CCCCC:::::::::::::::::AABBB5DDDDDDDDDDEE:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-15|::::::::::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-16|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-17|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-18|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-20|CCCCCCCCCCCC::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-21|CCCCCCCCCCCC::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-22|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-23|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-24|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+08|:FFFFFFF::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+09|:::A:FI:55555555:::::::::::::::::::::CCC5GGGGHHHF>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+10|:FFFF:::::::::::::::::::::::::::::::::::5DDDDDDDDDDEEE222CCCCCCCCCCCCCCAAAAAAAAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE:
+11|JJJKJKLJMMMMMMMJJJJJJJJJJJJJJJJFFFAAABBB5DDDDDDDDDDEE555555555555555::::::::::::::::::::::::::::::::::::::::::::::::::::
+12|:::A:FI:55555555:::::::::::::::::::AABBB5DDDDDDDDDDEEEEFFFFFFFFFFFFFFCCCCCCCCCCC::::::::::::::::::::::::::::::::::::::::
+13|:::A:BI:555555555::::::::::::::::::AABBB5DDDDDDDDDDEEEE555555555555555555555::::::::::::::::::::::::::::::::::::::::::::
+14|:::A:FI:5555555:::::::::::::::::::AAABBB5DDDDDDDDDDEE:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+15|:::A:FI:5555555::::::::::::::::::::AABBB5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+16|:FFFFFFFFFFFFFFF::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+17|:::A:AI:555555555::::::::::::::::::AABBB5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+18|::::::::::::::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC:::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+23|CCCCCCCCCCCC::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+24|CCCCCCCCCCCC::::::::::::::::::::::::::::5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 25|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 26|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -67,5 +67,5 @@
 30|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 31|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 32|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD5GGGGHHH>>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-33|00000000000000000000000000000000000000000OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-34|PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+33|00000000000000000000000000000000000000000NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+34|OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO

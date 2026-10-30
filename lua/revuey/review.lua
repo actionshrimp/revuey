@@ -325,6 +325,10 @@ function M.load(opts)
       return a.path < b.path
     end)
   end
+  if config.options.panel_folders then
+    -- grouped by directory, as the panel lists them, so ]f/[f and the diff follow the panel
+    files = require('revuey.folders').order(files)
+  end
   local branch, st_repo, st_branch, st_base
   if target then
     branch = target.branch

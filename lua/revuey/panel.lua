@@ -268,10 +268,13 @@ function M.render_notes(s, add, width)
 end
 
 ---@param s revuey.Session
----What the panel cursor is on: a file, a stack row, a guide section or the PR heading.
+---What the panel cursor is on: a file, a folder header, a stack row, a guide section or the PR
+---heading.
 local function row_item(s, row)
   if s.panel_files and s.panel_files[row] then
     return 'file', s.panel_files[row]
+  elseif s.panel_dirs and s.panel_dirs[row] then
+    return 'dir', s.panel_dirs[row].dir
   elseif s.panel_layers and s.panel_layers[row] then
     return 'layer', s.panel_layers[row]
   elseif s.panel_sections and s.panel_sections[row] then
@@ -282,13 +285,135 @@ local function row_item(s, row)
 end
 
 local function find_item(s, kind, id)
-  local maps = { file = s.panel_files, layer = s.panel_layers, section = s.panel_sections }
+  local maps = { file = s.panel_files, dir = s.panel_dirs, layer = s.panel_layers, section = s.panel_sections }
   if kind == 'forge' then
     return s.panel_forge and s.panel_forge.heading
   end
   for row, v in pairs(maps[kind] or {}) do
-    if v == id then
+    if v == id or (kind == 'dir' and v.dir == id) then
       return row
+    end
+  end
+end
+
+---Folder headers of the file list at `width`: the groups (folders.groups) with their header
+---text, and the dropped prefix. Cached per file list and width: redraws are frequent (every
+---mark), the list changes only on a refresh.
+local function folder_layout(s, width)
+  local r = s.review
+  local c = s.panel_folder_cache
+  if c and c.files == r.files and c.n == #r.files and c.width == width then
+    return c
+  end
+  local folders = require('revuey.folders')
+  local groups = folders.groups(r.files)
+  local dirs = {}
+  for i, g in ipairs(groups) do
+    dirs[i] = g.dir
+  end
+  local prefix = folders.common_prefix(dirs)
+  for _, g in ipairs(groups) do
+    if g.dir == '' then
+      g.text = ' ./'
+    else
+      local rel = prefix ~= '' and g.dir:sub(#prefix + 2) or g.dir
+      g.text = ' ' .. folders.abbreviate(rel, width - 2) .. ':'
+    end
+    g.path = g.dir == '' and './' or (g.dir .. '/')
+  end
+  c = {
+    files = r.files,
+    n = #r.files,
+    width = width,
+    groups = groups,
+    prefix = prefix,
+    prefix_text = prefix ~= '' and (' in ' .. folders.abbreviate(prefix, width - 5) .. '/') or nil,
+  }
+  s.panel_folder_cache = c
+  return c
+end
+
+---The file rows (`s.panel_rows`: file index -> row, `s.panel_files`: row -> file index). With
+---`panel_folders`, a header row per directory (`s.panel_dirs`: row -> its group) above its files,
+---which are indented and show only their name.
+local function render_files(s, add, marks, width)
+  local r = s.review
+  s.panel_rows = {}
+  s.panel_files = {}
+  s.panel_dirs = {}
+  local fl = require('revuey.config').options.panel_folders and #r.files > 0 and folder_layout(s, width)
+  local group_at = {}
+  if fl then
+    if fl.prefix_text then
+      add(fl.prefix_text, { { 0, #fl.prefix_text, 'RevueyPanelDir' } })
+    end
+    for _, g in ipairs(fl.groups) do
+      group_at[g.first] = g
+    end
+  end
+  local lead = fl and '   ' or ' '
+  local header, header_done
+  for fi, f in ipairs(r.files) do
+    local g = group_at[fi]
+    if g then
+      header_done = true
+      header = add(g.text, { { 1, #g.text, 'RevueyPanelFolder' } })
+      s.panel_dirs[header] = g
+    end
+    local ndone, ntotal = review_mod.file_progress(r, fi)
+    local done = ntotal > 0 and ndone == ntotal
+    header_done = header_done and done
+    local check = M.glyph(ndone, ntotal)
+    local name = vim.fs.basename(f.path)
+    local dir = fl and '' or vim.fs.dirname(f.path)
+    dir = dir == '.' and '' or dir
+    local dot = f.uncommitted and '●' or ' '
+    local prefix = lead .. check .. ' ' .. f.status .. dot .. ' '
+    local partial = (not done and ndone > 0) and (ndone .. '/' .. ntotal .. ' ') or ''
+    local ncom = require('revuey.comments_view').count(s, f.path)
+    local com = ncom > 0 and ('✎' .. ncom .. ' ') or ''
+    local counts_text = com .. partial .. (f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed))
+    -- fit name + dir before the right-aligned counts
+    local avail = width - vim.fn.strdisplaywidth(prefix) - vim.fn.strdisplaywidth(counts_text) - 2
+    if vim.fn.strdisplaywidth(name) > avail then
+      name = M.truncate(name, math.max(avail, 1))
+      dir = ''
+    elseif dir ~= '' then
+      local dir_avail = avail - vim.fn.strdisplaywidth(name) - 2
+      if dir_avail < 4 then
+        dir = ''
+      else
+        dir = M.truncate(dir, dir_avail, true)
+      end
+    end
+    local text = prefix .. name .. (dir ~= '' and ('  ' .. dir) or '')
+    local status_col = #lead + #check + 1
+    local hls = {
+      { #lead, #lead + #check, check == M.GLYPH_PARTIAL and 'RevueyPartial' or 'RevueyReviewed' },
+      { status_col, status_col + 1, status_hl[f.status] or 'Normal' },
+      { status_col + 1, status_col + 1 + #dot, 'RevueyUncommitted' },
+      { #prefix, #prefix + #name, done and 'RevueyUnreviewed' or 'Normal' },
+    }
+    if dir ~= '' then
+      hls[#hls + 1] = { #prefix + #name, #text, 'RevueyPanelDir' }
+    end
+    local row = add(text, hls)
+    local counts = partial ~= '' and { { partial, 'RevueyPartial' } } or {}
+    if com ~= '' then
+      table.insert(counts, 1, { com, 'RevueyCommentSign' })
+    end
+    if f.binary then
+      counts[#counts + 1] = { 'bin', 'Comment' }
+    else
+      counts[#counts + 1] = { '+' .. f.added, 'RevueyCountAdd' }
+      counts[#counts + 1] = { ' −' .. f.removed, 'RevueyCountDelete' }
+    end
+    marks[row].virt = counts
+    s.panel_rows[fi] = row
+    s.panel_files[row] = fi
+    -- the group's last file: a folder whose files are all reviewed is dimmed
+    if header and header_done and (fi == #r.files or group_at[fi + 1]) then
+      marks[header][1][3] = 'RevueyUnreviewed'
     end
   end
 end
@@ -390,60 +515,7 @@ function M.render(s, o)
     add(d, { { 0, #d, 'DiagnosticWarn' } })
   end
   add('')
-  s.panel_rows = {}
-  s.panel_files = {}
-  for fi, f in ipairs(r.files) do
-    local ndone, ntotal = review_mod.file_progress(r, fi)
-    local done = ntotal > 0 and ndone == ntotal
-    local check = M.glyph(ndone, ntotal)
-    local name = vim.fs.basename(f.path)
-    local dir = vim.fs.dirname(f.path)
-    dir = dir == '.' and '' or dir
-    local dot = f.uncommitted and '●' or ' '
-    local prefix = ' ' .. check .. ' ' .. f.status .. dot .. ' '
-    local partial = (not done and ndone > 0) and (ndone .. '/' .. ntotal .. ' ') or ''
-    local ncom = require('revuey.comments_view').count(s, f.path)
-    local com = ncom > 0 and ('✎' .. ncom .. ' ') or ''
-    local counts_text = com .. partial .. (f.binary and 'bin' or ('+' .. f.added .. ' −' .. f.removed))
-    -- fit name + dir before the right-aligned counts
-    local avail = width - vim.fn.strdisplaywidth(prefix) - vim.fn.strdisplaywidth(counts_text) - 2
-    if vim.fn.strdisplaywidth(name) > avail then
-      name = M.truncate(name, math.max(avail, 1))
-      dir = ''
-    else
-      local dir_avail = avail - vim.fn.strdisplaywidth(name) - 2
-      if dir_avail < 4 then
-        dir = ''
-      else
-        dir = M.truncate(dir, dir_avail, true)
-      end
-    end
-    local text = prefix .. name .. (dir ~= '' and ('  ' .. dir) or '')
-    local status_col = 1 + #check + 1
-    local hls = {
-      { 1, 1 + #check, check == M.GLYPH_PARTIAL and 'RevueyPartial' or 'RevueyReviewed' },
-      { status_col, status_col + 1, status_hl[f.status] or 'Normal' },
-      { status_col + 1, status_col + 1 + #dot, 'RevueyUncommitted' },
-      { #prefix, #prefix + #name, done and 'RevueyUnreviewed' or 'Normal' },
-    }
-    if dir ~= '' then
-      hls[#hls + 1] = { #prefix + #name, #text, 'RevueyPanelDir' }
-    end
-    local row = add(text, hls)
-    local counts = partial ~= '' and { { partial, 'RevueyPartial' } } or {}
-    if com ~= '' then
-      table.insert(counts, 1, { com, 'RevueyCommentSign' })
-    end
-    if f.binary then
-      counts[#counts + 1] = { 'bin', 'Comment' }
-    else
-      counts[#counts + 1] = { '+' .. f.added, 'RevueyCountAdd' }
-      counts[#counts + 1] = { ' −' .. f.removed, 'RevueyCountDelete' }
-    end
-    marks[row].virt = counts
-    s.panel_rows[fi] = row
-    s.panel_files[row] = fi
-  end
+  render_files(s, add, marks, width)
   local orphans = require('revuey.comments_view').orphans(s)
   if orphans > 0 then
     local t = (' ✎%d on files no longer in this review'):format(orphans)

@@ -3,40 +3,40 @@
 02| Files                       ○ no agent │ Guide 1. Core change                                            ]n next · gN hide notes 
 03| Guide                      0/2 reviewed│          Binary file not shown                                                          
 04|   1 Core change                       4│                                                                                         
-05|   2 Follow-up wiring                  3│  A       src/components/Total.tsx  @@ -0,0 +1,5 @@   +5 −0  added                       
+05|   2 Follow-up wiring                  3│  M       src/index.ts  @@ -1,13 +1,16 @@   +9 −6                                        
 06|                                        │           ▼ guide  The new module starts here.                                          
-07| feature/cart → main                    │      1 + import { formatCurrency } from "../format";                                    
+07| feature/cart → main                    │  1     - import { add, circleArea } from "./math";                                      
 08| 7 files  +57 −22  ✓ 0/7                │           ▼ guide · 2 lines  Note the sum call: totals are built here.                  
-09| base ee2e6fcf  head 6b2be8a3           │      2 +                                                                                
-10| working tree  ● uncommitted            │      3 + export function Total(props: { amount: number }) {                             
-11|                                        │      4 +   return <strong className="total">{formatCurrency(props.amount)}</strong>;    
-12|   M  logo.png  assets               bin│      5 + }                                                                              
-13|   A  cart.ts  src                +27 −0│                                                                                         
-14|   A  Total.tsx  src/components    +5 −0│  D       src/legacy.ts  @@ -1,6 +0,0 @@   +0 −6  deleted                                
-15|   M  index.ts  src                +9 −6│  1     - // Old helpers kept for backwards compatibility.                               
-16|   D  legacy.ts  src               +0 −6│  2     - export function oldTotal(prices: number[]): number {                           
-17|   M  math.ts  src                +14 −8│  3     -   var t = 0;                                                                   
-18|   R  text.ts  src                 +2 −2│  4     -   for (var i = 0; i < prices.length; i++) t += prices[i];                      
-19|                                        │  5     -   return t;                                                                    
-20| ]] [[ section  mr reviewed             │  6     - }                                                                              
-21| ]c [c hunk  <Tab> fold  gp diff        │                                                                                         
-22| gd def  K hover  go open  R refresh    │  R       src/utils/strings.ts → src/text.ts  @@ -7,8 +7,8 @@ export function truncate(s:
-23| gG diff view  gR regenerate  q close   │  7   7     return s.length > max ? s.slice(0, max - 1) + "…" : s;                       
-24| ]n [n line note  gN show/collapse      │  8   8   }                                                                              
-25| g? all keys                            │  9   9                                                                                  
-26|~                                       │ 10     - export function slugify(s: string): string {                                   
-27|~                                       │ 11     -   return s                                                                     
-28|~                                       │     10 + export function slugify(input: string): string {                               
-29|~                                       │     11 +   return input                                                                 
-30|~                                       │ 12  12       .toLowerCase()                                                             
-31|~                                       │ 13  13       .replace(/[^a-z0-9]+/g, "-")                                               
-32|~                                       │ 14  14       .replace(/(^-|-$)/g, "");                                                  
-33|~                                       │                                                                                         
-34|~                                       │       ▾  ☐ 2. Follow-up wiring   3 hunks                                                
-35|~                                       │          Call sites and glue.                                                           
-36|~                                       │                                                                                         
-37|~                                       │          • one                                                                          
-38|~                                       │          • two                                                                          
+09| base ee2e6fcf  head 6b2be8a3           │      1 + import { add, circleArea, subtract } from "./math";                            
+10| working tree  ● uncommitted            │  2   2   import { formatCurrency } from "./format";                                     
+11|                                        │  3     - import { capitalize } from "./utils/strings";                                  
+12| assets:                                │  4     - import { oldTotal } from "./legacy";                                           
+13|     M  logo.png                     bin│      3 + import { capitalize } from "./text";                                           
+14| src:                                   │      4 + import { Cart } from "./cart";                                                 
+15|     A  cart.ts                   +27 −0│  5   5                                                                                  
+16|     M  index.ts                   +9 −6│  6   6   export function main(): void {                                                 
+17|     D  legacy.ts                  +0 −6│  7     -   const total = oldTotal([1, 2, 3]);                                           
+18|     M  math.ts                   +14 −8│  8     -   console.log(capitalize("total"), formatCurrency(total));                     
+19|     R  text.ts                    +2 −2│      7 +   const cart = new Cart()                                                      
+20| src/components:                        │      8 +     .addItem({ name: "apple", price: 0.5, quantity: 6 })                       
+21|     A  Total.tsx                  +5 −0│      9 +     .addItem({ name: "pear", price: 0.75, quantity: 2 });                      
+22|                                        │     10 +   console.log(capitalize("total"), formatCurrency(cart.total()));              
+23| ]] [[ section  mr reviewed             │     11 +   console.log(cart.describe());                                                
+24| ]c [c hunk  <Tab> fold  gp diff        │  9  12     console.log("area", circleArea(2));                                          
+25| gd def  K hover  go open  R refresh    │ 10     -   console.log("sum", add(2, 3));                                               
+26| gG diff view  gR regenerate  q close   │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));                       
+27| ]n [n line note  gN show/collapse      │ 11  14   }                                                                              
+28| g? all keys                            │ 12  15                                                                                  
+29|~                                       │ 13  16   main();                                                                        
+30|~                                       │                                                                                         
+31|~                                       │  M       src/math.ts  @@ -3,17 +3,23 @@ export function add(a: number, b: number): numbe
+32|~                                       │  3   3     return a + b;                                                                
+33|~                                       │  4   4   }                                                                              
+34|~                                       │  5   5                                                                                  
+35|~                                       │      6 + /** Subtract b from a. */                                                      
+36|~                                       │      7 + export function subtract(a: number, b: number): number {                       
+37|~                                       │      8 +   return a - b;                                                                
+38|~                                       │      9 + }                                                                              
 39|revuey://files [-]    2,1            All revuey://feature/cart..main [-]                                        16,1           12%
 40|                                                                                                                                  
 
@@ -45,39 +45,39 @@
 02|3333333333333333333333333333333333333333456666665555555555555555555555555555555555555555555555555555555555775555555577555555555555
 03|22222288888888888888888888889999999999994::::::::::9999999999999999999998888888888888888888888888888888888888888888888888888888888
 04|;<;=;>>>>>>>>>>>;;;;;;;;;;;;;;;;;;;;;;;94::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-05|8?828444444444444444488888888888888888894??????????@@@@@@@@@@@@@@@@@@@@@@@@AAAAAAAAAAAAAAAAABBBCCDDDCCCCCCCBBBBBBBBBBBBBBBBBBBBBBB
-06|88888888888888888888888888888888888888884::::::::::EEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF88
-07|22222222222222222222888888888888888888884GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-08|8888888888???LLLL999999988888888888888884::::::::::EEEEEEEEEEEEEEEEEEEFFFFFFFFFFMMMFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF88
-09|99999999999999999999999999999888888888884NNNNOOOIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-10|PPPPPPPPPPPPP9999999999999998888888888884NNNNOOOIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-11|88888888888888888888888888888888888888884NNNNOOOIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-12|8?8PQ844444444999999998888888888888889994NNNNOOOIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-13|8?8?Q84444444999998888888888888888???LLL4::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-14|8?8?Q844444444499999999999999998888??LLL4LLLLLLLLLL@@@@@@@@@@@@@AAAAAAAAAAAAAAAAABBBCCDDDDDDDDDDDDBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
-15|8?8PQ844444444999998888888888888888??LLL4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-16|8?8LQ844444444499999888888888888888??LLL4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-17|8?8PQ84444444999998888888888888888???LLL4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-18|8?8PQ844444449999988888888888888888??LLL4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-19|88888888888888888888888888888888888888884RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-20|99999999999999999999999999988888888888884RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-21|99999999999999999999999999999999888888884::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-22|99999999999999999999999999999999999988884PPPPPPPPPP@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-23|99999999999999999999999999999999999998884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
-24|99999999999999999999999999999999998888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
-25|99999999999988888888888888888888888888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
-26|::::::::::::::::::::::::::::::::::::::::4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-27|::::::::::::::::::::::::::::::::::::::::4RRRRRRRSSSTTTTTTTTTUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-28|::::::::::::::::::::::::::::::::::::::::4NNNNOOOIIIKKKKKKKKKKKKKKKKKKKKKKKKVVVVVKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-29|::::::::::::::::::::::::::::::::::::::::4NNNNOOOIIIKKKKKKKKKVVVVVKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-30|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
-31|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+05|8?828444444444444444488888888888888888894@@@@@@@@@@AAAAAAAAAAAABBBBBBBBBBBBBBBBBBBCCCDDEEECCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+06|88888888888888888888888888888888888888884::::::::::FFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG88
+07|22222222222222222222888888888888888888884HHHHHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+08|8888888888???LLLL999999988888888888888884::::::::::FFFFFFFFFFFFFFFFFFFGGGGGGGGGGMMMGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG88
+09|99999999999999999999999999999888888888884NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQRRRRRRRRRRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+10|@@@@@@@@@@@@@9999999999999998888888888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+11|88888888888888888888888888888888888888884SSSSSSSIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKTTTTTTTTTTTTTKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+12|8@@@@@@@888888888888888888888888888888884SSSSSSSIIIKKKKKKKKKTTTTTTTTKKKKKKKKKKKTTTTTTKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+13|888?8@U8444444448888888888888888888889994NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQRRRRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+14|8@@@@888888888888888888888888888888888884NNNNOOOPPPQQQQQQQQQRRRRQQQQQQQQQQQRRRRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+15|888?8?U844444448888888888888888888???LLL4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+16|888?8@U8444444448888888888888888888??LLL4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+17|888?8LU8444444444888888888888888888??LLL4SSSSSSSIIIKKKKKKKKTTTTTKKKTTTTTTTTKTTTTTTTTTKTKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+18|888?8@U844444448888888888888888888???LLL4SSSSSSSIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+19|888?8@U8444444488888888888888888888??LLL4NNNNOOOPPPQQQQQQQQRRRRQQQRRRRRRRRQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+20|8@@@@@@@@@@@@@@@8888888888888888888888884NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+21|888?8?U8444444444888888888888888888??LLL4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+22|88888888888888888888888888888888888888884NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+23|99999999999999999999999999988888888888884NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+24|99999999999999999999999999999999888888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+25|99999999999999999999999999999999999988884SSSSSSSIIIKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+26|99999999999999999999999999999999999998884NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQRRRRRRRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQQQQQQQQQ
+27|99999999999999999999999999999999998888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+28|99999999999988888888888888888888888888884NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+29|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+30|::::::::::::::::::::::::::::::::::::::::4::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
+31|::::::::::::::::::::::::::::::::::::::::4@@@@@@@@@@AAAAAAAAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 32|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
-33|::::::::::::::::::::::::::::::::::::::::4::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-34|::::::::::::::::::::::::::::::::::::::::42222222222WWXXYYYYYYYYYYYYYYYYYYYYWWWWWWWYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY
-35|::::::::::::::::::::::::::::::::::::::::4::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-36|::::::::::::::::::::::::::::::::::::::::4::::::::::8888888888888888888888888888888888888888888888888888888888888888888888888888888
-37|::::::::::::::::::::::::::::::::::::::::4::::::::::P888888888888888888888888888888888888888888888888888888888888888888888888888888
-38|::::::::::::::::::::::::::::::::::::::::4::::::::::P888888888888888888888888888888888888888888888888888888888888888888888888888888
-39|00000000000000000000000000000000000000000ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
-40|[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[
+33|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+34|::::::::::::::::::::::::::::::::::::::::4NNNNNNNNNN8888888888888888888888888888888888888888888888888888888888888888888888888888888
+35|::::::::::::::::::::::::::::::::::::::::4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+36|::::::::::::::::::::::::::::::::::::::::4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+37|::::::::::::::::::::::::::::::::::::::::4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+38|::::::::::::::::::::::::::::::::::::::::4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+39|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+40|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW

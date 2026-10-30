@@ -13,21 +13,21 @@
 12| full stack (3 layers)                  │      8 + }                                                                    
 13| committed only  (not HEAD)             │      9 +                                                                      
 14|                                        │     10 + export class Cart {                                                  
-15|   A  cart.ts  src                +25 −0│     11 +   private items: LineItem[] = [];                                    
-16|   A  Total.tsx  src/components    +6 −0│     12 +                                                                      
-17|   M  index.ts  src                +3 −2│     13 +   addItem(item: LineItem): this {                                    
-18|   M  math.ts  src                +11 −5│     14 +     this.items.push(item);                                           
-19|                                        │     15 +     return this;                                                     
-20| <CR> show  mr reviewed  gp diff        │     16 +   }                                                                  
-21| ]c [c hunk  ]f [f file  <Tab> fold     │     17 +                                                                      
-22| gd def  K hover  go open  R refresh    │     18 +   total(): number {                                                  
-23| gu committed/working tree  q close     │     19 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-24| gG AI guide                            │     20 +   }                                                                  
-25| ]s [s layer  gs full stack             │     21 +                                                                      
-26| gS check out layer                     │     22 +   names(): string {                                                  
-27| g? all keys                            │     23 +     return this.items.map((i) => capitalize(i.name)).join(", ");     
-28|~                                       │     24 +   }                                                                  
-29|revuey://files [-]    13,1           All revuey://stack/ui..main [-]                                  1,1            Top
+15| src:                                   │     11 +   private items: LineItem[] = [];                                    
+16|     A  cart.ts                   +25 −0│     12 +                                                                      
+17|     M  index.ts                   +3 −2│     13 +   addItem(item: LineItem): this {                                    
+18|     M  math.ts                   +11 −5│     14 +     this.items.push(item);                                           
+19| src/components:                        │     15 +     return this;                                                     
+20|     A  Total.tsx                  +6 −0│     16 +   }                                                                  
+21|                                        │     17 +                                                                      
+22| <CR> show  mr reviewed  gp diff        │     18 +   total(): number {                                                  
+23| ]c [c hunk  ]f [f file  <Tab> fold     │     19 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
+24| gd def  K hover  go open  R refresh    │     20 +   }                                                                  
+25| gu committed/working tree  q close     │     21 +                                                                      
+26| gG AI guide                            │     22 +   names(): string {                                                  
+27| ]s [s layer  gs full stack             │     23 +     return this.items.map((i) => capitalize(i.name)).join(", ");     
+28| gS check out layer                     │     24 +   }                                                                  
+29|revuey://files [-]    14,1           Top revuey://stack/ui..main [-]                                  1,1            Top
 30|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -45,19 +45,19 @@
 12|??????????????????????9999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 13|???????????????AAAAAAAAAAAA99999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 14|99999999999999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-15|LMLMNLOOOOOOOPPPPPLLLLLLLLLLLLLLLLJJJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-16|9J9J@9444444444AAAAAAAAAAAAAAAA9999JJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-17|9J9?@944444444AAAAA9999999999999999JJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-18|9J9?@94444444AAAAA9999999999999999JJJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-19|99999999999999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+15|9????999999999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+16|LLLMLMNLOOOOOOOLLLLLLLLLLLLLLLLLLLJJJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+17|999J9?@9444444449999999999999999999JJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+18|999J9?@944444449999999999999999999JJJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+19|9???????????????9999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+20|999J9J@9444444444999999999999999999JJKKK4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+21|99999999999999999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-24|AAAAAAAAAAAA99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-25|AAAAAAAAAAAAAAAAAAAAAAAAAAA99999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-26|AAAAAAAAAAAAAAAAAAA9999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-27|AAAAAAAAAAAA99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
-29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-30|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+26|AAAAAAAAAAAA99999999999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAA99999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+28|AAAAAAAAAAAAAAAAAAA9999999999999999999994FFFFGGGHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+29|00000000000000000000000000000000000000000PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+30|QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ

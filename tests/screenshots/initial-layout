@@ -6,23 +6,23 @@
 05| base ee2e6fcf  head 6b2be8a3           │                                                                               
 06| working tree  ● uncommitted            │  A     ▾ src/cart.ts   +27 −0  added                                          
 07|                                        │          @@ -0,0 +1,27 @@                                                     
-08|   M  logo.png  assets               bin│      1 + import { multiply, sum } from "./math";                              
-09|   A  cart.ts  src                +27 −0│      2 + import { formatCurrency } from "./format";                           
-10|   A  Total.tsx  src/components    +5 −0│      3 + import { capitalize } from "./text";                                 
-11|   M  index.ts  src                +9 −6│      4 +                                                                      
-12|   D  legacy.ts  src               +0 −6│      5 + export interface LineItem {                                          
-13|   M  math.ts  src                +14 −8│      6 +   name: string;                                                      
-14|   R  text.ts  src                 +2 −2│      7 +   price: number;                                                     
-15|                                        │      8 +   quantity: number;                                                  
-16| <CR> show  mr reviewed  gp diff        │      9 + }                                                                    
-17| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
-18| gd def  K hover  go open  R refresh    │     11 + export class Cart {                                                  
-19| gu committed/working tree  q close     │     12 +   private items: LineItem[] = [];                                    
-20| gG AI guide                            │     13 +                                                                      
-21| g? all keys                            │     14 +   addItem(item: LineItem): this {                                    
-22|~                                       │     15 +     this.items.push(item);                                           
-23|~                                       │     16 +     return this;                                                     
-24|~                                       │     17 +   }                                                                  
+08| assets:                                │      1 + import { multiply, sum } from "./math";                              
+09|     M  logo.png                     bin│      2 + import { formatCurrency } from "./format";                           
+10| src:                                   │      3 + import { capitalize } from "./text";                                 
+11|     A  cart.ts                   +27 −0│      4 +                                                                      
+12|     M  index.ts                   +9 −6│      5 + export interface LineItem {                                          
+13|     D  legacy.ts                  +0 −6│      6 +   name: string;                                                      
+14|     M  math.ts                   +14 −8│      7 +   price: number;                                                     
+15|     R  text.ts                    +2 −2│      8 +   quantity: number;                                                  
+16| src/components:                        │      9 + }                                                                    
+17|     A  Total.tsx                  +5 −0│     10 +                                                                      
+18|                                        │     11 + export class Cart {                                                  
+19| <CR> show  mr reviewed  gp diff        │     12 +   private items: LineItem[] = [];                                    
+20| ]c [c hunk  ]f [f file  <Tab> fold     │     13 +                                                                      
+21| gd def  K hover  go open  R refresh    │     14 +   addItem(item: LineItem): this {                                    
+22| gu committed/working tree  q close     │     15 +     this.items.push(item);                                           
+23| gG AI guide                            │     16 +     return this;                                                     
+24| g? all keys                            │     17 +   }                                                                  
 25|~                                       │     18 +                                                                      
 26|~                                       │     19 +   total(): number {                                                  
 27|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
@@ -38,26 +38,26 @@
 05|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@===========4AAAAAAAAAA=====================================================================
 06|BBBBBBBBBBBBB@@@@@@@@@@@@@@@============4>>>>>>>>>>CCCCCCCCCCC;;;DDDEEEDDDDDDD;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 07|========================================4AAAAAAAAAAFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-08|8H8IJ8KKKKKKKKLLLLLLLL888888888888888@@@4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-09|=>=>Q=4444444@@@@@================>>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-10|=>=>Q=444444444@@@@@@@@@@@@@@@@====>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-11|=>=BQ=44444444@@@@@================>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-12|=>=?Q=444444444@@@@@===============>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-13|=>=BQ=4444444@@@@@================>>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-14|=>=BQ=4444444@@@@@=================>>???4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-15|========================================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-16|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@========4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-17|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-20|@@@@@@@@@@@@============================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-21|@@@@@@@@@@@@============================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-23|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-24|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-26|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-29|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
-30|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+08|=BBBBBBB================================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+09|888L8MN8OOOOOOOO888888888888888888888@@@4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+10|=BBBB===================================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+11|===>=>P=4444444===================>>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+12|===>=BP=44444444===================>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+13|===>=?P=444444444==================>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+14|===>=BP=4444444===================>>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+15|===>=BP=4444444====================>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+16|=BBBBBBBBBBBBBBB========================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+17|===>=>P=444444444==================>>???4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+18|========================================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+19|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@========4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+20|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+21|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@====4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+22|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@=====4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+23|@@@@@@@@@@@@============================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+24|@@@@@@@@@@@@============================4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+25|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+26|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HHHHIIIJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+30|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR

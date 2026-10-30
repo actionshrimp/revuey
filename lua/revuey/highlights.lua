@@ -69,6 +69,7 @@ function M.setup()
   set('RevueyMode', { link = 'Special' })
   set('RevueyUncommitted', { link = 'DiagnosticWarn' })
   set('RevueyPanelDir', { link = 'Comment' })
+  set('RevueyPanelFolder', { link = 'Directory' }) -- a folder header (dimmed when all reviewed)
   set('RevueyPanelCurrent', { link = 'CursorLine' })
   set('RevueyWinbar', { link = 'WinBar' })
   -- the winbar's key hint (key_help) and the g? float

@@ -6,16 +6,16 @@
 05| base 1f2ed75d  head eac31334           │          @@ -17,7 +17,7 @@ line 16                                            
 06| working tree  ● uncommitted            │ 17  17   line 17                                                              
 07|                                        │ 18  18   line 18                                                              
-08|   A  a.txt                        +2 −0│ 19  19   line 19                                                              
-09| ◐ M  m.txt                    1/3 +3 −3│ 20     - line 20                                                              
-10|                                        │     20 + line twenty                                                          
-11| <CR> show  mr reviewed  gp diff        │ 21  21   line 21                                                              
-12| ]c [c hunk  ]f [f file  <Tab> fold     │ 22  22   line 22                                                              
-13| gd def  K hover  go open  R refresh    │ 23  23   line 23                                                              
-14| gu committed/working tree  q close     │          @@ -32,7 +32,7 @@ line 31                                            
-15| gG AI guide                            │ 32  32   line 32                                                              
-16| g? all keys                            │ 33  33   line 33                                                              
-17|~                                       │ 34  34   line 34                                                              
+08| ./                                     │ 19  19   line 19                                                              
+09|     A  a.txt                      +2 −0│ 20     - line 20                                                              
+10|   ◐ M  m.txt                  1/3 +3 −3│     20 + line twenty                                                          
+11|                                        │ 21  21   line 21                                                              
+12| <CR> show  mr reviewed  gp diff        │ 22  22   line 22                                                              
+13| ]c [c hunk  ]f [f file  <Tab> fold     │ 23  23   line 23                                                              
+14| gd def  K hover  go open  R refresh    │          @@ -32,7 +32,7 @@ line 31                                            
+15| gu committed/working tree  q close     │ 32  32   line 32                                                              
+16| gG AI guide                            │ 33  33   line 33                                                              
+17| g? all keys                            │ 34  34   line 34                                                              
 18|~                                       │ 35     - line 35                                                              
 19|~                                       │     35 + line thirty-five                                                     
 20|~                                       │ 36  36   line 36                                                              
@@ -37,7 +37,7 @@
 36|~                                       │                                                                               
 37|~                                       │                                                                               
 38|~                                       │                                                                               
-39|revuey://files [-]    7,1            All revuey://feat..main [-]                                      15,1           Bot
+39|revuey://files [-]    8,1            All revuey://feat..main [-]                                      15,1           Bot
 40|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -48,17 +48,17 @@
 05|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994EEEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
 06|:::::::::::::AAAAAAAAAAAAAAA9999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
 07|99999999999999999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-08|9?9?I944444999999999999999999999999??@@@4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-09|JKJKLJMMMMMJJJJJJJJJJJJJJJJJJJJ::::??@@@4NNNNNNNOOOPPPPPQQPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-10|99999999999999999999999999999999999999994HHHHRRRSSSTTTTTUUUUUUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-11|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-13|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-14|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-15|AAAAAAAAAAAA99999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+08|9::99999999999999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+09|999?9?I9444449999999999999999999999??@@@4JJJJJJJKKKLLLLLMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+10|NNNONOPNQQQQQNNNNNNNNNNNNNNNNNN::::??@@@4HHHHRRRSSSTTTTTUUUUUUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+11|99999999999999999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+13|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+14|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994BBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+15|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
 16|AAAAAAAAAAAA99999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-17|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
-18|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4NNNNNNNOOOPPPPPQQPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+17|AAAAAAAAAAAA99999999999999999999999999994HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
+18|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4JJJJJJJKKKLLLLLMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
 19|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHRRRSSSTTTTTUUUUUUUUUUUTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 20|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999
 21|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4HHHHHHHHHH999999999999999999999999999999999999999999999999999999999999999999999

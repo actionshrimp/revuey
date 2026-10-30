@@ -14,19 +14,19 @@
 13| layer 3/3  @ detached HEAD             │ 19  20     }                                                                  
 14| working tree  ● uncommitted            │     21 +                                                                      
 15|                                        │     22 +   names(): string {                                                  
-16|   M  cart.ts  src                 +5 −0│     23 +     return this.items.map((i) => capitalize(i.name)).join(", ");     
-17|   A  Total.tsx  src/components    +6 −0│     24 +   }                                                                  
-18|                                        │ 20  25   }                                                                    
-19| <CR> show  mr reviewed  gp diff        │                                                                               
-20| ]c [c hunk  ]f [f file  <Tab> fold     │  A     ▾ src/components/Total.tsx   +6 −0  added                              
-21| gd def  K hover  go open  R refresh    │          @@ -0,0 +1,6 @@                                                      
-22| gu committed/working tree  q close     │      1 + import { formatCurrency } from "../format";                          
-23| gG AI guide                            │      2 + import { Cart } from "../cart";                                      
-24| ]s [s layer  gs full stack  ! notes    │      3 +                                                                      
-25| gS check out layer                     │      4 + export function Total(props: { cart: Cart }) {                       
-26| g? all keys                            │      5 +   return <strong className="total">{formatCurrency(props.cart.total()
-27|~                                       │      6 + }                                                                    
-28|~                                       │                                                                               
+16| src:                                   │     23 +     return this.items.map((i) => capitalize(i.name)).join(", ");     
+17|     M  cart.ts                    +5 −0│     24 +   }                                                                  
+18| src/components:                        │ 20  25   }                                                                    
+19|     A  Total.tsx                  +6 −0│                                                                               
+20|                                        │  A     ▾ src/components/Total.tsx   +6 −0  added                              
+21| <CR> show  mr reviewed  gp diff        │          @@ -0,0 +1,6 @@                                                      
+22| ]c [c hunk  ]f [f file  <Tab> fold     │      1 + import { formatCurrency } from "../format";                          
+23| gd def  K hover  go open  R refresh    │      2 + import { Cart } from "../cart";                                      
+24| gu committed/working tree  q close     │      3 +                                                                      
+25| gG AI guide                            │      4 + export function Total(props: { cart: Cart }) {                       
+26| ]s [s layer  gs full stack  ! notes    │      5 +   return <strong className="total">{formatCurrency(props.cart.total()
+27| gS check out layer                     │      6 + }                                                                    
+28| g? all keys                            │                                                                               
 29|revuey://files [-]    1,1            All revuey://origin/stack/ui..origin/stack/cart [-]              1,1            All
 30|                                                                                                                        
 
@@ -46,18 +46,18 @@
 13|AAAAAAAAAACCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 14|AAAAAAAAAAAAACCCCCCCCCCCCCCC@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 15|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-16|:M:NO:PPPPPPPQQQQQ:::::::::::::::::KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-17|@K@KB@444444444CCCCCCCCCCCCCCCC@@@@KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-18|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-19|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-20|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4KKKKKKKKKKRRRRRRRRRRRRRRRRRRRRRRRR===>>???>>>>>>>==============================
-21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4DDDDDDDDDDEEEEEEEEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+16|@AAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+17|:::M:NO:PPPPPPP::::::::::::::::::::KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+18|@AAAAAAAAAAAAAAA@@@@@@@@@@@@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+19|@@@K@KB@444444444@@@@@@@@@@@@@@@@@@KKLLL4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+20|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4KKKKKKKKKKQQQQQQQQQQQQQQQQQQQQQQQQ===>>???>>>>>>>==============================
+21|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4DDDDDDDDDDEEEEEEEEEEEEEEEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 22|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-23|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-26|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-27|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-28|DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-29|00000000000000000000000000000000000000000SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
-30|TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+23|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+24|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+27|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+28|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+29|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
+30|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

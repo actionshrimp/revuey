@@ -11,15 +11,15 @@
 10| base 1f2ed75d  head eac31334           │                                                                               
 11| working tree  ● uncommitted            │       ▾  ☐ 1. Core change   2 hunks                                           
 12|                                        │          The heart of the change: totals move into cart.ts.                   
-13|   A  a.txt                        +2 −0│                                                                               
-14|   M● m.txt                        +3 −3│          ▎ Important: Callers now get rounded totals.                         
-15|                                        │                                                                               
-16| ]] [[ section  mr reviewed             │  A       a.txt  @@ -0,0 +1,2 @@   +2 −0  added                                
-17| ]c [c hunk  <Tab> fold  gp diff        │            Introduces the new total helper.                                   
-18| gd def  K hover  go open  R refresh    │      1 + new                                                                  
-19| gG diff view  gR regenerate  q close   │      2 + file                                                                 
-20| g? all keys                            │                                                                               
-21|~                                       │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1  ✎ edited since guide       
+13| ./                                     │                                                                               
+14|     A  a.txt                      +2 −0│          ▎ Important: Callers now get rounded totals.                         
+15|     M● m.txt                      +3 −3│                                                                               
+16|                                        │  A       a.txt  @@ -0,0 +1,2 @@   +2 −0  added                                
+17| ]] [[ section  mr reviewed             │            Introduces the new total helper.                                   
+18| ]c [c hunk  <Tab> fold  gp diff        │      1 + new                                                                  
+19| gd def  K hover  go open  R refresh    │      2 + file                                                                 
+20| gG diff view  gR regenerate  q close   │                                                                               
+21| g? all keys                            │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1  ✎ edited since guide       
 22|~                                       │ 17  17   line 17                                                              
 23|~                                       │ 18  18   line 18                                                              
 24|~                                       │ 19  19   line 19                                                              
@@ -37,7 +37,7 @@
 36|~                                       │                                                                               
 37|~                                       │  M       m.txt  @@ -1,6 +1,6 @@   +1 −1                                       
 38|~                                       │  1   1   line 1                                                               
-39|revuey://files [-]    10,0-1         All revuey://feat..main [-]                                      1,1            Top
+39|revuey://files [-]    11,1           All revuey://feat..main [-]                                      1,1            Top
 40|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -52,24 +52,24 @@
 09|7777777777>>AAA88888887777777777777777774==========777777777777777777777777777777777777777777777777777777777777777777777
 10|88888888888888888888888888888777777777774==========777777777777777777777777777777777777777777777777777777777777777777777
 11|@@@@@@@@@@@@@88888888888888877777777777742222222222BBCCDDDDDDDDDDDDDDDBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-12|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4==========7777777777777777777777777EEEEEE77777777777@@@@@@@77777777777777777777
-13|7>7><744444777777777777777777777777>>AAA4==========777777777777777777777777777777777777777777777777777777777777777777777
-14|7>7@<744444777777777777777777777777>>AAA4==========FFGGGGGGGGGFF77777777777777777777777777777777777777777777777777777777
-15|77777777777777777777777777777777777777774==========777777777777777777777777777777777777777777777777777777777777777777777
-16|88888888888888888888888888877777777777774>>>>>>>>>>HHHHHIIIIIIIIIIIIIIIIIJJJKKLLLKKKKKKKJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-17|88888888888888888888888888888888777777774==========77@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@77777777777777777777777777777777777
-18|88888888888888888888888888888888888877774MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-19|88888888888888888888888888888888888887774MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-20|88888888888877777777777777777777777777774==========777777777777777777777777777777777777777777777777777777777777777777777
-21|========================================4@@@@@@@@@@HHHHHIIIIIIIIIIIIIIIIIIIIIIIIIIIJJJKKLLLQQQQQQQQQQQQQQQQQQQQQQJJJJJJJ
-22|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-23|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-24|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-25|========================================4RRRRRRRSSSTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-26|========================================4MMMMNNNOOOPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-27|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-28|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-29|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
+12|77777777777777777777777777777777777777774==========7777777777777777777777777EEEEEE77777777777@@@@@@@77777777777777777777
+13|;FF;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4==========777777777777777777777777777777777777777777777777777777777777777777777
+14|777>7><7444447777777777777777777777>>AAA4==========GGHHHHHHHHHGG77777777777777777777777777777777777777777777777777777777
+15|777>7@<7444447777777777777777777777>>AAA4==========777777777777777777777777777777777777777777777777777777777777777777777
+16|77777777777777777777777777777777777777774>>>>>>>>>>IIIIIJJJJJJJJJJJJJJJJJKKKLLMMMLLLLLLLKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+17|88888888888888888888888888877777777777774==========77@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@77777777777777777777777777777777777
+18|88888888888888888888888888888888777777774NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+19|88888888888888888888888888888888888877774NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+20|88888888888888888888888888888888888887774==========777777777777777777777777777777777777777777777777777777777777777777777
+21|88888888888877777777777777777777777777774@@@@@@@@@@IIIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJKKKLLMMMRRRRRRRRRRRRRRRRRRRRRRKKKKKKK
+22|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+23|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+24|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+25|========================================4SSSSSSSTTTUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+26|========================================4NNNNOOOPPPQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+27|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+28|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+29|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
 30|========================================4==========777777777777777777777777777777777777777777777777777777777777777777777
 31|========================================42222222222BBCCDDDDDDDDDDDDDDDDDDDDBBBBBBBDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 32|========================================4==========777777777777777777777777777777777777777777777777777777777777777777777
@@ -77,7 +77,7 @@
 34|========================================4==========@77777777777777777777777777777777777777777777777777777777777777777777
 35|========================================4==========@77777777777777777777777777777777777777777777777777777777777777777777
 36|========================================4==========777777777777777777777777777777777777777777777777777777777777777777777
-37|========================================4@@@@@@@@@@HHHHHIIIIIIIIIIIIIIIIIJJJKKLLLJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-38|========================================4MMMMMMMMMM777777777777777777777777777777777777777777777777777777777777777777777
-39|00000000000000000000000000000000000000000UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
-40|VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+37|========================================4@@@@@@@@@@IIIIIJJJJJJJJJJJJJJJJJKKKLLMMMKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+38|========================================4NNNNNNNNNN777777777777777777777777777777777777777777777777777777777777777777777
+39|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+40|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW

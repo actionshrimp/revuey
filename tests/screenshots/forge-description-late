@@ -21,16 +21,16 @@
 20| layer 2/3                              │     16 +                                                                      
 21| working tree  ● uncommitted            │     17 +   total(): number {                                                  
 22|                                        │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
-23|   A  cart.ts  src                +20 −0│     19 +   }                                                                  
-24|   M  index.ts  src                +3 −2│     20 + }                                                                    
-25|                                        │                                                                               
-26| <CR> show  mr reviewed  gp diff        │  M     ▾ src/index.ts   +3 −2                                                 
-27| ]c [c hunk  ]f [f file  <Tab> fold     │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
-28| gd def  K hover  go open  R refresh    │  2   2   import { formatCurrency } from "./format";                           
-29| gu committed/working tree  q close     │  3   3   import { capitalize } from "./utils/strings";                        
-30| gG AI guide                            │  4   4   import { oldTotal } from "./legacy";                                 
-31| ]s [s layer  gs full stack             │      5 + import { Cart } from "./cart";                                       
-32| gS check out layer                     │  5   6                                                                        
+23| src:                                   │     19 +   }                                                                  
+24|     A  cart.ts                   +20 −0│     20 + }                                                                    
+25|     M  index.ts                   +3 −2│                                                                               
+26|                                        │  M     ▾ src/index.ts   +3 −2                                                 
+27| <CR> show  mr reviewed  gp diff        │          @@ -2,10 +2,11 @@ import { add, circleArea } from "./math";          
+28| ]c [c hunk  ]f [f file  <Tab> fold     │  2   2   import { formatCurrency } from "./format";                           
+29| gd def  K hover  go open  R refresh    │  3   3   import { capitalize } from "./utils/strings";                        
+30| gu committed/working tree  q close     │  4   4   import { oldTotal } from "./legacy";                                 
+31| gG AI guide                            │      5 + import { Cart } from "./cart";                                       
+32| ]s [s layer  gs full stack             │  5   6                                                                        
 33|revuey://files [-]    1,1            Top revuey://stack/cart..stack/math [-]                          17,1           64%
 34|                                                                                                                        
 
@@ -57,15 +57,15 @@
 20|AAAAAAAAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 21|AAAAAAAAAAAAACCCCCCCCCCCCCCC@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 22|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-23|:M:MN:OOOOOOOPPPPP::::::::::::::::KKKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-24|@K@AB@44444444CCCCC@@@@@@@@@@@@@@@@KKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-25|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-26|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4AAAAAAAAAAQQQQQQQQQQQQ===>>???=================================================
-27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4DDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEFFFFFFFFFF
-28|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-29|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-30|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-31|CCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-32|CCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-33|00000000000000000000000000000000000000000RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
-34|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+23|@AAAA@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+24|:::M:MN:OOOOOOO:::::::::::::::::::KKKLLL4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+25|@@@K@AB@44444444@@@@@@@@@@@@@@@@@@@KKLLL4DDDDDDDDDD@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+26|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@4AAAAAAAAAAPPPPPPPPPPPP===>>???=================================================
+27|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@4DDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEFFFFFFFFFF
+28|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+29|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+30|CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+31|CCCCCCCCCCCC@@@@@@@@@@@@@@@@@@@@@@@@@@@@4GGGGHHHIIIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+32|CCCCCCCCCCCCCCCCCCCCCCCCCCC@@@@@@@@@@@@@4GGGGGGGGGG@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+33|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+34|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR

@@ -1934,6 +1934,7 @@ local function panel_keymaps(s)
     callback = function()
       vim.schedule(function()
         panel.update_hint(s)
+        key_help.update_panel(s)
       end)
     end,
   })
@@ -1957,6 +1958,9 @@ local function panel_keymaps(s)
   end
   local function jump(focus)
     local fi = file_under_cursor()
+    -- a folder header: its first file
+    local dir = not fi and s.panel_dirs and s.panel_dirs[api.nvim_win_get_cursor(0)[1]]
+    fi = fi or (dir and dir.first)
     if not fi then
       return
     end
@@ -1986,7 +1990,7 @@ local function panel_keymaps(s)
       return jump_section(si, true)
     end
     jump(true)
-  end, 'open file in diff / select stack layer / guide section')
+  end, 'open file in diff (a folder: its first file) / select stack layer / guide section')
   stack_keymaps(buf)
   guide_keymaps(buf)
   -- gS on a layer row checks that layer out (elsewhere: the viewed layer)
@@ -2034,6 +2038,7 @@ local function panel_keymaps(s)
     buffer = buf,
     callback = function()
       panel.update_hint(s)
+      key_help.update_panel(s)
       if s.syncing or not api.nvim_win_is_valid(s.diff_win) then
         return
       end

@@ -7,16 +7,16 @@
 06| base 1f2ed75d  head eac31334           │  3     - line 3                                                               
 07| working tree  ● uncommitted            │      3 + line three                                                           
 08|                                        │  4   4   line 4                                                               
-09|   A  a.txt                        +2 −0│  5   5   line 5                                                               
-10|   M  m.txt                        +3 −3│  6   6   line 6                                                               
-11|                                        │          @@ -17,7 +17,7 @@ line 16                                            
-12| <CR> show  mr reviewed  gp diff        │ 17  17   line 17                                                              
-13| ]c [c hunk  ]f [f file  <Tab> fold     │ 18  18   line 18                                                              
-14| gd def  K hover  go open  R refresh    │ 19  19   line 19                                                              
-15| gu committed/working tree  q close     │ 20     - line 20                                                              
-16| gG AI guide                            │╭ m.txt:17-23 ────────────────────────────────────────────────────────────────╮
-17| g? all keys                            ││  1 +-- 13 lines: line 1·····················································│
-18|~                                       ││ 14 line 14                                                                  │
+09| ./                                     │  5   5   line 5                                                               
+10|     A  a.txt                      +2 −0│  6   6   line 6                                                               
+11|     M  m.txt                      +3 −3│          @@ -17,7 +17,7 @@ line 16                                            
+12|                                        │ 17  17   line 17                                                              
+13| <CR> show  mr reviewed  gp diff        │ 18  18   line 18                                                              
+14| ]c [c hunk  ]f [f file  <Tab> fold     │ 19  19   line 19                                                              
+15| gd def  K hover  go open  R refresh    │ 20     - line 20                                                              
+16| gu committed/working tree  q close     │╭ m.txt:17-23 ────────────────────────────────────────────────────────────────╮
+17| gG AI guide                            ││  1 +-- 13 lines: line 1·····················································│
+18| g? all keys                            ││ 14 line 14                                                                  │
 19|~                                       ││ 15 line 15                                                                  │
 20|~                                       ││ 16 line 16                                                                  │
 21|~                                       ││ 17 line 17                                                                  │
@@ -37,7 +37,7 @@
 36|~                                       │                                                                               
 37|~                                       │                                                                               
 38|~                                       │                                                                               
-39|revuey://files [-]    9,1            All revuey://feat..main [-]                                      19,1           Bot
+39|revuey://files [-]    10,1           All revuey://feat..main [-]                                      19,1           Bot
 40|                                                                                                      20,1          All 
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
@@ -49,16 +49,16 @@
 06|77777777777777777777777777777666666666661CCCCCCCDDDEEEEEFEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 07|88888888888887777777777777776666666666661@@@@GGGHHHIIIIIJJJJJIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 08|66666666666666666666666666666666666666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-09|6A6AK611111666666666666666666666666AABBB1@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-10|LMLNOLPPPPPLLLLLLLLLLLLLLLLLLLLLLLLAABBB1@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-11|66666666666666666666666666666666666666661==========>>>>>>>>>>>>>>>>>>>>>>>>>????????????????????????????????????????????
-12|77777777777777777777777777777777666666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-13|77777777777777777777777777777777777666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-14|77777777777777777777777777777777777766661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
-15|77777777777777777777777777777777777666661QQQQQQQDDDRRRRRRREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
-16|77777777777766666666666666666666666666661S5555555555555SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+09|68866666666666666666666666666666666666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
+10|666A6AK6111116666666666666666666666AABBB1@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
+11|LLLMLNOLPPPPPLLLLLLLLLLLLLLLLLLLLLLAABBB1==========>>>>>>>>>>>>>>>>>>>>>>>>>????????????????????????????????????????????
+12|66666666666666666666666666666666666666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
+13|77777777777777777777777777777777666666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
+14|77777777777777777777777777777777777666661@@@@@@@@@@666666666666666666666666666666666666666666666666666666666666666666666
+15|77777777777777777777777777777777777766661QQQQQQQDDDRRRRRRREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+16|77777777777777777777777777777777777666661S5555555555555SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 17|77777777777766666666666666666666666666661STTTTUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUS
-18|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+18|77777777777766666666666666666666666666661STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 19|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 20|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 21|========================================1STTTTSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
