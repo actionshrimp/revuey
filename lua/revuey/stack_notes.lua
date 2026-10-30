@@ -387,6 +387,28 @@ M.KINDS = {
       return 'The bottom layer is compared with that base branch as last fetched.'
     end,
   },
+  local_above = {
+    level = 'info',
+    title = 'Local branch with a PR elsewhere',
+    one = function(n)
+      return ('%s sits on %s here, but its pull request (#%d) is based elsewhere on GitHub; the stack stops below it.'):format(
+        n.branch, n.layer, n.pr or 0)
+    end,
+    impact = function()
+      return 'Doesn\'t affect the layers shown. The stack tree shows where its PR is; change its base on GitHub to stack it here.'
+    end,
+  },
+  head_off_path = {
+    level = 'info',
+    title = 'Checked-out branch not in this path',
+    one = function(n)
+      return ('%s, the branch you have checked out, isn\'t on the path chosen in the stack tree.%s'):format(
+        n.branch, n.key and (' %s shows the tree; choose its PR to review it.'):format(n.key) or '')
+    end,
+    impact = function()
+      return 'The layers are committed-only: none of them is your working tree.'
+    end,
+  },
   tree_incomplete = {
     level = 'info',
     title = 'Stack tree incomplete',
@@ -443,6 +465,8 @@ M.KINDS = {
     one = function(n)
       if n.head then
         return ('Your checked-out %s isn\'t PR #%d\'s head and doesn\'t contain it (behind GitHub, or rebased); the layer shows your branch.'):format(n.branch, n.pr or 0)
+      elseif n.restacked then
+        return ('Your local %s isn\'t PR #%d\'s head, but your checked-out branch is built on it (restacked here, not pushed yet); the layer shows your copy.'):format(n.branch, n.pr or 0)
       end
       return ('Your local %s isn\'t PR #%d\'s head and doesn\'t contain it (behind GitHub, or rebased); the layer shows the PR from %s.'):format(
         n.branch, n.pr or 0, n.layer)
@@ -453,6 +477,8 @@ M.KINDS = {
     impact = function(ns)
       if ns[1].head then
         return 'Affects this review: it shows your branch, not the PR. Pull or rebase it.'
+      elseif ns[1].restacked then
+        return 'Affects this review: it shows your local stack as you will push it, not the PRs as they are on GitHub.'
       end
       return 'Affects this review only in that your local copy is not shown. Pull it, or delete it.'
     end,
@@ -466,7 +492,7 @@ M.KINDS = {
 M.ORDER = {
   'not_fetched', 'local_differs', 'pr_not_restacked', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent',
   'cycle', 'newer_copy', 'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'detached', 'upstream',
-  'same_commit', 'parent_landed', 'github_parent', 'github_base', 'tree_incomplete',
+  'same_commit', 'parent_landed', 'github_parent', 'github_base', 'local_above', 'head_off_path', 'tree_incomplete',
 }
 for i, k in ipairs(M.ORDER) do
   M.KINDS[k].order = i
@@ -620,6 +646,10 @@ function M.summary(notes, ignored, ctx, max)
     elseif k == 'github_base' then
       add(n1.missing and '⚠' or '●', n1.why == 'cycle' and ('PR bases loop at %s'):format(n1.parent)
         or ('stack based on %s%s'):format(n1.parent, n1.missing and ' (not fetched)' or ''), n1.missing and 'warn' or 'info')
+    elseif k == 'local_above' then
+      add('●', ('%s: PR #%d based elsewhere'):format(n1.branch, n1.pr or 0), 'info')
+    elseif k == 'head_off_path' then
+      add('●', ('%s (checked out) not on this path'):format(n1.branch), 'info')
     elseif k == 'tree_incomplete' then
       add('●', (n1.why == 'failed' and 'stack tree failed' or 'stack tree incomplete') .. (n1.key and (': %s retries'):format(n1.key) or ''), 'info')
     elseif k == 'pr_not_restacked' then

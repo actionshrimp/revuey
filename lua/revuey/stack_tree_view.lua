@@ -112,6 +112,9 @@ function M.begin(s, info, force)
     end
   end
   gt.remote = base
+  if force then
+    gt.saved = {} -- `R`: other branches' trees are fetched again when HEAD goes back to them
+  end
   -- a newer fetch replaces one in flight: its rounds stop and their answers are dropped
   gt.gen = gt.gen + 1
   M.stop_job(gt)
@@ -168,7 +171,9 @@ local function take(s, st, final)
     end
   else
     changed = true
-    gt.tree, gt.stale, gt.reason, gt.failed = t, (st.failed ~= nil) or nil, nil, nil
+    -- a round that failed leaves a partial tree (the heading says so; `R` retries); `stale` is
+    -- for the last good tree kept after a refetch that failed outright
+    gt.tree, gt.stale, gt.reason, gt.failed = t, nil, nil, nil
     -- a chosen PR gone from GitHub's answer: only once the whole tree is in (phase one may lack
     -- a closed subtree), and not after a failed round (the tree is partial)
     if final and not st.failed and gt.sel and not t.nodes[gt.sel] then
@@ -263,13 +268,14 @@ function M.follow_head(s, head_branch)
   if not gt or not gt.fetched or head_branch == gt.for_branch then
     return false
   end
-  local old = gt.for_branch
-  local name = head_branch
-  if name and gt.remote and name:sub(1, #gt.remote + 1) == gt.remote .. '/' then
-    name = name:sub(#gt.remote + 2) -- detached at `origin/x`: the PR branch x
+  local function short(branch, remote)
+    if branch and remote and branch:sub(1, #remote + 1) == remote .. '/' then
+      return branch:sub(#remote + 2) -- detached at `origin/x`: the PR branch x
+    end
+    return branch
   end
-  local num = gt.tree and name and gt.tree.rep[name]
-  if num then
+  -- into a tree: the path through the branch's PR (the same path when it is on it)
+  local function enter(num)
     gt.for_branch = head_branch
     local path = M.path(s)
     if not vim.tbl_contains(path, num) then
@@ -280,19 +286,42 @@ function M.follow_head(s, head_branch)
     gt.version = gt.version + 1
     return false
   end
-  if old then
+  local num = gt.tree and head_branch and gt.tree.rep[short(head_branch, gt.remote)]
+  if num then
+    return enter(num)
+  end
+  -- leaving: only a finished fetch is kept for coming back (a tree still loading, or a lookup
+  -- in flight, is fetched again then: a first fetch)
+  local old = gt.for_branch
+  if old and not gt.loading and not gt.running and (gt.tree or gt.reason) then
     gt.saved[old] = { tree = gt.tree, sel = gt.sel, reason = gt.reason, stale = gt.stale, remote = gt.remote, failed = gt.failed }
   end
   gt.gen = gt.gen + 1
   M.stop_job(gt)
-  local back = head_branch and gt.saved[head_branch]
-  gt.for_branch, gt.loading, gt.version = head_branch, nil, gt.version + 1
+  gt.loading, gt.running, gt.version = nil, nil, gt.version + 1
   gt.built, gt.head_pr = nil, nil
-  if back then
+  -- a tree kept for this branch, or one that has this branch's PR in it
+  local key = head_branch and gt.saved[head_branch] and head_branch
+  if not key and head_branch then
+    for k, e in pairs(gt.saved) do
+      if e.tree and e.tree.rep[short(head_branch, e.remote)] then
+        key = k
+        break
+      end
+    end
+  end
+  if key then
+    local back = gt.saved[key]
+    gt.saved[key] = nil
     gt.tree, gt.sel, gt.reason, gt.stale, gt.remote, gt.failed = back.tree, back.sel, back.reason, back.stale, back.remote, back.failed
-    gt.saved[head_branch] = nil
+    gt.for_branch = head_branch
+    local n = gt.tree and gt.tree.rep[short(head_branch, gt.remote)]
+    if n and key ~= head_branch then
+      return enter(n)
+    end
     return false
   end
+  gt.for_branch = head_branch
   gt.tree, gt.sel, gt.reason, gt.stale, gt.failed = nil, nil, nil, nil, nil
   gt.fetched = false
   return true
@@ -305,9 +334,9 @@ end
 ---What the clone has (refs, head commits, which local branches contain their open PR's
 ---head). Inside git.async.
 ---@return revuey.TreeFacts
-function M.facts(s, root, trunk)
+function M.facts(s, root, trunk, t)
   local gt = state(s)
-  local t = gt.tree
+  t = t or gt.tree
   local heads, refs = {}, {}
   local out = git.git({ 'for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads', 'refs/remotes' }, root) or ''
   for line in out:gmatch('[^\n]+') do
@@ -332,35 +361,62 @@ function M.facts(s, root, trunk)
       end
     end
   end
-  -- local branches of open PRs that are not at the PR's head: do they contain it (your
-  -- commits on top) or not (behind, or off it)?
-  local contains, fns, which = {}, {}, {}
-  for head, num in pairs(t and t.rep or {}) do
-    local n = t.nodes[num]
-    local lb = heads[head]
-    if lb and n.state == 'OPEN' and n.head_oid and lb ~= n.head_oid and objects[n.head_oid] then
-      which[#which + 1] = head
-      fns[#fns + 1] = function()
-        return git.git({ 'merge-base', '--is-ancestor', n.head_oid, lb }, root) ~= nil
+  -- local branches of the tree's PRs that are not at their PR's head: do they contain it (your
+  -- commits on top)? Is HEAD built on them (a lower branch restacked locally)?
+  local current = git.current_branch(root)
+  local head = git.rev_parse('HEAD', root)
+  local contains, in_head, behind, fns, which = {}, {}, {}, {}, {}
+  local function check(set, key, a, b)
+    which[#which + 1] = { set, key }
+    fns[#fns + 1] = function()
+      return git.git({ 'merge-base', '--is-ancestor', a, b }, root) ~= nil
+    end
+  end
+  -- HEAD's PR: its branch's in the tree, else the PR the tree was fetched for when HEAD is
+  -- still that branch (its head may have another name on GitHub: a push name, a fork)
+  local head_num = t and current and (t.rep[current] or (current == gt.for_branch and t.start)) or nil
+  for name, lb in pairs(heads) do
+    local num = t and t.rep[name]
+    if name == current then
+      num = head_num
+    end
+    local n = num and t.nodes[num]
+    if n and n.head_oid and lb ~= n.head_oid then
+      if objects[n.head_oid] then
+        check(contains, name, n.head_oid, lb)
+        check(behind, name, lb, n.head_oid)
+      end
+      if head and lb ~= head and name ~= current then
+        check(in_head, name, lb, head)
       end
     end
   end
+  local b = t and t.bottom_base
+  if b and heads[b] and head and heads[b] ~= head then
+    check(in_head, b, heads[b], head)
+  end
   for i, r in ipairs(git.all(fns)) do
-    contains[which[i]] = r[1] and r[2] == true or nil
+    which[i][1][which[i][2]] = (r[1] and r[2] == true) or nil
+  end
+  -- built on by HEAD but only behind the PR (an older commit of it, the trunk): not a local
+  -- restack, just an old copy
+  for name in pairs(behind) do
+    in_head[name] = nil
   end
   local remotes = git.remotes(root)
-  local current = git.current_branch(root)
   return {
     remote = gt.remote or 'origin',
     heads = heads,
     refs = refs,
     objects = objects,
     contains = contains,
+    in_head = in_head,
+    head_num = head_num,
     trunk = trunk,
     trunk_rev = git.rev_parse(trunk, root),
     current = current or s.review.head_branch,
     detached = current == nil or nil,
-    head = git.rev_parse('HEAD', root),
+    head = head,
     normalize = function(n)
       return require('revuey.state').normalize_base(n, remotes)
     end,
@@ -368,12 +424,20 @@ function M.facts(s, root, trunk)
 end
 
 ---The PRs of the chosen path (bottom first) and the index of the chosen PR.
-function M.path(s)
+---The chosen PR when the tree has it (after `R` it may not, until the closed PRs are read:
+---the default route meanwhile).
+function M.chosen(gt, t)
+  t = t or gt.tree
+  return t and gt.sel and t.nodes[gt.sel] and gt.sel or nil
+end
+
+function M.path(s, t)
   local gt = state(s)
-  if not gt.tree then
+  t = t or gt.tree
+  if not t then
     return {}
   end
-  return tree_mod.route(gt.tree, gt.sel or gt.tree.start)
+  return tree_mod.route(t, M.chosen(gt, t) or t.start)
 end
 
 local function signature(st)
@@ -422,20 +486,22 @@ function M.stack(s, git_stack, root, trunk, fingerprint, git_notes)
   if not (M.enabled() and gt and gt.tree and trunk) then
     return nil
   end
-  local path = M.path(s)
-  if #path < 2 and not gt.sel then
+  -- one tree throughout: a fetch landing while git runs below must not mix two trees
+  local t = gt.tree
+  local sel = M.chosen(gt, t)
+  local path = M.path(s, t)
+  if #path < 2 and not sel then
     return nil
   end
-  local key = table.concat({ fingerprint or '', gt.version, gt.facts_gen, tostring(gt.sel) }, '\0')
+  local key = table.concat({ fingerprint or '', gt.version, gt.facts_gen, tostring(sel) }, '\0')
   if gt.built and gt.built.key == key then
     return gt.built.stack
   end
-  local facts = M.facts(s, root, trunk)
+  local facts = M.facts(s, root, trunk, t)
   if not facts.trunk_rev then
     return nil
   end
-  local t = gt.tree
-  local st = tree_mod.stack(t, path, gt.sel, facts)
+  local st = tree_mod.stack(t, path, sel, facts)
   if not st then
     return nil
   end
@@ -472,11 +538,18 @@ function M.stack(s, git_stack, root, trunk, fingerprint, git_notes)
     end
     for i = (at or #git_stack.layers) + 1, #git_stack.layers do
       local l = vim.deepcopy(git_stack.layers[i])
+      -- a branch with a PR in the tree is placed by GitHub, not here: the local stack stops
+      -- (gb shows where its PR is), never a layer pinned to nothing
+      local num = t.rep[l.name] or t.rep[require('revuey.forge').branch_name(l.name)]
+      if num then
+        st.notes[#st.notes + 1] = notes_mod.new('local_above', { branch = l.name, pr = num, layer = top.name }, ctx)
+        break
+      end
       l.stats = nil
       st.layers[#st.layers + 1] = l
       if l.is_head and not st.head_index then
         st.head_index = #st.layers
-        if not gt.sel then
+        if not sel then
           st.current = #st.layers
         end
       end
@@ -515,7 +588,8 @@ function M.stack(s, git_stack, root, trunk, fingerprint, git_notes)
   for _, l in ipairs(st.layers) do
     if l.local_differs then
       st.notes[#st.notes + 1] = notes_mod.new('local_differs', {
-        branch = l.pr_head, pr = l.pr, layer = l.name, head = l.local_differs == 'head' or nil,
+        branch = l.remote and l.pr_head or l.name, pr = l.pr, layer = l.name,
+        head = l.local_differs == 'head' or nil, restacked = l.local_differs == 'restacked' or nil,
       }, ctx)
     end
   end
@@ -536,14 +610,18 @@ function M.stack(s, git_stack, root, trunk, fingerprint, git_notes)
   end
   local ign = require('revuey.stack_ignore')
   require('revuey.stack').finish(root, st, ign.patterns((ign.for_root(root, s.opts and s.opts.state_dir))))
-  if gt.sel and vim.tbl_contains(st.missing, gt.sel) then
-    gt.want_view = gt.sel -- shown once it is fetched
+  if sel and vim.tbl_contains(st.missing, sel) then
+    gt.want_view = sel -- shown once it is fetched
   end
-  if gt.sel and gt.notify_missing == gt.sel and vim.tbl_contains(st.missing, gt.sel) then
+  if sel and gt.notify_missing == sel and vim.tbl_contains(st.missing, sel) then
     gt.notify_missing = nil
     vim.schedule(function()
-      vim.notify(('revuey: PR #%d is not in this clone yet; %s fetches it'):format(gt.sel, fk or 'stack_fetch'), vim.log.levels.WARN)
+      vim.notify(('revuey: PR #%d is not in this clone yet; %s fetches it'):format(sel, fk or 'stack_fetch'), vim.log.levels.WARN)
     end)
+  end
+  -- the checked-out branch off the chosen path (you picked another one): said
+  if not st.head_index and facts.current and not facts.detached and facts.heads[facts.current] then
+    st.notes[#st.notes + 1] = notes_mod.new('head_off_path', { branch = facts.current, key = first_key('stack_tree') }, ctx)
   end
   local cur = facts.current
   if cur and cur:sub(1, #facts.remote + 1) == facts.remote .. '/' then
@@ -604,22 +682,53 @@ end
 
 ---Environment of `git fetch`: no prompt from git (GIT_TERMINAL_PROMPT=0) nor from ssh (BatchMode:
 ---no host key question, no passphrase on /dev/tty, which would draw over the editor), unless
----ssh is configured otherwise (GIT_SSH_COMMAND, core.sshCommand: yours is used as it is).
+---ssh is configured otherwise (GIT_SSH_COMMAND, GIT_SSH, core.sshCommand: yours is used as is).
 ---@param env_ssh? string $GIT_SSH_COMMAND
 ---@param core_ssh? string git config core.sshCommand
-function M.fetch_env(env_ssh, core_ssh)
+---@param git_ssh? string $GIT_SSH
+function M.fetch_env(env_ssh, core_ssh, git_ssh)
   local env = { GIT_TERMINAL_PROMPT = '0' }
-  if (env_ssh == nil or env_ssh == '') and (core_ssh == nil or core_ssh == '') then
+  local function unset(v)
+    return v == nil or v == ''
+  end
+  if unset(env_ssh) and unset(core_ssh) and unset(git_ssh) then
     env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
   end
   return env
 end
 
+---The `git fetch` command line for `specs` from `remote`.
+function M.fetch_cmd(remote, specs)
+  local cmd = { 'git', 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', remote }
+  return vim.list_extend(cmd, specs)
+end
+
+---Is a failed fetch's error about a ref (a branch gone on GitHub, a ref it won't serve), so
+---the refspecs are worth trying one by one? Never for a timeout or a connection failure:
+---those would only fail again, each after its own timeout.
+function M.ref_error(code, stderr)
+  if code == 124 then
+    return false
+  end
+  stderr = stderr or ''
+  return stderr:find("couldn't find remote ref", 1, true) ~= nil or stderr:find('not our ref', 1, true) ~= nil
+    or stderr:find('invalid refspec', 1, true) ~= nil or stderr:find('unadvertised object', 1, true) ~= nil
+end
+
+---Stop a fetch in flight (the review closed): its process group, git and ssh with it.
+function M.stop_fetch(gt)
+  local proc = gt and gt.fetch_proc
+  if proc then
+    gt.fetch_proc = nil
+    require('revuey.ai').terminate(proc)
+  end
+end
+
 ---`git fetch` the heads of `nums` (default: the chosen path) from the PRs' remote: branches
 ---that exist on GitHub into `<remote>/<head>`, forks, deleted branches and closed PRs through
----`refs/pull/N/head` (commits only, no ref written). All at once; when that fails, one by one,
----a branch that is gone through its pull ref, so what can be fetched is. Then the review
----refreshes.
+---`refs/pull/N/head` (commits only, no ref written). All at once; when that fails on a ref,
+---one by one, a branch that is gone through its pull ref, so what can be fetched is. Closing
+---the review stops it. Then the review refreshes.
 function M.fetch(s, nums)
   local why = M.unavailable(s)
   if why then
@@ -632,20 +741,45 @@ function M.fetch(s, nums)
   nums = nums or M.path(s)
   local root = s.review.root
   local trunk = s.review.tree_trunk
+  local t = gt.tree
   gt.fetching = true
+  local ai = require('revuey.ai')
   git.async(function()
-    local facts = M.facts(s, root, trunk)
-    local specs, which = tree_mod.fetch_specs(gt.tree, nums, facts)
-    if #specs == 0 then
+    local facts = M.facts(s, root, trunk, t)
+    local specs, which = tree_mod.fetch_specs(t, nums, facts)
+    if #specs == 0 or s.cleaned then
       gt.fetching = false
+      if s.cleaned then
+        return
+      end
       return vim.notify('revuey: nothing to fetch: the stack is up to date with GitHub', vim.log.levels.INFO)
     end
     vim.notify(('revuey: fetching %d PR%s from %s…'):format(#which, #which == 1 and '' or 's', facts.remote), vim.log.levels.INFO)
-    local env = M.fetch_env(vim.env.GIT_SSH_COMMAND, vim.trim(git.git({ 'config', '--get', 'core.sshCommand' }, root) or ''))
+    local env = M.fetch_env(vim.env.GIT_SSH_COMMAND, vim.trim(git.git({ 'config', '--get', 'core.sshCommand' }, root) or ''), vim.env.GIT_SSH)
+    local co = coroutine.running()
+    ---One `git fetch`, in a process group of its own (closing the review stops git and ssh).
     local function run(list)
-      local cmd = { 'git', 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', facts.remote }
-      vim.list_extend(cmd, list)
-      return git.system(cmd, { cwd = root, timeout = 120000, env = env })
+      if s.cleaned then
+        return { code = -1, stderr = 'review closed' }
+      end
+      local ok, proc = pcall(vim.system, M.fetch_cmd(facts.remote, list), {
+        cwd = root, timeout = 120000, env = env, text = true, detach = true,
+      }, function(res)
+        vim.schedule(function()
+          git.resume(co, res)
+        end)
+      end)
+      if not ok then
+        return { code = -1, stderr = tostring(proc) }
+      end
+      gt.fetch_proc = proc
+      ai.live[proc] = true
+      local res = coroutine.yield()
+      ai.live[proc] = nil
+      if gt.fetch_proc == proc then
+        gt.fetch_proc = nil
+      end
+      return res
     end
     local res = run(specs)
     local ok, via_pull, failed, errs = {}, {}, {}, {}
@@ -653,19 +787,26 @@ function M.fetch(s, nums)
       ok = which
     else
       errs[#errs + 1] = vim.trim(tostring(res.stderr or ''))
-      for i, spec in ipairs(specs) do
-        local r = run({ spec })
-        if r.code == 0 then
-          ok[#ok + 1] = which[i]
-        else
-          errs[#errs + 1] = vim.trim(tostring(r.stderr or ''))
-          local pull = ('refs/pull/%d/head'):format(which[i])
-          if spec ~= pull and run({ pull }).code == 0 then
-            via_pull[#via_pull + 1] = which[i] -- the branch is gone on GitHub: its commits at least
+      if M.ref_error(res.code, res.stderr) then
+        for i, spec in ipairs(specs) do
+          if s.cleaned then
+            break
+          end
+          local r = run({ spec })
+          if r.code == 0 then
+            ok[#ok + 1] = which[i]
           else
-            failed[#failed + 1] = which[i]
+            errs[#errs + 1] = vim.trim(tostring(r.stderr or ''))
+            local pull = ('refs/pull/%d/head'):format(which[i])
+            if spec ~= pull and M.ref_error(r.code, r.stderr) and run({ pull }).code == 0 then
+              via_pull[#via_pull + 1] = which[i] -- the branch is gone on GitHub: its commits at least
+            else
+              failed[#failed + 1] = which[i]
+            end
           end
         end
+      else
+        failed = which
       end
     end
     gt.fetching = false
@@ -690,6 +831,9 @@ function M.fetch(s, nums)
     end
     if #failed > 0 then
       local last = (errs[#errs] or ''):match('([^\n]*)$') or ''
+      if res.code == 124 then
+        last = 'timed out'
+      end
       parts[#parts + 1] = ('could not fetch %s%s'):format(list(failed), last ~= '' and (' (' .. last .. ')') or ' (see revuey.log)')
     end
     vim.notify(('revuey: %s from %s'):format(table.concat(parts, '; '), facts.remote),
@@ -1124,6 +1268,7 @@ function M.detach(s)
   if gt then
     gt.gen = gt.gen + 1 -- rounds in flight drop their answers
     M.stop_job(gt)
+    M.stop_fetch(gt) -- and a `git fetch` stops
   end
 end
 

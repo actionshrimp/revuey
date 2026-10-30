@@ -530,6 +530,49 @@ h.test('fetch environment: no prompt from git or ssh, unless ssh is yours', func
   h.eq({ GIT_TERMINAL_PROMPT = '0', GIT_SSH_COMMAND = 'ssh -o BatchMode=yes' }, tv.fetch_env(nil, ''))
   h.eq({ GIT_TERMINAL_PROMPT = '0' }, tv.fetch_env('my-ssh', ''))
   h.eq({ GIT_TERMINAL_PROMPT = '0' }, tv.fetch_env('', 'ssh -i key'))
+  h.eq({ GIT_TERMINAL_PROMPT = '0' }, tv.fetch_env(nil, '', '/usr/bin/my-ssh'), 'GIT_SSH is yours too')
+  h.eq({ 'git', 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', 'origin', 'refs/pull/1/head' },
+    tv.fetch_cmd('origin', { 'refs/pull/1/head' }))
+  -- per-ref retries only for errors about refs
+  h.eq(true, tv.ref_error(128, "fatal: couldn't find remote ref refs/heads/stack/d"))
+  h.eq(false, tv.ref_error(128, 'fatal: Could not read from remote repository.'))
+  h.eq(false, tv.ref_error(124, "couldn't find remote ref"), 'a timeout never')
+end)
+
+h.test('stack: HEAD\'s branch is its PR\'s layer whatever the PR\'s state; restacked lower copies; stale refs', function()
+  local nodes = small()
+  nodes[3] = node(12, 'stack/b', 'stack/a', 'CLOSED', { updated = '2026-01-05T01:00:00Z' })
+  local t = tree.tree((fetch(nodes, 'stack/b')))
+  local o = function(n)
+    return ('%040d'):format(n)
+  end
+  local f = {
+    remote = 'origin', trunk = 'origin/main', trunk_rev = 'T', trunk_state = 'main',
+    refs = { ['origin/stack/a'] = o(11), ['origin/stack/b'] = o(12), ['origin/stack/c'] = o(13) }, objects = {},
+    heads = { ['stack/b'] = 'work' }, contains = { ['stack/b'] = true }, current = 'stack/b', head = 'work',
+  }
+  local st = tree.stack(t, tree.route(t, 12), nil, f)
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, vim.tbl_map(function(l)
+    return l.name
+  end, st.layers))
+  h.eq({ true, nil }, { st.layers[2].is_head, st.layers[2].local_differs }, 'a closed PR, your work on top: HEAD\'s layer')
+  -- a lower branch restacked locally (HEAD built on it, not merely behind the PR): your copy
+  f.heads['stack/a'], f.in_head = 'a2', { ['stack/a'] = true }
+  st = tree.stack(t, tree.route(t, 12), nil, f)
+  h.eq({ 'stack/a', 'a2', 'restacked' }, { st.layers[1].name, st.layers[1].tip, st.layers[1].local_differs })
+  h.eq('a2', st.layers[2].parent_rev)
+  -- a stale origin ref while the PR's exact head is here: the head
+  local r = tree.reach(t.nodes[13], { remote = 'origin', refs = { ['origin/stack/c'] = 'old' }, objects = { [o(13)] = true } })
+  h.eq({ o(13), 'behind', 'commit' }, { r.tip, r.mark, r.how })
+  -- the bottom base: GitHub's copy, a local one only when HEAD is built on it
+  local t2 = tree.tree((fetch({ node(1, 'a', 'release', 'OPEN'), node(2, 'b', 'a', 'OPEN') }, 'b')))
+  local g = {
+    remote = 'origin', trunk = 'origin/main', trunk_rev = 'T', heads = { b = 'B', release = 'stale' },
+    refs = { ['origin/a'] = 'A', ['origin/release'] = 'R' }, objects = {}, current = 'b', head = 'B',
+  }
+  h.eq('origin/release', tree.stack(t2, { 1, 2 }, nil, g).layers[1].parent)
+  g.in_head = { release = true }
+  h.eq('release', tree.stack(t2, { 1, 2 }, nil, g).layers[1].parent)
 end)
 
 h.run()

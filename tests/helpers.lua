@@ -387,11 +387,16 @@ function M.open_review(opts)
 end
 
 ---Capture vim.notify messages while running fn (restored afterwards).
+---`M.on_error(msg)`, when a spec sets it, also sees every error-level message captured here,
+---so a spec can fail on errors no test expected (they would otherwise vanish in a capture).
 function M.capture_notify()
   local msgs = {}
   local orig = vim.notify
   vim.notify = function(msg, level)
     msgs[#msgs + 1] = { msg = msg, level = level }
+    if M.on_error and level and level >= vim.log.levels.ERROR then
+      M.on_error(msg)
+    end
   end
   return msgs, function()
     vim.notify = orig

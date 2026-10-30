@@ -6,6 +6,14 @@
 [ -n "${REVUEY_FAKE_SSH_REPO:-}" ] || { echo "fake ssh: REVUEY_FAKE_SSH_REPO is not set" >&2; exit 97; }
 # git's probe for the ssh variant (`ssh -G <host>`): an OpenSSH that accepts it
 [ "${1:-}" = -G ] && exit 0
+# REVUEY_FAKE_SSH_HANG=<seconds>: a remote that does not answer, then drops the connection
+if [ -n "${REVUEY_FAKE_SSH_HANG:-}" ]; then
+  [ -n "${REVUEY_FAKE_SSH_LOG:-}" ] && echo "start pid=$$" >> "$REVUEY_FAKE_SSH_LOG"
+  sleep "$REVUEY_FAKE_SSH_HANG"
+  [ -n "${REVUEY_FAKE_SSH_LOG:-}" ] && echo "end pid=$$" >> "$REVUEY_FAKE_SSH_LOG"
+  echo "Connection closed by remote host" >&2
+  exit 255
+fi
 for last; do :; done
 # the command, and whether git asked for no terminal prompt (GIT_TERMINAL_PROMPT=0)
 [ -n "${REVUEY_FAKE_SSH_LOG:-}" ] && echo "$last prompt=${GIT_TERMINAL_PROMPT:-unset}" >> "$REVUEY_FAKE_SSH_LOG"

@@ -20,6 +20,36 @@ local view = require('revuey.view')
 local tv = require('revuey.stack_tree_view')
 local api = vim.api
 
+-- Error-level messages nobody expected fail the test they happen in: shown or captured
+-- (h.capture_notify passes them to h.on_error), whether from revuey or an error in a task.
+local errors = {}
+h.on_error = function(msg)
+  errors[#errors + 1] = msg
+end
+do
+  local real = vim.notify
+  vim.notify = function(msg, level, ...)
+    if level and level >= vim.log.levels.ERROR then
+      errors[#errors + 1] = msg
+    end
+    return real(msg, level, ...)
+  end
+end
+---h.test, failing on error notifications unless `allow(msg)` accepts each one.
+local function test(name, fn, allow)
+  h.test(name, function()
+    errors = {}
+    fn()
+    vim.wait(100, function()
+      return false
+    end)
+    local bad = vim.tbl_filter(function(m)
+      return not (allow and allow(m))
+    end, errors)
+    h.eq({}, bad, 'unexpected error notifications')
+  end)
+end
+
 local function names(s)
   return vim.tbl_map(function(l)
     return l.name
@@ -77,7 +107,7 @@ local function wait_idle(s)
   end, 20)
 end
 
-h.test('open: the tree comes with the PR lookup, in batched rounds; the stack is the default route', function()
+test('open: the tree comes with the PR lookup, in batched rounds; the stack is the default route', function()
   local s, _, calls = open('tree-open')
   local all = h.read_calls(calls)
   local first = all[1].argv[5]
@@ -106,7 +136,7 @@ h.test('open: the tree comes with the PR lookup, in batched rounds; the stack is
   view.close()
 end)
 
-h.test('panel: other paths (⑂), branches to fetch (⇣), the hints under a layer, the help line', function()
+test('panel: other paths (⑂), branches to fetch (⇣), the hints under a layer, the help line', function()
   local s = open('tree-panel')
   local lines = api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)
   local virt = {}
@@ -177,7 +207,7 @@ local function path_hl(s)
   return out
 end
 
-h.test('tree view: rows, j/k between PRs with the path lit up, closed shown and hidden, q cancels', function()
+test('tree view: rows, j/k between PRs with the path lit up, closed shown and hidden, q cancels', function()
   local s = open('tree-view')
   api.nvim_set_current_win(s.diff_win)
   api.nvim_feedkeys('gb', 'x', false)
@@ -231,7 +261,7 @@ h.test('tree view: rows, j/k between PRs with the path lit up, closed shown and 
   view.close()
 end)
 
-h.test('<CR>: the stack becomes the chosen path, viewing its PR; full scope and ]s/[s follow it', function()
+test('<CR>: the stack becomes the chosen path, viewing its PR; full scope and ]s/[s follow it', function()
   local s = open('tree-select')
   api.nvim_set_current_win(s.diff_win)
   api.nvim_feedkeys('gb', 'x', false)
@@ -282,7 +312,7 @@ h.test('<CR>: the stack becomes the chosen path, viewing its PR; full scope and 
   view.close()
 end)
 
-h.test('R: the tree is fetched again (and only then); the chosen path stays', function()
+test('R: the tree is fetched again (and only then); the chosen path stays', function()
   local s, _, calls = open('tree-refetch')
   local before = #tree_calls(calls)
   view.refresh({ force = true })
@@ -304,7 +334,7 @@ h.test('R: the tree is fetched again (and only then); the chosen path stays', fu
   view.close()
 end)
 
-h.test('the fetch key: git fetch of the stack\'s branches from the PRs\' remote, then the marks go', function()
+test('the fetch key: git fetch of the stack\'s branches from the PRs\' remote, then the marks go', function()
   local s, r, calls, ssh_log = open('tree-fetch')
   local n_gh = #h.read_calls(calls)
   local msgs, restore = h.capture_notify()
@@ -375,7 +405,7 @@ h.test('the fetch key: git fetch of the stack\'s branches from the PRs\' remote,
   view.close()
 end)
 
-h.test('GitHub fails: git detection stays, the tree key says why', function()
+test('GitHub fails: git detection stays, the tree key says why', function()
   local s = open('tree-fail', 'fail')
   h.eq(nil, s.gh_tree.tree)
   h.eq(nil, s.review.stack, 'a lone local branch: the plain review, as without GitHub')
@@ -392,7 +422,7 @@ h.test('GitHub fails: git detection stays, the tree key says why', function()
   view.close()
 end)
 
-h.test('later tree rounds fail: the chain read so far is the stack, the failure is logged', function()
+test('later tree rounds fail: the chain read so far is the stack, the failure is logged', function()
   local s = open('tree-fail-later', nil, { tree_scenario = 'fail' })
   vim.env.REVUEY_FAKE_GH_TREE_SCENARIO = nil
   h.ok(s.gh_tree.tree ~= nil)
@@ -406,7 +436,7 @@ h.test('later tree rounds fail: the chain read so far is the stack, the failure 
   view.close()
 end)
 
-h.test('stack.github = false: no tree query, git detection only', function()
+test('stack.github = false: no tree query, git detection only', function()
   setup({ stack = { github = false } })
   local s, _, calls = open('tree-off')
   h.eq(0, #tree_calls(calls))
@@ -443,7 +473,7 @@ local function fetch_and_wait(s, nums)
   return msgs
 end
 
-h.test('a closed PR of a moved branch: its own commit, never the local branch of the newer PR; its own PR in the forge', function()
+test('a closed PR of a moved branch: its own commit, never the local branch of the newer PR; its own PR in the forge', function()
   local s, r = open('tree-moved-local', nil, {
     prepare = function(r)
       h.git(r.dir, 'branch', 'stack/c', 'origin/stack/c') -- a local copy of #13's branch
@@ -470,7 +500,7 @@ h.test('a closed PR of a moved branch: its own commit, never the local branch of
   view.close()
 end)
 
-h.test('a local branch behind its open PR (not checked out): the layer is the PR\'s, with a note', function()
+test('a local branch behind its open PR (not checked out): the layer is the PR\'s, with a note', function()
   local s, r = open('tree-local-behind', nil, {
     prepare = function(r)
       h.git(r.dir, 'branch', 'stack/a', 'main')
@@ -486,7 +516,7 @@ h.test('a local branch behind its open PR (not checked out): the layer is the PR
   view.close()
 end)
 
-h.test('a fork\'s PR as a layer: threads, the description, posting and the change check are its own', function()
+test('a fork\'s PR as a layer: threads, the description, posting and the change check are its own', function()
   setup({ forge = { threads = { enabled = true }, description = { enabled = true } } })
   local thread = {
     id = 'T19', isResolved = false, isOutdated = false, path = 'src/fix.ts', line = 1, startLine = vim.NIL,
@@ -530,7 +560,7 @@ h.test('a fork\'s PR as a layer: threads, the description, posting and the chang
   setup()
 end)
 
-h.test('HEAD on an unrelated branch: its own (first) fetch, git meanwhile; back again without a fetch', function()
+test('HEAD on an unrelated branch: its own (first) fetch, git meanwhile; back again without a fetch', function()
   local s, r, calls = open('tree-head-moves')
   local before = #tree_calls(calls)
   h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
@@ -556,7 +586,7 @@ h.test('HEAD on an unrelated branch: its own (first) fetch, git meanwhile; back 
   view.close()
 end)
 
-h.test('HEAD on a branch of the tree (gS to a layer): the path stays, @ follows HEAD', function()
+test('HEAD on a branch of the tree (gS to a layer): the path stays, @ follows HEAD', function()
   local s, r = open('tree-head-layer')
   h.eq(12, s.gh_tree.head_pr)
   h.git(r.dir, 'checkout', '-q', '--track', 'origin/stack/a')
@@ -570,7 +600,7 @@ h.test('HEAD on a branch of the tree (gS to a layer): the path stays, @ follows 
   view.close()
 end)
 
-h.test('only R refetches the tree: not the refetch after a post', function()
+test('only R refetches the tree: not the refetch after a post', function()
   local s, _, calls = open('tree-post-refetch')
   local n = #tree_calls(calls)
   local all = #h.read_calls(calls)
@@ -588,7 +618,7 @@ h.test('only R refetches the tree: not the refetch after a post', function()
   view.close()
 end)
 
-h.test('R keeps a chosen PR under a closed one, and the stack object when nothing changed', function()
+test('R keeps a chosen PR under a closed one, and the stack object when nothing changed', function()
   local s = open('tree-r-closed')
   tv.select(s, 16)
   h.ok(wait_idle(s))
@@ -618,7 +648,7 @@ h.test('R keeps a chosen PR under a closed one, and the stack object when nothin
   view.close()
 end)
 
-h.test('the tree\'s rounds run outside the PR lookup, and stop when the review closes', function()
+test('the tree\'s rounds run outside the PR lookup, and stop when the review closes', function()
   local s, _, calls = open('tree-slow', 'slow')
   vim.env.REVUEY_FAKE_GH_DELAY = '0.5'
   view.refresh({ force = true, forge = true })
@@ -635,7 +665,7 @@ h.test('the tree\'s rounds run outside the PR lookup, and stop when the review c
   vim.env.REVUEY_FAKE_GH_DELAY = nil
 end)
 
-h.test('gF: a branch gone on GitHub comes by its pull ref, the rest is fetched; no prompts', function()
+test('gF: a branch gone on GitHub comes by its pull ref, the rest is fetched; no prompts', function()
   local s, r, _, ssh_log = open('tree-fetch-partial')
   h.git(r.bare, 'update-ref', '-d', 'refs/heads/stack/d')
   local msgs = fetch_and_wait(s)
@@ -650,7 +680,7 @@ h.test('gF: a branch gone on GitHub comes by its pull ref, the rest is fetched; 
   view.close()
 end)
 
-h.test('git detection finds another stack: the tree overrides it, says where a parent setting disagrees', function()
+test('git detection finds another stack: the tree overrides it, says where a parent setting disagrees', function()
   local git_stack
   local s, r = open('tree-over-git', nil, {
     prepare = function(r)
@@ -675,7 +705,7 @@ h.test('git detection finds another stack: the tree overrides it, says where a p
   view.close()
 end)
 
-h.test('local branches above the top PR (no PR yet) stay on top', function()
+test('local branches above the top PR (no PR yet) stay on top', function()
   local s, r = open('tree-local-above')
   fetch_and_wait(s)
   h.git(r.dir, 'branch', 'stack/d', 'origin/stack/d')
@@ -692,7 +722,7 @@ h.test('local branches above the top PR (no PR yet) stay on top', function()
   view.close()
 end)
 
-h.test('a lone PR stays a plain review until a path is chosen', function()
+test('a lone PR stays a plain review until a path is chosen', function()
   local s = open('tree-lone', nil, {
     prepare = function(r)
       local a = r.prs['acme/shop:stack/a'][1]
@@ -709,7 +739,7 @@ h.test('a lone PR stays a plain review until a path is chosen', function()
   view.close()
 end)
 
-h.test('GitHub rejects the lookup with the tree in it: the PRs are looked up alone', function()
+test('GitHub rejects the lookup with the tree in it: the PRs are looked up alone', function()
   local s = open('tree-reject', nil, { tree_scenario = 'reject' })
   vim.env.REVUEY_FAKE_GH_TREE_SCENARIO = nil
   h.eq(nil, s.gh_tree.tree)
@@ -718,7 +748,7 @@ h.test('GitHub rejects the lookup with the tree in it: the PRs are looked up alo
   view.close()
 end)
 
-h.test('a PR chosen while closed PRs still load: the stack is rebuilt when they arrive', function()
+test('a PR chosen while closed PRs still load: the stack is rebuilt when they arrive', function()
   vim.env.REVUEY_FAKE_GH_DELAY = '0.4'
   local s = open('tree-phase-two', 'slow', {
     until_ = function(s)
@@ -735,7 +765,7 @@ h.test('a PR chosen while closed PRs still load: the stack is rebuilt when they 
   view.close()
 end)
 
-h.test('R: a chosen PR GitHub no longer has is dropped, back to the default route', function()
+test('R: a chosen PR GitHub no longer has is dropped, back to the default route', function()
   local s, r, calls = open('tree-sel-gone')
   tv.select(s, 16)
   h.ok(wait_idle(s))
@@ -756,7 +786,7 @@ h.test('R: a chosen PR GitHub no longer has is dropped, back to the default rout
   view.close()
 end)
 
-h.test('the tree\'s own rounds fail with the chain unknown below HEAD\'s PR: git detection, and a note that R retries', function()
+test('the tree\'s own rounds fail with the chain unknown below HEAD\'s PR: git detection, and a note that R retries', function()
   local s = open('tree-fail-rounds', nil, {
     tree_scenario = 'fail',
     prepare = function(r)
@@ -780,6 +810,347 @@ h.test('the tree\'s own rounds fail with the chain unknown below HEAD\'s PR: git
     end)
   end, 20), table.concat(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n'))
   view.close()
+end)
+
+local function pause(ms)
+  vim.wait(ms, function()
+    return false
+  end)
+end
+
+local function set_pr(r, num, fields)
+  for k, list in pairs(r.prs) do
+    if type(list) == 'table' and k ~= '_default_branch' then
+      for _, n in ipairs(list['acme/shop'] or list) do
+        if type(n) == 'table' and n.number == num then
+          for f, v in pairs(fields) do
+            n[f] = v
+          end
+        end
+      end
+    end
+  end
+end
+
+test('HEAD\'s branch with a closed PR and work on top: still the HEAD layer, viewed', function()
+  local s = open('tree-head-closed', nil, {
+    prepare = function(r)
+      set_pr(r, 12, { state = 'CLOSED', reviewDecision = vim.NIL })
+      h.write(r.dir, 'src/new.ts', 'export const n = 1\n')
+      h.git(r.dir, 'add', '-A')
+      h.git(r.dir, 'commit', '-q', '-m', 'more work')
+      h.write(r.dir, 'src/new.ts', 'export const n = 2\n') -- uncommitted too
+    end,
+  })
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  h.eq(true, s.review.stack.layers[2].is_head)
+  h.eq({ kind = 'layer', index = 2 }, s.scope)
+  h.ok(vim.tbl_contains(files(s), 'src/new.ts'), vim.inspect(files(s)))
+  h.eq(12, s.gh_tree.head_pr)
+  view.close()
+end)
+
+test('a chosen PR not in the tree after R (moved under another closed PR): default route, then its path', function()
+  vim.env.REVUEY_FAKE_GH_DELAY = '0.3'
+  local s, r, calls = open('tree-sel-moved', 'slow')
+  tv.select(s, 17)
+  h.ok(wait_idle(s))
+  local prs = vim.deepcopy(r.prs)
+  for _, n in ipairs(prs._tree['acme/shop']) do
+    if n.number == 17 then
+      n.baseRefName = 'stack/x' -- now on closed #14's branch
+    end
+  end
+  vim.fn.writefile({ vim.json.encode(prs) }, calls .. '.prs.json')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true, forge = true })
+  pause(300)
+  h.ok(vim.wait(20000, function()
+    return not s.gh_tree.loading and not s.gh_tree.running and wait_idle(s)
+  end, 20))
+  restore()
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.eq(17, s.gh_tree.sel, 'kept through phase one')
+  h.eq({ 11, 12, 14, 17 }, (tv.path(s)))
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/x' }, names(s))
+  view.close()
+end)
+
+test('the chosen PR missing from the tree: the default route, no error', function()
+  local s = open('tree-sel-missing')
+  s.gh_tree.sel = 17
+  local t = vim.deepcopy(s.gh_tree.tree)
+  t.nodes[17], t.parent[17], t.kids[16] = nil, nil, {}
+  s.gh_tree.tree = t
+  s.gh_tree.version = s.gh_tree.version + 1
+  view.refresh({ force = true })
+  h.ok(wait_idle(s))
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  view.close()
+end)
+
+test('a fetch landing while the stack is built: one tree throughout', function()
+  local s = open('tree-race')
+  local orig = tv.facts
+  tv.facts = function(...)
+    local f = orig(...)
+    -- take() lands here: a tree without #13 and #15
+    local t2 = vim.deepcopy(s.gh_tree.tree)
+    t2.nodes[13], t2.nodes[15], t2.kids[12], t2.kids[13] = nil, nil, { 14, 19 }, nil
+    t2.parent[13], t2.parent[15] = nil, nil
+    s.gh_tree.tree = t2
+    tv.facts = orig
+    return f
+  end
+  s.gh_tree.version = s.gh_tree.version + 1
+  view.refresh({ force = true })
+  h.ok(wait_idle(s))
+  tv.facts = orig
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s), 'the tree it started with')
+  s.gh_tree.version = s.gh_tree.version + 1
+  view.refresh({ force = true })
+  h.ok(wait_idle(s))
+  h.eq({ 'origin/stack/a', 'stack/b' }, names(s), 'then the new one')
+  view.close()
+end)
+
+test('HEAD leaves before its tree arrived: coming back fetches it', function()
+  vim.env.REVUEY_FAKE_GH_DELAY = '0.6'
+  local s, r = open('tree-leave-early', 'slow', {
+    until_ = function(s)
+      return s.gh_tree and s.gh_tree.fetched and s.gh_tree.tree == nil and s.forge and s.forge.busy
+    end,
+  })
+  h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.for_branch == 'unrelated' and s.gh_tree.reason ~= nil and wait_idle(s)
+  end, 20))
+  h.eq(nil, s.gh_tree.saved['stack/b'], 'nothing saved for a tree still loading')
+  h.git(r.dir, 'checkout', '-q', 'stack/b')
+  view.refresh({ force = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.tree ~= nil and not s.gh_tree.loading and not s.gh_tree.running and wait_idle(s)
+  end, 20))
+  restore()
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  view.close()
+end)
+
+test('HEAD leaves while closed PRs load: coming back reads them', function()
+  vim.env.REVUEY_FAKE_GH_DELAY = '0.6'
+  local s, r = open('tree-leave-phase2', 'slow', {
+    until_ = function(s)
+      return s.gh_tree and s.gh_tree.loading == true and s.review.stack ~= nil and not s.refreshing
+    end,
+  })
+  h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.for_branch == 'unrelated' and s.gh_tree.reason ~= nil and wait_idle(s)
+  end, 20))
+  h.git(r.dir, 'checkout', '-q', 'stack/b')
+  view.refresh({ force = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.tree ~= nil and not s.gh_tree.loading and not s.gh_tree.running and wait_idle(s)
+  end, 20))
+  restore()
+  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  h.ok(s.gh_tree.tree.nodes[17], 'the closed subtree is there')
+  view.close()
+end)
+
+test('R refetches the other branches\' trees too, when HEAD goes back', function()
+  local s, r, calls = open('tree-r-saved')
+  h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true })
+  h.ok(vim.wait(10000, function()
+    return s.gh_tree.reason ~= nil and wait_idle(s)
+  end, 20))
+  h.ok(s.gh_tree.saved['stack/b'] ~= nil)
+  view.refresh({ force = true, forge = true })
+  pause(300)
+  h.ok(wait_idle(s))
+  local n = #tree_calls(calls)
+  h.git(r.dir, 'checkout', '-q', 'stack/b')
+  view.refresh({ force = true })
+  pause(300)
+  h.ok(vim.wait(10000, function()
+    return s.gh_tree.tree ~= nil and wait_idle(s)
+  end, 20))
+  restore()
+  h.ok(#tree_calls(calls) > n, 'fetched again')
+  view.close()
+end)
+
+test('a saved tree is found by any branch in it', function()
+  local s, r, calls = open('tree-saved-contains')
+  h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
+  local _, restore = h.capture_notify()
+  view.refresh({ force = true })
+  h.ok(vim.wait(10000, function()
+    return s.gh_tree.reason ~= nil and wait_idle(s)
+  end, 20))
+  local n = #tree_calls(calls)
+  h.git(r.dir, 'checkout', '-q', '--track', 'origin/stack/a')
+  view.refresh({ force = true })
+  h.ok(wait_idle(s))
+  restore()
+  h.eq(n, #tree_calls(calls), 'stack/b\'s tree has stack/a: no fetch')
+  h.eq({ 'stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  h.eq(true, s.review.stack.layers[1].is_head)
+  view.close()
+end)
+
+test('a lower branch restacked locally: your copy, the layer above not marked', function()
+  local s = open('tree-local-restack', nil, {
+    prepare = function(r)
+      h.git(r.dir, 'branch', 'stack/a', 'origin/stack/a')
+      h.git(r.dir, 'checkout', '-q', 'stack/a')
+      h.write(r.dir, 'src/price.ts', 'export const price = 2\n')
+      h.git(r.dir, 'commit', '-q', '--amend', '-am', 'a2')
+      h.git(r.dir, 'checkout', '-q', 'stack/b')
+      h.git(r.dir, 'rebase', '-q', '--onto', 'stack/a', 'origin/stack/a', 'stack/b')
+    end,
+  })
+  h.eq({ 'stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  h.eq('restacked', s.review.stack.layers[1].local_differs)
+  h.eq(nil, s.review.stack.layers[2].diverged)
+  h.eq({ 'src/tax.ts' }, files(s), '#12\'s change only')
+  for _, n in ipairs(s.review.stack.notes) do
+    h.ok(not (n.kind == 'pr_not_restacked' and n.branch == 'stack/b'), n.text)
+  end
+  view.close()
+end)
+
+test('the bottom base: GitHub\'s copy, not a stale local branch', function()
+  local s = open('tree-base-stale', nil, {
+    prepare = function(r)
+      set_pr(r, 11, { baseRefName = 'release' })
+      h.git(r.author, 'push', '-q', 'origin', 'main:release')
+      h.git(r.dir, 'fetch', '-q', r.bare, 'main:refs/remotes/origin/release')
+      h.git(r.dir, 'branch', 'release', 'main')
+      h.git(r.dir, 'checkout', '-q', 'release')
+      h.write(r.dir, 'src/stale.ts', 'x\n')
+      h.git(r.dir, 'add', '-A')
+      h.git(r.dir, 'commit', '-q', '-m', 'stale')
+      h.git(r.dir, 'checkout', '-q', 'stack/b')
+    end,
+  })
+  h.eq('origin/release', s.review.stack.layers[1].parent)
+  view.close()
+end)
+
+test('a local branch above the top with a PR based elsewhere: not stacked, noted', function()
+  local s = open('tree-local-above-pr', nil, {
+    prepare = function(r)
+      h.git(r.dir, 'fetch', '-q', r.bare, '+refs/heads/stack/c:refs/remotes/origin/stack/c')
+      h.git(r.dir, 'checkout', '-q', '-b', 'stack/e', 'origin/stack/c')
+      h.write(r.dir, 'src/e.ts', 'export const e = 1\n')
+      h.git(r.dir, 'add', '-A')
+      h.git(r.dir, 'commit', '-q', '-m', 'e')
+      h.git(r.dir, 'branch', 'stack/c', 'origin/stack/c')
+      h.git(r.dir, 'checkout', '-q', 'stack/c')
+      local e = vim.trim(h.git(r.dir, 'rev-parse', 'stack/e'))
+      local node = {
+        number = 20, title = 'E', url = 'https://github.com/acme/shop/pull/20', state = 'OPEN', isDraft = false,
+        updatedAt = '2026-01-06T00:00:00Z', headRefName = 'stack/e', baseRefName = 'stack/a', headRefOid = e,
+        isCrossRepository = false, headRepositoryOwner = { login = 'acme' }, reviewDecision = 'REVIEW_REQUIRED',
+      }
+      table.insert(r.prs._tree['acme/shop'], node)
+      r.prs['acme/shop:stack/e'] = { node }
+    end,
+  })
+  h.ok(not vim.tbl_contains(names(s), 'stack/e'), vim.inspect(names(s)))
+  h.ok(vim.tbl_contains(note_kinds(s), 'local_above'), vim.inspect(note_kinds(s)))
+  view.close()
+end)
+
+test('R with a chosen PR under a closed one: its path already after phase one', function()
+  local s = open('tree-pins', nil)
+  tv.select(s, 16)
+  h.ok(wait_idle(s))
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.5'
+  view.refresh({ force = true, forge = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.loading == true and s.gh_tree.running ~= nil and not s.refreshing and not s.pending
+  end, 10), 'phase one taken')
+  pause(200)
+  h.eq({ 'origin/stack/a', 'origin/stack/old1' }, names(s), 'not the default route meanwhile')
+  h.ok(wait_idle(s))
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
+  view.close()
+end)
+
+test('R twice: the first fetch\'s rounds stop', function()
+  local s, _, calls = open('tree-gen')
+  local full = #tree_calls(calls)
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.4'
+  view.refresh({ force = true, forge = true })
+  h.ok(vim.wait(20000, function()
+    return s.gh_tree.running ~= nil and not s.forge.busy
+  end, 10))
+  view.refresh({ force = true, forge = true })
+  pause(300)
+  h.ok(vim.wait(30000, function()
+    return not s.gh_tree.running and not s.gh_tree.loading and wait_idle(s)
+  end, 20))
+  pause(1500)
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
+  local extra = #tree_calls(calls) - full
+  h.ok(extra < 2 * full, ('%d tree calls for two R, a full fetch is %d'):format(extra, full))
+  view.close()
+end)
+
+test('gF on a remote that does not answer: one attempt, no retries', function()
+  local s, _, _, ssh_log = open('tree-fetch-hang')
+  vim.env.REVUEY_FAKE_SSH_HANG = '1'
+  local msgs = fetch_and_wait(s)
+  vim.env.REVUEY_FAKE_SSH_HANG = nil
+  local starts = vim.tbl_filter(function(l)
+    return l:find('^start') ~= nil
+  end, vim.fn.readfile(ssh_log))
+  h.eq(1, #starts, 'a connection failure is not retried per ref')
+  h.ok(vim.iter(msgs):any(function(m)
+    return m.msg:find('could not fetch #13 #15', 1, true) ~= nil
+  end), vim.inspect(msgs))
+  view.close()
+end, function(m)
+  return m:find('could not fetch', 1, true) ~= nil
+end)
+
+test('gF then closing the review: the fetch stops, nothing starts after', function()
+  local s, _, _, ssh_log = open('tree-fetch-close')
+  vim.env.REVUEY_FAKE_SSH_HANG = '3'
+  local _, restore = h.capture_notify()
+  tv.fetch(s)
+  h.ok(vim.wait(5000, function()
+    return vim.fn.filereadable(ssh_log) == 1 and #vim.tbl_filter(function(l)
+      return l:find('^start') ~= nil
+    end, vim.fn.readfile(ssh_log)) > 0
+  end, 20), 'ssh started')
+  view.close()
+  pause(5000)
+  restore()
+  vim.env.REVUEY_FAKE_SSH_HANG = nil
+  local lines = vim.fn.readfile(ssh_log)
+  local starts, pids = 0, {}
+  for _, l in ipairs(lines) do
+    local pid = l:match('^start pid=(%d+)')
+    if pid then
+      starts = starts + 1
+      pids[#pids + 1] = tonumber(pid)
+    end
+  end
+  h.eq(1, starts, 'no fetch after the close')
+  for _, pid in ipairs(pids) do
+    h.ok(vim.uv.kill(pid, 0) ~= 0, 'ssh ' .. pid .. ' is gone')
+  end
+  h.eq(false, s.gh_tree.fetching)
 end)
 
 h.run()

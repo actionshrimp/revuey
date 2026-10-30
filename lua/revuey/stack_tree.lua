@@ -581,6 +581,10 @@ function M.reach(n, facts)
     local tip = facts.refs[ref]
     if tip and (live or tip == n.head_oid or not n.head_oid) then
       local mark = (n.head_oid and tip ~= n.head_oid and n.head_exists) and 'behind' or nil
+      if mark and facts.objects[n.head_oid] then
+        -- the ref is stale but the PR's exact head is here: that, not the ref
+        return { ref = ref, tip = n.head_oid, mark = mark, how = 'commit' }
+      end
       return { ref = ref, tip = tip, mark = mark, how = 'remote' }
     end
     if n.head_exists and live then
@@ -668,15 +672,36 @@ function M.stack(t, path, view, facts)
     -- (its working tree is the layer's, whatever it holds: noted when it is not the PR's). An
     -- older closed PR of a moved branch, or a local copy behind or off the PR, is shown from
     -- GitHub's side (remote ref or commit) with a note.
-    local lb = (not n.fork) and facts.heads[n.head] or nil
+    -- HEAD's PR (`facts.head_num`: its branch's, or the PR the tree was fetched for) is always
+    -- the checked-out branch, whatever its PR's state or its head's name (a fork's branch): the
+    -- review never loses the work you are on.
+    local lname = (not n.fork) and n.head or nil
+    local head_num = facts.head_num
+    if head_num == nil and facts.current and t.rep[facts.current] then
+      head_num = t.rep[facts.current]
+    end
+    if num == head_num and facts.current and not facts.detached and facts.heads[facts.current] then
+      lname = facts.current
+    end
+    local lb = lname and facts.heads[lname] or nil
     local use_local, differs = false, nil
+    local in_head = facts.in_head or {}
     if lb then
-      if not n.head_oid or lb == n.head_oid then
+      if lname == facts.current and num == head_num then
         use_local = true
+        if n.head_oid and lb ~= n.head_oid and not (facts.contains or {})[lname] then
+          differs = 'head'
+        end
+      elseif not n.head_oid or lb == n.head_oid then
+        use_local = true
+      elseif in_head[lname] then
+        -- a lower branch your checked-out branch is built on (restacked locally, not pushed
+        -- yet): your copy, so the layers above it diff from what they were built on
+        use_local, differs = true, 'restacked'
       elseif n.state == 'OPEN' and t.rep[n.head] == num then
-        if (facts.contains or {})[n.head] then
+        if (facts.contains or {})[lname] then
           use_local = true
-        elseif n.head == facts.current then
+        elseif lname == facts.current then
           use_local, differs = true, 'head'
         else
           differs = 'other'
@@ -684,7 +709,7 @@ function M.stack(t, path, view, facts)
       end
     end
     if use_local then
-      name, tip, key = n.head, lb, n.head
+      name, tip, key = lname, lb, lname
     elseif r.tip then
       remote = true
       if n.fork then
@@ -703,10 +728,12 @@ function M.stack(t, path, view, facts)
       local parent_rev = prev and prev.tip or facts.trunk_rev
       if not prev and t.bottom_base and path[1] == t.chain[1] then
         -- the chain's bottom base (also below a bottom PR that is missing here)
+        -- GitHub's copy, unless your local one is what your checked-out branch is built on
         local b = t.bottom_base
-        local brev = facts.heads[b] or facts.refs[facts.remote .. '/' .. b]
+        local use_local_base = facts.heads[b] and ((facts.in_head or {})[b] or not facts.refs[facts.remote .. '/' .. b])
+        local brev = use_local_base and facts.heads[b] or facts.refs[facts.remote .. '/' .. b]
         if brev then
-          parent, parent_rev = facts.heads[b] and b or (facts.remote .. '/' .. b), brev
+          parent, parent_rev = use_local_base and b or (facts.remote .. '/' .. b), brev
         else
           base_missing = facts.remote .. '/' .. b
         end
