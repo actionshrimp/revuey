@@ -1709,7 +1709,8 @@ are in `reports/Terminal code review tool landscape.md`.
     can (declared, unambiguous). GitHub is required for the tree; without it decision 7's
     detection stands, unchanged.
     - **Fetching.** `forge_view.update` starts it with the PR lookup the first time a review
-      fetches and on `R` (decision 20: never on its own; cached on the session, `s.gh_tree`).
+      fetches for HEAD's branch, and on `R` only (`s.tree_force`; the refetch after a post does
+      not refetch the tree; decision 20: never on its own; cached on the session, `s.gh_tree`).
       The start is HEAD's branch (the git stack's current layer, the checked-out branch, or a
       remote-tracking branch detached HEAD is at), looked up under `forge.target`'s candidate
       names in the base repo. Round one rides on the lookup's call (`forge.fetch` `extra`):
@@ -1721,39 +1722,73 @@ are in `reports/Terminal code review tool landscape.md`.
       expanded, batched (at most 40 aliases). Fragment `tnode`: number, title, url, state, draft,
       updatedAt, head/base names, headRefOid, isCrossRepository, head owner, `headRef` (null: the
       branch was deleted), reviewDecision. Measured: 1 point for nested lookups with `first: 2`
-      (11 with `first: 3`); about 1.2 s per call.
+      (11 with `first: 3`); about 1.2 s per call. When GitHub rejects the combined call (GraphQL
+      errors, no data), the lookup is retried alone so the PR chips never fail with the tree.
+      The later rounds run in a task of their own after the lookup (the lookup's lock, threads
+      and `R` never wait for them), with their own generation and `gh` handle: a newer fetch, a
+      new branch or closing the review drops them.
     - **Phases.** Phase one expands what routes need (the chain and every PR that is not
       CLOSED, plus HEAD's), then the stack is rebuilt; phase two expands closed PRs' subtrees for
-      the tree view only (`loading closed PRs…`). Routes never pass through a closed PR, so phase
-      two never changes the stack. On a long real stack with several abandoned closed chains
-      hanging off it, phase one took a handful of calls (a few seconds, one shared with the
-      lookup) and the whole tree about four times as many. Upward walks cost one call per level:
-      GraphQL has no field for the PRs based on a ref, so children cannot be nested.
-    - **Limits.** 25 calls per fetch, 300 PRs, 30 children per branch: past them the tree keeps
-      what was read, says `cut:` in its heading, marks PRs not expanded (`…`) and lists cut
-      (`+N more on GitHub`); the cut is logged. A failed round (logged) is the same; a failed
-      `R` keeps the last tree marked stale; a first fetch that fails leaves git detection.
+      the tree view only (`loading closed PRs…`). Routes never pass through a closed PR, except
+      from a closed PR chosen in the tree: its path (the PRs below it, `st.pin`) is expanded in
+      phase one too, so `R` keeps it and its open PRs above it are in the stack at once. The
+      stack is rebuilt after each phase; an unchanged one keeps its object, so nothing reloads.
+      On a long real stack with several abandoned closed chains hanging off it, phase one took a
+      handful of calls (a few seconds, one shared with the lookup) and the whole tree about four
+      times as many. Upward walks cost one call per level: GraphQL has no field for the PRs
+      based on a ref, so children cannot be nested.
+    - **Limits.** 25 calls per fetch, 300 PRs (counted as children are taken in, so a round
+      never overshoots), 30 children per branch: past them the tree keeps what was read, says
+      `cut:` in its heading, marks PRs not expanded (`…`) and lists cut (`+N more on GitHub`);
+      the cut is logged and the panel notes it (`stack tree incomplete: R retries`). A failed
+      round (logged) is the same; a failed `R` keeps the last tree marked stale; a first fetch
+      that fails leaves git detection, with a `stack tree failed: R retries` note.
     - **The tree.** Nodes are PRs. One per head branch is its representative (the newest OPEN,
       else the newest by updatedAt, then number); only representatives have children (PRs based
       on their branch), so older PRs of a moved branch are leaves on their old base. Forks' PRs
       (`isCrossRepository`) are leaves, and never a branch's representative. Members: the chain
       plus every child, recursively. The chain stops at the trunk or the repository's default
-      branch; at a base without a PR (`github_base` note: the bottom layer diffs from that
-      branch as fetched); at a repeated branch (a cycle). Merged PRs below stay in the chain
-      (dimmed; `mark_landed` applies).
+      branch; at a base without a PR; at a repeated branch (a cycle); where a limit or an error
+      cut it (a note says the tree is incomplete there). Whenever the bottom PR's base is not
+      the trunk (a branch without a PR, the repository's default branch when the trunk is
+      another), the bottom layer diffs from `<remote>/<base>` (also when the bottom PR itself is
+      missing here), with a `github_base` note; when that ref is not fetched it diffs from the
+      trunk and the note says so (a warning). Merged PRs below stay in the chain (dimmed;
+      `mark_landed` applies).
     - **Default route** (`route`): down by bases to the trunk, then up through OPEN children
       (drafts included), at each node the one with the longest open continuation, ties to the
       lower PR number (stable as PRs are updated, unlike recency). A node with one open child
       continues through it. A closed PR chosen in the tree gets its own path (open PRs above it
       only). The stack uses the route through HEAD's PR, or through the PR chosen in the tree
-      (`gt.sel`, session state only; dropped when a refetch no longer has it). A default route
-      of one PR leaves a plain review (no stack) until a path is chosen.
+      (`gt.sel`, session state only; dropped when a complete refetch no longer has it). A
+      default route of one PR leaves a plain review (no stack) until a path is chosen.
+    - **HEAD moves** (`follow_head`, each refresh; the tree remembers `for_branch`). To a branch
+      of the tree (`gS` to a layer, a checkout of a PR's branch): the tree stays, the path too
+      when the branch is on it (else the route through its PR), and `@` follows HEAD. To any
+      other branch: that branch's own stack, from the tree this review fetched for it before
+      (kept per branch), else a first fetch for it (decision 20 allows it: never fetched in
+      this review), with git detection meanwhile. Not "press R": an unrelated branch's work
+      must never be hidden behind an old path, and a tree per branch is fetched once.
     - **The stack for a path** (`stack_tree.stack`, from one `for-each-ref` of heads and
-      remotes and one `cat-file --batch-check` of head commits): a local branch of the head
-      name, else `<remote>/<head>` (remote, `ro`), else the head commit (`unfetched`, `ro`;
-      forks' layers are named `owner:branch`). A closed or merged PR's `<remote>/<head>` counts
-      only at its own head commit (the branch may hold a newer PR). PRs with no commit here are
-      left out (`not_fetched` warning: the layer above diffs from the one below them). Keys:
+      remotes, one `cat-file --batch-check` of head commits, and `merge-base --is-ancestor` for
+      local branches of open PRs not at their head): a local branch of the head name only when
+      it is that PR's: at its head commit; for the branch's open PR also when it contains the
+      head (your commits on top) or is checked out (its working tree is the layer's whatever it
+      holds; a `local_differs` warning when it does not contain the head). A local copy behind
+      or off an open PR that is not checked out is not shown: the PR is, from GitHub's side,
+      with the warning (reviewing the PR is the point; the copy is stale). An older closed PR of
+      a moved branch never takes the branch's local copy. Else `<remote>/<head>` (remote, `ro`),
+      else the head commit (`unfetched`, `ro`; forks' layers are named `owner:branch`). A closed
+      or merged PR's `<remote>/<head>` counts only at its own head commit (the branch may hold a
+      newer PR). PRs with no commit here are left out (`not_fetched` warning: the layer above
+      diffs from the one below them). A layer whose tip does not contain the layer below's
+      (`merge-base --is-ancestor`) is `diverged` with a `pr_not_restacked` warning: like
+      GitHub's PR view it diffs from the merge base, so it shows the parent's old commits.
+      Git detection's notes that still hold are kept (`upstream`, `detached`, the copy notes);
+      an explicit parent (revuey setting, Graphite) that GitHub's base contradicts gets a
+      `github_parent` note (inferred git parents are guesses: not noted). The ignore list does
+      not remove PRs from the path: it hides guessed relations, and a PR's base is declared, so
+      a hole in the chain would only misplace the PRs above it. Keys:
       `state_branch` is the head name (shared with a local branch made later), `state_base` the
       layer below's. `is_head` as in decision 7. Layers carry `pr`, `others` (children off the
       path), `fetch` (`missing` | `behind`). Git detection's local layers above the top (no PR
@@ -1768,18 +1803,28 @@ are in `reports/Terminal code review tool landscape.md`.
       path is `RevueyTreePath`, its default continuation `RevueyTreeRoute` (dimmer). `C`
       (`tree_closed`) shows CLOSED PRs, hidden unless on the chosen path or below an open one;
       a node counts the PRs hidden above it. `<CR>` selects (`refresh{scope = {pr = N}}`:
-      `rescope` finds the layer of that PR); `q`/`<Esc>`, leaving the window, or closing the
-      review close it with no change.
+      `rescope` finds the layer of that PR; a PR not fetched yet is shown once `gF` brings it);
+      `q`/`<Esc>`, leaving for a non-floating window, or closing the review close it with no
+      change (`g?` keeps it). It follows the diff window's size (`VimResized`, `WinResized`); in
+      a narrow window the right side shrinks to the chip and markers, then goes.
     - **Panel.** `⑂N` and `⇣` chips before the PR chip; the layer row's hint lines (panel
-      focused) name `gb` and `gF`; a help line. A layer's chip is the lookup's PR when it is the
-      layer's PR, else the tree node's (a fork's PR, an old PR of a moved branch). `gS` refuses
-      forks' and unfetched layers.
+      focused) name `gb` and `gF`; a help line. `gS` refuses forks' and unfetched layers.
+    - **The layer's PR is pinned** (`forge.pinned_target`): a GitHub stack layer's forge target
+      is its PR's number (`pin`), looked up by its head branch in the base repo, forks' PRs
+      included, so `forge.get` returns that PR and nothing else: the panel chip and section, the
+      threads, the description, posting (`gP` posts only to the PR whose diff is shown; a closed
+      PR's layer has nothing to post to, never the branch's open PR) and the change check.
     - **Fetching branches** (`gF`, `stack_fetch`). Not automatic: revuey never moved remote
       refs before, a fetch can prompt for credentials or hang offline, and costs a round trip per
       open; the marks say when it is worth it. `git fetch --no-tags --no-write-fetch-head
       <remote>` with `+refs/heads/<head>:refs/remotes/<remote>/<head>` for open PRs' branches and
-      `refs/pull/N/head` (objects only, no ref) for forks, deleted branches and closed PRs;
-      `GIT_TERMINAL_PROMPT=0`, 120 s. In the tree view it fetches the path under the cursor,
+      `refs/pull/N/head` (objects only, no ref) for forks, deleted branches and closed PRs, and
+      for names `git check-ref-format` would refuse (`safe_ref`); `--no-recurse-submodules`,
+      `GIT_TERMINAL_PROMPT=0` and, unless ssh is configured (`GIT_SSH_COMMAND`,
+      `core.sshCommand`), `GIT_SSH_COMMAND='ssh -o BatchMode=yes'` (no host-key or passphrase
+      prompt on the terminal under the editor); 120 s. When the fetch fails, each refspec is
+      fetched alone, a branch gone on GitHub through its pull ref, and the message says what
+      came, how, and what did not. In the tree view it fetches the path under the cursor,
       elsewhere the chosen path. Then a refresh; nothing on GitHub changes.
     - **Tests**: `stack_tree_spec.lua` (pure, an in-memory GitHub answering the aliases),
       `stack_tree_view_spec.lua` (a real clone, the fake `gh` with a `_tree`, `git fetch` to a

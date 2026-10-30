@@ -328,8 +328,12 @@ the PRs' base branches instead of guessing from git history:
 - **The stack is a path through the tree:** from the trunk down through each PR's base, then up
   through open PRs, taking the longest run of open PRs where a branch has several (a tie goes
   to the lower PR number, the one opened first). A branch with one open child just continues.
-  The commits come from your branches: a local branch of the PR's head when you have one, else
-  `origin/<head>` (read-only, `ro`), else the head commit when the clone has it.
+  The commits come from your branches: a local branch of the PR's head when it is the PR's (at
+  its head, or containing it with your commits on top, or checked out), else `origin/<head>`
+  (read-only, `ro`), else the head commit when the clone has it. A local copy that is behind
+  the PR or was rebased off it is not shown (unless checked out): the PR is, with a `⚠ local
+  stack/a differs from PR #11` note. An old closed PR of a branch that moved on is shown from
+  its own commit, never from the branch.
 - **`gb` shows the tree** over the diff, top of the stack at the top and the trunk at the
   bottom, like `gt log`:
 
@@ -356,27 +360,40 @@ the PRs' base branches instead of guessing from git history:
   PRs are dim with their state, and can be chosen too.
 - **Nothing is stored:** the chosen path lasts while the review is open (refreshes and `R`
   keep it). Reopening starts from the path through your branch again.
+- **When you switch branches** (in the review with `gS`, or elsewhere): on a branch of the tree
+  the path stays and `@` moves with you; on any other branch the stack is that branch's own,
+  its tree fetched once (git detection until it arrives, or when it has no PR).
 - **The panel** shows the chosen path as before. `⑂2` on a layer means the tree has two other
   PRs on that branch (`gb` shows them); `⇣` means its branch is not fetched or behind GitHub.
   With the panel focused, the layer under the cursor says which (`gb tree: 2 other paths
   here`, `gF fetch: origin is behind GitHub`). A PR whose commits are not in your clone is
   left out (the layer above then shows its changes too) with a `⚠ PR #15 not fetched` note.
   `]s`/`[s`, the full-stack scope and `gS` work along the chosen path; `gS` on a remote layer
-  creates a tracking branch as before.
+  creates a tracking branch as before. The PR section, threads, the description, posting
+  (`gP`) and the news check use the layer's own PR: a closed PR's layer never shows or posts to
+  the open PR its branch has now. Other notes: a layer not based on its parent PR's head
+  (`⚠ … not based on …'s head`: like on GitHub it shows the parent's old commits), and a parent
+  you set (`:RevueyStackParent`, Graphite) that GitHub's base disagrees with (the stack follows
+  GitHub). The [ignore list](#stack-notes) does not remove PRs from the path.
 - **`gF` fetches** the stack's branches from the PRs' remote with `git fetch` (into
   `origin/<head>`; for PRs from forks and closed PRs `refs/pull/N/head`, which brings the
   commits without writing a ref), then refreshes. It only writes to your clone, never to
-  GitHub. In the tree it fetches the path under the cursor. revuey does not fetch on open: a
+  GitHub. In the tree it fetches the path under the cursor. If part of it fails (a branch
+  deleted on GitHub since), the rest is still fetched, a gone branch by its pull ref, and the
+  message says which. It never prompts: no git credential prompt, and ssh runs in batch mode
+  (no host-key or passphrase question) unless you configured ssh for git yourself. revuey does not fetch on open: a
   fetch moves your remote-tracking branches, can ask for credentials and costs a network round
   trip on every review, and the marks say when one is worth it.
 - **PRs from forks** are shown (`bob:fix-d`, `fork`); `gF` brings their commits through
   `refs/pull/N/head`, and they are read-only layers (`gh pr checkout N` checks one out).
-- **When it is read:** with the PR lookup, when the review opens and on `R` (never on its own).
+- **When it is read:** with the PR lookup, when the review opens and on `R` (never on its own,
+  not after posting a review).
   The first round shares the lookup's call: the base chain seven PRs at a time, then one call
   per level of children for every branch of the tree at once. What the stack needs comes
   first; closed subtrees follow (`loading closed PRs…` in the tree's heading meanwhile). At
   most 25 calls, 300 PRs and 30 child PRs per branch: past that the tree is cut where it got
-  to (`cut:` in its heading, `… ` on PRs not expanded, `+N more on GitHub`).
+  to (`cut:` in its heading, `… ` on PRs not expanded, `+N more on GitHub`, and a
+  `stack tree incomplete: R retries` note in the panel).
 - **Without GitHub** (no `gh`, no GitHub remote, offline, no PR for your branch) the stack comes
   from git as above, and `gb` says why there is no tree. A lone PR stays a plain review until
   you pick a path in the tree. Branches without a PR yet above the top PR (local work not
