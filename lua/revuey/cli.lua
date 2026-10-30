@@ -41,6 +41,18 @@
 -- a branch name = review scopes of that branch. Messages (sent events) match by repo only.
 local modname = ...
 local plugin = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h:h:h')
+
+if modname ~= 'revuey.cli' then
+  -- run as a script: os.exit skips Neovim's own exit, which removes its server socket and temp
+  -- dir ($XDG_RUNTIME_DIR or $TMPDIR/nvim.<user>/...), so remove them first, or every command
+  -- leaves both behind
+  local os_exit = os.exit
+  os.exit = function(...)
+    pcall(vim.fn.serverstop, vim.v.servername)
+    pcall(vim.fn.delete, vim.fn.fnamemodify(vim.fn.tempname(), ':h'), 'rf')
+    return os_exit(...)
+  end
+end
 vim.opt.rtp:prepend(plugin)
 
 local comments = require('revuey.comments')

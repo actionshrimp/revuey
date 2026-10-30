@@ -324,12 +324,25 @@ function M.skip(reason)
   error({ revuey_skip = reason }, 0)
 end
 
+---Exit this Neovim with `code`. os.exit skips Neovim's own exit, which removes its server
+---socket and its temp dir ($TMPDIR/nvim.<user>/XXXXXX): every spec (and every fake CLI) would
+---leave both behind, so they are removed here first.
+function M.exit(code)
+  io.flush()
+  pcall(vim.fn.serverstop, vim.v.servername)
+  pcall(vim.fn.delete, vim.fn.fnamemodify(vim.fn.tempname(), ':h'), 'rf')
+  vim.fn.delete(M.mux_dir, 'rf')
+  os.exit(code)
+end
+
+local function spec_file(level)
+  return vim.fn.fnamemodify(debug.getinfo(level + 1, 'S').source:sub(2), ':t')
+end
+
 ---Skip a whole spec file before any test runs (call at top level); exits the process.
 function M.skip_spec(reason)
-  local file = vim.fn.fnamemodify(debug.getinfo(2, 'S').source:sub(2), ':t')
-  skip_line(file, '(all tests)', reason)
-  io.flush()
-  os.exit(0)
+  skip_line(spec_file(2), '(all tests)', reason)
+  M.exit(0)
 end
 
 local function on_error(err)
@@ -340,7 +353,7 @@ local function on_error(err)
 end
 
 function M.run()
-  local file = vim.fn.fnamemodify(debug.getinfo(2, 'S').source:sub(2), ':t')
+  local file = spec_file(2)
   for _, t in ipairs(tests) do
     local ok, err = xpcall(t.fn, on_error)
     if ok then
@@ -374,8 +387,7 @@ function M.run()
   pcall(function()
     vim.system({ 'tmux', 'kill-server' }):wait(2000)
   end)
-  vim.fn.delete(M.mux_dir, 'rf')
-  os.exit(failures == 0 and 0 or 1)
+  M.exit(failures == 0 and 0 or 1)
 end
 
 return M

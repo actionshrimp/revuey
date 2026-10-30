@@ -1,4 +1,12 @@
 -- Lua half of tests/bin/gh: records the call and answers `gh api graphql` from canned PRs.
+-- os.exit skips Neovim's own exit, which removes its server socket and temp dir
+-- ($TMPDIR/nvim.<user>/XXXXXX): remove them first, or every call leaves both behind.
+local os_exit = os.exit
+os.exit = function(...)
+  pcall(vim.fn.serverstop, vim.v.servername)
+  pcall(vim.fn.delete, vim.fn.fnamemodify(vim.fn.tempname(), ':h'), 'rf')
+  return os_exit(...)
+end
 local argv = { 'gh' }
 for i = 1, #arg do
   argv[#argv + 1] = arg[i]

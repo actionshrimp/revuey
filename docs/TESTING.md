@@ -107,6 +107,12 @@ attached (`screen_spec.lua`), which may be resized freely.
   there. `make test` gives every spec `REVUEY_TEST_RUN=<run dir>`, which everything it starts
   inherits, and `scripts/check-leaks.sh` fails the run (and kills them) when any such process is
   still alive at the end.
+- Nothing a run starts leaves files in the real temp dir. `make test` points `TMPDIR` at `<run dir>/tmp` (and unsets
+  `XDG_RUNTIME_DIR`, so Neovim's server sockets go there too), removes the run dir when the run passes and keeps it,
+  printing its path, when it fails. At the source: Lua's `os.exit` skips Neovim's own exit, which deletes the
+  process's temp dir (`$TMPDIR/nvim.<user>/XXXXXX`, holding its server socket), so the harness ends specs with
+  `h.exit(code)`, and `nvim -l` scripts (the fake `gh` and `claude`, `lua/revuey/cli.lua`) remove both before
+  `os.exit`. A child Neovim must exit (`:qall`, `:cquit`) or be stopped with SIGTERM, never SIGKILL.
 - The README's Keymaps tables are generated from `lua/revuey/keys.lua` (the list `g?` shows):
   after changing a key or its description run `nvim --headless --clean -l scripts/readme-keys.lua`;
   `key_help_spec.lua` fails while the README differs or a keymap option is missing from the list.

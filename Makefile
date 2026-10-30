@@ -3,16 +3,19 @@ SPECS := tests/guard_spec.lua tests/stack_spec.lua tests/stack_remote_spec.lua t
 
 .PHONY: test fixture
 
-# Each spec runs in a fresh `nvim --headless --clean`; temp files go to a throwaway dir. Every
-# process the specs start inherits REVUEY_TEST_RUN; any still alive at the end fails the run.
+# Each spec runs in a fresh `nvim --headless --clean`. Everything a run writes goes to its own run
+# dir: the specs' files (REVUEY_TEST_TMP) and, through TMPDIR (with XDG_RUNTIME_DIR unset), the
+# temp dirs and server sockets of every process they start, so nothing is left in the real TMPDIR.
+# Every process the specs start inherits REVUEY_TEST_RUN; any still alive at the end fails the
+# run. The run dir is removed when the run passes and kept (path printed) when it fails.
 test:
-	@tmp=$$(mktemp -d); status=0; \
+	@run=$$(mktemp -d); status=0; mkdir "$$run/tmp"; unset XDG_RUNTIME_DIR; \
 	for spec in $(SPECS); do \
-		REVUEY_TEST_RUN=$$tmp REVUEY_TEST_TMP=$$tmp $(NVIM) --headless --clean -l $$spec || status=1; \
+		TMPDIR=$$run/tmp REVUEY_TEST_RUN=$$run REVUEY_TEST_TMP=$$run $(NVIM) --headless --clean -l $$spec || status=1; \
 	done; \
-	scripts/check-leaks.sh $$tmp || status=1; \
-	rm -rf $$tmp; \
-	if [ $$status -eq 0 ]; then echo "all tests passed"; else echo "TESTS FAILED"; fi; \
+	scripts/check-leaks.sh $$run || status=1; \
+	if [ $$status -eq 0 ]; then rm -rf "$$run"; echo "all tests passed"; \
+	else echo "TESTS FAILED (run dir kept: $$run)"; fi; \
 	exit $$status
 
 # make fixture DIR=/tmp/revuey-fixture

@@ -1,4 +1,12 @@
 -- Lua half of tests/bin/claude: records the call and replays canned stream-json (NDJSON).
+-- os.exit skips Neovim's own exit, which removes its server socket and temp dir
+-- ($TMPDIR/nvim.<user>/XXXXXX): remove them first, or every call leaves both behind.
+local os_exit = os.exit
+os.exit = function(...)
+  pcall(vim.fn.serverstop, vim.v.servername)
+  pcall(vim.fn.delete, vim.fn.fnamemodify(vim.fn.tempname(), ':h'), 'rf')
+  return os_exit(...)
+end
 local stdin_file = arg[1]
 local argv = { 'claude' }
 for i = 2, #arg do
