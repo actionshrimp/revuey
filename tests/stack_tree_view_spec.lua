@@ -384,11 +384,10 @@ h.test('GitHub fails: git detection stays, the tree key says why', function()
   api.nvim_feedkeys('gb', 'x', false)
   restore()
   h.eq('revuey: no stack tree from GitHub: the GitHub lookup failed (see revuey.log) (the stack comes from git)', msgs[1].msg)
-  h.ok(vim.wait(3000, function()
-    return vim.iter(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)):any(function(x)
-      return x:find('● stack tree failed: R', 1, true) ~= nil
-    end)
-  end, 20), table.concat(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n'))
+  -- quiet in the panel, like the PR lookup it shared its call with (decision 13)
+  h.eq(false, vim.iter(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)):any(function(x)
+    return x:find('stack tree', 1, true) ~= nil
+  end))
   h.eq(nil, s.gh_tree.view)
   view.close()
 end)
@@ -754,6 +753,32 @@ h.test('R: a chosen PR GitHub no longer has is dropped, back to the default rout
   restore()
   h.eq(nil, s.gh_tree.sel)
   h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  view.close()
+end)
+
+h.test('the tree\'s own rounds fail with the chain unknown below HEAD\'s PR: git detection, and a note that R retries', function()
+  local s = open('tree-fail-rounds', nil, {
+    tree_scenario = 'fail',
+    prepare = function(r)
+      -- the chain below stack/b needs a round of its own: a flat lookup of stack/a answers
+      -- stack/a's PRs nested, so cut it there by giving stack/a more PRs than a nested level lists
+      for i = 1, 3 do
+        table.insert(r.prs._tree['acme/shop'], {
+          number = 30 + i, title = 'old ' .. i, url = 'https://github.com/acme/shop/pull/' .. (30 + i), state = 'CLOSED',
+          isDraft = false, updatedAt = '2026-01-06T0' .. i .. ':00:00Z', headRefName = 'stack/a', baseRefName = 'main',
+          headRefOid = r.oid.main, isCrossRepository = false, headRepositoryOwner = { login = 'acme' }, reviewDecision = vim.NIL,
+        })
+      end
+    end,
+  })
+  vim.env.REVUEY_FAKE_GH_TREE_SCENARIO = nil
+  h.eq({ 12 }, s.gh_tree.tree.chain, 'only HEAD\'s PR was read')
+  h.eq(nil, s.review.stack, 'a lone PR: the plain review')
+  h.ok(vim.wait(3000, function()
+    return vim.iter(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)):any(function(x)
+      return x:find('stack tree incomplete: R', 1, true) ~= nil
+    end)
+  end, 20), table.concat(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n'))
   view.close()
 end)
 

@@ -841,9 +841,19 @@ function M.fetch(targets, o)
     end
     if extra then
       extra.absorb(data, err)
-      if not data and #list > 0 and raw and #raw > 0 then
-        -- GitHub rejected the call (an error about the tree's part, say): the PRs must not
-        -- fail with it, so the lookup alone once more
+      local invalid = false
+      for _, e in ipairs(raw or {}) do
+        -- a query GitHub refused to run (validation errors carry `locations`; rate limits,
+        -- auth and not-found errors a `type`): perhaps the tree's part
+        if type(e) == 'table' and e.type == nil and e.locations ~= nil then
+          invalid = true
+        elseif type(e) == 'table' and e.type ~= nil then
+          invalid = false
+          break
+        end
+      end
+      if not data and #list > 0 and invalid then
+        -- the PRs must not fail with the tree's part: the lookup alone once more
         log.write('forge', 'PR lookup with the stack tree failed, retrying without it: ' .. tostring(err))
         query, aliases = M.build_query(list)
         data, err = M.run_graphql(query, host, o.on_job)

@@ -744,7 +744,9 @@ local tree_all = prs._tree or {}
 -- (errors, no data) and answers the same lookup without them
 if query and query:find('fragment tnode on PullRequest', 1, true) and query:find('fragment pr on PullRequest', 1, true)
   and (os.getenv('REVUEY_FAKE_GH_TREE_SCENARIO') or '') == 'reject' then
-  io.stdout:write(vim.json.encode({ data = vim.NIL, errors = { { message = 'Field \'associatedPullRequests\' doesn\'t exist' } } }), '\n')
+  io.stdout:write(vim.json.encode({ data = vim.NIL, errors = { {
+    message = 'Field \'associatedPullRequests\' doesn\'t exist', locations = { { line = 3, column = 40 } },
+  } } }), '\n')
   io.stderr:write('gh: Field \'associatedPullRequests\' doesn\'t exist\n')
   os.exit(1)
 end

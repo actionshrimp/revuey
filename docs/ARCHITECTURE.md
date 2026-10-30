@@ -1722,8 +1722,9 @@ are in `reports/Terminal code review tool landscape.md`.
       expanded, batched (at most 40 aliases). Fragment `tnode`: number, title, url, state, draft,
       updatedAt, head/base names, headRefOid, isCrossRepository, head owner, `headRef` (null: the
       branch was deleted), reviewDecision. Measured: 1 point for nested lookups with `first: 2`
-      (11 with `first: 3`); about 1.2 s per call. When GitHub rejects the combined call (GraphQL
-      errors, no data), the lookup is retried alone so the PR chips never fail with the tree.
+      (11 with `first: 3`); about 1.2 s per call. When GitHub refuses to run the combined call
+      (validation errors, which carry `locations`; not rate limits or other typed errors), the
+      lookup is retried alone so the PR chips never fail with the tree.
       The later rounds run in a task of their own after the lookup (the lookup's lock, threads
       and `R` never wait for them), with their own generation and `gh` handle: a newer fetch, a
       new branch or closing the review drops them.
@@ -1741,8 +1742,9 @@ are in `reports/Terminal code review tool landscape.md`.
       never overshoots), 30 children per branch: past them the tree keeps what was read, says
       `cut:` in its heading, marks PRs not expanded (`…`) and lists cut (`+N more on GitHub`);
       the cut is logged and the panel notes it (`stack tree incomplete: R retries`). A failed
-      round (logged) is the same; a failed `R` keeps the last tree marked stale; a first fetch
-      that fails leaves git detection, with a `stack tree failed: R retries` note.
+      round (logged) is the same, also when the cut tree leaves no stack of its own; a failed `R`
+      keeps the last tree marked stale; a first fetch that fails with the PR lookup (no `gh`,
+      offline, rate limits) leaves git detection quietly, as decision 13 does for the PRs.
     - **The tree.** Nodes are PRs. One per head branch is its representative (the newest OPEN,
       else the newest by updatedAt, then number); only representatives have children (PRs based
       on their branch), so older PRs of a moved branch are leaves on their old base. Forks' PRs

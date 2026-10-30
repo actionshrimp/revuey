@@ -158,11 +158,13 @@ local function take(s, st, final)
       gt.stale = true -- `R` failed: the last tree stays, marked
     else
       -- a failure is said in the panel: redraw the stack's notes
-      changed = gt.tree ~= nil or st.failed ~= nil
+      changed = gt.tree ~= nil or (st.failed ~= nil and st.calls > 1)
       gt.tree = nil
       gt.reason = st.failed and 'the GitHub lookup failed (see revuey.log)'
         or ('no pull request for ' .. table.concat(st.start, ' / '))
-      gt.failed = st.failed ~= nil or nil
+      -- a failure of the first call is the PR lookup's too (no gh, offline, rate limits):
+      -- quiet like it (decision 13); one in the tree's own rounds is noted in the panel
+      gt.failed = (st.failed ~= nil and st.calls > 1) or nil
     end
   else
     changed = true
@@ -183,8 +185,9 @@ local function take(s, st, final)
       return
     end
     if changed then
-      -- without a tree the diff is the same, only the notes change: redraw anyway
-      require('revuey.view').refresh({ force = t == nil or nil })
+      -- without a tree, or a cut one, the diff may be the same and only the notes change:
+      -- redraw anyway
+      require('revuey.view').refresh({ force = (t == nil or t.cut ~= nil) or nil })
     end
     M.redraw(s)
   end)
@@ -400,6 +403,10 @@ function M.review_notes(s, ctx)
   local rk = first_key('refresh')
   if gt.failed then
     return { notes_mod.new('tree_incomplete', { branch = gt.for_branch or 'HEAD', why = 'failed', key = rk }, ctx) }
+  end
+  if gt.tree and gt.tree.cut then
+    -- a tree cut short (a failed round, a limit) that left no stack of its own
+    return { notes_mod.new('tree_incomplete', { branch = gt.for_branch or 'HEAD', why = gt.tree.cut, key = rk }, ctx) }
   end
   return {}
 end
