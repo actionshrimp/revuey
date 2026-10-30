@@ -190,24 +190,60 @@ local function tree_rows(s)
   return rows, v
 end
 
-local function path_hl(s)
+---The PRs whose glyph is lit (the path under consideration), sorted; and per graph line the
+---lit characters (`hl` marks them `^`).
+local function lit(s)
   local v = s.gh_tree.view
-  local out = { path = {}, route = {} }
+  local nodes, marks = {}, {}
   for _, m in ipairs(api.nvim_buf_get_extmarks(v.buf, -1, 0, -1, { details = true })) do
-    local g = m[4].line_hl_group
-    local n = v.row_pr[m[2] + 1]
-    if g == 'RevueyTreePath' then
-      out.path[#out.path + 1] = n
-    elseif g == 'RevueyTreeRoute' then
-      out.route[#out.route + 1] = n
+    if m[4].hl_group == 'RevueyTreePath' then
+      local row = m[2] + 1
+      local inf = v.info[row]
+      if inf and inf.glyph == m[3] and inf.node then
+        nodes[#nodes + 1] = inf.node
+      end
+      marks[row] = marks[row] or {}
+      marks[row][#marks[row] + 1] = { m[3], m[4].end_col }
     end
   end
-  table.sort(out.path)
-  table.sort(out.route)
-  return out
+  table.sort(nodes)
+  return nodes, marks
 end
 
-test('tree view: rows, j/k between PRs with the path lit up, closed shown and hidden, q cancels', function()
+---Graph line `row` with its lit characters shown as `^`, the rest as `.` (graph part only).
+local function lit_line(s, row)
+  local v = s.gh_tree.view
+  local _, marks = lit(s)
+  local line = api.nvim_buf_get_lines(v.buf, row - 1, row, false)[1]
+  local g = line:match('^([│├─╯●○ ]*)')
+  local out = {}
+  local i = 0
+  for ch in g:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
+    local on = false
+    for _, r in ipairs(marks[row] or {}) do
+      on = on or (i >= r[1] and i < r[2])
+    end
+    out[#out + 1] = ch == ' ' and ' ' or (on and '^' or '.')
+    i = i + #ch
+  end
+  return (table.concat(out):gsub('%s+$', ''))
+end
+
+local function footer(s)
+  local v = s.gh_tree.view
+  -- the clone's facts (fetch marks: `⇣` on PRs not here) come a moment after the view opens
+  vim.wait(5000, function()
+    return v.facts ~= nil
+  end, 10)
+  require('revuey.stack_tree_view').render_footer(s)
+  return api.nvim_buf_get_lines(v.fbuf, 0, -1, false)
+end
+
+local function at(s)
+  return require('revuey.stack_tree_view').cursor_pr(s)
+end
+
+test('tree view: the graph, j/k/h/l, the path lit whole, the footer, closed shown and hidden, q cancels', function()
   local s = open('tree-view')
   api.nvim_set_current_win(s.diff_win)
   api.nvim_feedkeys('gb', 'x', false)
@@ -217,31 +253,51 @@ test('tree view: rows, j/k between PRs with the path lit up, closed shown and hi
   h.eq('win', api.nvim_win_get_config(v.win).relative, 'a float over the diff window')
   local lines = api.nvim_buf_get_lines(v.buf, 0, -1, false)
   h.eq(' Stack tree · 9 PRs on main', lines[1])
-  h.eq(' j k move  <CR> review this path  C show closed (4)  gF fetch  q close', lines[2])
   local graph = {}
-  for i = 4, #lines do
-    graph[#graph + 1] = (lines[i]:match('^([│├─┘┴◉◯ ]*#?%d*)') or ''):gsub('%s+$', '')
+  for i = 2, #lines do
+    graph[#graph + 1] = (lines[i]:match('^([│├─╯●○ ]*#?%d*)') or ''):gsub('%s+$', '')
   end
-  h.eq({ '◉ #15', '◉ #13', '│ ◯ #19', '├─┘', '◉ #12', '◉ #11', '◯' }, graph)
-  h.ok(lines[#lines]:find('◯ main', 1, true))
+  h.eq({ '● #15', '● #13', '│ ○ #19', '├─╯', '● #12', '● #11', '●' }, graph)
+  h.ok(lines[#lines]:find('● main', 1, true))
+  h.eq(' path: main › #11 › #12 › #13 › #15⇣', footer(s)[1])
+  -- the keys, in as many words as the window has room for (a narrow one here)
+  h.eq(' j k h l move  <CR> review  C closed  gF fetch  q', footer(s)[2])
   local rows = tree_rows(s)
-  h.eq(rows[12], api.nvim_win_get_cursor(v.win)[1], 'starts on the viewed layer\'s PR')
-  h.eq({ path = { 11, 12 }, route = { 13, 15 } }, path_hl(s))
-  -- k goes up a PR (connector rows are skipped)
+  h.eq({ rows[12], v.info[rows[12]].glyph }, api.nvim_win_get_cursor(v.win), 'on #12\'s glyph (the viewed layer\'s PR)')
+  h.eq({ 11, 12, 13, 15 }, (lit(s)))
+  h.eq('^ .', lit_line(s, rows[19]), 'the line beside #19 is #12 → #13, on the path; #19 is not')
+  -- l: across to the sibling branch at the fork, the path through it lit, lines included
+  api.nvim_feedkeys('l', 'x', false)
+  h.eq(19, at(s))
+  h.eq({ 11, 12, 19 }, (lit(s)))
+  h.eq('. ^', lit_line(s, rows[19]))
+  h.eq('^^^', lit_line(s, rows[19] + 1), 'the join into #12')
+  h.eq(' path: main › #11 › #12 › #19⇣', footer(s)[1])
+  -- h: back across
+  api.nvim_feedkeys('h', 'x', false)
+  h.eq(13, at(s))
+  h.eq({ 11, 12, 13, 15 }, (lit(s)))
+  h.eq('^ .', lit_line(s, rows[19]))
+  h.eq('^..', lit_line(s, rows[19] + 1), '`├` carries #13\'s line too')
+  -- k up, j down the branch to the trunk end
   api.nvim_feedkeys('k', 'x', false)
-  h.eq(rows[19], api.nvim_win_get_cursor(v.win)[1])
-  h.eq({ path = { 11, 12, 19 }, route = {} }, path_hl(s), 'the fork\'s PR: the path through it')
-  api.nvim_feedkeys('2k', 'x', false)
-  h.eq(rows[15], api.nvim_win_get_cursor(v.win)[1])
-  h.eq({ path = { 11, 12, 13, 15 }, route = {} }, path_hl(s))
+  h.eq(15, at(s))
+  h.eq({ rows[15], v.info[rows[15]].glyph }, api.nvim_win_get_cursor(v.win))
+  api.nvim_feedkeys('k', 'x', false)
+  h.eq(15, at(s), 'the top: stays')
   api.nvim_feedkeys('jjj', 'x', false)
-  h.eq(rows[12], api.nvim_win_get_cursor(v.win)[1])
+  h.eq(11, at(s))
+  h.eq(' path: main › #11 › #12 › #13 › #15⇣', footer(s)[1], 'the default route on from #11')
+  api.nvim_feedkeys('j', 'x', false)
+  h.eq(11, at(s), 'the trunk is not a PR')
+  api.nvim_feedkeys('kk', 'x', false)
+  h.eq(13, at(s))
   -- closed PRs: shown, then hidden again; the cursor stays on its PR
   api.nvim_feedkeys('C', 'x', false)
   rows = tree_rows(s)
   h.ok(rows[10] and rows[14] and rows[16] and rows[17], 'closed PRs shown')
-  h.eq(rows[12], api.nvim_win_get_cursor(v.win)[1])
-  h.ok(api.nvim_buf_get_lines(v.buf, 1, 2, false)[1]:find('C hide closed (4)', 1, true))
+  h.eq(13, at(s))
+  h.ok(footer(s)[2]:find('C closed', 1, true))
   api.nvim_feedkeys('C', 'x', false)
   rows = tree_rows(s)
   h.eq(nil, rows[16])
@@ -250,6 +306,7 @@ test('tree view: rows, j/k between PRs with the path lit up, closed shown and hi
   api.nvim_feedkeys('q', 'x', false)
   h.eq(nil, s.gh_tree.view)
   h.ok(not api.nvim_win_is_valid(v.win))
+  h.ok(not api.nvim_win_is_valid(v.fwin), 'the footer too')
   h.eq(s.diff_win, api.nvim_get_current_win())
   wait_idle(s)
   h.eq(stack, s.review.stack, 'the stack is unchanged')
@@ -258,6 +315,137 @@ test('tree view: rows, j/k between PRs with the path lit up, closed shown and hi
   h.ok(s.gh_tree.view ~= nil)
   api.nvim_feedkeys(vim.keycode('<Esc>'), 'x', false)
   h.eq(nil, s.gh_tree.view)
+  view.close()
+end)
+
+test('a long, nested tree: every PR reachable with j/k/h/l, the view scrolls, the footer shortens', function()
+  local s = open('tree-long', nil, { prepare = h.tree_extend })
+  api.nvim_set_current_win(s.diff_win)
+  api.nvim_feedkeys('gb', 'x', false)
+  api.nvim_feedkeys('C', 'x', false)
+  local v = s.gh_tree.view
+  h.eq(12, at(s))
+  -- down the long path to its bottom: the cursor stays in view
+  api.nvim_feedkeys('30j', 'x', false)
+  h.eq(100, at(s))
+  local row = api.nvim_win_get_cursor(v.win)[1]
+  api.nvim_win_call(v.win, function()
+    h.ok(row >= vim.fn.line('w0') and row <= vim.fn.line('w$'), 'visible')
+  end)
+  h.ok(footer(s)[1]:find('^ path: main › #100⇣ › … %d+ more … › '), footer(s)[1])
+  -- every PR from #100 by the keys
+  local seen, queue = { [100] = true }, { 100 }
+  local tree_mod = require('revuey.stack_tree')
+  while #queue > 0 do
+    local n = table.remove(queue)
+    for _, k in ipairs({ 'h', 'j', 'k', 'l' }) do
+      local m = tree_mod.nav(s.gh_tree.tree, v.rows, n, k)
+      if not seen[m] then
+        seen[m] = true
+        queue[#queue + 1] = m
+      end
+    end
+  end
+  for n in pairs(v.row_pr) do
+    h.ok(seen[v.row_pr[n]], '#' .. v.row_pr[n])
+  end
+  -- and by keys pressed: up to #13, across into the closed chain, up it, across into the fork
+  api.nvim_feedkeys('40k', 'x', false)
+  h.eq(15, at(s))
+  api.nvim_feedkeys('jl', 'x', false)
+  h.eq(120, at(s), 'from #13 into its own side branch, the closed chain')
+  api.nvim_feedkeys('k', 'x', false)
+  h.eq(121, at(s), 'up the chain')
+  api.nvim_feedkeys('l', 'x', false)
+  h.eq(130, at(s), 'the fork off #121')
+  h.ok(footer(s)[1]:find('^ path: main › #100⇣ › … %d+ more … › .*#130⇣$'), footer(s)[1])
+  api.nvim_feedkeys('h', 'x', false)
+  h.eq(121, at(s), 'back across: the nearest PR')
+  api.nvim_feedkeys('j', 'x', false)
+  h.eq(120, at(s), 'and down the chain')
+  api.nvim_feedkeys('q', 'x', false)
+  view.close()
+end)
+
+test('the lit path through a later side branch is lit all the way to its fork', function()
+  local s = open('tree-lit-joined')
+  api.nvim_set_current_win(s.diff_win)
+  api.nvim_feedkeys('gb', 'x', false)
+  api.nvim_feedkeys('C', 'x', false)
+  api.nvim_feedkeys('kl', 'x', false)
+  h.eq(19, at(s))
+  local rows = tree_rows(s)
+  h.eq('. ^', lit_line(s, rows[19]))
+  h.eq('^^^', lit_line(s, rows[19] + 1))
+  h.eq('^ .', lit_line(s, rows[14]), 'beside #14 the line still carries #19 down to #12')
+  h.eq('^..', lit_line(s, rows[14] + 1))
+  api.nvim_feedkeys('q', 'x', false)
+  view.close()
+end)
+
+test('the footer follows the window: hidden when too short, back when it grows', function()
+  local s = open('tree-footer-resize')
+  api.nvim_set_current_win(s.diff_win)
+  api.nvim_feedkeys('gb', 'x', false)
+  local v = s.gh_tree.view
+  local function shown()
+    return not api.nvim_win_get_config(v.fwin).hide
+  end
+  local function wait_resized()
+    -- WinResized comes with a screen redraw, which a headless Neovim without a UI never does
+    api.nvim_exec_autocmds('WinResized', { modeline = false })
+    vim.wait(300, function()
+      return false
+    end)
+  end
+  h.ok(shown())
+  local full = api.nvim_win_get_height(s.diff_win)
+  local fpos = api.nvim_win_get_position(v.fwin)[1]
+  -- a short diff window: a split above it takes the room
+  api.nvim_set_current_win(s.diff_win)
+  vim.cmd('aboveleft ' .. (full - 3) .. 'split')
+  local other = api.nvim_get_current_win()
+  api.nvim_set_current_win(v.win)
+  wait_resized()
+  h.ok(api.nvim_win_get_height(s.diff_win) < 6, 'short now')
+  h.eq(false, shown(), 'no room: hidden, not left over the other window')
+  api.nvim_win_close(other, true)
+  if s.gh_tree.view then
+    api.nvim_set_current_win(v.win)
+  end
+  wait_resized()
+  h.ok(s.gh_tree.view, 'still open')
+  h.ok(shown(), 'room again: shown')
+  h.eq(fpos, api.nvim_win_get_position(v.fwin)[1], 'at the bottom again')
+  api.nvim_feedkeys('q', 'x', false)
+  view.close()
+end)
+
+test('h/l then <CR>: the other branch at a fork is reviewed', function()
+  local s = open('tree-swap')
+  api.nvim_set_current_win(s.diff_win)
+  api.nvim_feedkeys('gb', 'x', false)
+  api.nvim_feedkeys('C', 'x', false)
+  h.eq(12, at(s))
+  api.nvim_feedkeys('l', 'x', false)
+  h.eq(14, at(s), '#12\'s own side branch nearest to it')
+  h.eq(' path: main › #11 › #12 › #14', footer(s)[1])
+  api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
+  h.ok(wait_idle(s))
+  h.eq(14, s.gh_tree.sel)
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/x' }, names(s))
+  h.eq({ kind = 'layer', index = 3 }, s.scope)
+  -- the reviewed path is column 0 now, the other branch moved right
+  api.nvim_feedkeys('gb', 'x', false)
+  local v = s.gh_tree.view
+  local lines = api.nvim_buf_get_lines(v.buf, 0, -1, false)
+  h.ok(vim.iter(lines):any(function(l)
+    return l:find('^● #14') ~= nil
+  end), table.concat(lines, '\n'))
+  h.ok(vim.iter(lines):any(function(l)
+    return l:find('^│ ○ #15') ~= nil or l:find('^│ ○ #13') ~= nil
+  end), table.concat(lines, '\n'))
+  api.nvim_feedkeys('q', 'x', false)
   view.close()
 end)
 

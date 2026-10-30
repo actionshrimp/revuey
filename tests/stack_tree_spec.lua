@@ -318,46 +318,267 @@ h.test('route: longest open continuation, ties to the lower PR number, closed st
   h.eq({ 1, 0 }, { tree.others(t, 1, on) })
 end)
 
-h.test('layout: Graphite-style rows, closed PRs hidden with a count, or shown', function()
+---Draw a layout as plain lines: `@` on PRs of `on`, `o` elsewhere, `*` the trunk.
+local function draw(t, o)
+  local out = {}
+  for _, r in ipairs(tree.layout(t, o)) do
+    local g = tree.graph(r, r.kind == 'trunk' and '*' or ((o.on_path or {})[r.node] and '@' or 'o'))
+    local label = (r.kind == 'node' and ('#' .. r.node)) or (r.kind == 'trunk' and 'main') or ''
+    out[#out + 1] = (g .. label .. (r.hidden and (' +' .. r.hidden) or '')):gsub('%s+$', '')
+  end
+  return out
+end
+
+local function set(list)
+  local out = {}
+  for _, n in ipairs(list) do
+    out[n] = true
+  end
+  return out
+end
+
+---A tree straight from base links: { [child] = parent ('root' at the bottom) }, states.
+local function shape(parents, states)
+  local t = { nodes = {}, kids = { root = {} }, parent = {}, rep = {}, more = {}, unexpanded = {} }
+  for c, p in pairs(parents) do
+    t.nodes[c] = { number = c, state = (states or {})[c] or 'OPEN', head = 'b' .. c, title = '' }
+    t.parent[c] = p
+    t.kids[p] = t.kids[p] or {}
+    table.insert(t.kids[p], c)
+    t.kids[c] = t.kids[c] or {}
+  end
+  for _, l in pairs(t.kids) do
+    table.sort(l)
+  end
+  return t
+end
+
+h.test('layout: git log --graph rows; side branches join just above their fork; closed hidden or shown', function()
   local t = tree.tree((fetch(small(), 'stack/b')))
-  local path = tree.route(t, 12)
-  local on = {}
-  for _, n in ipairs(path) do
-    on[n] = true
-  end
-  local function draw(show)
-    local out = {}
-    for _, r in ipairs(tree.layout(t, { show_closed = show, on_path = on, main = on })) do
-      local g = tree.graph(r, r.trunk and 'o' or (on[r.node] and '@' or 'o'))
-      out[#out + 1] = (g .. (r.node and ('#' .. r.node) or (r.trunk and 'main' or '')) .. (r.hidden and (' +' .. r.hidden) or '')):gsub('%s+$', '')
-    end
-    return out
-  end
+  local on = set((tree.route(t, 12)))
   h.eq({
     '@ #15',
     '@ #13',
     '│ o #19',
-    '├─┘',
+    '├─╯',
     '@ #12 +1',
     '@ #11 +3',
-    'o main',
-  }, draw(false))
+    '* main',
+  }, draw(t, { on_path = on, main = on }))
   h.eq({
     '@ #15',
     '@ #13',
-    '│ o #14',
-    '│ │ o #19',
-    '├─┴─┘',
+    '│ o #19', -- open sides first (the longer open run), then by number
+    '├─╯',
+    '│ o #14', -- the column is free again: reused
+    '├─╯',
     '@ #12',
     '│ o #10',
-    '│ │ o #17',
-    '│ │ o #16',
-    '├─┴─┘',
+    '├─╯',
+    '│ o #17', -- a 2-PR closed chain in its own column, two rows
+    '│ o #16',
+    '├─╯',
     '@ #11',
-    'o main',
-  }, draw(true))
-  local _, gs, ge = tree.graph({ node = 1, col = 1, pipes = { 0 } }, '◉')
-  h.eq({ 4, 7 }, { gs, ge }, 'the glyph\'s byte range (after "│ ")')
+    '* main',
+  }, draw(t, { show_closed = true, on_path = on, main = on }))
+end)
+
+h.test('layout: the reviewed path stays in column 0; nested forks go further right; forks at many heights', function()
+  -- 1 ← 2 ← 3 ← 4 (the path); 2 ← 5 ← 6, 6 ← 7 (a fork off a side branch); 3 ← 8; 1 ← 9
+  local t = shape({ [1] = 'root', [2] = 1, [3] = 2, [4] = 3, [5] = 2, [6] = 5, [7] = 6, [8] = 3, [9] = 1, [10] = 6 })
+  local on = set({ 1, 2, 3, 4 })
+  h.eq({
+    '@ #4',
+    '│ o #8', -- #3's side branch, right above #3 and below its main child
+    '├─╯',
+    '@ #3',
+    '│ o #7', -- #6's main child (the lower number at an equal run)
+    '│ │ o #10', -- #6's side branch, a column further right
+    '│ ├─╯',
+    '│ o #6',
+    '│ o #5',
+    '├─╯',
+    '@ #2',
+    '│ o #9',
+    '├─╯',
+    '@ #1',
+    '* main',
+  }, draw(t, { on_path = on, main = on }))
+  -- another path chosen: it takes column 0, the old one moves right
+  local on2 = set({ 1, 2, 5, 6, 10 })
+  h.eq({
+    '@ #10',
+    '│ o #7',
+    '├─╯',
+    '@ #6',
+    '@ #5',
+    '│ o #4',
+    '│ │ o #8',
+    '│ ├─╯',
+    '│ o #3',
+    '├─╯',
+    '@ #2',
+    '│ o #9',
+    '├─╯',
+    '@ #1',
+    '* main',
+  }, draw(t, { on_path = on2, main = on2 }))
+  h.eq(3, tree.width(tree.layout(t, { on_path = on, main = on })))
+end)
+
+h.test('layout: several forks off one PR reuse one column; a long side chain keeps its column', function()
+  local parents = { [1] = 'root', [2] = 1 }
+  for i = 3, 5 do
+    parents[i] = 1 -- three more children of #1
+  end
+  local prev = 4
+  for i = 20, 23 do
+    parents[i] = prev -- a 4-PR closed chain on #4
+    prev = i
+  end
+  local states = {}
+  for i = 20, 23 do
+    states[i] = 'CLOSED'
+  end
+  local t = shape(parents, states)
+  local on = set({ 1, 2 })
+  local rows = draw(t, { on_path = on, main = on, show_closed = true })
+  h.eq({
+    '@ #2',
+    '│ o #3',
+    '├─╯',
+    '│ o #23',
+    '│ o #22',
+    '│ o #21',
+    '│ o #20',
+    '│ o #4',
+    '├─╯',
+    '│ o #5',
+    '├─╯',
+    '@ #1',
+    '* main',
+  }, rows)
+  h.eq(2, tree.width(tree.layout(t, { on_path = on, main = on, show_closed = true })), 'two columns for all of it')
+  h.eq({ '@ #2', '│ o #3', '├─╯', '│ o #4 +4', '├─╯', '│ o #5', '├─╯', '@ #1', '* main' }, draw(t, { on_path = on, main = on }))
+end)
+
+h.test('layout: segments name their node or edges, for colouring a path whole', function()
+  local t = tree.tree((fetch(small(), 'stack/b')))
+  local on = set((tree.route(t, 12)))
+  local rows = tree.layout(t, { on_path = on, main = on })
+  -- the side row: the main line beside it is edge #13 → #12, the node #19
+  local g, segs = tree.graph(rows[3], 'o')
+  h.eq('│ o ', g)
+  h.eq({ { 0, 3, edges = { 13 } }, { 4, 5, node = 19 } }, segs)
+  -- the join: `├` carries both edges into #12, `─` and `╯` the side's
+  g, segs = tree.graph(rows[4], '')
+  h.eq('├─╯ ', g)
+  h.eq({ { 0, 3, edges = { 13, 19 } }, { 3, 6, edges = { 19 } }, { 6, 9, edges = { 19 } } }, segs)
+end)
+
+h.test('navigation: j to the base, k up the column, h/l across; every PR reachable', function()
+  local t = tree.tree((fetch(small(), 'stack/b')))
+  local on = set((tree.route(t, 12)))
+  local rows = tree.layout(t, { show_closed = true, on_path = on, main = on })
+  local nav = function(n, k)
+    return tree.nav(t, rows, n, k)
+  end
+  h.eq(12, nav(13, 'j'))
+  h.eq(15, nav(13, 'k'))
+  h.eq(19, nav(13, 'l'), 'across to the sibling branch beside it')
+  h.eq(13, nav(19, 'h'), 'and back')
+  h.eq(12, nav(19, 'j'), 'a side branch\'s base: the fork point')
+  h.eq(14, nav(12, 'l'), 'the nearest PR in the next column')
+  h.eq(19, nav(14, 'k'), 'up a reused column to the branch above')
+  h.eq(17, nav(16, 'k'))
+  h.eq(16, nav(17, 'j'))
+  h.eq(11, nav(16, 'j'))
+  h.eq(15, nav(15, 'k'), 'nowhere to go: stays')
+  h.eq(11, nav(11, 'j'), 'the trunk is not a PR')
+  -- every PR from any PR, on this tree and on random ones
+  local function reach_all(tt, rr)
+    local nums = {}
+    for _, r in ipairs(rr) do
+      if r.kind == 'node' then
+        nums[#nums + 1] = r.node
+      end
+    end
+    for _, from in ipairs(nums) do
+      local seen, queue = { [from] = true }, { from }
+      while #queue > 0 do
+        local n = table.remove(queue)
+        for _, k in ipairs({ 'h', 'j', 'k', 'l' }) do
+          local m = tree.nav(tt, rr, n, k)
+          if not seen[m] then
+            seen[m] = true
+            queue[#queue + 1] = m
+          end
+        end
+      end
+      for _, n in ipairs(nums) do
+        if not seen[n] then
+          return ('#%d unreachable from #%d'):format(n, from)
+        end
+      end
+    end
+  end
+  h.eq(nil, reach_all(t, rows))
+  math.randomseed(23)
+  for _ = 1, 200 do
+    local parents = { [1] = 'root' }
+    local n = math.random(2, 25)
+    for i = 2, n do
+      parents[i] = math.random(1, i - 1)
+    end
+    local tt = shape(parents)
+    local path = { 1 }
+    while #tt.kids[path[#path]] > 0 do
+      path[#path + 1] = tt.kids[path[#path]][math.random(#tt.kids[path[#path]])]
+    end
+    local s2 = set(path)
+    local why = reach_all(tt, tree.layout(tt, { on_path = s2, main = s2 }))
+    h.eq(nil, why, vim.inspect(parents))
+  end
+end)
+
+h.test('layout: below an earlier side branch\'s join the line carries that branch too', function()
+  local t = tree.tree((fetch(small(), 'stack/b')))
+  local on = set((tree.route(t, 12)))
+  local rows = tree.layout(t, { show_closed = true, on_path = on, main = on })
+  -- rows: #15, #13, #19, join, #14, join, #12: beside #14 the line runs #13 and #19 down to #12
+  local _, segs = tree.graph(rows[5], 'o')
+  h.eq({ 0, 3, edges = { 13, 19 } }, segs[1])
+  _, segs = tree.graph(rows[6], '')
+  h.eq({ 0, 3, edges = { 13, 19, 14 } }, segs[1], '`├` of the second join: all three')
+end)
+
+h.test('navigation: l goes into the PR\'s own branches only; h and l undo each other at a fork', function()
+  -- 1 ← 2 ← 3 ← 4 ← 5 (the path); 6 off 2; 7 off 4
+  local t = shape({ [1] = 'root', [2] = 1, [3] = 2, [4] = 3, [5] = 4, [6] = 2, [7] = 4 })
+  local on = set({ 1, 2, 3, 4, 5 })
+  local rows = tree.layout(t, { on_path = on, main = on })
+  h.eq({ '@ #5', '│ o #7', '├─╯', '@ #4', '@ #3', '│ o #6', '├─╯', '@ #2', '@ #1', '* main' }, draw(t, { on_path = on, main = on }))
+  h.eq(6, tree.nav(t, rows, 3, 'l'), 'the branch beside #3 (it is #2\'s, not #3\'s own: #3 has none)')
+  h.eq(3, tree.nav(t, rows, 6, 'h'))
+  h.eq(6, tree.nav(t, rows, 2, 'l'), '#2\'s own branch')
+  h.eq(7, tree.nav(t, rows, 4, 'l'), '#4\'s own branch')
+  h.eq(7, tree.nav(t, rows, 5, 'l'))
+  h.eq(5, tree.nav(t, rows, 7, 'h'))
+  -- h∘l is the identity from the PRs right beside a side branch
+  for _, from in ipairs({ 3, 5 }) do
+    h.eq(from, tree.nav(t, rows, tree.nav(t, rows, from, 'l'), 'h'))
+  end
+end)
+
+h.test('footer path: shortened in the middle when long', function()
+  h.eq('main › #1 › #2', tree.path_text('main', { 1, 2 }, 80))
+  local long = {}
+  for i = 1, 17 do
+    long[i] = 200 + i
+  end
+  local text = tree.path_text('develop', long, 60)
+  h.ok(vim.fn.strdisplaywidth(text) <= 60, text)
+  h.ok(text:find('^develop › #201 › … %d+ more … › ') and text:find('#217$'), text)
 end)
 
 h.test('reach and fetch specs: missing, behind, a commit only, forks and deleted branches', function()

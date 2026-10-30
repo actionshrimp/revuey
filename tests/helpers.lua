@@ -363,6 +363,51 @@ function M.tree_repo(name)
   return { dir = review, bare = bare, author = author, oid = oid, prs = prs }
 end
 
+---Grow a tree_repo's GitHub side into a long, nested tree (PRs only: their commits are not in
+---the clone, so their layers are "not fetched"): 15 open PRs below #11 (#100..#114, main ← #100
+---← … ← #114 ← #11: a 19-PR path to #15), a 4-PR closed chain off #13 (#120..#123) with a 3-PR
+---closed fork off its second PR (#130..#132), and two more children of #12 (#140, a draft;
+---#141, closed).
+function M.tree_extend(r)
+  local list = r.prs._tree['acme/shop']
+  local function add(number, head, base, state, extra)
+    local n = vim.tbl_extend('force', {
+      number = number, title = ('Part %d of the pricing rework'):format(number),
+      url = 'https://github.com/acme/shop/pull/' .. number, state = state, isDraft = false,
+      updatedAt = ('2026-02-%02dT00:00:00Z'):format(number % 28 + 1), headRefName = head, baseRefName = base,
+      headRefOid = ('%040x'):format(number), isCrossRepository = false, headRepositoryOwner = { login = 'acme' },
+      reviewDecision = state == 'OPEN' and 'REVIEW_REQUIRED' or vim.NIL,
+    }, extra or {})
+    list[#list + 1] = n
+    r.prs['acme/shop:' .. head] = { n }
+  end
+  local base = 'main'
+  for i = 100, 114 do
+    add(i, 'stack/p' .. i, base, 'OPEN')
+    base = 'stack/p' .. i
+  end
+  for _, l in pairs(r.prs) do
+    for _, n in ipairs(type(l) == 'table' and (l['acme/shop'] or l) or {}) do
+      if type(n) == 'table' and n.number == 11 then
+        n.baseRefName = base
+      end
+    end
+  end
+  base = 'stack/c'
+  for i = 120, 123 do
+    add(i, 'stack/old-c' .. i, base, 'CLOSED')
+    base = 'stack/old-c' .. i
+  end
+  base = 'stack/old-c121'
+  for i = 130, 132 do
+    add(i, 'stack/try' .. i, base, 'CLOSED')
+    base = 'stack/try' .. i
+  end
+  add(140, 'stack/vat', 'stack/b', 'OPEN', { isDraft = true })
+  add(141, 'stack/vat-old', 'stack/b', 'CLOSED')
+  return r
+end
+
 ---`git fetch` from a `git@github.com:...` remote reaches `bare` (tests/bin/fake-ssh), never the
 ---network.
 function M.use_fake_ssh(bare, log)

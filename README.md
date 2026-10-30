@@ -336,30 +336,53 @@ the PRs' base branches instead of guessing from git history:
   shows its own change. A local copy that is just behind the PR or was rebased off it is not
   shown: the PR is, with a `⚠ local stack/a differs from PR #11` note. An old closed PR of a
   branch that moved on is shown from its own commit, never from the branch.
-- **`gb` shows the tree** over the diff, top of the stack at the top and the trunk at the
-  bottom, like `gt log`:
+- **`gb` shows the tree** over the diff as a graph, like `git log --graph`: the top of the
+  stack at the top, the trunk at the bottom, every branch in a column of its own, joined to
+  the PR it comes off right above that PR:
 
   ```
    Stack tree · 9 PRs on main
-   j k move  <CR> review this path  C show closed (4)  gF fetch  q close
+  ● #15 stack/d  Discounts for members                  not fetched  draft
+  ● #13 stack/c  Coupon codes                 origin behind · fetch  ✗
+  │ ○ #19 bob:fix-d  Fix the discount rounding       not fetched  fork  ●
+  ├─╯
+  │ ○ #14 stack/x  Experiment: free shipping                     closed
+  ├─╯
+  ● #12 stack/b  Tax on the cart total                            ● @ ▶
+  │ ○ #17 stack/old2  Legacy price rules, part 2     not fetched  closed
+  │ ○ #16 stack/old1  Legacy price rules                          closed
+  ├─╯
+  ● #11 stack/a  Prices per item                                  ✓
+  ● main
 
-  ◉ #15 stack/d  Discounts for members          not fetched  draft
-  ◉ #13 stack/c  Coupon codes              origin behind · fetch  ✗
-  │ ◯ #19 bob:fix-d  Fix the discount rounding    not fetched  fork  ●
-  ├─┘
-  ◉ #12 stack/b  Tax on the cart total                  +1 closed  ● @ ▶
-  ◉ #11 stack/a  Prices per item                        +3 closed  ✓
-  ◯ main
+   path: main › #11 › #12 › #13 › #15
+   j/k up/down  h/l other branch  <CR> review  C closed (4)  gF fetch  q close
   ```
+
+  The path you are reviewing is the left column, its PRs `●`; other PRs are `○`. The cursor
+  sits on a PR, and the path you would get from it, from the trunk through that PR and on
+  along its open PRs above, is lit along its whole length, lines included (the rest of the
+  graph is dim); the footer spells it out (`main › #100 › … 16 more … › #13 › #15` when long; `⇣` after a PR whose commits are
+  not in your clone yet, where the stack would stop: `gF` fetches them).
+
+  - `k` goes up the column (the next PR built on this one, or the next branch in that
+    column), `j` down to the PR this one is based on (from a side branch's lowest PR, the fork
+    point it comes off), so `j`/`k` follow a branch.
+  - `h`/`l` go to the nearest PR in the column to the left / right: that is how to swap to
+    another branch. `l` on a fork point goes into its own branches; at a fork, `l` from the
+    PR above it reaches the branch beside it, and `h` comes back. Every PR can be reached this
+    way.
+  - `<CR>` reviews the lit path: the panel's stack becomes it, viewing that PR's layer, and it
+    becomes the left column. `q`/`<Esc>` close without a change.
+  - Closed PRs are hidden (a PR says `+3 closed` for the ones above it); `C` shows them.
+    Closed and merged PRs show their state, and can be chosen too. Columns are reused once a
+    branch has joined, so a tree with many forks stays narrow; a long one scrolls with the
+    cursor.
 
   Each row has the PR number, branch, title, the review state (as in the panel), `@` on
   HEAD's PR, `▶` on the layer you are viewing, and what your clone lacks: `not fetched`
   (no `origin/<head>`, no commit) or `origin behind · fetch` (`origin/<head>` is not GitHub's
-  head). `j`/`k` move between PRs and light up the path from the trunk to the PR under the
-  cursor, with the rest of the stack you would get above it dimmer. `<CR>` reviews that path:
-  the panel's stack becomes it, viewing that PR's layer. `q`/`<Esc>` close without a change.
-  Closed PRs are hidden (a branch point says `+3 closed`); `C` shows them. Closed and merged
-  PRs are dim with their state, and can be chosen too.
+  head). In a narrow window the details on the right go first, then the title.
 - **Nothing is stored:** the chosen path lasts while the review is open (refreshes and `R`
   keep it). Reopening starts from the path through your branch again.
 - **When you switch branches** (in the review with `gS`, or elsewhere): on a branch of the tree
@@ -1463,7 +1486,9 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `gS` | [Check out](#checking-out-a-layer) the layer being viewed in this worktree (`git switch`) |
 | `gb` | The [stack tree](#stack-trees-from-github): every PR of the stack on GitHub, to pick the path to review |
 | `gF` | `git fetch` the stack's PR branches from their remote (layers marked `⇣`, "not fetched" or "origin behind") |
-| `<CR>` in the stack tree | Review the path through the PR under the cursor (`j`/`k` move between PRs and light the path up; `q`/`<Esc>` close without a change) |
+| `j k` in the stack tree | Down to the PR this one is based on (toward the trunk) / up the column; the path from the trunk to the PR under the cursor lights up, and the footer shows it |
+| `h l` in the stack tree | The nearest PR in the column to the left / right: how to swap to another branch at a fork (`l` on a fork point goes into its own branches) |
+| `<CR>` in the stack tree | Review the path through the PR under the cursor; `q`/`<Esc>` close without a change |
 | `C` | In the stack tree: show / hide closed PRs |
 | `!` | [Stack notes](#stack-notes) in full, with actions (also in the file panel) |
 | `gu` | Toggle working tree (default) / committed only |

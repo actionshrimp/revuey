@@ -792,7 +792,7 @@ function M.stack(t, path, view, facts)
 end
 
 -- ---------------------------------------------------------------------------
--- Drawing (Graphite-style: the top of the stack at the top, the trunk at the bottom)
+-- Drawing (`git log --graph` style: the top of the stack at the top, the trunk at the bottom)
 -- ---------------------------------------------------------------------------
 
 ---Visible children of a node: CLOSED ones are hidden unless `show_closed`, they are on the
@@ -835,107 +835,226 @@ local function visible_kids(t, num, o, memo)
   return shown, hidden
 end
 
----The graph rows, top first: {node = number?, col = integer, pipes = {cols}, join? = {from,
----to, tees}} where `node` rows draw the node at `col`; `hidden` = closed PRs hidden above it.
----`o`: {show_closed, on_path (set), main (set: preferred child at forks, e.g. the route)}.
+---The graph, `git log --graph` style: rows top first (the top of the stack at the top, the trunk
+---at the bottom). A node's main child (on `o.main`, the reviewed path, else the one with the
+---longest open run, else the lowest number) continues in the node's own column right above it;
+---every other child's subtree is drawn in the next column, above the node and below the main
+---child, and joins the node's column on the row just above it (`├─╯`). Each side branch joins
+---before the next one starts, so they all reuse that one column; a side branch's own side
+---branches go one column further right, and so on. The reviewed path is column 0.
+---
+---Row: {kind = 'node'|'join'|'trunk', node? = number ('root' for the trunk), col = integer,
+---hidden? = closed PRs hidden above it, cells = {[col] = {a, a_edges, b?, b_edges?}}}: two
+---characters per column, `a` the line or glyph, `b` the one after it (a join's `─`); `*_edges`
+---are the edges a character draws, by child number (an edge is a child and its parent).
+---`o`: {show_closed, on_path (set: kept visible), main (set)}.
 function M.layout(t, o)
   o = o or {}
   local memo = {}
+  local open_len = {}
+  local function run(num)
+    -- the longest run of open PRs above `num` (a deterministic main child off the path)
+    if open_len[num] == nil then
+      local best = 0
+      for _, k in ipairs(t.kids[num] or {}) do
+        if t.nodes[k] and t.nodes[k].state == 'OPEN' then
+          best = math.max(best, 1 + run(k))
+        end
+      end
+      open_len[num] = best
+    end
+    return open_len[num]
+  end
   local function block(num, col)
     local ks, hidden = visible_kids(t, num, o, memo)
-    -- the child on the route stays in this column; the others go to the right, by number
     table.sort(ks, function(a, b)
       local ma, mb = o.main and o.main[a] or false, o.main and o.main[b] or false
       if ma ~= mb then
         return ma
       end
+      local ra, rb = run(a) + (t.nodes[a].state == 'OPEN' and 1 or 0), run(b) + (t.nodes[b].state == 'OPEN' and 1 or 0)
+      if ra ~= rb then
+        return ra > rb
+      end
       return a < b
     end)
-    local rows, width = {}, 1
+    local rows = {}
     if #ks > 0 then
-      local main, w0 = block(ks[1], col)
-      vim.list_extend(rows, main)
-      width = w0
-      local starts, off = {}, col + 1
+      vim.list_extend(rows, block(ks[1], col))
+      -- the line in this column below a join carries every branch joined so far down to the PR
+      local joined = { ks[1] }
       for i = 2, #ks do
-        local side, wi = block(ks[i], off)
-        starts[i] = off
-        for _, r in ipairs(side) do
-          r.pipes[#r.pipes + 1] = col
-          for j = 2, i - 1 do
-            r.pipes[#r.pipes + 1] = starts[j]
+        for _, r in ipairs(block(ks[i], col + 1)) do
+          if not r.cells[col] then
+            r.cells[col] = { '│', vim.deepcopy(joined) } -- the main line goes on beside it
           end
+          rows[#rows + 1] = r
         end
-        vim.list_extend(rows, side)
-        off = off + wi
-      end
-      if #ks > 1 then
-        local tees = {}
-        for i = 2, #ks - 1 do
-          tees[#tees + 1] = starts[i]
-        end
-        rows[#rows + 1] = { pipes = {}, join = { from = col, to = starts[#ks], tees = tees } }
-      end
-      width = math.max(width, off - col)
-    end
-    rows[#rows + 1] = { node = num, col = col, pipes = {}, hidden = hidden > 0 and hidden or nil }
-    return rows, width
-  end
-  local rows = {}
-  local roots = visible_kids(t, 'root', o, memo)
-  for i, r in ipairs(roots) do
-    local b = block(r, 0)
-    if i > 1 then
-      for _, x in ipairs(b) do
-        x.pipes[#x.pipes + 1] = 0
+        joined[#joined + 1] = ks[i]
+        rows[#rows + 1] = {
+          kind = 'join', col = col,
+          cells = { [col] = { '├', vim.deepcopy(joined), '─', { ks[i] } }, [col + 1] = { '╯', { ks[i] } } },
+        }
       end
     end
-    vim.list_extend(rows, b)
+    rows[#rows + 1] = {
+      kind = num == 'root' and 'trunk' or 'node', node = num, col = col, hidden = hidden > 0 and hidden or nil,
+      cells = { [col] = { 'node', {} } },
+    }
+    return rows
   end
-  rows[#rows + 1] = { trunk = true, col = 0, pipes = {} }
-  return rows
+  return block('root', 0)
 end
 
----The graph prefix of a row: two cells per column. `glyph` for its node. Also the byte range of
----the glyph.
-function M.graph(row, glyph)
-  local cells = {}
-  local maxc = row.col or 0
-  for _, p in ipairs(row.pipes) do
-    maxc = math.max(maxc, p)
+---Text of a row's graph: two characters per column up to `width` columns (the widest row's, so
+---the text after it lines up), with `glyph` for its node. Returns the text and its segments,
+---{from, to (byte offsets), node? = number, edges? = {child numbers}} for highlighting.
+function M.graph(row, glyph, width)
+  local maxc = 0
+  for c in pairs(row.cells) do
+    maxc = math.max(maxc, c)
   end
-  if row.join then
-    maxc = math.max(maxc, row.join.to)
-  end
-  for c = 0, maxc do
-    cells[c] = '  '
-  end
-  for _, p in ipairs(row.pipes) do
-    cells[p] = '│ '
-  end
-  if row.join then
-    local tees = {}
-    for _, x in ipairs(row.join.tees) do
-      tees[x] = true
+  width = math.max(width or 0, maxc + 1)
+  local out, segs, len = {}, {}, 0
+  local function put(ch, seg)
+    out[#out + 1] = ch
+    if seg then
+      seg[1], seg[2] = len, len + #ch
+      segs[#segs + 1] = seg
     end
-    for c = row.join.from, row.join.to do
-      local ch = (c == row.join.from and '├') or (c == row.join.to and '┘') or (tees[c] and '┴') or '─'
-      cells[c] = ch .. (c == row.join.to and ' ' or '─')
+    len = len + #ch
+  end
+  for c = 0, width - 1 do
+    local cell = row.cells[c]
+    if not cell then
+      put('  ')
+    elseif cell[1] == 'node' then
+      put(glyph, { 0, 0, node = row.node })
+      put(' ')
+    else
+      put(cell[1], { 0, 0, edges = cell[2] })
+      if cell[3] then
+        put(cell[3], { 0, 0, edges = cell[4] })
+      else
+        put(' ')
+      end
     end
   end
-  if row.node or row.trunk then
-    cells[row.col] = glyph .. ' '
-  end
-  local out, gs, ge = {}, nil, nil
-  local len = 0
-  for c = 0, maxc do
-    if c == row.col and (row.node or row.trunk) then
-      gs, ge = len, len + #glyph
+  return table.concat(out), segs
+end
+
+---Graph columns a layout needs (the widest row).
+function M.width(rows)
+  local w = 1
+  for _, r in ipairs(rows) do
+    for c in pairs(r.cells) do
+      w = math.max(w, c + 1)
     end
-    out[#out + 1] = cells[c]
-    len = len + #cells[c]
   end
-  return table.concat(out), gs, ge
+  return w
+end
+
+---Moving in the tree view from PR `num` (rows from M.layout): `j` to the PR it is based on (its
+---parent: right below in its column, or for a side branch's lowest PR the fork point to its
+---left); `k` to the next PR up its column (its main child, else the next branch that reuses the
+---column); `h`/`l` to the nearest PR in the next column left / right (the closest row, the
+---upper one on a tie; further columns when that one is empty; `l` from a fork point into its
+---own side branches first), which is how to cross to a sibling branch at a fork. Returns the
+---PR, or `num` when there is nowhere to go.
+function M.nav(t, rows, num, key)
+  local at, list = nil, {}
+  for i, r in ipairs(rows) do
+    if r.kind == 'node' then
+      list[#list + 1] = { row = i, col = r.col, num = r.node }
+      if r.node == num then
+        at = list[#list]
+      end
+    end
+  end
+  if not at then
+    return num
+  end
+  if key == 'j' then
+    local p = t.parent[num]
+    for _, x in ipairs(list) do
+      if x.num == p then
+        return p
+      end
+    end
+    return num
+  elseif key == 'k' then
+    local best
+    for _, x in ipairs(list) do
+      if x.col == at.col and x.row < at.row and (not best or x.row > best.row) then
+        best = x
+      end
+    end
+    return best and best.num or num
+  end
+  local dir = key == 'l' and 1 or -1
+  local maxc = 0
+  for _, x in ipairs(list) do
+    maxc = math.max(maxc, x.col)
+  end
+  -- `l` at a fork point goes into its own side branches (above it), not into a branch of the
+  -- PR below that happens to be closer: a node whose branch forks off this PR (walking down
+  -- its branch until the next PR is in this PR's column, that PR is this one)
+  local col_of = {}
+  for _, x in ipairs(list) do
+    col_of[x.num] = x.col
+  end
+  local function above(x)
+    local p = t.parent[x]
+    while p and p ~= 'root' and col_of[p] and col_of[p] ~= at.col do
+      p = t.parent[p]
+    end
+    return p == num
+  end
+  local c = at.col + dir
+  while c >= 0 and c <= maxc do
+    local best
+    local own = false
+    if dir > 0 then
+      for _, x in ipairs(list) do
+        own = own or (x.col == c and above(x.num))
+      end
+    end
+    for _, x in ipairs(list) do
+      if x.col == c and (not own or above(x.num)) then
+        local d = math.abs(x.row - at.row)
+        if not best or d < best.d or (d == best.d and x.row < best.row) then
+          best = { d = d, row = x.row, num = x.num }
+        end
+      end
+    end
+    if best then
+      return best.num
+    end
+    c = c + dir
+  end
+  return num
+end
+
+---The footer's path, `main › #11 › #12 › #13`, shortened to `width` cells: the first two and
+---the last ones it can fit, with `… N more …` between. `flag(n)` adds a mark after a PR.
+function M.path_text(trunk, path, width, flag)
+  local parts = { trunk }
+  for _, n in ipairs(path) do
+    parts[#parts + 1] = '#' .. n .. (flag and flag(n) or '')
+  end
+  local full = table.concat(parts, ' › ')
+  if vim.fn.strdisplaywidth(full) <= width or #parts <= 4 then
+    return full
+  end
+  for tail = #parts - 2, 1, -1 do
+    local hidden = #parts - 2 - tail
+    local text = table.concat({ parts[1], parts[2] }, ' › ') .. (' › … %d more … › '):format(hidden)
+      .. table.concat(vim.list_slice(parts, #parts - tail + 1), ' › ')
+    if vim.fn.strdisplaywidth(text) <= width or tail == 1 then
+      return text
+    end
+  end
+  return full
 end
 
 return M

@@ -331,8 +331,40 @@ h.test('stack tree from GitHub: panel markers, the tree view with closed PRs hid
   ]]), 'the tree view did not open')
   child.lua('vim.wait(50)')
   screenshot('stack-tree')
+  -- closed PRs shown, and `l` across to #12's other branch: the path through it lit
   child.type_keys('C')
+  child.type_keys('l')
   screenshot('stack-tree-closed')
+  child.type_keys('q')
+end)
+
+-- A long, nested tree (helpers tree_extend): a 19-PR open path, a 4-PR closed chain with a 3-PR
+-- fork off it, two more branches off #12; closed PRs shown, the cursor moved up to #13, across
+-- into the closed chain, up it and across into the fork; the footer's path shortened.
+h.test('stack tree from GitHub: a long, nested tree, scrolled', function()
+  local r = h.tree_extend(h.tree_repo('screen-tree-long'))
+  h.use_fake_gh(h.tmpdir('screen-tree-long-gh') .. '/calls.ndjson', r.prs)
+  h.use_fake_ssh(r.bare)
+  start(r.dir, '', 30, 120, { forge = { check = false, threads = { enabled = false }, description = { enabled = false } } })
+  h.ok(child.lua([[
+    return vim.wait(20000, function()
+      local s = require('revuey.view').session
+      local gt = s and s.gh_tree
+      return gt and gt.tree and not gt.loading and not gt.running and not s.refreshing and not s.pending and s.review.stack
+        and s.review.stack.kind == 'github' and s.forge and not s.forge.busy
+    end, 10)
+  ]]), 'the tree did not load')
+  child.lua('vim.api.nvim_set_current_win(require("revuey.view").session.diff_win)')
+  child.type_keys('gb')
+  h.ok(child.lua([[
+    return vim.wait(5000, function()
+      local v = require('revuey.view').session.gh_tree.view
+      return v and v.facts ~= nil
+    end, 10)
+  ]]), 'the tree view did not open')
+  child.type_keys('C', 'k', 'l', 'k', 'l')
+  child.lua('vim.wait(50)')
+  screenshot('stack-tree-long')
   child.type_keys('q')
 end)
 

@@ -1812,18 +1812,43 @@ are in `reports/Terminal code review tool landscape.md`.
       `local_above` note says where). `stack.finish` then runs the squash and landed checks and the ignore
       list. The stack is cached on the git fingerprint, the tree version, the fetch count and
       the selection, and an equal one keeps its object (a new object reloads the review).
-    - **Tree view** (`gb`): a float over the diff window, `gt log` style (top of the stack at the
-      top, the trunk at the bottom; at a fork the child on the route stays in the column, the
-      others go right, joined by `├─┴─┘`). Rows: number, branch, title (cut first), then right
-      aligned `+N closed`, `…`/`+N more on GitHub`, the fetch mark, `fork`, the review chip,
-      `@` (HEAD's PR), `▶` (the viewed layer). `j`/`k` move between PRs; the trunk-to-cursor
-      path is `RevueyTreePath`, its default continuation `RevueyTreeRoute` (dimmer). `C`
+    - **Tree view** (`gb`; `stack_tree.layout`, `graph`, `nav`, `path_text` pure; the view
+      draws them): a float over the diff window, the graph like `git log --graph` (the top of
+      the stack at the top, the trunk at the bottom), and a two-line footer float below it.
+      **Layout:** `block(node, col)` draws a node's main child's block in its own column right
+      above it (the main child: on the reviewed path, else the longest run of open PRs, else
+      the lower number; so the reviewed path is column 0 and does not move with the cursor),
+      then each other child's block one column to the right (open runs first, then by
+      number), each followed by a join row `├─╯` into the node's column, then the node. A side
+      branch joins before the next one starts, so all of a node's side branches reuse one
+      column, and a column is free again once its branch joined; a side branch's own forks go
+      one further right (nested forks), a long chain keeps its column for its rows. Rows
+      carry cells of two characters per column, each naming the edges it draws (by child
+      PR: an edge is a PR and its base; below a join the line names every branch joined so
+      far), so the path under consideration (route from the
+      cursor's PR: trunk to it and on along open PRs) is coloured whole, `RevueyTreePath`,
+      nodes, `│`, `├─╯` and text; the rest `RevueyTreeDim`. Glyphs `●` mark the reviewed path,
+      `○` the rest. **Navigation:** `k` the next PR up the cursor's column (its main child,
+      else the next branch reusing the column); `j` the PR it is based on (below in the column,
+      or for a side branch's lowest PR the fork point to its left), so `j`/`k` follow a branch;
+      `h`/`l` the nearest PR in the next column left/right (row distance, the upper on a tie,
+      skipping empty columns; `l` from a fork point prefers its own side branches, the ones
+      whose branch comes down into its column at it), which
+      swaps between sibling branches. Reachability is checked on the fixtures and on 200
+      random trees. The cursor sits on the PR's glyph (`cursorline`, `RevueyTreeCursor`).
+      **Footer:** the lit path (`path_text`: the trunk and first PR, `… N more …`, as many
+      last PRs as fit; `⇣` after PRs with no commit here) and the keys, in fewer words as the
+      width shrinks; hidden when the diff window has fewer than 6 rows, shown again when it
+      grows. Rows: number,
+      branch, title (cut first), then right aligned `+N closed`, `…`/`+N more on GitHub`, the
+      fetch mark, `fork`, the review chip, `@` (HEAD's PR), `▶` (the viewed layer); in a
+      narrow window the right side shrinks to the chip and markers, then goes. `C`
       (`tree_closed`) shows CLOSED PRs, hidden unless on the chosen path or below an open one;
       a node counts the PRs hidden above it. `<CR>` selects (`refresh{scope = {pr = N}}`:
       `rescope` finds the layer of that PR; a PR not fetched yet is shown once `gF` brings it);
       `q`/`<Esc>`, leaving for a non-floating window, or closing the review close it with no
-      change (`g?` keeps it). It follows the diff window's size (`VimResized`, `WinResized`); in
-      a narrow window the right side shrinks to the chip and markers, then goes.
+      change (`g?` keeps it). It follows the diff window's size (`VimResized`, `WinResized`),
+      starting below its winbar.
     - **Panel.** `⑂N` and `⇣` chips before the PR chip; the layer row's hint lines (panel
       focused) name `gb` and `gF`; a help line. `gS` refuses forks' and unfetched layers.
     - **The layer's PR is pinned** (`forge.pinned_target`): a GitHub stack layer's forge target
@@ -1849,7 +1874,7 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Tests**: `stack_tree_spec.lua` (pure, an in-memory GitHub answering the aliases),
       `stack_tree_view_spec.lua` (a real clone, the fake `gh` with a `_tree`, `git fetch` to a
       local bare repository through `tests/bin/fake-ssh`), screenshots `stack-tree`,
-      `stack-tree-closed`, `stack-tree-panel`.
+      `stack-tree-closed` (after `l`: another branch lit), `stack-tree-panel`, `stack-tree-long` (a 19-PR path, a closed chain with a fork off it, scrolled); `helpers.tree_extend` grows the fixture.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

@@ -905,50 +905,41 @@ local function chunks_width(ch)
   return w
 end
 
----Lines, highlights and row -> PR for the tree at `width`.
+---Lines of the tree at `width`: a title, then the graph (tree_mod.layout: the reviewed path in
+---column 0, `●` on its PRs, `○` elsewhere), one row per PR with its number, branch and title
+---after the graph, and the details right-aligned (virtual text, cut first in a narrow window).
+---Returns lines, virtual text per row, row -> PR, and per row what M.highlight colours.
 function M.lines(s, width, marks)
   local gt = s.gh_tree
   local t = gt.tree
   local v = gt.view or {}
   local path = M.path(s)
-  local on_path, main = {}, {}
+  local reviewed = {}
   for _, num in ipairs(path) do
-    on_path[num] = true
-    main[num] = true
+    reviewed[num] = true
   end
-  local rows = tree_mod.layout(t, { show_closed = v.show_closed, on_path = on_path, main = main })
-  local closed = 0
-  for _, n in pairs(t.nodes) do
-    if n.state == 'CLOSED' then
-      closed = closed + 1
-    end
-  end
-  local lines, hls, virt, row_pr = {}, {}, {}, {}
-  local function add(text, list)
-    lines[#lines + 1] = text
-    hls[#lines] = list or {}
-    return #lines
-  end
+  local rows = tree_mod.layout(t, { show_closed = v.show_closed, on_path = reviewed, main = reviewed })
+  local lines, virt, row_pr, info = {}, {}, {}, {}
   local title = (' Stack tree · %d PR%s on %s'):format(t.count, t.count == 1 and '' or 's', t.trunk)
   local extra = (gt.loading and ' · loading closed PRs…' or '') .. (gt.stale and ' · stale (R failed)' or '')
     .. (t.cut and (' · cut: ' .. t.cut) or '')
-  add(title .. extra, { { 0, #title, 'RevueyPanelTitle' }, { #title, #title + #extra, 'Comment' } })
-  local help = require('revuey.keys').line(' j k move  <CR> review this path  {tree_closed} ' .. (v.show_closed and 'hide' or 'show')
-    .. (' closed (%d)'):format(closed) .. '  {stack_fetch} fetch  q close') or ''
-  add(help, { { 0, #help, 'Comment' } })
-  add('')
+  lines[1] = title .. extra
+  info[1] = { title = #title, extra = #title + #extra }
+  local panel = require('revuey.panel')
   for _, r in ipairs(rows) do
-    if r.trunk then
-      local g = tree_mod.graph(r, '◯')
-      local text = g .. t.trunk
-      add(text, { { 0, #g, 'Comment' }, { #g, #text, 'Comment' } })
-    elseif not r.node then
-      local g = tree_mod.graph(r, '')
-      add(g, { { 0, #g, 'Comment' } })
+    local ln = #lines + 1
+    if r.kind == 'trunk' then
+      local g, segs = tree_mod.graph(r, '●')
+      lines[ln] = g .. t.trunk
+      info[ln] = { segs = segs, trunk = true, text = { #g, #lines[ln] } }
+    elseif r.kind == 'join' then
+      local g, segs = tree_mod.graph(r, '')
+      lines[ln] = (g:gsub('%s+$', ''))
+      info[ln] = { segs = segs }
     else
       local n = t.nodes[r.node]
-      local dim = n.state ~= 'OPEN'
-      local g, gs, ge = tree_mod.graph(r, on_path[n.number] and '◉' or '◯')
+      local g, segs = tree_mod.graph(r, reviewed[n.number] and '●' or '○')
+      g = g:gsub('%s+$', '') .. ' '
       local right = right_chunks(s, t, n, r, marks)
       local num = '#' .. n.number
       local branch = display_branch(n)
@@ -965,23 +956,26 @@ function M.lines(s, width, marks)
         right = {}
       end
       local avail = room()
-      local panel = require('revuey.panel')
-      branch = panel.truncate(branch, math.max(math.min(vim.fn.strdisplaywidth(branch), math.max(avail - 12, math.floor(avail * 0.6))), 4))
+      branch = panel.truncate(branch, math.max(math.min(vim.fn.strdisplaywidth(branch), math.max(avail - 12, math.floor(avail * 0.6))), 1))
       local title_room = avail - vim.fn.strdisplaywidth(branch) - 2
       local ttl = title_room >= 4 and ('  ' .. panel.truncate(n.title, title_room)) or ''
-      local text = g .. num .. ' ' .. branch .. ttl
-      local row = add(text, {
-        { 0, #g, 'Comment' },
-        { gs, ge, on_path[n.number] and 'RevueyTreeNode' or 'Comment' },
-        { #g, #g + #num, dim and 'RevueyForgeDim' or 'RevueyForgeNumber' },
-        { #g + #num + 1, #g + #num + 1 + #branch, dim and 'Comment' or 'RevueyStackBranch' },
-        { #g + #num + 1 + #branch, #text, dim and 'Comment' or 'Normal' },
-      })
-      virt[row] = right
-      row_pr[row] = n.number
+      lines[ln] = g .. num .. ' ' .. branch .. ttl
+      local nstart = #g
+      info[ln] = {
+        segs = segs, node = n.number,
+        num = { nstart, nstart + #num }, branch = { nstart + #num + 1, nstart + #num + 1 + #branch },
+        title = { nstart + #num + 1 + #branch, #lines[ln] },
+      }
+      for _, sg in ipairs(segs) do
+        if sg.node then
+          info[ln].glyph = sg[1]
+        end
+      end
+      virt[ln] = right
+      row_pr[ln] = n.number
     end
   end
-  return lines, hls, virt, row_pr
+  return lines, virt, row_pr, info, rows
 end
 
 ---Marks of every node (how the clone reaches its head), from the last facts.
@@ -997,8 +991,51 @@ local function node_marks(s)
   return out
 end
 
----Highlight the path from the trunk to the PR under the cursor, and its default continuation
----above (dimmer).
+---The closed PRs of the tree (for the legend).
+local function closed_count(t)
+  local n = 0
+  for _, x in pairs(t.nodes) do
+    if x.state == 'CLOSED' then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+---The footer: the path <CR> would review (from the trunk through the PR under the cursor and
+---on along its default route), and the keys.
+function M.footer_lines(s, width)
+  local gt = s.gh_tree
+  local v = gt.view
+  local t = gt.tree
+  local num = M.cursor_pr(s)
+  local path = num and tree_mod.route(t, num) or M.path(s)
+  local label = ' path: '
+  -- `⇣` on PRs whose commits are not here: the stack would stop below them (gF fetches them)
+  local marks = node_marks(s)
+  local text = label .. tree_mod.path_text(t.trunk, path, math.max(width - #label - 1, 10), function(n)
+    return (marks[n] and marks[n].how == 'none') and '⇣' or ''
+  end)
+  -- the keys, shortened to fit: fewer words before any key goes
+  local keys = require('revuey.keys')
+  local n = closed_count(t)
+  local legend
+  for _, tpl in ipairs({
+    ' j/k up/down  h/l other branch  <CR> review  {tree_closed} closed (' .. n .. ')  {stack_fetch} fetch  q close',
+    ' j/k up/down  h/l branch  <CR> review  {tree_closed} closed  {stack_fetch} fetch  q close',
+    ' j k h l move  <CR> review  {tree_closed} closed  {stack_fetch} fetch  q',
+  }) do
+    legend = keys.line(tpl) or ''
+    if vim.fn.strdisplaywidth(legend) <= width then
+      break
+    end
+  end
+  return { text, legend }, #label
+end
+
+---Colour the path under consideration: from the trunk to the PR under the cursor and on along
+---its default route, nodes, lines and text, in RevueyTreePath; the rest of the graph and the
+---other PRs dim. Also the footer.
 function M.highlight(s)
   local gt = s.gh_tree
   local v = gt and gt.view
@@ -1006,20 +1043,65 @@ function M.highlight(s)
     return
   end
   api.nvim_buf_clear_namespace(v.buf, ns_path, 0, -1)
+  local t = gt.tree
   local num = M.cursor_pr(s)
-  if not num then
-    return
-  end
-  local path, idx = tree_mod.route(gt.tree, num)
-  local kind = {}
-  for i, p in ipairs(path) do
-    kind[p] = i <= idx and 'RevueyTreePath' or 'RevueyTreeRoute'
-  end
-  for row, p in pairs(v.row_pr) do
-    if kind[p] then
-      api.nvim_buf_set_extmark(v.buf, ns_path, row - 1, 0, { line_hl_group = kind[p], priority = 5 })
+  local on = {}
+  if num then
+    for _, p in ipairs((tree_mod.route(t, num))) do
+      on[p] = true
     end
   end
+  local function edge_on(c)
+    local p = t.parent[c]
+    return on[c] and (p == 'root' or on[p]) or false
+  end
+  local function hl(row, a, b, group)
+    if b > a then
+      pcall(api.nvim_buf_set_extmark, v.buf, ns_path, row - 1, a, { end_col = b, hl_group = group, priority = 20 })
+    end
+  end
+  for row, inf in pairs(v.info or {}) do
+    if inf.extra then
+      hl(row, 0, inf.title, 'RevueyPanelTitle')
+      hl(row, inf.title, inf.extra, 'Comment')
+    end
+    for _, sg in ipairs(inf.segs or {}) do
+      local lit = false
+      if sg.node then
+        lit = sg.node == 'root' or on[sg.node] or false
+      else
+        for _, c in ipairs(sg.edges or {}) do
+          lit = lit or edge_on(c)
+        end
+      end
+      hl(row, sg[1], sg[2], lit and 'RevueyTreePath' or 'RevueyTreeDim')
+    end
+    if inf.trunk then
+      hl(row, inf.text[1], inf.text[2], 'RevueyTreePath')
+    elseif inf.node then
+      local lit = on[inf.node]
+      hl(row, inf.num[1], inf.num[2], lit and 'RevueyTreePath' or 'RevueyTreeDim')
+      hl(row, inf.branch[1], inf.branch[2], lit and 'RevueyTreePath' or 'RevueyTreeDim')
+      hl(row, inf.title[1], inf.title[2], lit and 'Normal' or 'RevueyTreeDim')
+    end
+  end
+  M.render_footer(s)
+end
+
+---Draw the footer float.
+function M.render_footer(s)
+  local v = s.gh_tree and s.gh_tree.view
+  if not (v and v.fbuf and api.nvim_buf_is_valid(v.fbuf) and api.nvim_win_is_valid(v.fwin)) then
+    return
+  end
+  local lines, label = M.footer_lines(s, api.nvim_win_get_width(v.fwin))
+  vim.bo[v.fbuf].modifiable = true
+  api.nvim_buf_set_lines(v.fbuf, 0, -1, false, lines)
+  vim.bo[v.fbuf].modifiable = false
+  api.nvim_buf_clear_namespace(v.fbuf, ns, 0, -1)
+  api.nvim_buf_set_extmark(v.fbuf, ns, 0, 0, { end_col = label, hl_group = 'Comment' })
+  api.nvim_buf_set_extmark(v.fbuf, ns, 0, label, { end_col = #lines[1], hl_group = 'RevueyTreePath' })
+  api.nvim_buf_set_extmark(v.fbuf, ns, 1, 0, { end_col = #lines[2], hl_group = 'Comment' })
 end
 
 ---The PR on the cursor's row (the nearest PR row above, on a connector row).
@@ -1041,6 +1123,17 @@ function M.cursor_pr(s)
   end
 end
 
+---Put the cursor on PR `num`'s glyph.
+local function put_cursor(s, num)
+  local v = s.gh_tree.view
+  for row, p in pairs(v.row_pr) do
+    if p == num then
+      api.nvim_win_set_cursor(v.win, { row, v.info[row].glyph or 0 })
+      return true
+    end
+  end
+end
+
 ---Draw the tree view (keeps the cursor on its PR).
 function M.render_view(s)
   local gt = s.gh_tree
@@ -1054,35 +1147,23 @@ function M.render_view(s)
   local keep = M.cursor_pr(s) or v.want
   v.want = nil
   local width = api.nvim_win_get_width(v.win)
-  local lines, hls, virt, row_pr = M.lines(s, width, node_marks(s))
-  v.lines, v.row_pr = lines, row_pr
+  local lines, virt, row_pr, info, rows = M.lines(s, width, node_marks(s))
+  v.lines, v.row_pr, v.info, v.rows = lines, row_pr, info, rows
   vim.bo[v.buf].modifiable = true
   api.nvim_buf_set_lines(v.buf, 0, -1, false, lines)
   vim.bo[v.buf].modifiable = false
   api.nvim_buf_clear_namespace(v.buf, ns, 0, -1)
-  for row, list in pairs(hls) do
-    for _, h in ipairs(list) do
-      if h[2] > h[1] then
-        pcall(api.nvim_buf_set_extmark, v.buf, ns, row - 1, h[1], { end_col = h[2], hl_group = h[3] })
-      end
-    end
-  end
   for row, ch in pairs(virt) do
     api.nvim_buf_set_extmark(v.buf, ns, row - 1, 0, { virt_text = ch, virt_text_pos = 'right_align' })
   end
-  local target
-  for row, p in pairs(row_pr) do
-    if p == keep then
-      target = row
-    end
-  end
-  if not target then
+  if not (keep and put_cursor(s, keep)) then
+    local first
     for row in pairs(row_pr) do
-      target = (not target or row < target) and row or target
+      first = (not first or row < first) and row or first
     end
-  end
-  if target then
-    api.nvim_win_set_cursor(v.win, { target, 0 })
+    if first then
+      put_cursor(s, row_pr[first])
+    end
   end
   M.highlight(s)
 end
@@ -1108,32 +1189,36 @@ function M.close_view(s)
     return
   end
   gt.view = nil
-  if api.nvim_win_is_valid(v.win) then
-    pcall(api.nvim_win_close, v.win, true)
+  for _, w in ipairs({ v.win, v.fwin }) do
+    if w and api.nvim_win_is_valid(w) then
+      pcall(api.nvim_win_close, w, true)
+    end
   end
-  if api.nvim_buf_is_valid(v.buf) then
-    pcall(api.nvim_buf_delete, v.buf, { force = true })
+  for _, b in ipairs({ v.buf, v.fbuf }) do
+    if b and api.nvim_buf_is_valid(b) then
+      pcall(api.nvim_buf_delete, b, { force = true })
+    end
   end
   if s.diff_win and api.nvim_win_is_valid(s.diff_win) and not s.cleaned then
     pcall(api.nvim_set_current_win, s.diff_win)
   end
 end
 
----Move to the count-th next (dir 1) / previous (-1) PR row.
-local function move(s, dir)
+---Move the cursor with `key` (j k h l; tree_mod.nav), a count of times.
+function M.move(s, key)
   local v = s.gh_tree.view
-  local row = api.nvim_win_get_cursor(v.win)[1]
+  local num = M.cursor_pr(s)
+  if not (v and num) then
+    return
+  end
   for _ = 1, vim.v.count1 do
-    local r = row + dir
-    while r >= 1 and r <= #v.lines and not v.row_pr[r] do
-      r = r + dir
-    end
-    if r < 1 or r > #v.lines then
+    local nxt = tree_mod.nav(s.gh_tree.tree, v.rows, num, key)
+    if nxt == num then
       break
     end
-    row = r
+    num = nxt
   end
-  api.nvim_win_set_cursor(v.win, { row, 0 })
+  put_cursor(s, num)
   M.highlight(s)
 end
 
@@ -1148,6 +1233,23 @@ function M.select(s, num)
   gt.notify_missing = num
   M.close_view(s)
   require('revuey.view').refresh({ scope = { kind = 'layer', pr = num }, force = true })
+end
+
+---Where the tree and its footer go: over the diff window, the footer on its last two rows.
+local function geometry(s)
+  local w, hgt = api.nvim_win_get_width(s.diff_win), api.nvim_win_get_height(s.diff_win)
+  -- a float relative to a window starts below its winbar: the rows below it are the text area
+  local info = vim.fn.getwininfo(s.diff_win)[1]
+  hgt = hgt - ((info and info.winbar) or 0)
+  -- the footer only with room for it (hidden, not left where it was, in a short window)
+  local room = hgt >= 6
+  local fh = room and 2 or 0
+  return {
+    main = { relative = 'win', win = s.diff_win, row = 0, col = 0, width = w, height = math.max(hgt - fh, 1) },
+    footer = {
+      relative = 'win', win = s.diff_win, row = math.max(hgt - 2, 0), col = 0, width = w, height = 2, hide = not room,
+    },
+  }
 end
 
 ---Open the tree view over the diff window (the tree key).
@@ -1166,30 +1268,41 @@ function M.open_view(s)
   if not (s.diff_win and api.nvim_win_is_valid(s.diff_win)) then
     return
   end
+  local geo = geometry(s)
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'revuey-tree'
   pcall(api.nvim_buf_set_name, buf, 'revuey://stack-tree')
-  local win = api.nvim_open_win(buf, true, {
-    relative = 'win', win = s.diff_win, row = 0, col = 0,
-    width = api.nvim_win_get_width(s.diff_win), height = api.nvim_win_get_height(s.diff_win),
-    style = 'minimal', border = 'none', zindex = 40,
-  })
+  local win = api.nvim_open_win(buf, true, vim.tbl_extend('force', geo.main, { style = 'minimal', border = 'none', zindex = 40 }))
   vim.wo[win].wrap = false
-  vim.wo[win].cursorline = false
-  vim.wo[win].winhighlight = 'NormalFloat:Normal'
-  gt.view = { buf = buf, win = win, show_closed = false, lines = {}, row_pr = {}, want = viewed_pr(s) or gt.tree.start }
+  vim.wo[win].cursorline = true
+  vim.wo[win].scrolloff = 3
+  vim.wo[win].winhighlight = 'NormalFloat:Normal,CursorLine:RevueyTreeCursor'
+  local fbuf, fwin
+  do
+    fbuf = api.nvim_create_buf(false, true)
+    vim.bo[fbuf].bufhidden = 'wipe'
+    fwin = api.nvim_open_win(fbuf, false, vim.tbl_extend('force', geo.footer, {
+      style = 'minimal', border = 'none', zindex = 41, focusable = false,
+    }))
+    vim.wo[fwin].wrap = false
+    vim.wo[fwin].winhighlight = 'NormalFloat:Normal'
+  end
+  gt.view = {
+    buf = buf, win = win, fbuf = fbuf, fwin = fwin, show_closed = false, lines = {}, row_pr = {}, info = {},
+    want = viewed_pr(s) or gt.tree.start,
+  }
   local function map(lhs, fn, desc)
     for _, l in ipairs(type(lhs) == 'table' and lhs or { lhs }) do
       vim.keymap.set('n', l, fn, { buffer = buf, nowait = true, silent = true, desc = 'revuey: ' .. desc })
     end
   end
-  map({ 'j', '<Down>' }, function()
-    move(s, 1)
-  end, 'stack tree: next PR')
-  map({ 'k', '<Up>' }, function()
-    move(s, -1)
-  end, 'stack tree: previous PR')
+  for key, lhs in pairs({ j = { 'j', '<Down>' }, k = { 'k', '<Up>' }, h = { 'h', '<Left>' }, l = { 'l', '<Right>' } }) do
+    map(lhs, function()
+      M.move(s, key)
+    end, ({ j = 'stack tree: down (the PR it is based on)', k = 'stack tree: up the column',
+      h = 'stack tree: the branch to the left', l = 'stack tree: the branch to the right' })[key])
+  end
   map({ '<CR>', '<2-LeftMouse>' }, function()
     local num = M.cursor_pr(s)
     if num then
@@ -1230,7 +1343,7 @@ function M.open_view(s)
       vim.schedule(function()
         local cur = api.nvim_get_current_win()
         -- another float (the g? list of keys) keeps the tree; any other window closes it
-        if gt.view and gt.view.buf == buf and cur ~= win and api.nvim_win_get_config(cur).relative == '' then
+        if gt.view and gt.view.buf == buf and cur ~= win and cur ~= fwin and api.nvim_win_get_config(cur).relative == '' then
           M.close_view(s)
         end
       end)
@@ -1242,10 +1355,11 @@ function M.open_view(s)
     callback = function()
       local v = gt.view
       if v and v.buf == buf and api.nvim_win_is_valid(v.win) and api.nvim_win_is_valid(s.diff_win) then
-        api.nvim_win_set_config(v.win, {
-          relative = 'win', win = s.diff_win, row = 0, col = 0,
-          width = api.nvim_win_get_width(s.diff_win), height = api.nvim_win_get_height(s.diff_win),
-        })
+        local g = geometry(s)
+        api.nvim_win_set_config(v.win, g.main)
+        if v.fwin and api.nvim_win_is_valid(v.fwin) then
+          api.nvim_win_set_config(v.fwin, g.footer)
+        end
         M.render_view(s)
       end
     end,

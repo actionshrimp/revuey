@@ -121,9 +121,13 @@ function M.setup()
   set('RevueyStackRemote', { link = 'Comment' }) -- remote-tracking layers (read-only), detached `@`
   -- the stack tree: the path from the trunk to the PR under the cursor, its default
   -- continuation above (dimmer), the chosen stack's nodes, the panel's `⑂2` other-paths chip
-  set('RevueyTreePath', { bg = mix(normal_bg, 0x4078c0, dark and 0.28 or 0.18) })
-  set('RevueyTreeRoute', { bg = mix(normal_bg, 0x4078c0, dark and 0.12 or 0.08) })
-  set('RevueyTreeNode', { link = 'Special' })
+  -- the path under consideration (trunk to the cursor's PR and on), nodes, lines and text;
+  -- the rest of the graph dim; the cursor's row
+  -- Special's colour (gui and cterm; a blue when it has none), bold
+  local sp = get('Special')
+  set('RevueyTreePath', { fg = sp.fg or (dark and 0x79c0ff or 0x0969da), ctermfg = sp.ctermfg or 12, bold = true })
+  set('RevueyTreeDim', { link = 'Comment' })
+  set('RevueyTreeCursor', { bg = mix(normal_bg, 0x4078c0, dark and 0.18 or 0.10) })
   set('RevueyStackFork', { link = 'Special' })
   -- comments
   set('RevueyCommentSign', { link = 'DiagnosticInfo' })
