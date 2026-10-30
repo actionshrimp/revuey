@@ -556,6 +556,10 @@ h.test('stack: HEAD\'s branch is its PR\'s layer whatever the PR\'s state; resta
     return l.name
   end, st.layers))
   h.eq({ true, nil }, { st.layers[2].is_head, st.layers[2].local_differs }, 'a closed PR, your work on top: HEAD\'s layer')
+  -- HEAD's branch under another name than its PR's head (pushed as stack/b): still its layer
+  local fb = vim.tbl_extend('force', f, { heads = { ['my-b'] = 'work' }, contains = { ['my-b'] = true }, current = 'my-b', head_num = 12 })
+  st = tree.stack(t, tree.route(t, 12), nil, fb)
+  h.eq({ 'my-b', true }, { st.layers[2].name, st.layers[2].is_head })
   -- a lower branch restacked locally (HEAD built on it, not merely behind the PR): your copy
   f.heads['stack/a'], f.in_head = 'a2', { ['stack/a'] = true }
   st = tree.stack(t, tree.route(t, 12), nil, f)

@@ -275,6 +275,9 @@ test('<CR>: the stack becomes the chosen path, viewing its PR; full scope and ]s
   -- #16 is closed: its own path (nothing open above it)
   h.eq({ 'origin/stack/a', 'origin/stack/old1' }, names(s))
   h.eq({ kind = 'layer', index = 2 }, s.scope, 'viewing #16')
+  h.ok(vim.tbl_contains(vim.tbl_map(function(n)
+    return n.kind
+  end, s.review.stack.notes), 'head_off_path'), 'stack/b (checked out) is not on this path')
   h.eq('origin/stack/old1', s.review.branch)
   h.eq({ 'src/legacy.ts' }, vim.tbl_map(function(f)
     return f.path
@@ -1072,7 +1075,7 @@ end)
 
 test('R with a chosen PR under a closed one: its path already after phase one', function()
   local s = open('tree-pins', nil)
-  tv.select(s, 16)
+  tv.select(s, 17) -- under closed #16, whose children phase one reads only for a pin
   h.ok(wait_idle(s))
   vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.5'
   view.refresh({ force = true, forge = true })
@@ -1081,14 +1084,25 @@ test('R with a chosen PR under a closed one: its path already after phase one', 
   end, 10), 'phase one taken')
   pause(200)
   h.eq({ 'origin/stack/a', 'origin/stack/old1' }, names(s), 'not the default route meanwhile')
+  h.eq({ 11, 16, 17 }, (tv.path(s)))
   h.ok(wait_idle(s))
   vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
   view.close()
 end)
 
-test('R twice: the first fetch\'s rounds stop', function()
+test('R twice: the first fetch\'s rounds stop, and nothing of it is taken', function()
   local s, _, calls = open('tree-gen')
   local full = #tree_calls(calls)
+  local function taken()
+    local n = 0
+    for _, l in ipairs(vim.fn.filereadable(log_file) == 1 and vim.fn.readfile(log_file) or {}) do
+      if l:find('stack tree: ', 1, true) then
+        n = n + 1
+      end
+    end
+    return n
+  end
+  local logged = taken()
   vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.4'
   view.refresh({ force = true, forge = true })
   h.ok(vim.wait(20000, function()
@@ -1103,6 +1117,8 @@ test('R twice: the first fetch\'s rounds stop', function()
   vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
   local extra = #tree_calls(calls) - full
   h.ok(extra < 2 * full, ('%d tree calls for two R, a full fetch is %d'):format(extra, full))
+  -- the first fetch's round stopped mid-call fails; its tree must not be taken (logged by take)
+  h.eq(logged, taken(), 'the stopped fetch took nothing')
   view.close()
 end)
 
@@ -1125,7 +1141,7 @@ end)
 
 test('gF then closing the review: the fetch stops, nothing starts after', function()
   local s, _, _, ssh_log = open('tree-fetch-close')
-  vim.env.REVUEY_FAKE_SSH_HANG = '3'
+  vim.env.REVUEY_FAKE_SSH_HANG = '8' -- longer than the wait below: only a kill ends it in time
   local _, restore = h.capture_notify()
   tv.fetch(s)
   h.ok(vim.wait(5000, function()
@@ -1134,7 +1150,7 @@ test('gF then closing the review: the fetch stops, nothing starts after', functi
     end, vim.fn.readfile(ssh_log)) > 0
   end, 20), 'ssh started')
   view.close()
-  pause(5000)
+  pause(3000)
   restore()
   vim.env.REVUEY_FAKE_SSH_HANG = nil
   local lines = vim.fn.readfile(ssh_log)
@@ -1147,9 +1163,13 @@ test('gF then closing the review: the fetch stops, nothing starts after', functi
     end
   end
   h.eq(1, starts, 'no fetch after the close')
-  for _, pid in ipairs(pids) do
-    h.ok(vim.uv.kill(pid, 0) ~= 0, 'ssh ' .. pid .. ' is gone')
+  local alive = vim.tbl_filter(function(pid)
+    return vim.uv.kill(pid, 0) == 0
+  end, pids)
+  if #alive > 0 then
+    pause(6000) -- not stopped: let it end on its own before failing (no process outlives a spec)
   end
+  h.eq({}, alive, 'ssh stopped with the review')
   h.eq(false, s.gh_tree.fetching)
 end)
 
