@@ -135,8 +135,15 @@ local function render_stack(s, add, add_virt, width)
     local prefix = ' ' .. sel .. head .. ' '
     local name = l.name .. (l.title and ('  ' .. l.title) or '')
     local virt = stats_virt(l.stats, selected and live or nil)
-    -- the layer's pull request: `#123 ✓ ` (nothing without one)
-    local pr = forge_view.chunks(forge_view.pr(s, l.name))
+    -- the layer's pull request: `#123 ✓ ` (nothing without one). A GitHub stack's layer is a
+    -- PR of the tree: the lookup's PR for its branch when it is that PR, else the tree's own
+    -- (a fork's PR, an old closed PR of a moved branch)
+    local lpr, lstale, lchanged = forge_view.pr(s, l.name)
+    if l.pr and (not lpr or lpr.number ~= l.pr) then
+      local gt = s.gh_tree
+      lpr, lstale, lchanged = gt and gt.tree and gt.tree.nodes[l.pr], nil, nil
+    end
+    local pr = forge_view.chunks(lpr, lstale, lchanged)
     if pr then
       s.panel_forge_any = true
       for k = #pr, 1, -1 do
@@ -145,6 +152,14 @@ local function render_stack(s, add, add_virt, width)
     end
     if l.remote then
       table.insert(virt, 1, { 'ro ', 'RevueyStackRemote' }) -- remote-tracking: read-only
+    end
+    if l.fetch then
+      -- `<remote>/<head>` missing or not GitHub's head: the stack_fetch key fetches it
+      table.insert(virt, 1, { '⇣ ', 'RevueyStackWarn' })
+    end
+    if l.others then
+      -- the stack tree has other paths through this layer (the stack_tree key shows them)
+      table.insert(virt, 1, { '⑂' .. l.others .. ' ', 'RevueyStackFork' })
     end
     local function virt_width()
       local vw = 0
@@ -197,7 +212,7 @@ end
 ---@param l revuey.Layer
 function M.switch_hint(l)
   local key = first_key('switch_layer')
-  if not key or (l.is_head and not l.detached) then
+  if not key or (l.is_head and not l.detached) or l.unfetched or l.fork_pr then
     return nil
   end
   if not l.remote then
@@ -226,11 +241,18 @@ function M.update_hint(s)
   local row = vim.api.nvim_win_get_cursor(win)[1]
   local idx = s.panel_layers and s.panel_layers[row]
   local layer = type(idx) == 'number' and s.review.stack and s.review.stack.layers[idx]
-  local text = layer and M.switch_hint(layer)
-  if text then
-    vim.api.nvim_buf_set_extmark(buf, ns_hint, row - 1, 0, {
-      virt_lines = { { { '     ' .. text, 'Comment' } } },
-    })
+  local texts = {}
+  if layer then
+    texts[#texts + 1] = M.switch_hint(layer)
+    -- a GitHub stack's layer: other paths in the tree, a branch to fetch
+    vim.list_extend(texts, require('revuey.stack_tree_view').hints(layer))
+  end
+  if #texts > 0 then
+    local lines = {}
+    for _, t in ipairs(texts) do
+      lines[#lines + 1] = { { '     ' .. t, 'Comment' } }
+    end
+    vim.api.nvim_buf_set_extmark(buf, ns_hint, row - 1, 0, { virt_lines = lines })
   end
 end
 
@@ -573,6 +595,13 @@ function M.render(s, o)
     end
   elseif has_notes then
     help[#help + 1] = ' ' .. nk .. ' branch notes'
+  end
+  -- the stack tree from GitHub, once there is one
+  if s.gh_tree and s.gh_tree.tree then
+    local line = keys.line(' {stack_tree} stack tree  {stack_fetch} fetch')
+    if line then
+      help[#help + 1] = line
+    end
   end
   if s.panel_forge or s.panel_forge_any then
     local ok = require('revuey.config').options.keymaps.forge_open

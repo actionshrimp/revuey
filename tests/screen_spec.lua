@@ -299,6 +299,45 @@ end)
 
 -- Pull requests from a fake `gh`: `#N` and the review state on each layer row, and the detail
 -- section of the viewed layer (stack/cart) under the stack.
+-- The stack tree from GitHub (fake `gh`, tests/helpers.lua tree_repo): the panel's markers on
+-- the default route (⑂ other paths, ⇣ to fetch, the not-fetched note), then the tree view over
+-- the diff with closed PRs hidden and shown.
+h.test('stack tree from GitHub: panel markers, the tree view with closed PRs hidden and shown', function()
+  local r = h.tree_repo('screen-tree')
+  h.use_fake_gh(h.tmpdir('screen-tree-gh') .. '/calls.ndjson', r.prs)
+  h.use_fake_ssh(r.bare)
+  start(r.dir, '', 30, 120, { forge = { check = false, threads = { enabled = false }, description = { enabled = false } } })
+  h.ok(child.lua([[
+    return vim.wait(15000, function()
+      local s = require('revuey.view').session
+      local gt = s and s.gh_tree
+      return gt and gt.tree and not gt.loading and not s.refreshing and not s.pending and s.review.stack
+        and s.review.stack.kind == 'github' and s.review.stack.full_stats ~= nil and s.forge and not s.forge.busy
+    end, 10)
+  ]]), 'the tree did not load')
+  child.lua([[
+    local s = require('revuey.view').session
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
+    require('revuey.panel').update_hint(s)
+    vim.fn.winrestview({ topline = 1, lnum = 3 })
+  ]])
+  screenshot('stack-tree-panel')
+  child.lua('vim.api.nvim_set_current_win(require("revuey.view").session.diff_win)')
+  child.type_keys('gb')
+  h.ok(child.lua([[
+    return vim.wait(5000, function()
+      local v = require('revuey.view').session.gh_tree.view
+      return v and v.facts ~= nil
+    end, 10)
+  ]]), 'the tree view did not open')
+  child.lua('vim.wait(50)')
+  screenshot('stack-tree')
+  child.type_keys('C')
+  screenshot('stack-tree-closed')
+  child.type_keys('q')
+end)
+
 h.test('stack with pull requests: PR rows and the detail section', function()
   local d = h.tmpdir('screen-forge')
   vim.fn.delete(d, 'rf')

@@ -1720,6 +1720,12 @@ local function stack_keymaps(buf)
   map(buf, k.stack_notes, function()
     require('revuey.notes_float').toggle(M.session)
   end, 'stack notes: details and actions')
+  map(buf, k.stack_tree, function()
+    require('revuey.stack_tree_view').open_view(M.session)
+  end, 'the stack tree from GitHub (choose the path to review)')
+  map(buf, k.stack_fetch, function()
+    require('revuey.stack_tree_view').fetch(M.session)
+  end, "git fetch the stack's branches from the PRs' remote")
 end
 
 local function guide_keymaps(buf)
@@ -2685,6 +2691,7 @@ cleanup = function(s)
   comments_view.detach(s)
   agent_link.detach(s)
   require('revuey.forge_view').detach(s) -- stops a running gh
+  require('revuey.stack_tree_view').detach(s) -- closes the tree view
   if s.augroup then
     pcall(api.nvim_del_augroup_by_id, s.augroup)
   end
@@ -3120,6 +3127,15 @@ local function rescope(old_stack, new_stack, scope)
   if scope.kind == 'full' then
     return scope
   end
+  if scope.pr then
+    -- chosen in the stack tree: the layer of that PR (else the stack's own pick)
+    for i, l in ipairs(new_stack.layers) do
+      if l.pr == scope.pr then
+        return { kind = 'layer', index = i }
+      end
+    end
+    return { kind = 'layer', index = new_stack.current }
+  end
   local old = old_stack and old_stack.layers[scope.index]
   local name = old and old.name
   for i, l in ipairs(new_stack.layers) do
@@ -3345,6 +3361,12 @@ function M.switch_layer(index, o)
   local layer = stack.layers[index]
   if not layer then
     return
+  end
+  if layer.fork_pr then
+    return say(('revuey: PR #%d comes from a fork; check it out with `gh pr checkout %d`'):format(layer.pr, layer.pr), vim.log.levels.WARN)
+  elseif layer.unfetched then
+    local fk = require('revuey.keys').first('stack_fetch')
+    return say(('revuey: %s is not fetched (only its commit is here)%s'):format(layer.name, fk and ('; %s fetches it'):format(fk) or ''), vim.log.levels.WARN)
   end
   if s.switching then
     return say(switch.msg.busy(), vim.log.levels.WARN)
@@ -3663,11 +3685,14 @@ function M.open(opts)
   opts = opts or {}
   git.async(function()
     local cache, stack_cache = {}, {}
-    local stack, scope, root, notes, from, ignored
+    local stack, scope, root, notes, from, ignored, head_branch, trunk
     if wants_stack(opts) then
       root = git.root(opts.cwd or vim.fn.getcwd())
       if root then
         stack, notes, from, ignored = detect_stack(root, opts, stack_cache)
+        -- what the GitHub stack tree starts from (fetched with the PR lookup, after the review shows)
+        trunk = stack_trunk(root, opts)
+        head_branch = trunk and require('revuey.stack_tree_view').head_branch(root, stack)
       end
       if stack then
         scope = opts.scope == 'full' and { kind = 'full' } or { kind = 'layer', index = stack.current }
@@ -3681,6 +3706,7 @@ function M.open(opts)
     end
     review.stack, review.scope = stack, scope
     review.notes, review.notes_ignored = not stack and notes or nil, not stack and ignored or nil
+    review.head_branch, review.tree_trunk = head_branch, trunk
     review.layer_labels, review.layer_labels_note = layer_labels(review, cache)
     local s = M.show(review, opts)
     s.load_cache = cache
@@ -3728,10 +3754,19 @@ function M.refresh(o)
   git.async(function()
     local mode = s.target_mode
     local old_stack, stack, scope, notes, from, ignored = s.review.stack, nil, nil, nil, nil, nil
+    local head_branch, trunk
     if wants_stack(s.opts) then
       -- cheap when refs are unchanged (fingerprint cache)
       s.stack_cache = s.stack_cache or {}
       stack, notes, from, ignored = detect_stack(s.review.root, s.opts, s.stack_cache)
+      trunk = stack_trunk(s.review.root, s.opts)
+      local tv = require('revuey.stack_tree_view')
+      head_branch = trunk and tv.head_branch(s.review.root, stack)
+      -- the GitHub stack tree's chosen path, when there is one (else git detection's stack)
+      local gh = tv.stack(s, stack, s.review.root, trunk, s.stack_cache.key)
+      if gh then
+        stack, notes, from, ignored = gh, nil, nil, nil
+      end
       scope = rescope(old_stack, stack, o.scope or s.scope)
       if old_stack and not stack then
         vim.notify('revuey: no stack detected any more; showing the plain branch review', vim.log.levels.WARN)
@@ -3758,6 +3793,7 @@ function M.refresh(o)
     end
     review.stack, review.scope = stack, scope
     review.notes, review.notes_ignored = not stack and notes or nil, not stack and ignored or nil
+    review.head_branch, review.tree_trunk = head_branch, trunk
     review.layer_labels, review.layer_labels_note = layer_labels(review, s.load_cache)
     if M.session ~= s or s.cleaned then
       return finish()

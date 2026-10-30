@@ -1369,6 +1369,10 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `]s` / `[s` | Next / previous stack layer (takes a count). These shadow spell navigation, which is off in review buffers. |
 | `gs` | Toggle full-stack scope and back to the last layer |
 | `gS` | [Check out](#checking-out-a-layer) the layer being viewed in this worktree (`git switch`) |
+| `gb` | The [stack tree](#stack-trees-from-github): every PR of the stack on GitHub, to pick the path to review |
+| `gF` | `git fetch` the stack's PR branches from their remote (layers marked `⇣`, "not fetched" or "origin behind") |
+| `<CR>` in the stack tree | Review the path through the PR under the cursor (`j`/`k` move between PRs and light the path up; `q`/`<Esc>` close without a change) |
+| `C` | In the stack tree: show / hide closed PRs |
 | `!` | [Stack notes](#stack-notes) in full, with actions (also in the file panel) |
 | `gu` | Toggle working tree (default) / committed only |
 

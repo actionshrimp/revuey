@@ -1,0 +1,63 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  2 r//files                                                                                                 X
+02| Files                       ○ no agent │ A src/tax.ts +1 −0                                                        1/1 
+03| Stack: 3 layers on origin/main         │  A     ▾ src/tax.ts   +1 −0  added                                            
+04|    origin/stack… ⑂2 ro #11 ✓ 1c 1f ✓0/1│          @@ -0,0 +1 @@                                                        
+05| ▶@ stack/b          ⑂2 #12 ● 1c 1f ✓0/1│      1 + export const tax = 0.2                                               
+06|     gb tree: 2 other paths here        │                                                                               
+07|    origin/stack/c ⇣ ro #13 ✗ 1c 1f ✓0/1│                                                                               
+08|    full stack                3c 3f ✓0/3│                                                                               
+09| ⚠ PR #15 not fetched: gF fetches       │                                                                               
+10|                                        │                                                                               
+11| ▾ PR #12                              ●│                                                                               
+12|   Tax on the cart total                │                                                                               
+13|   open                                 │                                                                               
+14|   ● review required                    │                                                                               
+15|   checks: none                         │                                                                               
+16|   mergeable: unknown                   │                                                                               
+17|   base: stack/a                        │                                                                               
+18|                                        │                                                                               
+19| stack/b → origin/stack/a               │                                                                               
+20| 1 files  +1 −0  ✓ 0/1                  │                                                                               
+21| base f762e836  head e443701b           │                                                                               
+22| layer 2/3                              │                                                                               
+23| working tree  ● uncommitted            │                                                                               
+24|                                        │                                                                               
+25|   A  tax.ts  src                  +1 −0│                                                                               
+26|                                        │                                                                               
+27| <CR> show  mr reviewed  gp diff        │                                                                               
+28| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                               
+29|revuey://files [-]    3,1            Top revuey://stack/b..origin/stack/a [-]                         1,1            All
+30|                                                                                                                        
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333345667777777777766688555555555555555555555555555555555555555555555555555555555555
+03|22222222222222222222222222222229999999994::::::::::;;;;;;;;;;<<<==>>>=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+04|9?@9AAAAAAAAAAAAA9???AAA???BB4AAAAAAAAAA4CCCCCCCCCCDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+05|FGHFIIIIIIIFFFFFFFFFF??????AA4AAAAAAAAAA4JJJJKKKLLLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+06|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994CCCCCCCCCC999999999999999999999999999999999999999999999999999999999999999999999
+07|9?@9AAAAAAAAAAAAAA9@@AAA???NN4AAAAAAAAAA4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+08|9?99AAAAAAAAAA9999999999999999AAAAAAAAAA4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+09|@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@99999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+10|99999999999999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+11|9A2222222999999999999999999999999999999A4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+12|99944444444444444444444499999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+13|999AAAA9999999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+14|999AAAAAAAAAAAAAAAAA999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+15|999AAAAAAAAAAAA99999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+16|999AAAAAAAAAAAAAAAAAA99999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+17|999AAAAAAAAAAAAA9999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+18|99999999999999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+19|22222222222222222222222229999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+20|9999999999BBNNNAAAAAAA9999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+22|??????????9999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+23|?????????????AAAAAAAAAAAAAAA9999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+24|99999999999999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+25|FOFOHFPPPPPPQQQQQFFFFFFFFFFFFFFFFFFBBNNN4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+26|99999999999999999999999999999999999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+27|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+28|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+29|RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR0000000000000000000000000000000000000000000000000000000000000000000000000000000
+30|SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS

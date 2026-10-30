@@ -348,12 +348,44 @@ M.KINDS = {
       return ('parent %s'):format(n.parent)
     end,
   },
+  not_fetched = {
+    level = 'warn',
+    title = 'Pull requests not fetched',
+    one = function(n)
+      return ('%s (PR #%d) isn\'t in this clone: neither %s nor its head commit has been fetched.'):format(n.branch, n.pr or 0, n.ref or n.branch)
+    end,
+    many = function()
+      return 'These pull requests of the stack aren\'t in this clone: neither their branches nor their head commits have been fetched.'
+    end,
+    impact = function(ns)
+      local key = ns[1].key
+      return ('Affects this review: they are left out, so the layer above each one also shows its changes.%s'):format(
+        key and (' Press %s to fetch them (git fetch, nothing on GitHub changes).'):format(key) or '')
+    end,
+    detail = function(n)
+      return ('PR #%d'):format(n.pr or 0)
+    end,
+  },
+  github_base = {
+    level = 'info',
+    title = 'Stack base on GitHub',
+    one = function(n, ctx)
+      if n.why == 'cycle' then
+        return ('The base branches of the pull requests loop at %s; the stack starts above it.'):format(n.parent)
+      end
+      return ('%s\'s pull request is based on %s, which has no pull request and isn\'t %s; the stack starts there.'):format(n.branch, n.parent, ctx.trunk)
+    end,
+    impact = function()
+      return 'The bottom layer is compared with that base branch as last fetched.'
+    end,
+  },
 }
 
 -- Display order of kinds (float sections).
 M.ORDER = {
-  'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy',
+  'not_fetched', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy',
   'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'detached', 'upstream', 'same_commit', 'parent_landed',
+  'github_base',
 }
 for i, k in ipairs(M.ORDER) do
   M.KINDS[k].order = i
@@ -501,6 +533,11 @@ function M.summary(notes, ignored, ctx, max)
         or ('detached HEAD at %s'):format(n1.branch), 'info')
     elseif k == 'upstream' then
       add('●', ('%s %s'):format(n1.branch, M.ahead_behind(n1)), 'info')
+    elseif k == 'not_fetched' then
+      add('⚠', (c == 1 and ('PR #%d not fetched'):format(n1.pr or 0) or ('%d PRs not fetched'):format(c))
+        .. (n1.key and (': %s fetches'):format(n1.key) or ''), 'warn')
+    elseif k == 'github_base' then
+      add('●', n1.why == 'cycle' and ('PR bases loop at %s'):format(n1.parent) or ('stack based on %s (no PR)'):format(n1.parent), 'info')
     elseif k == 'parent_landed' then
       add('●', c == 1 and ('%s\'s parent is already in %s'):format(n1.branch, ctx.trunk) or ('%d parents already in %s'):format(c, ctx.trunk), 'info')
     end

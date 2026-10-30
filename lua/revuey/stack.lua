@@ -42,12 +42,18 @@ local M = {}
 ---@field skipped? integer      commits at its bottom already squash-merged into trunk, left out
 ---@field key_old? boolean      reviewed marks also key on the old side (parent content)
 ---@field remote? boolean       a remote-tracking branch (`origin/x`) with no local branch: read-only
+---@field pr? integer           GitHub stacks (stack_tree.lua): the layer's PR
+---@field others? integer       GitHub stacks: PRs based on this layer's branch off the chosen path
+---@field others_closed? integer  of which closed
+---@field fetch? 'missing'|'behind' GitHub stacks: `<remote>/<head>` missing or not GitHub's head
+---@field unfetched? boolean    GitHub stacks: no ref, only the head commit (read-only)
+---@field fork_pr? boolean      GitHub stacks: the PR's head is in a fork (read-only)
 ---@field detached? boolean     the HEAD layer, with HEAD detached at its tip
 ---@field local_copy? string    remote layer: a local branch tracking it (not on the line)
 ---@field stats? {commits?:integer, files?:integer, reviewed?:integer}
 
 ---@class revuey.Stack
----@field kind string           'local' (other sources may add kinds)
+---@field kind string           'local', or 'github' (stack_tree.lua: a path of the PR tree)
 ---@field trunk string
 ---@field trunk_rev string
 ---@field trunk_state string    normalised trunk for state keys
@@ -1028,6 +1034,16 @@ local function mark_landed(root, stack)
     l.landed, l.dimmed = true, true
     table.insert(stack.notes, 1, notes_mod.new('landed', { branch = l.name }, { stack = true, trunk = stack.trunk }))
   end
+end
+
+---What `detect` does to a stack after resolving it, for stacks built elsewhere (the GitHub stack
+---tree): squash-merged commits under the bottom layer, landed layers, then the ignore list.
+function M.finish(root, stack, ignore)
+  skip_squashed(root, stack)
+  mark_landed(root, stack)
+  merge_landed_squashed(stack)
+  stack.notes, stack.ignored = notes_mod.filter(stack.notes, ignore or {})
+  return stack
 end
 
 ---Suggest-only notes about related branches outside the stack (or outside the lone branch), for

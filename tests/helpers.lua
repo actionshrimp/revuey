@@ -247,6 +247,129 @@ function M.old_branches_repo(name)
   return d
 end
 
+---A stack that branches on GitHub (the stack tree, stack_tree.lua), small but with the shapes of
+---real ones: a chain, a fork with an open and a closed child, a closed two-PR chain off the
+---middle, a branch moved to a new base with its old PR closed, and a fork's PR.
+---
+---  main ← #11 stack/a ← #12 stack/b ← #13 stack/c ← #15 stack/d (draft)
+---                     │             ├ #14 stack/x (closed)
+---                     │             └ #19 bob:fix-d (a fork's PR, open)
+---                     ├ #16 stack/old1 (closed) ← #17 stack/old2 (closed, branch deleted)
+---                     └ #10 stack/c (closed: stack/c's old PR, before it moved onto stack/b)
+---
+---`origin.git` is GitHub's side (every branch, `refs/pull/N/head`). `review` is a clone made
+---before stack/c got a second commit and stack/d was pushed, on local branch stack/b: its
+---origin/stack/c is behind GitHub's head, origin/stack/d and the commits of #10, #17 and #19 are
+---missing. Its origin URL is GitHub's (`git@github.com:acme/shop.git`); fetches reach
+---`origin.git` through tests/bin/fake-ssh (`M.use_fake_ssh`). Returns {dir, bare, author, oid =
+---{name -> commit}, prs = PR file for M.use_fake_gh (`_tree` and per-branch lookups)}.
+function M.tree_repo(name)
+  local root = M.tmpdir(name)
+  local bare, author, review = root .. '/origin.git', root .. '/author', root .. '/review'
+  M.git(root, 'init', '--bare', '-q', '-b', 'main', bare)
+  vim.fn.mkdir(author, 'p')
+  M.git(author, 'init', '-q', '-b', 'main')
+  M.git(author, 'remote', 'add', 'origin', bare)
+  local oid = {}
+  local function commit(key, file, text)
+    M.write(author, file, text)
+    M.git(author, 'add', '-A')
+    M.git(author, 'commit', '-q', '-m', key)
+    oid[key] = vim.trim(M.git(author, 'rev-parse', 'HEAD'))
+  end
+  local function co(...)
+    M.git(author, 'checkout', '-q', ...)
+  end
+  commit('main', 'src/cart.ts', 'export const total = 0\n')
+  co('-b', 'stack/a')
+  commit('a', 'src/price.ts', 'export const price = 1\n')
+  co('-b', 'old-c')
+  commit('c_old', 'src/coupon.ts', 'export const coupon = "old"\n')
+  co('stack/a')
+  co('-b', 'stack/old1')
+  commit('old1', 'src/legacy.ts', 'export const legacy = 1\n')
+  co('-b', 'stack/old2')
+  commit('old2', 'src/legacy2.ts', 'export const legacy2 = 2\n')
+  co('stack/a')
+  co('-b', 'stack/b')
+  commit('b', 'src/tax.ts', 'export const tax = 0.2\n')
+  co('-b', 'stack/x')
+  commit('x', 'src/experiment.ts', 'export const x = true\n')
+  co('stack/b')
+  co('-b', 'fix-d')
+  commit('fork', 'src/fix.ts', 'export const fix = 1\n')
+  co('stack/b')
+  co('-b', 'stack/c')
+  commit('c1', 'src/coupon.ts', 'export const coupon = "new"\n')
+  M.git(author, 'push', '-q', 'origin', 'main', 'stack/a', 'stack/b', 'stack/c', 'stack/x', 'stack/old1')
+  M.git(root, 'clone', '-q', bare, review)
+  M.git(review, 'checkout', '-q', 'stack/b')
+  M.git(review, 'remote', 'set-url', 'origin', 'git@github.com:acme/shop.git')
+  -- after the clone: GitHub moves on
+  commit('c2', 'src/coupon.ts', 'export const coupon = "new"\nexport const max = 3\n')
+  co('-b', 'stack/d')
+  commit('d', 'src/discount.ts', 'export const discount = 5\n')
+  M.git(author, 'push', '-q', 'origin', 'stack/c', 'stack/d', 'old-c:refs/pull/10/head', 'stack/a:refs/pull/11/head',
+    'stack/b:refs/pull/12/head', 'stack/c:refs/pull/13/head', 'stack/x:refs/pull/14/head', 'stack/d:refs/pull/15/head',
+    'stack/old1:refs/pull/16/head', 'stack/old2:refs/pull/17/head', 'fix-d:refs/pull/19/head')
+  local function pr(number, head, base, state, commit_key, updated, extra)
+    return vim.tbl_extend('force', {
+      number = number,
+      title = ({
+        [10] = 'Coupons (first try)', [11] = 'Prices per item', [12] = 'Tax on the cart total', [13] = 'Coupon codes',
+        [14] = 'Experiment: free shipping', [15] = 'Discounts for members', [16] = 'Legacy price rules',
+        [17] = 'Legacy price rules, part 2', [19] = 'Fix the discount rounding',
+      })[number],
+      url = 'https://github.com/acme/shop/pull/' .. number,
+      state = state,
+      isDraft = false,
+      updatedAt = updated,
+      headRefName = head,
+      baseRefName = base,
+      headRefOid = oid[commit_key],
+      isCrossRepository = false,
+      headRepositoryOwner = { login = 'acme' },
+      reviewDecision = state == 'OPEN' and 'REVIEW_REQUIRED' or vim.NIL,
+    }, extra or {})
+  end
+  local nodes = {
+    pr(10, 'stack/c', 'stack/a', 'CLOSED', 'c_old', '2026-01-02T00:00:00Z'),
+    pr(11, 'stack/a', 'main', 'OPEN', 'a', '2026-01-05T00:00:00Z', { reviewDecision = 'APPROVED' }),
+    pr(12, 'stack/b', 'stack/a', 'OPEN', 'b', '2026-01-05T01:00:00Z'),
+    pr(13, 'stack/c', 'stack/b', 'OPEN', 'c2', '2026-01-05T02:00:00Z', { reviewDecision = 'CHANGES_REQUESTED' }),
+    pr(14, 'stack/x', 'stack/b', 'CLOSED', 'x', '2026-01-03T00:00:00Z'),
+    pr(15, 'stack/d', 'stack/c', 'OPEN', 'd', '2026-01-05T03:00:00Z', { isDraft = true }),
+    pr(16, 'stack/old1', 'stack/a', 'CLOSED', 'old1', '2026-01-01T10:00:00Z'),
+    pr(17, 'stack/old2', 'stack/old1', 'CLOSED', 'old2', '2026-01-01T11:00:00Z', { headRef = vim.NIL }),
+    pr(19, 'fix-d', 'stack/b', 'OPEN', 'fork', '2026-01-04T00:00:00Z',
+      { isCrossRepository = true, headRepositoryOwner = { login = 'bob' } }),
+  }
+  local prs = { _tree = { ['acme/shop'] = nodes } }
+  for _, n in ipairs(nodes) do
+    if not n.isCrossRepository then
+      local k = 'acme/shop:' .. n.headRefName
+      prs[k] = prs[k] or {}
+      table.insert(prs[k], n)
+    end
+  end
+  for _, list in pairs(prs) do
+    if list[1] and list[1].updatedAt then
+      table.sort(list, function(a, b)
+        return a.updatedAt > b.updatedAt
+      end)
+    end
+  end
+  return { dir = review, bare = bare, author = author, oid = oid, prs = prs }
+end
+
+---`git fetch` from a `git@github.com:...` remote reaches `bare` (tests/bin/fake-ssh), never the
+---network.
+function M.use_fake_ssh(bare, log)
+  vim.env.GIT_SSH_COMMAND = M.root .. '/tests/bin/fake-ssh'
+  vim.env.REVUEY_FAKE_SSH_REPO = bare
+  vim.env.REVUEY_FAKE_SSH_LOG = log
+end
+
 ---Open a review and wait until it is shown. Returns the session.
 function M.open_review(opts)
   local session

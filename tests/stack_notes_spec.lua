@@ -10,6 +10,21 @@ local function new(kind, fields)
   return sn.new(kind, fields, ctx)
 end
 
+h.test('GitHub stack notes: PRs not fetched, a base without a PR, bases that loop', function()
+  local ctx = { stack = true, trunk = 'main' }
+  local a = sn.new('not_fetched', { branch = 'stack/d', pr = 15, ref = 'origin/stack/d', key = 'gF' }, ctx)
+  h.eq("stack/d (PR #15) isn't in this clone: neither origin/stack/d nor its head commit has been fetched.", a.text)
+  local b = sn.new('not_fetched', { branch = 'stack/e', pr = 16, ref = 'origin/stack/e', key = 'gF' }, ctx)
+  h.eq({ { glyph = '⚠', text = 'PR #15 not fetched: gF fetches', level = 'warn' } }, sn.summary({ a }, {}, ctx))
+  h.eq('2 PRs not fetched: gF fetches', sn.summary({ a, b }, {}, ctx)[1].text)
+  local c = sn.new('github_base', { branch = 'stack/a', parent = 'release' }, ctx)
+  h.eq("stack/a's pull request is based on release, which has no pull request and isn't main; the stack starts there.", c.text)
+  h.eq('stack based on release (no PR)', sn.summary({ c }, {}, ctx)[1].text)
+  local d = sn.new('github_base', { branch = 'a', parent = 'b', why = 'cycle' }, ctx)
+  h.eq('PR bases loop at b', sn.summary({ d }, {}, ctx)[1].text)
+  h.eq(false, sn.ignorable(a))
+end)
+
 h.test('classification: only notes that change the diff shown are warnings', function()
   local warn = {}
   for _, k in ipairs(sn.ORDER) do
@@ -17,7 +32,8 @@ h.test('classification: only notes that change the diff shown are warnings', fun
       warn[#warn + 1] = k
     end
   end
-  h.eq({ 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy', 'outside' }, warn)
+  -- not_fetched (a GitHub stack's PR whose commits are not in the clone): the layer above shows them
+  h.eq({ 'not_fetched', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy', 'outside' }, warn)
   h.eq('info', sn.level(new('outdated_copy', { branch = 'x', layer = 'a' })))
   h.eq('warn', sn.level(new('not_restacked', { branch = 'b', parent = 'a', at = '1234abcd' })))
   -- only informational notes about branches outside the stack can be ignored, never warnings

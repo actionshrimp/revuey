@@ -1,0 +1,63 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  3 r//stack-tree                                                                                            X
+02| Files                       ○ no agent │ A src/tax.ts +1 −0                                                        1/1 
+03| Stack: 3 layers on origin/main         │ Stack tree · 9 PRs on main                                                    
+04|    origin/stack… ⑂2 ro #11 ✓ 1c 1f ✓0/1│ j k move  <CR> review this path  C hide closed (4)  gF fetch  q close         
+05| ▶@ stack/b          ⑂2 #12 ● 1c 1f ✓0/1│                                                                               
+06|    origin/stack/c ⇣ ro #13 ✗ 1c 1f ✓0/1│◉ #15 stack/d  Discounts for members                     not fetched  draft    
+07|    full stack                3c 3f ✓0/3│◉ #13 stack/c  Coupon codes                        origin behind · fetch  ✗    
+08| ⚠ PR #15 not fetched: gF fetches       ││ ◯ #14 stack/x  Experiment: free shipping                           closed    
+09|                                        ││ │ ◯ #19 bob:fix-d  Fix the discount rounding         not fetched  fork  ●    
+10| ▾ PR #12                              ●│├─┴─┘                                                                          
+11|   Tax on the cart total                │◉ #12 stack/b  Tax on the cart total                                      ● @ ▶
+12|   open                                 ││ ◯ #10 stack/c  Coupons (first try)                    not fetched  closed    
+13|   ● review required                    ││ │ ◯ #17 stack/old2  Legacy price rules, part 2        not fetched  closed    
+14|   checks: none                         ││ │ ◯ #16 stack/old1  Legacy price rules                             closed    
+15|   mergeable: unknown                   │├─┴─┘                                                                          
+16|   base: stack/a                        │◉ #11 stack/a  Prices per item                                            ✓    
+17|                                        │◯ main                                                                         
+18| stack/b → origin/stack/a               │                                                                               
+19| 1 files  +1 −0  ✓ 0/1                  │                                                                               
+20| base f762e836  head e443701b           │                                                                               
+21| layer 2/3                              │                                                                               
+22| working tree  ● uncommitted            │                                                                               
+23|                                        │                                                                               
+24|   A  tax.ts  src                  +1 −0│                                                                               
+25|                                        │                                                                               
+26| <CR> show  mr reviewed  gp diff        │                                                                               
+27| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                               
+28| gd def  K hover  go open  R refresh    │                                                                               
+29|revuey://files [-]    3,1            Top                                                                                
+30|                                                                                                      9,1           All 
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333343556666666666655577333333333333333333333333333333333333333333333333333333333333
+03|222222222222222222222222222222288888888849999999999999999999999999994444444444444444444444444444444444444444444444444444
+04|8:;8<<<<<<<<<<<<<8:::<<<:::==4<<<<<<<<<<4>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>444444444
+05|?@A?BBBBBBB??????????::::::<<4<<<<<<<<<<44444444444444444444444444444444444444444444444444444444444444444444444444444444
+06|8:;8<<<<<<<<<<<<<<8;;<<<:::CC4<<<<<<<<<<4DEDDDFGGGGGGGFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFHHHHHHHHHHHHH>>>>>HHII
+07|8:88<<<<<<<<<<8888888888888888<<<<<<<<<<4DEDDDFGGGGGGGFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFHHHHHHHHHHHHHHHHHHHHHHHJHHII
+08|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;88888884>>>>>>>4>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>444444444444444444444444444>>>>>>HHII
+09|88888888888888888888888888888888888888884>>>>>>III4KKKKKKKKK444444444444444444444444444444444444HHHHHHHHHHHHH>>>>>>>HHII
+10|8<2222222888888888888888888888888888888<4>>>>>>4444444444444444444444444444444444444444444444444444444444444444444444444
+11|88844444444444444444444488888888888888884LMLLLNOOOOOOONNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN>HHII
+12|888<<<<8888888888888888888888888888888884>>>>>>>4>>>>>>>>>>>>>>>>>>>>>>>>>>>>44444444444444444444HHHHHHHHHHHHH>>>>>>HHII
+13|888<<<<<<<<<<<<<<<<<888888888888888888884>>>>>>>>>4>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>44444444HHHHHHHHHHHHH>>>>>>HHII
+14|888<<<<<<<<<<<<88888888888888888888888884>>>>>>>>>4>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>44444444444444444444444444444>>>>>>HHII
+15|888<<<<<<<<<<<<<<<<<<88888888888888888884>>>>>>4444444444444444444444444444444444444444444444444444444444444444444444444
+16|888<<<<<<<<<<<<<8888888888888888888888884LMLLLNOOOOOOONNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPHHII
+17|88888888888888888888888888888888888888884>>>>>>4444444444444444444444444444444444444444444444444444444444444444444444444
+18|22222222222222222222222228888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+19|8888888888==CCC<<<<<<<8888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+20|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+21|::::::::::8888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+22|:::::::::::::<<<<<<<<<<<<<<<8888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+23|88888888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+24|?R?RA?SSSSSSTTTTT??????????????????==CCC4QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+25|88888888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+26|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+27|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+28|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<88884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+30|UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

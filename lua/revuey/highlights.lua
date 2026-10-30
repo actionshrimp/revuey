@@ -119,6 +119,12 @@ function M.setup()
   set('RevueyStackTitle', { link = 'Title' })
   set('RevueyStackBranch', { link = 'Identifier' })
   set('RevueyStackRemote', { link = 'Comment' }) -- remote-tracking layers (read-only), detached `@`
+  -- the stack tree: the path from the trunk to the PR under the cursor, its default
+  -- continuation above (dimmer), the chosen stack's nodes, the panel's `⑂2` other-paths chip
+  set('RevueyTreePath', { bg = mix(normal_bg, 0x4078c0, dark and 0.28 or 0.18) })
+  set('RevueyTreeRoute', { bg = mix(normal_bg, 0x4078c0, dark and 0.12 or 0.08) })
+  set('RevueyTreeNode', { link = 'Special' })
+  set('RevueyStackFork', { link = 'Special' })
   -- comments
   set('RevueyCommentSign', { link = 'DiagnosticInfo' })
   set('RevueyCommentBorder', { link = 'FloatBorder' })

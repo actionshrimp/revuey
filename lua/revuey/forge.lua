@@ -338,9 +338,11 @@ end
 ---One query for many (repo, branch) pairs: an aliased `repository { pullRequests(headRefName) }`
 ---each, plus the same lookup in the repo's `parent` (a fork's upstream; null otherwise) unless
 ---the pair has `parent = false`. Returns the query and alias -> pair.
+---`extra` adds other aliases (the stack tree's first round rides on this call) and their fragment.
 ---@param pairs {repo:revuey.ForgeRepo, branch:string, parent?:boolean}[]
+---@param extra? {parts:string[], fragment:string}
 ---@return string query, table<string, {repo:revuey.ForgeRepo, branch:string}> aliases
-function M.build_query(pairs)
+function M.build_query(pairs, extra)
   local parts, aliases = { 'query {' }, {}
   for i, p in ipairs(pairs) do
     local alias = 'l' .. i
@@ -350,8 +352,16 @@ function M.build_query(pairs)
     parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { %s%s }')
       :format(alias, lit(p.repo.owner), lit(p.repo.name), prs, parent)
   end
+  if extra then
+    vim.list_extend(parts, extra.parts)
+  end
   parts[#parts + 1] = '}'
-  parts[#parts + 1] = PR_FIELDS
+  if #pairs > 0 then
+    parts[#parts + 1] = PR_FIELDS -- GraphQL rejects a fragment no alias uses
+  end
+  if extra then
+    parts[#parts + 1] = extra.fragment
+  end
   return table.concat(parts, '\n'), aliases
 end
 
@@ -767,11 +777,14 @@ end
 ---git.async. `o.alive()` false after the call (the review closed, a newer lookup) drops the
 ---result: nothing is written. Clears the PR change marks of the PRs it read. Returns true when
 ---it ran gh.
+---`o.extra` (the stack tree's first round, stack_tree.lua) goes into the call for its host
+---(one is made for it when no target needs that host); `extra.absorb(data, err)` gets the
+---answer.
 ---@param targets table<any, revuey.ForgeTarget>
----@param o? {alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj)}
+---@param o? {alive?:fun():boolean, on_job?:fun(obj:vim.SystemObj), extra?:{host:string, parts:string[], fragment:string, absorb:fun(data:table?, err:string?)}}
 function M.fetch(targets, o)
   o = o or {}
-  if not next(targets) then
+  if not next(targets) and not o.extra then
     return false
   end
   local by_host, seen = {}, {}
@@ -785,14 +798,21 @@ function M.fetch(targets, o)
       seen[k].parent = true
     end
   end)
+  if o.extra and not by_host[o.extra.host] then
+    by_host[o.extra.host] = {}
+  end
   for host, list in pairs(by_host) do
     table.sort(list, function(a, b)
       return M.repo_key(a.repo) .. a.branch < M.repo_key(b.repo) .. b.branch
     end)
-    local query, aliases = M.build_query(list)
+    local extra = o.extra and o.extra.host == host and o.extra or nil
+    local query, aliases = M.build_query(list, extra)
     local data, err = M.run_graphql(query, host, o.on_job)
     if o.alive and not o.alive() then
       return true
+    end
+    if extra then
+      extra.absorb(data, err)
     end
     local now = M.now()
     if not data then

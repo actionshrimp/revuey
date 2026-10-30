@@ -117,7 +117,9 @@ function M.update(s, force)
     end
     f.info = info
     f.targets = forge.targets(review, info)
-    if next(f.targets) then
+    -- the stack tree (first fetch, or `R`): its first round rides on the PR lookup's call
+    local tree_job = require('revuey.stack_tree_view').begin(s, info, force)
+    if next(f.targets) or tree_job then
       local todo, keys = {}, {}
       for name, t in pairs(f.targets) do
         local k = target_key(name, t)
@@ -125,7 +127,7 @@ function M.update(s, force)
           todo[name], keys[#keys + 1] = t, k
         end
       end
-      if next(todo) then
+      if next(todo) or tree_job then
         cancel_check(f)
       end
       local ran = forge.fetch(todo, {
@@ -133,6 +135,7 @@ function M.update(s, force)
         on_job = function(obj)
           f.job = obj
         end,
+        extra = tree_job and tree_job.extra or nil,
       })
       f.job = nil
       if not alive() then
@@ -217,6 +220,13 @@ function M.update(s, force)
         require('revuey.comments_view').render(s)
         require('revuey.panel').render(s, { keep_view = true })
       end
+    end
+    -- the rest of the stack tree (rounds of its own), after what the panel shows
+    if tree_job then
+      require('revuey.stack_tree_view').continue(s, tree_job, alive, function(obj)
+        f.job = obj
+      end)
+      f.job = nil
     end
     done()
   end, function(err)

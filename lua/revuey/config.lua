@@ -43,6 +43,11 @@ M.defaults = {
     -- `]s`/`[s` also check the layer out in this worktree (as `gS` does, with the same checks).
     -- Off: they only move the view. A refused switch leaves the view moved and says why.
     switch_on_navigate = false,
+    -- The stack from GitHub: when HEAD's branch has a pull request, the PRs' base branches
+    -- give the stack (a tree when stacked PRs branch; the stack_tree key shows it and picks
+    -- the path to review), with the commits from your remote-tracking branches. Fetched with
+    -- the PR lookup on open and `R`. false: the stack always comes from git alone.
+    github = true,
   },
   keymaps = {
     next_hunk = ']c',
@@ -68,6 +73,13 @@ M.defaults = {
     -- check the layer out in this worktree (`git switch`; panel: the layer row under the cursor)
     switch_layer = 'gS',
     stack_notes = '!', -- details of the stack notes (float with actions)
+    -- the stack tree from GitHub over the diff (j/k move, <CR> reviews the path, q closes). `gb`
+    -- means nothing in Neovim itself (plugins that map it globally are shadowed here only).
+    stack_tree = 'gb',
+    -- `git fetch` the stack's branches from the PRs' remote (marked "not fetched" / "origin
+    -- behind"). `gF` (edit the file under the cursor) means nothing in a review buffer.
+    stack_fetch = 'gF',
+    tree_closed = 'C', -- in the stack tree: show / hide closed PRs
     -- AI guide
     toggle_guide = 'gG', -- diff view <-> guide view (offers to generate when there is none)
     regenerate_guide = 'gR', -- guide view: generate a new guide
