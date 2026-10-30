@@ -94,7 +94,17 @@ sequence; later items build on earlier ones.
   needs them and on `R` (no time-based refetch replacing what is shown); a change check every
   `forge.ttl` seconds (180, focused and visible only; one query of signals, one rate-limit
   point) marks PRs with news on GitHub (`↻`, `new on GitHub · R`) until `R`.
-
+- Stack trees from GitHub (stacks without local branches, GitHub half): when HEAD's branch has a PR, the
+  stack comes from the PRs' base branches, with commits from local branches, `origin/<head>` or the head
+  commit. Stacks that branch are a tree (`gb`, `gt log` style: `j`/`k` light up the path, `C` shows closed
+  PRs, `<CR>` reviews a path, session state only); the default route takes the longest run of open PRs
+  (ties to the lower number). Fetched with the PR lookup on open and `R` in batched rounds (the base
+  chain 7 PRs per call, children one call per level, closed subtrees last; 25 calls, 300 PRs at most).
+  The panel marks other paths (`⑂2`) and branches not fetched or behind GitHub (`⇣`); `gF` runs `git fetch`
+  for them (`refs/pull/N/head` for forks and closed PRs). Without GitHub, git detection as before.
+  Left: GitHub's native stacks (below); a quicker upward walk (one call per level today: GraphQL has no
+  field for the PRs based on a ref, so a long chain above HEAD or a deep closed subtree takes one call
+  per PR level); a chosen path is not remembered across sessions, on purpose (no locks, no stored choices); fork PRs are read-only (no local branch for them).
 
 ## Next
 1. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
@@ -108,15 +118,13 @@ sequence; later items build on earlier ones.
    PR branch. A URL must name the clone's repo; wt's errors (no gh, no GitHub remote, unknown PR, failed
    hook, with the worktree left behind) are shown as wt words them. README documents a TypeScript
    `pre-start` pipeline (install, then build), the build-free alternatives and `wt remove`.
-   **Left:** the PR stack from the GitHub base chain (below), and `stack.after_switch` for `gS` (below).
+   **Left:** `stack.after_switch` for `gS` (below). (The PR stack from the GitHub base chain is done.)
    **Stacks without local branches.** Reviewing someone else's stack from a worktree at its top shouldn't need
    local branches for the intermediate PRs. **Git half: done** (see Done): with HEAD detached, remote-tracking branches on HEAD's
    own line between trunk and HEAD are layers below HEAD (remote branches above HEAD are not used), a local
    branch wins over its remote copy, a detached HEAD at a branch tip uses that branch, state keys strip the
-   remote prefix, and remote-only layers are dimmer and read-only. **Left: the GitHub half.** When the stack
-   has PRs, layers come from the GitHub base chain, with tips at `origin/<head>` (or `refs/pull/<N>/head` for
-   forks), fetched as needed (revuey itself doesn't fetch today). Editing a remote-only layer needs `gS`, which
-   creates a local tracking branch with `git switch --track`. Also read GitHub's native stacks (public preview):
+   remote prefix, and remote-only layers are dimmer and read-only. **GitHub half: done** (see Done: stack
+   trees from GitHub). **Left:** read GitHub's native stacks (public preview):
    the PR `stack`/`stackEntry` GraphQL fields (joined to the existing PR-status query) and the `gh stack`
    extension's local `.git/gh-stack` file, as explicit stack sources like Graphite metadata; confirm both formats
    against a real stacked repo first.

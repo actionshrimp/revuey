@@ -90,8 +90,10 @@ are in `reports/Terminal code review tool landscape.md`.
 7. **Local stacks** (`stack.lua`). A `revuey.Stack` is an ordered list of layers (bottom first), each with a
    tip commit, a parent rev and a reviewed-state key (`state_branch`, `state_base`); a scope is a layer or the
    full stack, turned into a `revuey.Target` (`from`, `to` or nil for HEAD/working tree, labels, state key) that
-   `review.load` diffs. Nothing in the model assumes layers are local branches, so a later PR-stack source only
-   has to build a `revuey.Stack`.
+   `review.load` diffs. Nothing in the model assumes layers are local branches: the GitHub stack tree
+   (decision 22) builds a `revuey.Stack` of kind `github` for the chosen path, which replaces what this
+   detection finds whenever HEAD's branch has a PR on GitHub. Detection still runs on every refresh (its
+   fingerprint and its result are the fallback, and its local layers above the path's top are kept).
    Detection is split into a pure resolver (`resolve`: branch tips + a first-parent graph of commits not
    reachable from trunk + explicit parents -> layers, forks, notes, or a request for more history) and a gatherer
    (`detect`): `for-each-ref` (heads, `refs/branch-metadata` and `refs/remotes`), `config --get-regexp` for
@@ -1031,8 +1033,9 @@ are in `reports/Terminal code review tool landscape.md`.
       PR's local branch (wt creates one tracking `origin/<head>`, or the fork's ref): local
       branches below are layers; remote-tracking ones are not (HEAD is not detached) unless a
       parent setting names them. The PR status section's base-mismatch warning flags a stacked
-      PR whose GitHub base is not the detected parent. Layers from the GitHub base chain are
-      the roadmap's next part.
+      PR whose GitHub base is not the detected parent. Once the PR lookup has run, the stack
+      tree (decision 22) replaces it with the PR's base chain from GitHub, layers at
+      `origin/<head>`, so the PRs below need no local branches.
     - **Errors.** No `wt` on PATH (or `worktrunk.cmd`): checked before anything runs. wt's own
       failures are shown in wt's words (the `✗` line and what follows, glyphs and ANSI codes
       stripped; the last `✗` line, since a hook may print its own), plus the last 5 lines the
@@ -1698,9 +1701,94 @@ are in `reports/Terminal code review tool landscape.md`.
       their abbreviations are cached on the session per file list and panel width, so a redraw
       (every mark) adds one table lookup per file. `folders_spec` times a 400-file panel redraw.
 
+22. **The stack tree from GitHub** (`stack_tree.lua` pure: queries, rounds, the tree, routes,
+    layout, fetch marks and the stack for a path; `stack_tree_view.lua` the fetch glue, the stack
+    for the review, the tree view and `gF`). Stacked PRs branch (a branch with an open and a
+    closed child, an abandoned chain off the middle, a branch moved onto a new base with its old
+    PR closed), and git history cannot say which branch is whose parent: the PRs' base branches
+    can (declared, unambiguous). GitHub is required for the tree; without it decision 7's
+    detection stands, unchanged.
+    - **Fetching.** `forge_view.update` starts it with the PR lookup the first time a review
+      fetches and on `R` (decision 20: never on its own; cached on the session, `s.gh_tree`).
+      The start is HEAD's branch (the git stack's current layer, the checked-out branch, or a
+      remote-tracking branch detached HEAD is at), looked up under `forge.target`'s candidate
+      names in the base repo. Round one rides on the lookup's call (`forge.fetch` `extra`):
+      `sdN: repository { pullRequests(headRefName:, first: 5) { ...tnode baseRef {
+      associatedPullRequests(first: 2) { ... } } } }` nested 6 levels, so 7 PRs of the base
+      chain per call (GitHub rejects a query deeper than 25; 7 nested levels measured at 26), plus
+      `defaultBranchRef`. Later rounds are one `gh api graphql` each: the next `sd` where the chain
+      continues, and `skN: pullRequests(baseRefName:, first: 30)` for every PR of the tree not yet
+      expanded, batched (at most 40 aliases). Fragment `tnode`: number, title, url, state, draft,
+      updatedAt, head/base names, headRefOid, isCrossRepository, head owner, `headRef` (null: the
+      branch was deleted), reviewDecision. Measured: 1 point for nested lookups with `first: 2`
+      (11 with `first: 3`); about 1.2 s per call.
+    - **Phases.** Phase one expands what routes need (the chain and every PR that is not
+      CLOSED, plus HEAD's), then the stack is rebuilt; phase two expands closed PRs' subtrees for
+      the tree view only (`loading closed PRs…`). Routes never pass through a closed PR, so phase
+      two never changes the stack. On a long real stack with several abandoned closed chains
+      hanging off it, phase one took a handful of calls (a few seconds, one shared with the
+      lookup) and the whole tree about four times as many. Upward walks cost one call per level:
+      GraphQL has no field for the PRs based on a ref, so children cannot be nested.
+    - **Limits.** 25 calls per fetch, 300 PRs, 30 children per branch: past them the tree keeps
+      what was read, says `cut:` in its heading, marks PRs not expanded (`…`) and lists cut
+      (`+N more on GitHub`); the cut is logged. A failed round (logged) is the same; a failed
+      `R` keeps the last tree marked stale; a first fetch that fails leaves git detection.
+    - **The tree.** Nodes are PRs. One per head branch is its representative (the newest OPEN,
+      else the newest by updatedAt, then number); only representatives have children (PRs based
+      on their branch), so older PRs of a moved branch are leaves on their old base. Forks' PRs
+      (`isCrossRepository`) are leaves, and never a branch's representative. Members: the chain
+      plus every child, recursively. The chain stops at the trunk or the repository's default
+      branch; at a base without a PR (`github_base` note: the bottom layer diffs from that
+      branch as fetched); at a repeated branch (a cycle). Merged PRs below stay in the chain
+      (dimmed; `mark_landed` applies).
+    - **Default route** (`route`): down by bases to the trunk, then up through OPEN children
+      (drafts included), at each node the one with the longest open continuation, ties to the
+      lower PR number (stable as PRs are updated, unlike recency). A node with one open child
+      continues through it. A closed PR chosen in the tree gets its own path (open PRs above it
+      only). The stack uses the route through HEAD's PR, or through the PR chosen in the tree
+      (`gt.sel`, session state only; dropped when a refetch no longer has it). A default route
+      of one PR leaves a plain review (no stack) until a path is chosen.
+    - **The stack for a path** (`stack_tree.stack`, from one `for-each-ref` of heads and
+      remotes and one `cat-file --batch-check` of head commits): a local branch of the head
+      name, else `<remote>/<head>` (remote, `ro`), else the head commit (`unfetched`, `ro`;
+      forks' layers are named `owner:branch`). A closed or merged PR's `<remote>/<head>` counts
+      only at its own head commit (the branch may hold a newer PR). PRs with no commit here are
+      left out (`not_fetched` warning: the layer above diffs from the one below them). Keys:
+      `state_branch` is the head name (shared with a local branch made later), `state_base` the
+      layer below's. `is_head` as in decision 7. Layers carry `pr`, `others` (children off the
+      path), `fetch` (`missing` | `behind`). Git detection's local layers above the top (no PR
+      yet) are appended. `stack.finish` then runs the squash and landed checks and the ignore
+      list. The stack is cached on the git fingerprint, the tree version, the fetch count and
+      the selection, and an equal one keeps its object (a new object reloads the review).
+    - **Tree view** (`gb`): a float over the diff window, `gt log` style (top of the stack at the
+      top, the trunk at the bottom; at a fork the child on the route stays in the column, the
+      others go right, joined by `├─┴─┘`). Rows: number, branch, title (cut first), then right
+      aligned `+N closed`, `…`/`+N more on GitHub`, the fetch mark, `fork`, the review chip,
+      `@` (HEAD's PR), `▶` (the viewed layer). `j`/`k` move between PRs; the trunk-to-cursor
+      path is `RevueyTreePath`, its default continuation `RevueyTreeRoute` (dimmer). `C`
+      (`tree_closed`) shows CLOSED PRs, hidden unless on the chosen path or below an open one;
+      a node counts the PRs hidden above it. `<CR>` selects (`refresh{scope = {pr = N}}`:
+      `rescope` finds the layer of that PR); `q`/`<Esc>`, leaving the window, or closing the
+      review close it with no change.
+    - **Panel.** `⑂N` and `⇣` chips before the PR chip; the layer row's hint lines (panel
+      focused) name `gb` and `gF`; a help line. A layer's chip is the lookup's PR when it is the
+      layer's PR, else the tree node's (a fork's PR, an old PR of a moved branch). `gS` refuses
+      forks' and unfetched layers.
+    - **Fetching branches** (`gF`, `stack_fetch`). Not automatic: revuey never moved remote
+      refs before, a fetch can prompt for credentials or hang offline, and costs a round trip per
+      open; the marks say when it is worth it. `git fetch --no-tags --no-write-fetch-head
+      <remote>` with `+refs/heads/<head>:refs/remotes/<remote>/<head>` for open PRs' branches and
+      `refs/pull/N/head` (objects only, no ref) for forks, deleted branches and closed PRs;
+      `GIT_TERMINAL_PROMPT=0`, 120 s. In the tree view it fetches the path under the cursor,
+      elsewhere the chosen path. Then a refresh; nothing on GitHub changes.
+    - **Tests**: `stack_tree_spec.lua` (pure, an in-memory GitHub answering the aliases),
+      `stack_tree_view_spec.lua` (a real clone, the fake `gh` with a `_tree`, `git fetch` to a
+      local bare repository through `tests/bin/fake-ssh`), screenshots `stack-tree`,
+      `stack-tree-closed`, `stack-tree-panel`.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_tree.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

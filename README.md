@@ -149,7 +149,10 @@ for any change. Comments on edited lines move or become outdated by the usual ru
 ## Stacks
 
 A stack is a chain of local branches, each based on the one below, for example
-`main ← feat/api ← feat/ui ← feat/docs`. `:Revuey` (or `bin/revuey`) with no base detects it:
+`main ← feat/api ← feat/ui ← feat/docs`. `:Revuey` (or `bin/revuey`) with no base detects it
+from git as below; once the branches have pull requests on GitHub, their base branches give the
+stack instead, and stacks that branch become a tree to pick a path from (see
+[Stack trees from GitHub](#stack-trees-from-github)):
 
 - **Layers below HEAD:** local branches whose tips are on HEAD's first-parent line above
   `merge-base(trunk, HEAD)`. The trunk is `default_branch` or the auto-detected default branch.
@@ -266,7 +269,8 @@ pause, with your next `gS`, or when the review closes or Neovim quits.
 ### Someone else's stack (no local branches)
 
 To review a colleague's stacked PRs you don't need a local branch for every PR. Fetch first
-(revuey never fetches; it uses the remote-tracking branches you have), then review from a
+(revuey never fetches on its own; it uses the remote-tracking branches you have, and when the
+stack has pull requests [`gF`](#stack-trees-from-github) fetches the ones it lacks), then review from a
 worktree detached at the top PR:
 
 ```sh
@@ -313,6 +317,70 @@ cd ../review-their-stack && revuey
   ahead or behind (not for a branch that tracks the trunk).
 - `bin/revuey comments`/`watch` in a detached worktree use the live review's scope, or else the
   branch the review would pick.
+
+### Stack trees from GitHub
+
+Stacked pull requests can branch: a branch with two child PRs (one continuing the stack, one
+abandoned), a closed chain hanging off the middle, a branch moved onto a new base with its old
+PR closed. When the checked-out branch has a pull request on GitHub, revuey builds the stack from
+the PRs' base branches instead of guessing from git history:
+
+- **The stack is a path through the tree:** from the trunk down through each PR's base, then up
+  through open PRs, taking the longest run of open PRs where a branch has several (a tie goes
+  to the lower PR number, the one opened first). A branch with one open child just continues.
+  The commits come from your branches: a local branch of the PR's head when you have one, else
+  `origin/<head>` (read-only, `ro`), else the head commit when the clone has it.
+- **`gb` shows the tree** over the diff, top of the stack at the top and the trunk at the
+  bottom, like `gt log`:
+
+  ```
+   Stack tree · 9 PRs on main
+   j k move  <CR> review this path  C show closed (4)  gF fetch  q close
+
+  ◉ #15 stack/d  Discounts for members          not fetched  draft
+  ◉ #13 stack/c  Coupon codes              origin behind · fetch  ✗
+  │ ◯ #19 bob:fix-d  Fix the discount rounding    not fetched  fork  ●
+  ├─┘
+  ◉ #12 stack/b  Tax on the cart total                  +1 closed  ● @ ▶
+  ◉ #11 stack/a  Prices per item                        +3 closed  ✓
+  ◯ main
+  ```
+
+  Each row has the PR number, branch, title, the review state (as in the panel), `@` on
+  HEAD's PR, `▶` on the layer you are viewing, and what your clone lacks: `not fetched`
+  (no `origin/<head>`, no commit) or `origin behind · fetch` (`origin/<head>` is not GitHub's
+  head). `j`/`k` move between PRs and light up the path from the trunk to the PR under the
+  cursor, with the rest of the stack you would get above it dimmer. `<CR>` reviews that path:
+  the panel's stack becomes it, viewing that PR's layer. `q`/`<Esc>` close without a change.
+  Closed PRs are hidden (a branch point says `+3 closed`); `C` shows them. Closed and merged
+  PRs are dim with their state, and can be chosen too.
+- **Nothing is stored:** the chosen path lasts while the review is open (refreshes and `R`
+  keep it). Reopening starts from the path through your branch again.
+- **The panel** shows the chosen path as before. `⑂2` on a layer means the tree has two other
+  PRs on that branch (`gb` shows them); `⇣` means its branch is not fetched or behind GitHub.
+  With the panel focused, the layer under the cursor says which (`gb tree: 2 other paths
+  here`, `gF fetch: origin is behind GitHub`). A PR whose commits are not in your clone is
+  left out (the layer above then shows its changes too) with a `⚠ PR #15 not fetched` note.
+  `]s`/`[s`, the full-stack scope and `gS` work along the chosen path; `gS` on a remote layer
+  creates a tracking branch as before.
+- **`gF` fetches** the stack's branches from the PRs' remote with `git fetch` (into
+  `origin/<head>`; for PRs from forks and closed PRs `refs/pull/N/head`, which brings the
+  commits without writing a ref), then refreshes. It only writes to your clone, never to
+  GitHub. In the tree it fetches the path under the cursor. revuey does not fetch on open: a
+  fetch moves your remote-tracking branches, can ask for credentials and costs a network round
+  trip on every review, and the marks say when one is worth it.
+- **PRs from forks** are shown (`bob:fix-d`, `fork`); `gF` brings their commits through
+  `refs/pull/N/head`, and they are read-only layers (`gh pr checkout N` checks one out).
+- **When it is read:** with the PR lookup, when the review opens and on `R` (never on its own).
+  The first round shares the lookup's call: the base chain seven PRs at a time, then one call
+  per level of children for every branch of the tree at once. What the stack needs comes
+  first; closed subtrees follow (`loading closed PRs…` in the tree's heading meanwhile). At
+  most 25 calls, 300 PRs and 30 child PRs per branch: past that the tree is cut where it got
+  to (`cut:` in its heading, `… ` on PRs not expanded, `+N more on GitHub`).
+- **Without GitHub** (no `gh`, no GitHub remote, offline, no PR for your branch) the stack comes
+  from git as above, and `gb` says why there is no tree. A lone PR stays a plain review until
+  you pick a path in the tree. Branches without a PR yet above the top PR (local work not
+  pushed) stay on top of the stack. `stack = { github = false }` turns the tree off.
 
 ### Stack notes
 

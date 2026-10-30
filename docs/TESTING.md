@@ -69,6 +69,17 @@ is available.
   `forge_post_spec.lua`), a pending comment edited there gets a new `body`. Posting is only ever
   tested against this fake: no spec or manual check sends a mutation to GitHub, and "add to
   pending review" is asserted to send no `submitPullRequestReview` and no `event`.
+  For the stack tree it answers the tree's aliases (`sdN`: a head branch's PRs with their
+  bases' PRs nested as deep as the query asks; `skN`: the PRs based on a branch) from a `_tree`
+  list of PR nodes in the PRs file, newest first and cut at the query's `first` with the real
+  `totalCount`; `REVUEY_FAKE_GH_TREE_SCENARIO=fail` fails the tree's own rounds while the first
+  one (inside the PR lookup) still answers. `h.tree_repo` builds the matching repositories: a
+  bare "GitHub" with every branch and `refs/pull/N/head`, and a clone made before some of them
+  moved, so some remote-tracking branches are missing or behind.
+- **ssh for `git fetch`:** `tests/bin/fake-ssh` (`h.use_fake_ssh`, set as `GIT_SSH_COMMAND`)
+  runs git's `git-upload-pack '<owner>/<name>.git'` against a local bare repository instead, so
+  a clone whose origin is `git@github.com:acme/shop.git` (which the PR lookup needs) fetches
+  without the network; it refuses when no repository is set.
 - **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
   threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the
   file at the PR head (the thread's lines ±110, enough for placement's ±100-line search and the
