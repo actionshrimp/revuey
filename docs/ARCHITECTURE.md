@@ -91,7 +91,7 @@ are in `reports/Terminal code review tool landscape.md`.
    tip commit, a parent rev and a reviewed-state key (`state_branch`, `state_base`); a scope is a layer or the
    full stack, turned into a `revuey.Target` (`from`, `to` or nil for HEAD/working tree, labels, state key) that
    `review.load` diffs. Nothing in the model assumes layers are local branches: the GitHub stack tree
-   (decision 22) builds a `revuey.Stack` of kind `github` for the chosen path, which replaces what this
+   (decision 23) builds a `revuey.Stack` of kind `github` for the chosen path, which replaces what this
    detection finds whenever HEAD's branch has a PR on GitHub. Detection still runs on every refresh (its
    fingerprint and its result are the fallback, and its local layers above the path's top are kept).
    Detection is split into a pure resolver (`resolve`: branch tips + a first-parent graph of commits not
@@ -1034,7 +1034,7 @@ are in `reports/Terminal code review tool landscape.md`.
       branches below are layers; remote-tracking ones are not (HEAD is not detached) unless a
       parent setting names them. The PR status section's base-mismatch warning flags a stacked
       PR whose GitHub base is not the detected parent. Once the PR lookup has run, the stack
-      tree (decision 22) replaces it with the PR's base chain from GitHub, layers at
+      tree (decision 23) replaces it with the PR's base chain from GitHub, layers at
       `origin/<head>`, so the PRs below need no local branches.
     - **Errors.** No `wt` on PATH (or `worktrunk.cmd`): checked before anything runs. wt's own
       failures are shown in wt's words (the `✗` line and what follows, glyphs and ANSI codes
@@ -1701,7 +1701,7 @@ are in `reports/Terminal code review tool landscape.md`.
       their abbreviations are cached on the session per file list and panel width, so a redraw
       (every mark) adds one table lookup per file. `folders_spec` times a 400-file panel redraw.
 
-22. **The stack tree from GitHub** (`stack_tree.lua` pure: queries, rounds, the tree, routes,
+23. **The stack tree from GitHub** (`stack_tree.lua` pure: queries, rounds, the tree, routes,
     layout, fetch marks and the stack for a path; `stack_tree_view.lua` the fetch glue, the stack
     for the review, the tree view and `gF`). Stacked PRs branch (a branch with an open and a
     closed child, an abandoned chain off the middle, a branch moved onto a new base with its old
