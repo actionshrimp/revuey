@@ -81,7 +81,11 @@ is available.
   runs git's `git-upload-pack '<owner>/<name>.git'` against a local bare repository instead, so
   a clone whose origin is `git@github.com:acme/shop.git` (which the PR lookup needs) fetches
   without the network; it refuses when no repository is set, and logs each command with the
-  `GIT_TERMINAL_PROMPT` git gave it.
+  `GIT_TERMINAL_PROMPT` git gave it. `REVUEY_FAKE_SSH_HANG=<seconds>` makes a remote that does
+  not answer and then drops the connection (its pid logged, so a spec checks it was stopped).
+- **Unexpected errors:** `h.capture_notify` passes error-level messages to `h.on_error` when a
+  spec sets it; `stack_tree_view_spec.lua` fails a test on any error notification it did not
+  expect, captured or not (an error inside a task would otherwise vanish in a capture).
 - **Real review threads:** `tests/data/forge_threads/` is a frozen corpus of 37 RIGHT-side
   threads from public PRs (TypeScript, ruff, vscode, deno, neovim): for each, an excerpt of the
   file at the PR head (the thread's lines ±110, enough for placement's ±100-line search and the

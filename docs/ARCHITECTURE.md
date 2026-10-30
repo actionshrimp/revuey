@@ -1734,10 +1734,11 @@ are in `reports/Terminal code review tool landscape.md`.
       from a closed PR chosen in the tree: its path (the PRs below it, `st.pin`) is expanded in
       phase one too, so `R` keeps it and its open PRs above it are in the stack at once. The
       stack is rebuilt after each phase; an unchanged one keeps its object, so nothing reloads.
-      On a long real stack with several abandoned closed chains hanging off it, phase one took a
-      handful of calls (a few seconds, one shared with the lookup) and the whole tree about four
-      times as many. Upward walks cost one call per level: GraphQL has no field for the PRs
-      based on a ref, so children cannot be nested.
+      Phase one costs about one call per level of open PRs above the lowest PR it expands, phase
+      two one per level of the deepest closed chain: in the test fixture (a 4-PR chain, a closed
+      2-PR chain off it) 4 calls before the stack is rebuilt (one shared with the lookup), 6 in
+      all. Upward walks cost one call per level: GraphQL has no field for the PRs based on a
+      ref, so children cannot be nested.
     - **Limits.** 25 calls per fetch, 300 PRs (counted as children are taken in, so a round
       never overshoots), 30 children per branch: past them the tree keeps what was read, says
       `cut:` in its heading, marks PRs not expanded (`…`) and lists cut (`+N more on GitHub`);
@@ -1767,19 +1768,32 @@ are in `reports/Terminal code review tool landscape.md`.
     - **HEAD moves** (`follow_head`, each refresh; the tree remembers `for_branch`). To a branch
       of the tree (`gS` to a layer, a checkout of a PR's branch): the tree stays, the path too
       when the branch is on it (else the route through its PR), and `@` follows HEAD. To any
-      other branch: that branch's own stack, from the tree this review fetched for it before
-      (kept per branch), else a first fetch for it (decision 20 allows it: never fetched in
-      this review), with git detection meanwhile. Not "press R": an unrelated branch's work
-      must never be hidden behind an old path, and a tree per branch is fetched once.
+      other branch: that branch's own stack, from a tree this review fetched before that has
+      the branch (kept per branch it was fetched for, found by any branch in it), else a first
+      fetch for it (decision 20 allows it: never fetched in this review), with git detection
+      meanwhile. Only finished fetches are kept (no rounds running, closed PRs read): leaving a
+      branch while its tree loads drops it, and coming back fetches it again. `R` drops the
+      kept trees. Not "press R": an unrelated branch's work must never be hidden behind an old
+      path. The stack is built from one tree, read once (a fetch landing while git runs is
+      used by the next refresh), and from the default route while the chosen PR is not in it
+      (after `R`, until the closed PRs are read). A path chosen in the tree without HEAD's
+      branch gets a `head_off_path` note.
     - **The stack for a path** (`stack_tree.stack`, from one `for-each-ref` of heads and
       remotes, one `cat-file --batch-check` of head commits, and `merge-base --is-ancestor` for
-      local branches of open PRs not at their head): a local branch of the head name only when
-      it is that PR's: at its head commit; for the branch's open PR also when it contains the
-      head (your commits on top) or is checked out (its working tree is the layer's whatever it
-      holds; a `local_differs` warning when it does not contain the head). A local copy behind
-      or off an open PR that is not checked out is not shown: the PR is, from GitHub's side,
-      with the warning (reviewing the PR is the point; the copy is stale). An older closed PR of
-      a moved branch never takes the branch's local copy. Else `<remote>/<head>` (remote, `ro`),
+      local branches of the tree's PRs not at their head: does it contain the head, is HEAD
+      built on it, is it only behind the head). HEAD's PR (`head_num`: its branch's in the
+      tree, else the PR the tree was fetched for while HEAD is that branch) is always the
+      checked-out branch, whatever the PR's state or head name, so the review never loses your
+      work (`local_differs` warning when it does not contain the PR's head). Other local
+      branches only when they are the PR's: at its head commit; for the branch's open PR also
+      when containing it; or when HEAD is built on them and they are not merely behind the PR
+      (a lower branch amended and restacked here, the usual flow before pushing: `restacked`,
+      noted), so each layer diffs from what it was built on. A local copy behind or off an
+      open PR is not shown: the PR is, from GitHub's side, with the warning (reviewing the PR
+      is the point; the copy is stale). An older closed PR of a moved branch never takes the
+      branch's local copy. A stale `<remote>/<head>` gives way to the PR's exact head commit
+      when the clone has it. The bottom base is `<remote>/<base>`, a local copy only when HEAD
+      is built on it (or there is no remote copy). Else `<remote>/<head>` (remote, `ro`),
       else the head commit (`unfetched`, `ro`; forks' layers are named `owner:branch`). A closed
       or merged PR's `<remote>/<head>` counts only at its own head commit (the branch may hold a
       newer PR). PRs with no commit here are left out (`not_fetched` warning: the layer above
@@ -1794,7 +1808,8 @@ are in `reports/Terminal code review tool landscape.md`.
       `state_branch` is the head name (shared with a local branch made later), `state_base` the
       layer below's. `is_head` as in decision 7. Layers carry `pr`, `others` (children off the
       path), `fetch` (`missing` | `behind`). Git detection's local layers above the top (no PR
-      yet) are appended. `stack.finish` then runs the squash and landed checks and the ignore
+      yet) are appended, up to one whose branch has a PR in the tree (placed by GitHub, a
+      `local_above` note says where). `stack.finish` then runs the squash and landed checks and the ignore
       list. The stack is cached on the git fingerprint, the tree version, the fetch count and
       the selection, and an equal one keeps its object (a new object reloads the review).
     - **Tree view** (`gb`): a float over the diff window, `gt log` style (top of the stack at the
@@ -1825,8 +1840,11 @@ are in `reports/Terminal code review tool landscape.md`.
       `GIT_TERMINAL_PROMPT=0` and, unless ssh is configured (`GIT_SSH_COMMAND`,
       `core.sshCommand`), `GIT_SSH_COMMAND='ssh -o BatchMode=yes'` (no host-key or passphrase
       prompt on the terminal under the editor); 120 s. When the fetch fails, each refspec is
-      fetched alone, a branch gone on GitHub through its pull ref, and the message says what
-      came, how, and what did not. In the tree view it fetches the path under the cursor,
+      fetched alone, a branch gone on GitHub through its pull ref, but only for errors about
+      refs (`couldn't find remote ref` and the like), never a timeout or a connection failure;
+      the message says what came, how, and what did not. `git` runs in a process group of its
+      own; closing the review kills it (ssh too) and starts nothing more. `GIT_SSH` is left
+      alone like `GIT_SSH_COMMAND`. In the tree view it fetches the path under the cursor,
       elsewhere the chosen path. Then a refresh; nothing on GitHub changes.
     - **Tests**: `stack_tree_spec.lua` (pure, an in-memory GitHub answering the aliases),
       `stack_tree_view_spec.lua` (a real clone, the fake `gh` with a `_tree`, `git fetch` to a

@@ -329,11 +329,13 @@ the PRs' base branches instead of guessing from git history:
   through open PRs, taking the longest run of open PRs where a branch has several (a tie goes
   to the lower PR number, the one opened first). A branch with one open child just continues.
   The commits come from your branches: a local branch of the PR's head when it is the PR's (at
-  its head, or containing it with your commits on top, or checked out), else `origin/<head>`
-  (read-only, `ro`), else the head commit when the clone has it. A local copy that is behind
-  the PR or was rebased off it is not shown (unless checked out): the PR is, with a `⚠ local
-  stack/a differs from PR #11` note. An old closed PR of a branch that moved on is shown from
-  its own commit, never from the branch.
+  its head, or containing it with your commits on top), else `origin/<head>` (read-only,
+  `ro`), else the head commit when the clone has it. Your checked-out branch is always its PR's
+  layer, whatever the PR's state (closed, merged) and whatever it holds. A lower branch you
+  amended and restacked your branch onto (not pushed yet) is shown from your copy, so each layer
+  shows its own change. A local copy that is just behind the PR or was rebased off it is not
+  shown: the PR is, with a `⚠ local stack/a differs from PR #11` note. An old closed PR of a
+  branch that moved on is shown from its own commit, never from the branch.
 - **`gb` shows the tree** over the diff, top of the stack at the top and the trunk at the
   bottom, like `gt log`:
 
@@ -362,7 +364,9 @@ the PRs' base branches instead of guessing from git history:
   keep it). Reopening starts from the path through your branch again.
 - **When you switch branches** (in the review with `gS`, or elsewhere): on a branch of the tree
   the path stays and `@` moves with you; on any other branch the stack is that branch's own,
-  its tree fetched once (git detection until it arrives, or when it has no PR).
+  its tree fetched once (git detection until it arrives, or when it has no PR). A tree that
+  finished loading is kept for when you come back (to any branch in it); `R` drops the kept
+  ones. If you pick a path in the tree that doesn't have your branch, a note says so.
 - **The panel** shows the chosen path as before. `⑂2` on a layer means the tree has two other
   PRs on that branch (`gb` shows them); `⇣` means its branch is not fetched or behind GitHub.
   With the panel focused, the layer under the cursor says which (`gb tree: 2 other paths
@@ -380,8 +384,10 @@ the PRs' base branches instead of guessing from git history:
   commits without writing a ref), then refreshes. It only writes to your clone, never to
   GitHub. In the tree it fetches the path under the cursor. If part of it fails (a branch
   deleted on GitHub since), the rest is still fetched, a gone branch by its pull ref, and the
-  message says which. It never prompts: no git credential prompt, and ssh runs in batch mode
-  (no host-key or passphrase question) unless you configured ssh for git yourself. revuey does not fetch on open: a
+  message says which (a remote that doesn't answer is tried once, not once per branch). It
+  never prompts: no git credential prompt, and ssh runs in batch mode (no host-key or
+  passphrase question) unless you configured ssh for git yourself (`GIT_SSH_COMMAND`,
+  `GIT_SSH`, `core.sshCommand`). Closing the review stops it. revuey does not fetch on open: a
   fetch moves your remote-tracking branches, can ask for credentials and costs a network round
   trip on every review, and the marks say when one is worth it.
 - **PRs from forks** are shown (`bob:fix-d`, `fork`); `gF` brings their commits through
@@ -397,7 +403,8 @@ the PRs' base branches instead of guessing from git history:
 - **Without GitHub** (no `gh`, no GitHub remote, offline, no PR for your branch) the stack comes
   from git as above, and `gb` says why there is no tree. A lone PR stays a plain review until
   you pick a path in the tree. Branches without a PR yet above the top PR (local work not
-  pushed) stay on top of the stack. `stack = { github = false }` turns the tree off.
+  pushed) stay on top of the stack; one that has a PR based elsewhere on GitHub is not stacked
+  there (a note says so). `stack = { github = false }` turns the tree off.
 
 ### Stack notes
 
