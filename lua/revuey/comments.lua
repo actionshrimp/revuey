@@ -1113,9 +1113,14 @@ function M.list(store, opts)
 end
 
 function M.sort(list)
+  -- files in the diff's order: folder order with `panel_folders` (review.load), else by path
+  local less = require('revuey.config').options.panel_folders and require('revuey.folders').less
   table.sort(list, function(x, y)
     local ax, ay = x.anchor, y.anchor
     if ax.path ~= ay.path then
+      if less then
+        return less(ax.path, ay.path)
+      end
       return ax.path < ay.path
     end
     -- new-side order (deleted lines where their hunk puts them); file-level comments first

@@ -1020,6 +1020,9 @@ local function comment_review(o, ctx, attached)
   if spec then
     config.options.context_lines = tonumber(spec.context_lines) or config.options.context_lines
     config.options.max_file_bytes = tonumber(spec.max_file_bytes) or config.options.max_file_bytes
+    if type(spec.panel_folders) == 'boolean' then
+      config.options.panel_folders = spec.panel_folders
+    end
     r, lerr = review_mod.load({
       cwd = ctx.root,
       base = spec.base,
@@ -1038,6 +1041,9 @@ local function comment_review(o, ctx, attached)
     end
     config.options.context_lines = tonumber(last.context_lines) or config.options.context_lines
     config.options.max_file_bytes = tonumber(last.max_file_bytes) or config.options.max_file_bytes
+    if type(last.panel_folders) == 'boolean' then
+      config.options.panel_folders = last.panel_folders
+    end
     local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
       or git.default_branch(ctx.root)
     if not trunk then

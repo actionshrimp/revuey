@@ -72,6 +72,7 @@ local function entry(s)
       mode = r.mode,
       context_lines = config.options.context_lines,
       max_file_bytes = config.options.max_file_bytes,
+      panel_folders = config.options.panel_folders, -- the file order (review.load)
     },
     review = info,
   }
@@ -92,6 +93,7 @@ local function last_review(s)
     state_dir = o.state_dir or config.options.state_dir or require('revuey.state').default_dir(),
     context_lines = config.options.context_lines,
     max_file_bytes = config.options.max_file_bytes,
+    panel_folders = config.options.panel_folders,
   }
 end
 

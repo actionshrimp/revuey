@@ -115,7 +115,8 @@ function M.panel_items(s)
   if not g then
     return {}
   end
-  return { { key = '<CR>', label = 'first file in ' .. g.path } }
+  -- `path`: format shortens it to the room left (the file name at the left keeps its cells)
+  return { { key = '<CR>', label = 'first file in ' .. g.path, prefix = 'first file in ', path = g.path } }
 end
 
 ---Redraw the diff window's winbar when the panel's hint changed (panel CursorMoved, focus).
@@ -162,6 +163,19 @@ M.SEP = ' · '
 ---@return string text, integer width
 function M.format(items, avail)
   local n, used = 0, 0
+  local first = items[1]
+  if first and first.path and api.nvim_strwidth(first.key .. ' ' .. first.label) > avail then
+    -- a folder's path: abbreviated (folders.abbreviate) to the room there is
+    -- (without its words when they would leave the path under 12 cells)
+    local dir = first.path:gsub('/$', '')
+    local prefix = first.prefix
+    local room = avail - api.nvim_strwidth(first.key .. ' ' .. prefix) - 1
+    if room < 12 then
+      prefix, room = '', avail - api.nvim_strwidth(first.key .. ' ') - 1
+    end
+    local short = require('revuey.folders').abbreviate(dir, math.max(room, 1)) .. '/'
+    items = vim.list_extend({ vim.tbl_extend('force', first, { label = prefix .. short }) }, items, 2)
+  end
   for i, it in ipairs(items) do
     local w = api.nvim_strwidth(it.key .. ' ' .. it.label) + (i > 1 and api.nvim_strwidth(M.SEP) or 0)
     if i > 1 and used + w > avail then
@@ -172,7 +186,8 @@ function M.format(items, avail)
   local parts = {}
   for i = 1, n do
     local it = items[i]
-    parts[#parts + 1] = '%#RevueyKeyHintKey#' .. it.key:gsub('%%', '%%%%') .. '%#RevueyKeyHint# ' .. it.label
+    -- labels can hold paths: a `%` there would be read as a statusline item
+    parts[#parts + 1] = '%#RevueyKeyHintKey#' .. it.key:gsub('%%', '%%%%') .. '%#RevueyKeyHint# ' .. it.label:gsub('%%', '%%%%')
   end
   return table.concat(parts, '%#RevueyKeyHint#' .. M.SEP), used
 end

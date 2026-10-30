@@ -19,6 +19,37 @@ local function segments(dir)
   return dir == '' and {} or vim.split(dir, '/', { plain = true })
 end
 
+---Sort key of a path: its folder's components and its name.
+local function key(path)
+  return { segs = segments(M.dir(path)), name = base(path) }
+end
+
+---`a` before `b` (keys): folders component by component, a folder before its subfolders, then
+---names. nil when equal.
+local function key_less(a, b)
+  local sa, sb = a.segs, b.segs
+  for k = 1, math.min(#sa, #sb) do
+    if sa[k] ~= sb[k] then
+      return sa[k] < sb[k]
+    end
+  end
+  if #sa ~= #sb then
+    return #sa < #sb
+  end
+  if a.name ~= b.name then
+    return a.name < b.name
+  end
+end
+
+---Path `a` before path `b` in folder order (M.order), for lists sorted by path elsewhere
+---(comments, findings). Splits both paths: fine for a sort comparator over hundreds of items.
+function M.less(a, b)
+  if a == b then
+    return false
+  end
+  return key_less(key(a), key(b)) or false
+end
+
 ---The files grouped by directory, groups contiguous: directories in tree order (a directory
 ---before its subdirectories, compared component by component, the root first), files sorted by
 ---name within each. This is `git diff`'s path order with each directory's own files gathered
@@ -29,22 +60,15 @@ end
 function M.order(files)
   local keyed = {}
   for i, f in ipairs(files) do
-    keyed[i] = { f = f, segs = segments(M.dir(f.path)), name = base(f.path), i = i }
+    keyed[i] = key(f.path)
+    keyed[i].f, keyed[i].i = f, i
   end
   table.sort(keyed, function(a, b)
-    local sa, sb = a.segs, b.segs
-    for k = 1, math.min(#sa, #sb) do
-      if sa[k] ~= sb[k] then
-        return sa[k] < sb[k]
-      end
+    local l = key_less(a, b)
+    if l == nil then
+      return a.i < b.i
     end
-    if #sa ~= #sb then
-      return #sa < #sb
-    end
-    if a.name ~= b.name then
-      return a.name < b.name
-    end
-    return a.i < b.i
+    return l
   end)
   local out = {}
   for i, k in ipairs(keyed) do
@@ -130,8 +154,8 @@ end
 
 ---`path` in at most `width` display cells, fish-shell style: the first and last components stay
 ---whole and the middle ones are cut to their first character, the one furthest from the leaf
----first, until it fits; then `first/…/last`, then `…/last`, then the last cut from the left (its
----end stays).
+---first, until it fits; then `first/…/last`, `…/last`, the last alone, then the last cut from
+---the left (its end stays).
 function M.abbreviate(path, width)
   if strwidth(path) <= width then
     return path
@@ -145,7 +169,7 @@ function M.abbreviate(path, width)
     end
   end
   local leaf = segs[#segs]
-  for _, p in ipairs({ segs[1] .. '/…/' .. leaf, '…/' .. leaf }) do
+  for _, p in ipairs({ segs[1] .. '/…/' .. leaf, '…/' .. leaf, leaf }) do
     if #segs >= 2 and strwidth(p) <= width then
       return p
     end

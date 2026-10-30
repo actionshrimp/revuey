@@ -191,4 +191,30 @@ h.test('hunks --prompt in the full-stack scope tags each hunk with its branch (n
   end
 end)
 
+h.test('hunks follow the review\'s file order: folders (the default), or git\'s with panel_folders = false', function()
+  local d = h.repo('import-review-order', {}, { ['a-b/x.txt'] = 'x\n', ['a/b/y.txt'] = 'y\n', ['a/z.txt'] = 'z\n' })
+  local function order()
+    local r = vim.system({ BIN, 'hunks', '--json' }, { cwd = d, env = ENV, text = true }):wait(20000)
+    h.eq(0, r.code, r.stderr)
+    return vim.tbl_map(function(hk)
+      return hk.path
+    end, vim.json.decode(r.stdout).hunks)
+  end
+  local folders, flat = { 'a/z.txt', 'a/b/y.txt', 'a-b/x.txt' }, { 'a-b/x.txt', 'a/b/y.txt', 'a/z.txt' }
+  -- live: the review's own load record; closed: the worktree's last-review record
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false, panel_folders = false })
+  local s = h.open_review({ cwd = d, base = '' })
+  h.eq(flat, vim.tbl_map(function(f)
+    return f.path
+  end, s.review.files))
+  h.eq(flat, order())
+  require('revuey').close()
+  h.eq(flat, order())
+  require('revuey').setup({ state_dir = state_dir, lsp_warmup = false })
+  h.open_review({ cwd = d, base = '' })
+  h.eq(folders, order())
+  require('revuey').close()
+  h.eq(folders, order())
+end)
+
 h.run()

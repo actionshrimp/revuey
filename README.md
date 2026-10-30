@@ -1286,7 +1286,13 @@ The review opens in a new tab:
   `packages/…/routes`, then `…/routes`); when every folder shares leading folders (everything
   under `src/`), they are left out of the headers and named once above them (` in src/`). A
   folder whose files are all reviewed is dimmed. `panel_folders = false` gives the flat list (git's
-  path order, each file's folder after its name).
+  path order, each file's folder after its name). The comment list, the AI findings and
+  `bin/revuey hunks` follow the same order.
+
+  Upgrading to the folder order: hunk ids follow the file order, so an AI review document made
+  with `bin/revuey hunks` before the upgrade is refused once ("the code changed": run `hunks`
+  again), and a saved guide is not found once (generate it again). Reviewed marks and comments
+  are kept.
 - **Diff (right):** one continuous buffer for all files.
 
 Every diff line is a real buffer line, and its text is exactly the source text. The `+`/`-` markers,

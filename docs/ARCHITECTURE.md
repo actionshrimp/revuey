@@ -1659,7 +1659,9 @@ are in `reports/Terminal code review tool landscape.md`.
     - **The panel's folder headers** have no keys of their own to show in the narrow panel, so
       while the panel has focus and its cursor is on one, the diff window's winbar hint is
       `<CR> first file in <full path>/` (`key_help.panel_items`; the header itself may be
-      abbreviated, decision 22). The panel's `CursorMoved` and focus changes redraw it.
+      abbreviated, decision 22). The panel's `CursorMoved` and focus changes redraw it. Too long
+      for the room after the left's 20 cells, the path is abbreviated the same way (and the
+      words dropped below 12 cells of path). Every label is statusline-escaped (`%` in a path).
 22. **Folders in the file panel** (`folders.lua` pure order, groups, common prefix and
     abbreviation; `panel.lua` the rows). On by default (`panel_folders`).
     - **One order for everything.** `review.load` sorts `r.files` with `folders.order`, so the
@@ -1669,6 +1671,13 @@ are in `reports/Terminal code review tool landscape.md`.
       subfolders stay together before `api-client/`, which git's byte order puts between them),
       a folder before its subfolders, the root first, files by name within each (as `ls -R`).
       Groups are therefore contiguous by construction. Off, `r.files` keeps git's order.
+      Lists sorted by path elsewhere use the same order (`comments.sort` with `folders.less`:
+      `cl`, the panel's AI findings, exports, the CLI), and the CLI loads with the option the
+      review recorded (its `load` record and the last-review record), so `revuey hunks` numbers
+      hunks as the UI does. Persisted state is keyed by content (hunk hashes, units, section
+      ids, anchors), so the order change keeps marks and comments; what is keyed by hunk order
+      (a `hunks` document's diff hash, the guide's `anchors_hash`) misses once after the
+      upgrade. Full-stack layer labels (per file index) include the option in their cache key.
     - **Root files** go under a `./` header rather than none: every file row is then indented
       under a label, and a root `README.md` reads as "at the root", not as part of the folder
       above it.

@@ -105,7 +105,11 @@ h.test('abbreviate: fish style from the root side, then first/…/last, …/last
   -- one or two components: nothing in the middle to shorten
   h.eq('…ryname', folders.abbreviate('verylongdirectoryname', 7))
   h.eq('…/defghij', folders.abbreviate('abc/defghij', 10))
-  h.eq('…defghij', folders.abbreviate('abc/defghij', 8))
+  -- the leaf alone when it fits, cut only when it does not
+  h.eq('defghij', folders.abbreviate('abc/defghij', 8))
+  h.eq('v1.2', folders.abbreviate('x/v1.2', 4))
+  h.eq('….2', folders.abbreviate('x/v1.2', 3))
+  h.eq('routes', folders.abbreviate('a/b/routes', 6))
   -- whatever the width, the result fits
   for _, path in ipairs({ p, deep, u, '.github/workflows', 'a/b', 'x' }) do
     for w = 0, 32 do
@@ -113,6 +117,21 @@ h.test('abbreviate: fish style from the root side, then first/…/last, …/last
       h.ok(vim.api.nvim_strwidth(a) <= w, ('%s at %d: %s'):format(path, w, a))
     end
   end
+end)
+
+h.test('less: the order of M.order for two paths (comments and findings sort with it)', function()
+  local list = {
+    'Makefile', 'README.md', '.github/ci.yml', 'packages/api-client/index.ts', 'packages/api/src/routes/billing.ts',
+    'packages/api/src/server.ts', 'packages/api/test/b.test.ts', 'a-b/x', 'a/b/y', 'a/z',
+  }
+  local by_order = paths(folders.order(of(list)))
+  local by_less = vim.deepcopy(list)
+  table.sort(by_less, folders.less)
+  h.eq(by_order, by_less)
+  h.eq(false, folders.less('a/x', 'a/x'))
+  h.eq(true, folders.less('README.md', '.github/ci.yml'), 'root files first')
+  h.eq(true, folders.less('a/z', 'a/b/y'), 'a folder\'s files before its subfolders')
+  h.eq(true, folders.less('api/b/c', 'api-client/a'), 'components, not characters')
 end)
 
 h.test('order and groups stay fast: 3000 files in 330 folders', function()
@@ -320,9 +339,12 @@ h.test('j/k land on a header harmlessly; <CR> there shows its first file; mr the
   for fi = 1, #s.review.files do
     h.eq(0, (review_mod.file_progress(s.review, fi)))
   end
-  -- <CR>: the folder's first file, in the diff
-  panel_keys(s, header_row(s, 'packages/api/test'), '<CR>')
+  -- <CR>: the folder's first file (of two: billing.ts, not refunds.ts), in the diff
+  panel_keys(s, header_row(s, 'packages/api/src/routes'), '<CR>')
   h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  h.eq(4, s.current_file)
+  h.eq(s.layout.files[4].start_row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  panel_keys(s, header_row(s, 'packages/api/test'), '<CR>')
   h.eq(6, s.current_file)
   h.eq(s.layout.files[6].start_row, vim.api.nvim_win_get_cursor(s.diff_win)[1])
 end)
@@ -333,14 +355,25 @@ h.test('hint: on a header the diff winbar names <CR> and the folder\'s full path
     vim.g.statusline_winid = s.diff_win
     return vim.api.nvim_eval_statusline(view.winbar(), { winid = s.diff_win, use_winbar = true, maxwidth = 200 }).str
   end
+  local function hint()
+    return vim.tbl_map(function(it)
+      return it.key .. ' ' .. it.label
+    end, key_help.current(s, s.diff_win))
+  end
+  -- a 69-cell diff window (80 columns): room for the whole path
+  vim.api.nvim_win_set_width(s.panel_win, 10)
   panel_keys(s, header_row(s, 'packages/api/src/routes'))
-  h.eq({ { key = '<CR>', label = 'first file in packages/api/src/routes/' } }, key_help.current(s, s.diff_win))
+  h.eq({ '<CR> first file in packages/api/src/routes/' }, hint())
   h.ok(winbar():find('<CR> first file in packages/api/src/routes/', 1, true), winbar())
+  -- a 39-cell one: the path shortened, the file name keeps its 20 cells
+  vim.api.nvim_win_set_width(s.panel_win, 40)
+  h.eq({ '<CR> first file in packages/api/src/routes/' }, hint(), 'the item has the whole path')
+  h.ok(winbar():find('<CR> …/routes/ $'), winbar())
   panel_keys(s, header_row(s, ''))
-  h.eq({ { key = '<CR>', label = 'first file in ./' } }, key_help.current(s, s.diff_win))
+  h.eq({ '<CR> first file in ./' }, hint())
   -- on a file row, and once the diff has focus: no folder hint
   panel_keys(s, s.panel_rows[1])
-  h.eq({}, key_help.current(s, s.diff_win))
+  h.eq({}, hint())
   panel_keys(s, header_row(s, ''))
   vim.api.nvim_set_current_win(s.diff_win)
   h.ok(not winbar():find('first file in', 1, true), winbar())
@@ -352,6 +385,19 @@ h.test('a redraw keeps the panel cursor on its header', function()
   panel_keys(s, row)
   panel.render(s, { keep_view = true })
   h.eq(row, vim.api.nvim_win_get_cursor(s.panel_win)[1])
+  -- rows added above (a background lookup drew a section): the cursor follows its header
+  local gv = require('revuey.guide_view')
+  local orig = gv.panel
+  gv.panel = function(s2, add, ...)
+    add(' one more line')
+    add(' and another')
+    return orig(s2, add, ...)
+  end
+  panel.render(s, { keep_view = true })
+  gv.panel = orig
+  h.eq(row + 2, header_row(s, 'packages/api-client'))
+  h.eq(row + 2, vim.api.nvim_win_get_cursor(s.panel_win)[1])
+  panel.render(s)
 end)
 
 h.test('a folder whose files are all reviewed is dimmed', function()
@@ -413,6 +459,72 @@ h.test('a single file: its folder as the header, no prefix line', function()
   h.eq(' a/b:', list[1])
   h.eq(2, #list)
   h.ok(not table.concat(lines(s), '\n'):find(' in a', 1, true))
+end)
+
+h.test('a % in a folder name: the winbar hint shows it literally (statusline-escaped)', function()
+  local d = h.repo('folders-pct', { ['docs/100%/a.md'] = 'a\n', ['x/y.md'] = 'y\n' }, { ['docs/100%/a.md'] = 'b\n', ['x/y.md'] = 'z\n' })
+  local s = open(d)
+  vim.api.nvim_win_set_width(s.panel_win, 19)
+  panel_keys(s, header_row(s, 'docs/100%'))
+  vim.g.statusline_winid = s.diff_win
+  local ok, res = pcall(vim.api.nvim_eval_statusline, view.winbar(), { winid = s.diff_win, use_winbar = true, maxwidth = 200 })
+  h.ok(ok, tostring(res))
+  h.ok(res.str:find('<CR> first file in docs/100%/', 1, true), res.str)
+  -- any label: format escapes it
+  local text = key_help.format({ { key = 'x%', label = '50% done' } }, 40)
+  h.eq('x% 50% done', vim.api.nvim_eval_statusline(text, { maxwidth = 200 }).str)
+end)
+
+h.test('a long folder path in the hint is shortened to the room left, so the file name keeps its cells', function()
+  local path = 'services/billing/src/handlers/invoices/'
+  local it = { key = '<CR>', label = 'first file in ' .. path, prefix = 'first file in ', path = path }
+  local text, used = key_help.format({ it }, 44)
+  h.ok(used <= 44, used)
+  h.eq('<CR> first file in services/b/s/h/invoices/', vim.api.nvim_eval_statusline(text, { maxwidth = 200 }).str)
+  h.eq('<CR> first file in …/invoices/', vim.api.nvim_eval_statusline(key_help.format({ it }, 34), { maxwidth = 200 }).str)
+  -- too little room for the words: the path alone
+  h.eq('<CR> …/invoices/', vim.api.nvim_eval_statusline(key_help.format({ it }, 20), { maxwidth = 200 }).str)
+  h.eq('first file in ' .. path, it.label, 'the item itself is untouched')
+  text = key_help.format({ it }, 80)
+  h.eq('<CR> first file in ' .. path, vim.api.nvim_eval_statusline(text, { maxwidth = 200 }).str)
+  -- composed into a 60-cell winbar: the file name keeps its 20 cells
+  local bar = key_help.compose(' A %<services/billing/src/index.ts +1 −0', '', { it }, 60)
+  local shown = vim.api.nvim_eval_statusline(bar, { maxwidth = 60 }).str
+  local at = shown:find('<CR>', 1, true)
+  h.ok(at and vim.api.nvim_strwidth(shown:sub(1, at - 1)) >= 20, shown)
+  h.ok(shown:find('index.ts +1 −0', 1, true) and shown:find('<CR> first file in …/invoices/ $'), shown)
+end)
+
+h.test('a refresh with as many files but other ones redraws the headers', function()
+  local d = h.repo('folders-refresh', {}, { ['a/x.txt'] = 'x\n', ['b/y.txt'] = 'y\n' })
+  local s = open(d)
+  header_row(s, 'b')
+  vim.fn.delete(d .. '/b/y.txt')
+  h.write(d, 'c/z.txt', 'z\n')
+  view.refresh({ force = true })
+  idle(s)
+  s = view.session
+  h.eq({ 'a/x.txt', 'c/z.txt' }, paths(s.review.files))
+  h.eq(' c:', lines(s)[header_row(s, 'c')])
+  for _, g in pairs(s.panel_dirs) do
+    h.ok(g.dir ~= 'b', 'no header left for b')
+  end
+end)
+
+h.test('comments and findings sort in the diff\'s order (folders), or by path with the option off', function()
+  local comments = require('revuey.comments')
+  local function sorted()
+    local list = vim.tbl_map(function(p)
+      return { anchor = { path = p } }
+    end, { 'packages/api-client/index.ts', '.github/ci.yml', 'packages/api/src/a.ts', 'README.md' })
+    return vim.tbl_map(function(c)
+      return c.anchor.path
+    end, comments.sort(list))
+  end
+  h.eq({ 'README.md', '.github/ci.yml', 'packages/api/src/a.ts', 'packages/api-client/index.ts' }, sorted())
+  require('revuey.config').options.panel_folders = false
+  h.eq({ '.github/ci.yml', 'README.md', 'packages/api-client/index.ts', 'packages/api/src/a.ts' }, sorted())
+  require('revuey.config').options.panel_folders = true
 end)
 
 h.test('a large review (400 files in 40 folders): a panel redraw stays fast, its headers cached', function()

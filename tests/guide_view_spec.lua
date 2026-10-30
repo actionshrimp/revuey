@@ -244,6 +244,21 @@ h.test('panel lists sections; selecting one jumps to it', function()
   vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
   h.eq(s.diff_win, vim.api.nvim_get_current_win())
   h.eq(s.layout.file_rows[s.panel_dirs[hrow].first], vim.api.nvim_win_get_cursor(s.diff_win)[1])
+  -- a folder whose first file the guide does not show: its first file the guide shows
+  for row, g in pairs(s.panel_dirs) do
+    if g.dir == 'src' then
+      hrow = row
+    end
+  end
+  local g = s.panel_dirs[hrow]
+  h.ok(g.last > g.first)
+  local saved = s.layout.file_rows[g.first]
+  s.layout.file_rows[g.first] = nil
+  vim.api.nvim_set_current_win(s.panel_win)
+  vim.api.nvim_win_set_cursor(s.panel_win, { hrow, 0 })
+  vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
+  s.layout.file_rows[g.first] = saved
+  h.eq(s.layout.file_rows[g.first + 1], vim.api.nvim_win_get_cursor(s.diff_win)[1])
 end)
 
 h.test('mr marks a section reviewed, folds it, moves on; persists; resets when its hunks change', function()

@@ -317,7 +317,7 @@ local function folder_layout(s, width)
       g.text = ' ./'
     else
       local rel = prefix ~= '' and g.dir:sub(#prefix + 2) or g.dir
-      g.text = ' ' .. folders.abbreviate(rel, width - 2) .. ':'
+      g.text = ' ' .. folders.abbreviate(rel, math.max(width - 2, 1)) .. ':'
     end
     g.path = g.dir == '' and './' or (g.dir .. '/')
   end
@@ -327,7 +327,7 @@ local function folder_layout(s, width)
     width = width,
     groups = groups,
     prefix = prefix,
-    prefix_text = prefix ~= '' and (' in ' .. folders.abbreviate(prefix, width - 5) .. '/') or nil,
+    prefix_text = prefix ~= '' and (' in ' .. folders.abbreviate(prefix, math.max(width - 5, 1)) .. '/') or nil,
   }
   s.panel_folder_cache = c
   return c

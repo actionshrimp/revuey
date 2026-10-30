@@ -1958,9 +1958,16 @@ local function panel_keymaps(s)
   end
   local function jump(focus)
     local fi = file_under_cursor()
-    -- a folder header: its first file
+    -- a folder header: its first file (in the guide view, the first one the guide shows)
     local dir = not fi and s.panel_dirs and s.panel_dirs[api.nvim_win_get_cursor(0)[1]]
-    fi = fi or (dir and dir.first)
+    if dir then
+      for i = dir.first, dir.last do
+        if s.view_mode ~= 'guide' or (s.layout.file_rows and s.layout.file_rows[i]) then
+          fi = i
+          break
+        end
+      end
+    end
     if not fi then
       return
     end
@@ -3142,7 +3149,8 @@ local function layer_labels(review, cache)
   if not (st and scope and scope.kind == 'full') then
     return nil
   end
-  local parts = { review.signature }
+  -- labels are per file index: the order (panel_folders) is part of the key
+  local parts = { review.signature, tostring(config.options.panel_folders) }
   for _, l in ipairs(st.layers) do
     parts[#parts + 1] = l.name .. '=' .. l.tip .. '^' .. l.parent_rev
   end
