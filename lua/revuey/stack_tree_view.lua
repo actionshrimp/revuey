@@ -3,10 +3,11 @@
 -- over the diff window), and fetching the stack's branches (`git fetch`, never a GitHub write).
 --
 -- Session state `s.gh_tree`: {fetched, tree, sel (the PR chosen in the tree view; nil = the
--- default route through HEAD's PR), version (bumped when a fetch changes what the stack is
--- built from), reason (why there is no tree), remote, stale, loading (closed subtrees still
--- coming), view (the open tree view)}. Nothing is stored: reopening a review starts from the
--- default route.
+-- default route through HEAD's PR), for_branch (the branch the tree was fetched for), version
+-- (bumped when a fetch changes what the stack is built from), reason (why there is no tree),
+-- remote, stale, loading (closed subtrees still coming), gen/job (the rounds in flight), saved
+-- (other branches' trees, kept when HEAD moves), view (the open tree view)}. Nothing is stored:
+-- reopening a review starts from the default route.
 local tree_mod = require('revuey.stack_tree')
 local forge = require('revuey.forge')
 local git = require('revuey.git')
@@ -25,7 +26,7 @@ function M.enabled()
 end
 
 local function state(s)
-  s.gh_tree = s.gh_tree or { version = 0, facts_gen = 0 }
+  s.gh_tree = s.gh_tree or { version = 0, facts_gen = 0, gen = 0, saved = {} }
   return s.gh_tree
 end
 M.state = state
@@ -59,8 +60,9 @@ end
 -- Fetching (with the PR lookup, forge_view.update)
 -- ---------------------------------------------------------------------------
 
----Start a tree fetch when this review has none yet (or `force`, `R`): the first round goes into
----the PR lookup's call (`extra`). nil when not wanted or not possible (`gt.reason` says why).
+---Start a tree fetch when this review has none for HEAD's branch yet (or `force`: `R` only):
+---the first round goes into the PR lookup's call (`extra`). nil when not wanted or not possible
+---(`gt.reason` says why).
 ---@return {st:revuey.TreeFetch, extra:table}?
 function M.begin(s, info, force)
   if not M.enabled() then
@@ -72,6 +74,7 @@ function M.begin(s, info, force)
   end
   gt.fetched = true
   local name, trunk = s.review.head_branch, s.review.tree_trunk
+  gt.for_branch = name
   if not trunk then
     gt.reason = 'this review has an explicit base (no stack)'
     return nil
@@ -101,10 +104,21 @@ function M.begin(s, info, force)
   end
   local repo = info.remotes[base].repo
   local st = tree_mod.new(repo, trunk_branch, branches, t.candidates[1].head_owner)
+  -- a chosen PR keeps its path whole in phase one (it may sit under a closed PR)
+  if gt.sel and gt.tree and gt.tree.nodes[gt.sel] then
+    st.pin = {}
+    for _, num in ipairs(tree_mod.down(gt.tree, gt.sel)) do
+      st.pin[num] = true
+    end
+  end
   gt.remote = base
+  -- a newer fetch replaces one in flight: its rounds stop and their answers are dropped
+  gt.gen = gt.gen + 1
+  M.stop_job(gt)
   local parts, aliases = tree_mod.first_parts(st)
   return {
     st = st,
+    gen = gt.gen,
     extra = {
       host = repo.host,
       parts = parts,
@@ -116,7 +130,19 @@ function M.begin(s, info, force)
   }
 end
 
----Take a fetch's tree. `final`: the closed subtrees are in too.
+function M.stop_job(gt)
+  if gt.job then
+    local job = gt.job
+    gt.job = nil
+    pcall(function()
+      job:kill(15)
+    end)
+  end
+end
+
+---Take a fetch's tree. `final`: the closed subtrees are in too. The stack is rebuilt every
+---time (the same stack keeps its object, so nothing reloads when the path did not change).
+---Exposed for tests (M._take).
 local function take(s, st, final)
   local gt = state(s)
   if st.failed then
@@ -131,15 +157,19 @@ local function take(s, st, final)
     if st.failed and gt.tree then
       gt.stale = true -- `R` failed: the last tree stays, marked
     else
-      changed = gt.tree ~= nil
+      -- a failure is said in the panel: redraw the stack's notes
+      changed = gt.tree ~= nil or st.failed ~= nil
       gt.tree = nil
       gt.reason = st.failed and 'the GitHub lookup failed (see revuey.log)'
         or ('no pull request for ' .. table.concat(st.start, ' / '))
+      gt.failed = st.failed ~= nil or nil
     end
   else
-    changed = not final
-    gt.tree, gt.stale, gt.reason = t, (st.failed ~= nil) or nil, nil
-    if gt.sel and not t.nodes[gt.sel] then
+    changed = true
+    gt.tree, gt.stale, gt.reason, gt.failed = t, (st.failed ~= nil) or nil, nil, nil
+    -- a chosen PR gone from GitHub's answer: only once the whole tree is in (phase one may lack
+    -- a closed subtree), and not after a failed round (the tree is partial)
+    if final and not st.failed and gt.sel and not t.nodes[gt.sel] then
       gt.sel = nil
     end
   end
@@ -153,49 +183,124 @@ local function take(s, st, final)
       return
     end
     if changed then
-      require('revuey.view').refresh()
+      -- without a tree the diff is the same, only the notes change: redraw anyway
+      require('revuey.view').refresh({ force = t == nil or nil })
     end
     M.redraw(s)
   end)
 end
+M._take = take
 
----The rounds after the first (inside forge_view.update's git.async, after the lookup): what
----routes need first, then the stack is rebuilt, then the closed subtrees for the tree view.
-function M.continue(s, job, alive, on_job)
-  local st = job.st
-  local function rounds(closed)
-    while alive() do
-      local want = tree_mod.plan(st, closed)
-      if not want then
-        return
-      end
-      local parts, aliases = tree_mod.parts(st, want)
-      local data, err = forge.run_graphql(tree_mod.query(parts), st.repo.host, on_job)
-      if not alive() then
-        return
-      end
-      tree_mod.absorb(st, data, aliases, err)
-    end
+---The rounds after the first, after the lookup, in a task of their own (so the PR lookup's lock,
+---threads and `R` never wait for them): what routes need first, then the stack is rebuilt, then
+---the closed subtrees. A newer fetch (`R`, a new branch) or closing the review stops them.
+function M.continue(s, job)
+  local gt = state(s)
+  local st, gen = job.st, job.gen
+  local function alive()
+    return not s.cleaned and gt.gen == gen
   end
-  rounds(false)
   if not alive() then
     return
   end
-  local has = tree_mod.tree(st) ~= nil
-  take(s, st, false)
-  if has then
-    rounds(true)
-    if alive() then
-      take(s, st, true)
+  gt.running = gen
+  local function finished()
+    if gt.running == gen then
+      gt.running = nil
     end
   end
+  git.async(function()
+    local function rounds(closed)
+      while alive() do
+        local want = tree_mod.plan(st, closed)
+        if not want then
+          return
+        end
+        local parts, aliases = tree_mod.parts(st, want)
+        local data, err = forge.run_graphql(tree_mod.query(parts), st.repo.host, function(obj)
+          gt.job = obj
+        end)
+        if not alive() then
+          return
+        end
+        gt.job = nil
+        tree_mod.absorb(st, data, aliases, err)
+      end
+    end
+    rounds(false)
+    if not alive() then
+      return finished()
+    end
+    local has = tree_mod.tree(st) ~= nil
+    take(s, st, false)
+    if has then
+      rounds(true)
+      if alive() then
+        take(s, st, true)
+      end
+    end
+    finished()
+  end, function(err)
+    finished()
+    log.write('forge', 'stack tree error: ' .. tostring(err))
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- HEAD moved (a checkout elsewhere, `gS`)
+-- ---------------------------------------------------------------------------
+
+---Follow HEAD to another branch. A branch of the tree (`gS` to a layer, a checkout of one of
+---its PRs' branches) keeps the tree: its path when on it, else the route through its PR. Any
+---other branch has its own stack: its tree when this review fetched one before, else a first
+---fetch for it (decision 20: never fetched in this review), git detection meanwhile.
+---@return boolean refetch a first fetch for the new branch is due
+function M.follow_head(s, head_branch)
+  local gt = s.gh_tree
+  if not gt or not gt.fetched or head_branch == gt.for_branch then
+    return false
+  end
+  local old = gt.for_branch
+  local name = head_branch
+  if name and gt.remote and name:sub(1, #gt.remote + 1) == gt.remote .. '/' then
+    name = name:sub(#gt.remote + 2) -- detached at `origin/x`: the PR branch x
+  end
+  local num = gt.tree and name and gt.tree.rep[name]
+  if num then
+    gt.for_branch = head_branch
+    local path = M.path(s)
+    if not vim.tbl_contains(path, num) then
+      gt.sel = num
+    elseif not gt.sel then
+      gt.sel = gt.tree.start -- the same path; `@` moves along it
+    end
+    gt.version = gt.version + 1
+    return false
+  end
+  if old then
+    gt.saved[old] = { tree = gt.tree, sel = gt.sel, reason = gt.reason, stale = gt.stale, remote = gt.remote, failed = gt.failed }
+  end
+  gt.gen = gt.gen + 1
+  M.stop_job(gt)
+  local back = head_branch and gt.saved[head_branch]
+  gt.for_branch, gt.loading, gt.version = head_branch, nil, gt.version + 1
+  gt.built, gt.head_pr = nil, nil
+  if back then
+    gt.tree, gt.sel, gt.reason, gt.stale, gt.remote, gt.failed = back.tree, back.sel, back.reason, back.stale, back.remote, back.failed
+    gt.saved[head_branch] = nil
+    return false
+  end
+  gt.tree, gt.sel, gt.reason, gt.stale, gt.failed = nil, nil, nil, nil, nil
+  gt.fetched = false
+  return true
 end
 
 -- ---------------------------------------------------------------------------
 -- The stack for the chosen path
 -- ---------------------------------------------------------------------------
 
----What the clone has (refs, head commits). Inside git.async.
+---What the clone has (refs, head commits, which local branches contain their open PR's
+---head). Inside git.async.
 ---@return revuey.TreeFacts
 function M.facts(s, root, trunk)
   local gt = state(s)
@@ -224,6 +329,22 @@ function M.facts(s, root, trunk)
       end
     end
   end
+  -- local branches of open PRs that are not at the PR's head: do they contain it (your
+  -- commits on top) or not (behind, or off it)?
+  local contains, fns, which = {}, {}, {}
+  for head, num in pairs(t and t.rep or {}) do
+    local n = t.nodes[num]
+    local lb = heads[head]
+    if lb and n.state == 'OPEN' and n.head_oid and lb ~= n.head_oid and objects[n.head_oid] then
+      which[#which + 1] = head
+      fns[#fns + 1] = function()
+        return git.git({ 'merge-base', '--is-ancestor', n.head_oid, lb }, root) ~= nil
+      end
+    end
+  end
+  for i, r in ipairs(git.all(fns)) do
+    contains[which[i]] = r[1] and r[2] == true or nil
+  end
   local remotes = git.remotes(root)
   local current = git.current_branch(root)
   return {
@@ -231,6 +352,7 @@ function M.facts(s, root, trunk)
     heads = heads,
     refs = refs,
     objects = objects,
+    contains = contains,
     trunk = trunk,
     trunk_rev = git.rev_parse(trunk, root),
     current = current or s.review.head_branch,
@@ -255,18 +377,40 @@ local function signature(st)
   local parts = { st.trunk_rev or '', tostring(st.current) }
   for _, l in ipairs(st.layers) do
     parts[#parts + 1] = table.concat({
-      l.name, l.tip, l.parent_rev, tostring(l.pr), tostring(l.others), tostring(l.fetch), tostring(l.is_head),
+      l.name, l.tip, l.parent_rev, tostring(l.pr), tostring(l.others), tostring(l.others_closed), tostring(l.fetch),
+      tostring(l.is_head), tostring(l.diverged),
     }, ' ')
   end
+  for _, n in ipairs(st.notes) do
+    parts[#parts + 1] = n.kind .. ' ' .. n.text
+  end
   return table.concat(parts, '\n')
+end
+
+-- git detection's notes that stay true of a GitHub stack (the rest are about its own guesses)
+local KEEP_NOTES = { upstream = true, detached = true, newer_copy = true, outdated_copy = true, other_copy = true }
+
+---Notes about the tree for a review without a GitHub stack (a failed or cut fetch).
+function M.review_notes(s, ctx)
+  local gt = s.gh_tree
+  if not (M.enabled() and gt and gt.fetched) then
+    return {}
+  end
+  local notes_mod = require('revuey.stack_notes')
+  local rk = first_key('refresh')
+  if gt.failed then
+    return { notes_mod.new('tree_incomplete', { branch = gt.for_branch or 'HEAD', why = 'failed', key = rk }, ctx) }
+  end
+  return {}
 end
 
 ---The review's stack from the tree (inside git.async), or nil to keep git detection's: no tree,
 ---or a default route of one PR (a lone branch stays a plain review until a path is chosen).
 ---`git_stack` is what git detection found: local-only layers above the path's top (branches
----without a PR yet) stay on top. Unchanged inputs give the same stack object.
+---without a PR yet) stay on top; its notes that still hold are kept, and explicit parent
+---settings GitHub disagrees with are noted. Unchanged inputs give the same stack object.
 ---@return revuey.Stack?
-function M.stack(s, git_stack, root, trunk, fingerprint)
+function M.stack(s, git_stack, root, trunk, fingerprint, git_notes)
   local gt = s.gh_tree
   if not (M.enabled() and gt and gt.tree and trunk) then
     return nil
@@ -283,9 +427,32 @@ function M.stack(s, git_stack, root, trunk, fingerprint)
   if not facts.trunk_rev then
     return nil
   end
-  local st = tree_mod.stack(gt.tree, path, gt.sel, facts)
+  local t = gt.tree
+  local st = tree_mod.stack(t, path, gt.sel, facts)
   if not st then
     return nil
+  end
+  local notes_mod = require('revuey.stack_notes')
+  local ctx = { stack = true, trunk = trunk }
+  local fk, rk = first_key('stack_fetch'), first_key('refresh')
+  -- layers not restacked onto their parent PR's head: like GitHub's PR view, their diff from the
+  -- merge base holds the parent's old commits
+  local fns, pairs_ = {}, {}
+  for i = 2, #st.layers do
+    local l, p = st.layers[i], st.layers[i - 1]
+    if l.pr and p.pr and l.parent_rev == p.tip then
+      pairs_[#pairs_ + 1] = i
+      fns[#fns + 1] = function()
+        return git.git({ 'merge-base', '--is-ancestor', p.tip, l.tip }, root) ~= nil
+      end
+    end
+  end
+  for k, r in ipairs(git.all(fns)) do
+    if r[1] and r[2] == false then
+      local l = st.layers[pairs_[k]]
+      l.diverged = true
+      st.notes[#st.notes + 1] = notes_mod.new('pr_not_restacked', { branch = l.name, parent = st.layers[pairs_[k] - 1].name, pr = l.pr }, ctx)
+    end
   end
   -- local branches above the top without a PR (yet): git detection's layers stay on top
   local top = st.layers[#st.layers]
@@ -308,11 +475,29 @@ function M.stack(s, git_stack, root, trunk, fingerprint)
       end
     end
   end
-  local notes_mod = require('revuey.stack_notes')
-  local ctx = { stack = true, trunk = trunk }
-  local fk = first_key('stack_fetch')
+  -- a parent you set (revuey setting, Graphite) that GitHub's base contradicts: the stack follows
+  -- GitHub, and says so (inferred git parents are only guesses: not noted)
+  for _, gl in ipairs(git_stack and git_stack.layers or {}) do
+    if gl.source == 'config' or gl.source == 'graphite' then
+      for i, l in ipairs(st.layers) do
+        if l.pr and l.name == gl.name then
+          local mine = i > 1 and st.layers[i - 1].name or st.trunk
+          if gl.parent ~= mine and require('revuey.forge').branch_name(gl.parent) ~= require('revuey.forge').branch_name(mine) then
+            st.notes[#st.notes + 1] = notes_mod.new('github_parent', {
+              branch = l.name, parent = gl.parent, source = gl.source, layer = mine, pr = l.pr,
+            }, ctx)
+          end
+        end
+      end
+    end
+  end
+  for _, n in ipairs(git_notes or {}) do
+    if KEEP_NOTES[n.kind] then
+      st.notes[#st.notes + 1] = n
+    end
+  end
   for _, num in ipairs(st.missing) do
-    local n = gt.tree.nodes[num]
+    local n = t.nodes[num]
     st.notes[#st.notes + 1] = notes_mod.new('not_fetched', {
       branch = n.fork and ((n.head_owner or '?') .. ':' .. n.head) or n.head,
       pr = num,
@@ -320,23 +505,44 @@ function M.stack(s, git_stack, root, trunk, fingerprint)
       key = fk,
     }, ctx)
   end
-  if gt.tree.bottom_base and path[1] == gt.tree.chain[1] then
-    st.notes[#st.notes + 1] = notes_mod.new('github_base', {
-      branch = st.layers[1].name, parent = gt.tree.bottom_base,
-    }, ctx)
-  elseif gt.tree.stop == 'cycle' and path[1] == gt.tree.chain[1] then
-    st.notes[#st.notes + 1] = notes_mod.new('github_base', {
-      branch = st.layers[1].name, parent = gt.tree.nodes[path[1]].base, why = 'cycle',
-    }, ctx)
+  for _, l in ipairs(st.layers) do
+    if l.local_differs then
+      st.notes[#st.notes + 1] = notes_mod.new('local_differs', {
+        branch = l.pr_head, pr = l.pr, layer = l.name, head = l.local_differs == 'head' or nil,
+      }, ctx)
+    end
+  end
+  local bottom = t.nodes[t.chain[1]]
+  if path[1] == t.chain[1] then
+    if t.stop == 'cut' then
+      st.notes[#st.notes + 1] = notes_mod.new('tree_incomplete', { branch = bottom.head, parent = bottom.base, why = 'chain', key = rk }, ctx)
+    elseif t.stop == 'cycle' then
+      st.notes[#st.notes + 1] = notes_mod.new('github_base', { branch = bottom.head, parent = bottom.base, why = 'cycle' }, ctx)
+    elseif t.bottom_base then
+      st.notes[#st.notes + 1] = notes_mod.new('github_base', {
+        branch = bottom.head, parent = t.bottom_base, missing = st.base_missing, pr = bottom.number,
+      }, ctx)
+    end
+  end
+  if t.cut and t.stop ~= 'cut' then
+    st.notes[#st.notes + 1] = notes_mod.new('tree_incomplete', { branch = bottom.head, why = t.cut, key = rk }, ctx)
   end
   local ign = require('revuey.stack_ignore')
   require('revuey.stack').finish(root, st, ign.patterns((ign.for_root(root, s.opts and s.opts.state_dir))))
+  if gt.sel and vim.tbl_contains(st.missing, gt.sel) then
+    gt.want_view = gt.sel -- shown once it is fetched
+  end
   if gt.sel and gt.notify_missing == gt.sel and vim.tbl_contains(st.missing, gt.sel) then
     gt.notify_missing = nil
     vim.schedule(function()
       vim.notify(('revuey: PR #%d is not in this clone yet; %s fetches it'):format(gt.sel, fk or 'stack_fetch'), vim.log.levels.WARN)
     end)
   end
+  local cur = facts.current
+  if cur and cur:sub(1, #facts.remote + 1) == facts.remote .. '/' then
+    cur = cur:sub(#facts.remote + 2)
+  end
+  gt.head_pr = (st.head_index and st.layers[st.head_index].pr) or (cur and t.rep[cur]) or nil
   -- the same stack as before: keep the object (a new one reloads the review)
   local sig = signature(st)
   if gt.built and gt.built.sig == sig then
@@ -350,6 +556,26 @@ end
 -- ---------------------------------------------------------------------------
 -- Fetching the stack's branches (git; nothing on GitHub changes)
 -- ---------------------------------------------------------------------------
+
+---The chosen PR, missing when it was chosen, now a layer of `stack`: the scope to show it in
+---(once).
+function M.pending_view(s, stack)
+  local gt = s.gh_tree
+  local want = gt and gt.want_view
+  if not (want and stack) then
+    return nil
+  end
+  if want ~= gt.sel then
+    gt.want_view = nil
+    return nil
+  end
+  for _, l in ipairs(stack.layers) do
+    if l.pr == want then
+      gt.want_view = nil
+      return { kind = 'layer', pr = want }
+    end
+  end
+end
 
 ---Why the tree key does nothing here (nil: there is a tree).
 function M.unavailable(s)
@@ -369,9 +595,24 @@ function M.unavailable(s)
   return ('no stack tree from GitHub: %s (the stack comes from git)'):format(gt.reason or 'not loaded')
 end
 
+---Environment of `git fetch`: no prompt from git (GIT_TERMINAL_PROMPT=0) nor from ssh (BatchMode:
+---no host key question, no passphrase on /dev/tty, which would draw over the editor), unless
+---ssh is configured otherwise (GIT_SSH_COMMAND, core.sshCommand: yours is used as it is).
+---@param env_ssh? string $GIT_SSH_COMMAND
+---@param core_ssh? string git config core.sshCommand
+function M.fetch_env(env_ssh, core_ssh)
+  local env = { GIT_TERMINAL_PROMPT = '0' }
+  if (env_ssh == nil or env_ssh == '') and (core_ssh == nil or core_ssh == '') then
+    env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
+  end
+  return env
+end
+
 ---`git fetch` the heads of `nums` (default: the chosen path) from the PRs' remote: branches
----that exist on GitHub into `<remote>/<head>`, forks and deleted branches through
----`refs/pull/N/head` (commits only, no ref written). Then the review refreshes.
+---that exist on GitHub into `<remote>/<head>`, forks, deleted branches and closed PRs through
+---`refs/pull/N/head` (commits only, no ref written). All at once; when that fails, one by one,
+---a branch that is gone through its pull ref, so what can be fetched is. Then the review
+---refreshes.
 function M.fetch(s, nums)
   local why = M.unavailable(s)
   if why then
@@ -393,25 +634,59 @@ function M.fetch(s, nums)
       return vim.notify('revuey: nothing to fetch: the stack is up to date with GitHub', vim.log.levels.INFO)
     end
     vim.notify(('revuey: fetching %d PR%s from %s…'):format(#which, #which == 1 and '' or 's', facts.remote), vim.log.levels.INFO)
-    local cmd = { 'git', 'fetch', '--no-tags', '--no-write-fetch-head', facts.remote }
-    vim.list_extend(cmd, specs)
-    local res = git.system(cmd, { cwd = root, timeout = 120000, env = { GIT_TERMINAL_PROMPT = '0' } })
+    local env = M.fetch_env(vim.env.GIT_SSH_COMMAND, vim.trim(git.git({ 'config', '--get', 'core.sshCommand' }, root) or ''))
+    local function run(list)
+      local cmd = { 'git', 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', facts.remote }
+      vim.list_extend(cmd, list)
+      return git.system(cmd, { cwd = root, timeout = 120000, env = env })
+    end
+    local res = run(specs)
+    local ok, via_pull, failed, errs = {}, {}, {}, {}
+    if res.code == 0 then
+      ok = which
+    else
+      errs[#errs + 1] = vim.trim(tostring(res.stderr or ''))
+      for i, spec in ipairs(specs) do
+        local r = run({ spec })
+        if r.code == 0 then
+          ok[#ok + 1] = which[i]
+        else
+          errs[#errs + 1] = vim.trim(tostring(r.stderr or ''))
+          local pull = ('refs/pull/%d/head'):format(which[i])
+          if spec ~= pull and run({ pull }).code == 0 then
+            via_pull[#via_pull + 1] = which[i] -- the branch is gone on GitHub: its commits at least
+          else
+            failed[#failed + 1] = which[i]
+          end
+        end
+      end
+    end
     gt.fetching = false
     gt.facts_gen = gt.facts_gen + 1
     if s.cleaned then
       return
     end
-    if res.code ~= 0 then
-      local err = vim.trim(tostring(res.stderr or ''))
-      log.write('stack', 'git fetch failed: ' .. err)
-      local last = err:match('([^\n]*)$') or ''
-      vim.notify(('revuey: git fetch failed%s'):format(last ~= '' and (': ' .. last) or ' (see revuey.log)'), vim.log.levels.ERROR)
-    else
-      local list = vim.tbl_map(function(n)
-        return '#' .. n
-      end, which)
-      vim.notify(('revuey: fetched %s from %s'):format(table.concat(list, ' '), facts.remote), vim.log.levels.INFO)
+    for _, e in ipairs(errs) do
+      log.write('stack', 'git fetch: ' .. e)
     end
+    local function list(l)
+      return table.concat(vim.tbl_map(function(n)
+        return '#' .. n
+      end, l), ' ')
+    end
+    local parts = {}
+    if #ok > 0 then
+      parts[#parts + 1] = ('fetched %s'):format(list(ok))
+    end
+    if #via_pull > 0 then
+      parts[#parts + 1] = ('%s only by their pull refs (branch gone on GitHub)'):format(list(via_pull))
+    end
+    if #failed > 0 then
+      local last = (errs[#errs] or ''):match('([^\n]*)$') or ''
+      parts[#parts + 1] = ('could not fetch %s%s'):format(list(failed), last ~= '' and (' (' .. last .. ')') or ' (see revuey.log)')
+    end
+    vim.notify(('revuey: %s from %s'):format(table.concat(parts, '; '), facts.remote),
+      #failed > 0 and (#ok + #via_pull > 0 and vim.log.levels.WARN or vim.log.levels.ERROR) or vim.log.levels.INFO)
     require('revuey.view').refresh({ force = true })
     M.redraw(s)
   end, function(err)
@@ -464,7 +739,9 @@ local function right_chunks(s, t, n, row, marks)
   elseif m.glyph then
     add(m.glyph, m.glyph_hl)
   end
-  add(n.number == t.start and ' @' or '  ', 'RevueyUncommitted')
+  local gt = s.gh_tree
+  local head = gt.built and gt.head_pr or (not gt.built and t.start) or nil
+  add(n.number == head and ' @' or '  ', 'RevueyUncommitted')
   add(n.number == viewed_pr(s) and ' ▶' or '  ', 'RevueyMode')
   return out
 end
@@ -524,7 +801,19 @@ function M.lines(s, width, marks)
       local right = right_chunks(s, t, n, r, marks)
       local num = '#' .. n.number
       local branch = display_branch(n)
-      local avail = width - vim.fn.strdisplaywidth(g) - #num - 1 - chunks_width(right) - 2
+      local gw = vim.fn.strdisplaywidth(g)
+      local function room()
+        return width - gw - #num - 1 - chunks_width(right) - 2
+      end
+      -- a wide graph or a narrow window: the right side shrinks to the review chip and the
+      -- markers (its last three chunks), then goes, before the text would run under it
+      if room() < 8 then
+        right = vim.list_slice(right, math.max(#right - 2, 1))
+      end
+      if room() < 4 then
+        right = {}
+      end
+      local avail = room()
       local panel = require('revuey.panel')
       branch = panel.truncate(branch, math.max(math.min(vim.fn.strdisplaywidth(branch), math.max(avail - 12, math.floor(avail * 0.6))), 4))
       local title_room = avail - vim.fn.strdisplaywidth(branch) - 2
@@ -788,10 +1077,26 @@ function M.open_view(s)
     group = group, buffer = buf,
     callback = function()
       vim.schedule(function()
-        if gt.view and gt.view.buf == buf and api.nvim_get_current_win() ~= win then
+        local cur = api.nvim_get_current_win()
+        -- another float (the g? list of keys) keeps the tree; any other window closes it
+        if gt.view and gt.view.buf == buf and cur ~= win and api.nvim_win_get_config(cur).relative == '' then
           M.close_view(s)
         end
       end)
+    end,
+  })
+  -- the diff window resized (the screen, the panel toggled): the tree follows it
+  api.nvim_create_autocmd({ 'VimResized', 'WinResized' }, {
+    group = group,
+    callback = function()
+      local v = gt.view
+      if v and v.buf == buf and api.nvim_win_is_valid(v.win) and api.nvim_win_is_valid(s.diff_win) then
+        api.nvim_win_set_config(v.win, {
+          relative = 'win', win = s.diff_win, row = 0, col = 0,
+          width = api.nvim_win_get_width(s.diff_win), height = api.nvim_win_get_height(s.diff_win),
+        })
+        M.render_view(s)
+      end
     end,
   })
   api.nvim_create_autocmd('BufWipeout', {
@@ -808,6 +1113,11 @@ end
 ---Review cleanup.
 function M.detach(s)
   M.close_view(s)
+  local gt = s and s.gh_tree
+  if gt then
+    gt.gen = gt.gen + 1 -- rounds in flight drop their answers
+    M.stop_job(gt)
+  end
 end
 
 ---Short texts for a panel layer row's hint lines (under it while the panel has focus).

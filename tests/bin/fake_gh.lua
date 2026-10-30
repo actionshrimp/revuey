@@ -740,6 +740,14 @@ end
 -- the query's `first` with the real `totalCount`. `REVUEY_FAKE_GH_TREE_SCENARIO=fail` fails the
 -- tree's own rounds (the first one, inside the PR lookup, still answers).
 local tree_all = prs._tree or {}
+-- `REVUEY_FAKE_GH_TREE_SCENARIO=reject`: GitHub rejects a PR lookup carrying the tree's aliases
+-- (errors, no data) and answers the same lookup without them
+if query and query:find('fragment tnode on PullRequest', 1, true) and query:find('fragment pr on PullRequest', 1, true)
+  and (os.getenv('REVUEY_FAKE_GH_TREE_SCENARIO') or '') == 'reject' then
+  io.stdout:write(vim.json.encode({ data = vim.NIL, errors = { { message = 'Field \'associatedPullRequests\' doesn\'t exist' } } }), '\n')
+  io.stderr:write('gh: Field \'associatedPullRequests\' doesn\'t exist\n')
+  os.exit(1)
+end
 if query and query:find('fragment tnode on PullRequest', 1, true) and not query:find('fragment pr on PullRequest', 1, true)
   and (os.getenv('REVUEY_FAKE_GH_TREE_SCENARIO') or '') == 'fail' then
   io.stderr:write('error connecting to api.github.com\n')

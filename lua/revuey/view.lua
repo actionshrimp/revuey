@@ -3736,6 +3736,7 @@ function M.refresh(o)
   s.refreshing = true
   if o.forge then
     s.forge_force = true -- `R`: look the pull requests up again, whatever the cache holds
+    s.tree_force = true -- and the stack tree (only `R`: not a post's refetch)
   end
   s.target_mode = o.mode or s.target_mode or s.review.mode
   if o.scope then
@@ -3762,10 +3763,28 @@ function M.refresh(o)
       trunk = stack_trunk(s.review.root, s.opts)
       local tv = require('revuey.stack_tree_view')
       head_branch = trunk and tv.head_branch(s.review.root, stack)
+      -- HEAD on another branch: the tree follows it (or is fetched for it, a first fetch)
+      tv.follow_head(s, head_branch)
       -- the GitHub stack tree's chosen path, when there is one (else git detection's stack)
-      local gh = tv.stack(s, stack, s.review.root, trunk, s.stack_cache.key)
+      local gh = tv.stack(s, stack, s.review.root, trunk, s.stack_cache.key, stack and stack.notes or notes)
       if gh then
         stack, notes, from, ignored = gh, nil, nil, nil
+        -- the PR chosen in the tree before its commits were here: shown now they are
+        o.scope = tv.pending_view(s, gh) or o.scope
+      else
+        -- a tree that could not be read: said in the panel (a note of its own, replaced each time)
+        local extra = tv.review_notes(s, { stack = stack ~= nil, trunk = trunk })
+        local function merge(list)
+          local out = vim.tbl_filter(function(n)
+            return n.kind ~= 'tree_incomplete'
+          end, list or {})
+          return vim.list_extend(out, extra)
+        end
+        if stack then
+          stack.notes = merge(stack.notes)
+        elseif #extra > 0 or notes then
+          notes = merge(notes)
+        end
       end
       scope = rescope(old_stack, stack, o.scope or s.scope)
       if old_stack and not stack then

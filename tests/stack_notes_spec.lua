@@ -18,8 +18,20 @@ h.test('GitHub stack notes: PRs not fetched, a base without a PR, bases that loo
   h.eq({ { glyph = '⚠', text = 'PR #15 not fetched: gF fetches', level = 'warn' } }, sn.summary({ a }, {}, ctx))
   h.eq('2 PRs not fetched: gF fetches', sn.summary({ a, b }, {}, ctx)[1].text)
   local c = sn.new('github_base', { branch = 'stack/a', parent = 'release' }, ctx)
-  h.eq("stack/a's pull request is based on release, which has no pull request and isn't main; the stack starts there.", c.text)
-  h.eq('stack based on release (no PR)', sn.summary({ c }, {}, ctx)[1].text)
+  h.eq("stack/a's pull request is based on release, not main; the stack starts there.", c.text)
+  h.eq('stack based on release', sn.summary({ c }, {}, ctx)[1].text)
+  -- its base not fetched: the bottom layer is compared with the trunk, and the note says so
+  local cm = sn.new('github_base', { branch = 'stack/a', parent = 'release', missing = 'origin/release' }, ctx)
+  h.eq("stack/a's pull request is based on release, not main; the stack starts there. origin/release isn't fetched, so the bottom layer is compared with main instead.", cm.text)
+  h.eq({ glyph = '⚠', text = 'stack based on release (not fetched)', level = 'warn' }, sn.summary({ cm }, {}, ctx)[1])
+  h.eq('stack tree failed: R retries', sn.summary({ sn.new('tree_incomplete', { branch = 'b', why = 'failed', key = 'R' }, ctx) }, {}, ctx)[1].text)
+  h.eq('stack tree incomplete: R retries', sn.summary({ sn.new('tree_incomplete', { branch = 'b', why = 'stopped after 25 calls', key = 'R' }, ctx) }, {}, ctx)[1].text)
+  h.eq('stack/c not based on stack/b\'s head', sn.summary({ sn.new('pr_not_restacked', { branch = 'stack/c', parent = 'stack/b', pr = 13 }, ctx) }, {}, ctx)[1].text)
+  local gp = sn.new('github_parent', { branch = 'stack/c', parent = 'stack/a', source = 'config', layer = 'stack/b', pr = 13 }, ctx)
+  h.eq("stack/c's parent is set to stack/a (in revuey's setting), but its pull request (#13) is based on stack/b; the stack follows GitHub.", gp.text)
+  local ld = sn.new('local_differs', { branch = 'stack/a', pr = 11, layer = 'origin/stack/a' }, ctx)
+  h.eq("Your local stack/a isn't PR #11's head and doesn't contain it (behind GitHub, or rebased); the layer shows the PR from origin/stack/a.", ld.text)
+  h.eq('local stack/a differs from PR #11', sn.summary({ ld }, {}, ctx)[1].text)
   local d = sn.new('github_base', { branch = 'a', parent = 'b', why = 'cycle' }, ctx)
   h.eq('PR bases loop at b', sn.summary({ d }, {}, ctx)[1].text)
   h.eq(false, sn.ignorable(a))
@@ -33,7 +45,7 @@ h.test('classification: only notes that change the diff shown are warnings', fun
     end
   end
   -- not_fetched (a GitHub stack's PR whose commits are not in the clone): the layer above shows them
-  h.eq({ 'not_fetched', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy', 'outside' }, warn)
+  h.eq({ 'not_fetched', 'local_differs', 'pr_not_restacked', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy', 'outside' }, warn)
   h.eq('info', sn.level(new('outdated_copy', { branch = 'x', layer = 'a' })))
   h.eq('warn', sn.level(new('not_restacked', { branch = 'b', parent = 'a', at = '1234abcd' })))
   -- only informational notes about branches outside the stack can be ignored, never warnings

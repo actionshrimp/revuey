@@ -7,6 +7,7 @@
 # git's probe for the ssh variant (`ssh -G <host>`): an OpenSSH that accepts it
 [ "${1:-}" = -G ] && exit 0
 for last; do :; done
-[ -n "${REVUEY_FAKE_SSH_LOG:-}" ] && echo "$last" >> "$REVUEY_FAKE_SSH_LOG"
+# the command, and whether git asked for no terminal prompt (GIT_TERMINAL_PROMPT=0)
+[ -n "${REVUEY_FAKE_SSH_LOG:-}" ] && echo "$last prompt=${GIT_TERMINAL_PROMPT:-unset}" >> "$REVUEY_FAKE_SSH_LOG"
 cmd=$(printf '%s' "$last" | sed "s#'[^']*'\$#'$REVUEY_FAKE_SSH_REPO'#")
 exec sh -c "$cmd"

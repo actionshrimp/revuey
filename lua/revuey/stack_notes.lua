@@ -373,19 +373,100 @@ M.KINDS = {
       if n.why == 'cycle' then
         return ('The base branches of the pull requests loop at %s; the stack starts above it.'):format(n.parent)
       end
-      return ('%s\'s pull request is based on %s, which has no pull request and isn\'t %s; the stack starts there.'):format(n.branch, n.parent, ctx.trunk)
+      local text = ('%s\'s pull request is based on %s, not %s; the stack starts there.'):format(n.branch, n.parent, ctx.trunk)
+      if n.missing then
+        text = text .. (' %s isn\'t fetched, so the bottom layer is compared with %s instead.'):format(n.missing, ctx.trunk)
+      end
+      return text
+    end,
+    impact = function(ns, ctx)
+      if ns[1].missing then
+        return ('Affects this review: the bottom layer also shows what %s has that %s doesn\'t. Fetch %s to compare with it.'):format(
+          ns[1].parent, ctx.trunk, ns[1].missing)
+      end
+      return 'The bottom layer is compared with that base branch as last fetched.'
+    end,
+  },
+  tree_incomplete = {
+    level = 'info',
+    title = 'Stack tree incomplete',
+    one = function(n)
+      local key = n.key and (' %s retries.'):format(n.key) or ''
+      if n.why == 'failed' then
+        return 'The stack tree from GitHub could not be read, so the stack comes from git.' .. key
+      elseif n.why == 'chain' then
+        return ('The stack tree from GitHub stops at %s: the pull requests below it were not read (a limit or an error).%s'):format(n.branch, key)
+      end
+      return ('The stack tree from GitHub is incomplete (%s).%s'):format(n.why or '?', key)
     end,
     impact = function()
-      return 'The bottom layer is compared with that base branch as last fetched.'
+      return 'The stack may miss pull requests on GitHub; details in revuey.log.'
+    end,
+  },
+  pr_not_restacked = {
+    level = 'warn',
+    title = 'Not based on its parent PR\'s head',
+    one = function(n)
+      return ('%s (PR #%d) isn\'t based on %s as it is now: %s changed after %s was built on it.'):format(
+        n.branch, n.pr or 0, n.parent, n.parent, n.branch)
+    end,
+    many = function()
+      return 'These layers aren\'t based on their parent PR\'s head: each parent changed after the layer was built on it.'
+    end,
+    impact = function()
+      return 'Affects this review: like the PR on GitHub, each such layer is compared from where it left its parent, so it also shows the parent\'s old commits. Rebase it onto its parent to fix it.'
+    end,
+    detail = function(n)
+      return ('on %s'):format(n.parent)
+    end,
+  },
+  github_parent = {
+    level = 'info',
+    title = 'Parent setting differs from GitHub',
+    one = function(n)
+      return ('%s\'s parent is set to %s (in %s), but its pull request (#%d) is based on %s; the stack follows GitHub.'):format(
+        n.branch, n.parent, source_name(n.source), n.pr or 0, n.layer)
+    end,
+    many = function()
+      return 'These branches have a parent setting their pull requests on GitHub disagree with; the stack follows GitHub.'
+    end,
+    impact = function()
+      return 'Doesn\'t affect this review beyond that: change the PR\'s base on GitHub, or clear the setting.'
+    end,
+    detail = function(n)
+      return ('set to %s, PR based on %s'):format(n.parent, n.layer)
+    end,
+  },
+  local_differs = {
+    level = 'warn',
+    title = 'Local branch differs from its PR',
+    one = function(n)
+      if n.head then
+        return ('Your checked-out %s isn\'t PR #%d\'s head and doesn\'t contain it (behind GitHub, or rebased); the layer shows your branch.'):format(n.branch, n.pr or 0)
+      end
+      return ('Your local %s isn\'t PR #%d\'s head and doesn\'t contain it (behind GitHub, or rebased); the layer shows the PR from %s.'):format(
+        n.branch, n.pr or 0, n.layer)
+    end,
+    many = function()
+      return 'These local branches aren\'t their PRs\' heads and don\'t contain them.'
+    end,
+    impact = function(ns)
+      if ns[1].head then
+        return 'Affects this review: it shows your branch, not the PR. Pull or rebase it.'
+      end
+      return 'Affects this review only in that your local copy is not shown. Pull it, or delete it.'
+    end,
+    detail = function(n)
+      return ('PR #%d'):format(n.pr or 0)
     end,
   },
 }
 
 -- Display order of kinds (float sections).
 M.ORDER = {
-  'not_fetched', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent', 'cycle', 'newer_copy',
-  'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'detached', 'upstream', 'same_commit', 'parent_landed',
-  'github_base',
+  'not_fetched', 'local_differs', 'pr_not_restacked', 'not_restacked', 'squashed', 'stale_parent', 'unknown_parent',
+  'cycle', 'newer_copy', 'outdated_copy', 'other_copy', 'outside', 'side', 'landed', 'fork', 'detached', 'upstream',
+  'same_commit', 'parent_landed', 'github_parent', 'github_base', 'tree_incomplete',
 }
 for i, k in ipairs(M.ORDER) do
   M.KINDS[k].order = i
@@ -537,7 +618,16 @@ function M.summary(notes, ignored, ctx, max)
       add('⚠', (c == 1 and ('PR #%d not fetched'):format(n1.pr or 0) or ('%d PRs not fetched'):format(c))
         .. (n1.key and (': %s fetches'):format(n1.key) or ''), 'warn')
     elseif k == 'github_base' then
-      add('●', n1.why == 'cycle' and ('PR bases loop at %s'):format(n1.parent) or ('stack based on %s (no PR)'):format(n1.parent), 'info')
+      add(n1.missing and '⚠' or '●', n1.why == 'cycle' and ('PR bases loop at %s'):format(n1.parent)
+        or ('stack based on %s%s'):format(n1.parent, n1.missing and ' (not fetched)' or ''), n1.missing and 'warn' or 'info')
+    elseif k == 'tree_incomplete' then
+      add('●', (n1.why == 'failed' and 'stack tree failed' or 'stack tree incomplete') .. (n1.key and (': %s retries'):format(n1.key) or ''), 'info')
+    elseif k == 'pr_not_restacked' then
+      add('⚠', c == 1 and ('%s not based on %s\'s head'):format(n1.branch, n1.parent) or ('%d layers not based on their parent PR'):format(c), 'warn')
+    elseif k == 'github_parent' then
+      add('●', c == 1 and ('%s: GitHub base differs from setting'):format(n1.branch) or ('%d parent settings differ from GitHub'):format(c), 'info')
+    elseif k == 'local_differs' then
+      add('⚠', c == 1 and ('local %s differs from PR #%d'):format(n1.branch, n1.pr or 0) or ('%d local branches differ from their PRs'):format(c), 'warn')
     elseif k == 'parent_landed' then
       add('●', c == 1 and ('%s\'s parent is already in %s'):format(n1.branch, ctx.trunk) or ('%d parents already in %s'):format(c, ctx.trunk), 'info')
     end

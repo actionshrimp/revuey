@@ -27,6 +27,10 @@
 #                        heads and pending reviews, REST PR files, review states, failures); it is
 #                        also the fake's state: review mutations rewrite it (see fake_gh.lua)
 #   REVUEY_FAKE_GH_MUTATIONS  file every mutation alias is appended to as {op, alias, input}
+#   REVUEY_FAKE_GH_TREE_SCENARIO  fail: the stack tree's own rounds fail (the first, inside the
+#                        PR lookup, answers); reject: a PR lookup carrying the tree's aliases is
+#                        rejected with GraphQL errors (the lookup alone answers). The tree is
+#                        answered from `_tree` in the PRs file (see fake_gh.lua)
 #   REVUEY_FAKE_NVIM     nvim binary that runs the Lua half (default: nvim)
 dir=$(cd "$(dirname "$0")" && pwd)
 if [ "${REVUEY_FAKE_GH:-}" = hang ]; then

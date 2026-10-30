@@ -426,4 +426,110 @@ h.test('stack: a base without a PR is the bottom layer\'s parent', function()
   h.eq({ 'origin/release', 'R' }, { st.layers[1].parent, st.layers[1].parent_rev })
 end)
 
+h.test('stack: a local branch is the layer only when it is that PR\'s', function()
+  local t = tree.tree((fetch(small(), 'stack/b')))
+  local o = function(n)
+    return ('%040d'):format(n)
+  end
+  local base = {
+    remote = 'origin', trunk = 'origin/main', trunk_rev = 'T', trunk_state = 'main',
+    refs = { ['origin/stack/a'] = o(11), ['origin/stack/c'] = o(13) }, objects = { [o(10)] = true },
+    current = 'stack/b', head = o(12),
+  }
+  local function facts(extra)
+    return vim.tbl_extend('force', base, extra)
+  end
+  -- an old closed PR of a moved branch: the local branch is the newer PR's, not this one's
+  local st = tree.stack(t, { 11, 10 }, 10, facts({ heads = { ['stack/b'] = o(12), ['stack/c'] = o(13) } }))
+  local l = st.layers[2]
+  h.eq({ 'origin/stack/c', o(10), true }, { l.name, l.tip, l.unfetched }, 'its own commit, not the local stack/c')
+  h.eq(nil, l.local_differs)
+  -- the open PR's local branch behind GitHub (not checked out): GitHub's side, noted
+  st = tree.stack(t, { 11, 12 }, nil, facts({ heads = { ['stack/a'] = 'main', ['stack/b'] = o(12) } }))
+  l = st.layers[1]
+  h.eq({ 'origin/stack/a', o(11), 'other', 'local' }, { l.name, l.tip, l.local_differs, l.fetch })
+  -- ... containing the PR's head (your commits on top): yours
+  st = tree.stack(t, { 11, 12 }, nil, facts({ heads = { ['stack/a'] = 'ahead', ['stack/b'] = o(12) }, contains = { ['stack/a'] = true } }))
+  h.eq({ 'stack/a', 'ahead', nil }, { st.layers[1].name, st.layers[1].tip, st.layers[1].local_differs })
+  -- ... checked out: its working tree is the layer's, noted when it is not the PR's
+  st = tree.stack(t, { 11, 12 }, nil, facts({ heads = { ['stack/b'] = 'old-b' }, head = 'old-b' }))
+  l = st.layers[2]
+  h.eq({ 'stack/b', 'old-b', true, 'head' }, { l.name, l.tip, l.is_head, l.local_differs })
+  -- the closed PR at its own head: the local branch is fine
+  st = tree.stack(t, { 11, 10 }, 10, facts({ heads = { ['stack/c'] = o(10) } }))
+  h.eq({ 'stack/c', o(10) }, { st.layers[2].name, st.layers[2].tip })
+end)
+
+h.test('stack: the bottom base whenever it is not the trunk; a base not fetched is said', function()
+  -- the repository's default branch (main) is not the configured trunk (develop)
+  local st0 = fetch({ node(1, 'a', 'main', 'OPEN'), node(2, 'b', 'a', 'OPEN') }, 'b', { trunk = 'develop' })
+  local t = tree.tree(st0)
+  h.eq('main', t.bottom_base)
+  local f = {
+    remote = 'origin', trunk = 'origin/develop', trunk_rev = 'D', heads = { b = 'B' },
+    refs = { ['origin/a'] = 'A', ['origin/main'] = 'M' }, objects = {}, current = 'b', head = 'B',
+  }
+  local st = tree.stack(t, { 1, 2 }, nil, f)
+  h.eq({ 'origin/main', 'M', nil }, { st.layers[1].parent, st.layers[1].parent_rev, st.base_missing })
+  f.refs['origin/main'] = nil
+  st = tree.stack(t, { 1, 2 }, nil, f)
+  h.eq({ 'origin/develop', 'D', 'origin/main' }, { st.layers[1].parent, st.layers[1].parent_rev, st.base_missing })
+  -- the bottom PR missing here: the layer above it still starts from the bottom base
+  f.refs['origin/main'], f.refs['origin/a'] = 'M', nil
+  st = tree.stack(t, { 1, 2 }, nil, f)
+  h.eq({ 1 }, st.missing)
+  h.eq({ 'b', 'origin/main', 'M' }, { st.layers[1].name, st.layers[1].parent, st.layers[1].parent_rev })
+end)
+
+h.test('phase one keeps a chosen PR\'s path whole, under a closed PR and above it', function()
+  local nodes = small()
+  nodes[#nodes + 1] = node(18, 'stack/revive', 'stack/old2', 'OPEN')
+  local st = tree.new(REPO, 'main', { 'stack/b' })
+  st.pin = { [11] = true, [16] = true, [17] = true } -- #17 chosen (under closed #16)
+  local parts, aliases = tree.first_parts(st)
+  tree.absorb(st, answer(nodes, tree.query(parts)), aliases)
+  while true do
+    local want = tree.plan(st, false)
+    if not want then
+      break
+    end
+    local p, a = tree.parts(st, want)
+    tree.absorb(st, answer(nodes, tree.query(p)), a)
+  end
+  local t = tree.tree(st)
+  h.ok(t.nodes[17], 'the chosen PR is in the tree after phase one')
+  h.eq({ 11, 16, 17, 18 }, (tree.route(t, 17)), 'and the open PR above it')
+  h.eq(nil, st.asked['stack/x'], 'other closed PRs still wait')
+end)
+
+h.test('limits: MAX_NODES caps the tree within a round', function()
+  local nodes = { node(1, 'c/1', 'main', 'OPEN') }
+  for i = 2, 40 do
+    nodes[#nodes + 1] = node(i, 'k/' .. i, 'c/1', 'OPEN')
+  end
+  local saved = tree.MAX_NODES
+  tree.MAX_NODES = 10
+  local st = fetch(nodes, 'c/1')
+  local t = tree.tree(st)
+  tree.MAX_NODES = saved
+  h.eq(10, t.count)
+  h.ok(t.cut and t.cut:find('10 PRs', 1, true), tostring(t.cut))
+end)
+
+h.test('refspecs: names git would not take as a branch go by the pull ref', function()
+  h.eq(true, tree.safe_ref('stack/a'))
+  for _, bad in ipairs({ '', '-x', '--upload-pack=x', 'a..b', 'a b', 'a:b', 'a^b', 'a~1', 'x.lock', 'a/', '/a', 'a//b', '@', 'a@{1}', '.a', 'a/.b', 'a\\b' }) do
+    h.eq(false, tree.safe_ref(bad), bad)
+  end
+  local t = tree.tree((fetch({ node(1, '-oops', 'main', 'OPEN') }, '-oops')))
+  h.eq({ 'refs/pull/1/head' }, (tree.fetch_specs(t, { 1 }, { remote = 'origin', heads = {}, refs = {}, objects = {} })))
+end)
+
+h.test('fetch environment: no prompt from git or ssh, unless ssh is yours', function()
+  local tv = require('revuey.stack_tree_view')
+  h.eq({ GIT_TERMINAL_PROMPT = '0', GIT_SSH_COMMAND = 'ssh -o BatchMode=yes' }, tv.fetch_env(nil, ''))
+  h.eq({ GIT_TERMINAL_PROMPT = '0' }, tv.fetch_env('my-ssh', ''))
+  h.eq({ GIT_TERMINAL_PROMPT = '0' }, tv.fetch_env('', 'ssh -i key'))
+end)
+
 h.run()

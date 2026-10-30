@@ -25,7 +25,7 @@ end
 ---What a target looks up (its candidates; not the tip, which a commit moves): a target fetched
 ---in this review under this key is not fetched again until `R`.
 local function target_key(name, t)
-  local parts = { name }
+  local parts = { name, tostring(t.pin or '') }
   for _, c in ipairs(t.candidates) do
     for _, r in ipairs(c.repos) do
       parts[#parts + 1] = forge.repo_key(r) .. ':' .. c.branch .. (c.parent == false and '' or '+')
@@ -117,8 +117,11 @@ function M.update(s, force)
     end
     f.info = info
     f.targets = forge.targets(review, info)
-    -- the stack tree (first fetch, or `R`): its first round rides on the PR lookup's call
-    local tree_job = require('revuey.stack_tree_view').begin(s, info, force)
+    -- the stack tree (a first fetch for HEAD's branch, or `R` only: `s.tree_force`, not the
+    -- refetch after a post): its first round rides on the PR lookup's call
+    local tree_force = s.tree_force
+    s.tree_force = nil
+    local tree_job = require('revuey.stack_tree_view').begin(s, info, tree_force)
     if next(f.targets) or tree_job then
       local todo, keys = {}, {}
       for name, t in pairs(f.targets) do
@@ -148,6 +151,10 @@ function M.update(s, force)
       -- fetched (or failed: `R` tries again; nothing retries on its own)
       for _, k in ipairs(keys) do
         f.fetched[k] = true
+      end
+      if tree_job then
+        -- the rest of the stack tree: rounds of its own, outside this lookup's lock
+        require('revuey.stack_tree_view').continue(s, tree_job)
       end
       forge.check_heads(review.root, f.targets)
       if not alive() then
@@ -220,13 +227,6 @@ function M.update(s, force)
         require('revuey.comments_view').render(s)
         require('revuey.panel').render(s, { keep_view = true })
       end
-    end
-    -- the rest of the stack tree (rounds of its own), after what the panel shows
-    if tree_job then
-      require('revuey.stack_tree_view').continue(s, tree_job, alive, function(obj)
-        f.job = obj
-      end)
-      f.job = nil
     end
     done()
   end, function(err)

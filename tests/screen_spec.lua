@@ -297,8 +297,6 @@ h.test('stack: gS checks out a lower layer, and @ moves', function()
   screenshot('stack-switch-after')
 end)
 
--- Pull requests from a fake `gh`: `#N` and the review state on each layer row, and the detail
--- section of the viewed layer (stack/cart) under the stack.
 -- The stack tree from GitHub (fake `gh`, tests/helpers.lua tree_repo): the panel's markers on
 -- the default route (⑂ other paths, ⇣ to fetch, the not-fetched note), then the tree view over
 -- the diff with closed PRs hidden and shown.
@@ -311,7 +309,7 @@ h.test('stack tree from GitHub: panel markers, the tree view with closed PRs hid
     return vim.wait(15000, function()
       local s = require('revuey.view').session
       local gt = s and s.gh_tree
-      return gt and gt.tree and not gt.loading and not s.refreshing and not s.pending and s.review.stack
+      return gt and gt.tree and not gt.loading and not gt.running and not s.refreshing and not s.pending and s.review.stack
         and s.review.stack.kind == 'github' and s.review.stack.full_stats ~= nil and s.forge and not s.forge.busy
     end, 10)
   ]]), 'the tree did not load')
@@ -338,6 +336,8 @@ h.test('stack tree from GitHub: panel markers, the tree view with closed PRs hid
   child.type_keys('q')
 end)
 
+-- Pull requests from a fake `gh`: `#N` and the review state on each layer row, and the detail
+-- section of the viewed layer (stack/cart) under the stack.
 h.test('stack with pull requests: PR rows and the detail section', function()
   local d = h.tmpdir('screen-forge')
   vim.fn.delete(d, 'rf')

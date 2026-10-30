@@ -31,6 +31,7 @@ local M = {}
 ---@class revuey.ForgeTarget  what to look up for one layer (or the plain review branch)
 ---@field candidates revuey.ForgeCandidate[] in order; the first with a PR wins
 ---@field tip? string         the branch tip commit (closed/merged PRs must have their head in it)
+---@field pin? integer        a GitHub stack layer's own PR: only that number is the target's PR
 
 ---@class revuey.ForgeInfo
 ---@field names string[]      remote names
@@ -290,6 +291,20 @@ function M.target(name, remote_layer, tip, base, info, trunk_branch, explicit)
   return #t.candidates > 0 and t or nil
 end
 
+---Target of a GitHub stack layer (stack_tree.lua): the layer IS a PR, so its target is pinned
+---to that PR's number (`pin`), looked up by its head branch in the base repo, a fork's PR too
+---(its head owner). Threads, the PR section, the description, posting and the change check all
+---read the PR through `M.get`, so they use the PR whose diff is shown, never another PR of the
+---same branch (a moved branch's open PR for its old closed one).
+function M.pinned_target(l, base, info)
+  local repo = info.remotes[base].repo
+  return {
+    candidates = { { branch = l.pr_head, remote = base, head_owner = l.pr_owner or repo.owner, repos = { repo }, parent = false } },
+    tip = l.tip,
+    pin = l.pr,
+  }
+end
+
 ---Targets for a review: one per stack layer (by layer name), or `['']` for a plain review.
 ---@return table<string, revuey.ForgeTarget>
 function M.targets(review, info)
@@ -302,7 +317,11 @@ function M.targets(review, info)
   local trunk_branch = trunk and M.branch_name(trunk, info)
   if review.stack then
     for _, l in ipairs(review.stack.layers) do
-      out[l.name] = M.target(l.name, l.remote, l.tip, base, info, trunk_branch, explicit)
+      if l.pr and l.pr_head then
+        out[l.name] = M.pinned_target(l, base, info)
+      else
+        out[l.name] = M.target(l.name, l.remote, l.tip, base, info, trunk_branch, explicit)
+      end
     end
   else
     out[''] = M.target(review.branch, false, review.head, base, info, trunk_branch, explicit)
@@ -638,7 +657,16 @@ function M.get(t)
     return nil
   end
   for _, c in ipairs(t.candidates) do
-    local pr = M.pick(prs_for(c), c.head_owner, accept_for(t))
+    local pr
+    if t.pin then
+      for _, x in ipairs(prs_for(c)) do
+        if x.number == t.pin then
+          pr = x
+        end
+      end
+    else
+      pr = M.pick(prs_for(c), c.head_owner, accept_for(t))
+    end
     if pr then
       local stale = false
       for _, repo in ipairs(c.repos) do
@@ -807,12 +835,22 @@ function M.fetch(targets, o)
     end)
     local extra = o.extra and o.extra.host == host and o.extra or nil
     local query, aliases = M.build_query(list, extra)
-    local data, err = M.run_graphql(query, host, o.on_job)
+    local data, err, raw = M.run_graphql(query, host, o.on_job)
     if o.alive and not o.alive() then
       return true
     end
     if extra then
       extra.absorb(data, err)
+      if not data and #list > 0 and raw and #raw > 0 then
+        -- GitHub rejected the call (an error about the tree's part, say): the PRs must not
+        -- fail with it, so the lookup alone once more
+        log.write('forge', 'PR lookup with the stack tree failed, retrying without it: ' .. tostring(err))
+        query, aliases = M.build_query(list)
+        data, err = M.run_graphql(query, host, o.on_job)
+        if o.alive and not o.alive() then
+          return true
+        end
+      end
     end
     local now = M.now()
     if not data then

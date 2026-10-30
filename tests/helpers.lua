@@ -262,7 +262,8 @@ end
 ---origin/stack/c is behind GitHub's head, origin/stack/d and the commits of #10, #17 and #19 are
 ---missing. Its origin URL is GitHub's (`git@github.com:acme/shop.git`); fetches reach
 ---`origin.git` through tests/bin/fake-ssh (`M.use_fake_ssh`). Returns {dir, bare, author, oid =
----{name -> commit}, prs = PR file for M.use_fake_gh (`_tree` and per-branch lookups)}.
+---{name -> commit}, prs = PR file for M.use_fake_gh (`_tree` and per-branch lookups)}. Branch
+---and commit names in `oid`: main, a, c_old, old1, old2, b, x, fork, c1, c2, d.
 function M.tree_repo(name)
   local root = M.tmpdir(name)
   local bare, author, review = root .. '/origin.git', root .. '/author', root .. '/review'
@@ -346,7 +347,7 @@ function M.tree_repo(name)
   }
   local prs = { _tree = { ['acme/shop'] = nodes } }
   for _, n in ipairs(nodes) do
-    if not n.isCrossRepository then
+    do -- `pullRequests(headRefName:)` lists forks' PRs of that name too
       local k = 'acme/shop:' .. n.headRefName
       prs[k] = prs[k] or {}
       table.insert(prs[k], n)

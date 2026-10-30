@@ -305,11 +305,14 @@ function M.chain(st)
   return chain
 end
 
----Membership: the chain plus every PR based on a representative's branch, recursively.
----Returns the tree's numbers in BFS order and the representatives whose children were not asked
----(CLOSED ones only with `closed`: routes never pass through them, so their subtrees can wait).
+---Membership: the chain plus every PR based on a representative's branch, recursively, at most
+---MAX_NODES (`st.cut` says so). Returns the tree's numbers in BFS order and the representatives
+---whose children were not asked (CLOSED ones only with `closed`: routes never pass through them,
+---so their subtrees can wait; except those in `st.pin`, the chosen PR and the PRs below it, whose
+---path must be complete in phase one).
 local function members(st, chain, closed)
   local order, inside, frontier = {}, {}, {}
+  local pin = st.pin or {}
   local queue = {}
   for _, n in ipairs(chain or {}) do
     if not inside[n.number] then
@@ -327,12 +330,16 @@ local function members(st, chain, closed)
       if st.asked[n.head] then
         for _, num in ipairs(st.kids[n.head] or {}) do
           if not inside[num] then
+            if #order >= M.MAX_NODES then
+              st.cut = st.cut or ('stopped at %d PRs'):format(#order)
+              break
+            end
             inside[num] = true
             order[#order + 1] = num
             queue[#queue + 1] = st.nodes[num]
           end
         end
-      elseif closed or n.state ~= 'CLOSED' or n.number == chain[#chain].number then
+      elseif closed or n.state ~= 'CLOSED' or n.number == chain[#chain].number or pin[n.number] then
         frontier[#frontier + 1] = n.head
       end
     end
@@ -397,6 +404,7 @@ end
 ---@field chain integer[]     trunk to HEAD's PR, bottom first
 ---@field stop? string        'cycle' | 'no_pr' | 'cut' | nil: why the chain stops above the trunk
 ---@field bottom_base? string the chain's bottom base when it is not the trunk
+---@field rep table<string, integer> head branch -> its representative PR
 ---@field cut? string         a limit was reached or a round failed
 ---@field count integer
 
@@ -414,7 +422,7 @@ function M.tree(st)
   local t = {
     trunk = st.trunk, nodes = {}, kids = { root = {} }, parent = {}, more = {}, unexpanded = {},
     start = chain[#chain].number, chain = {}, stop = stop, count = #order,
-    cut = st.failed or st.cut,
+    cut = st.failed or st.cut, rep = {},
   }
   for _, num in ipairs(order) do
     t.nodes[num] = st.nodes[num]
@@ -428,13 +436,16 @@ function M.tree(st)
   end
   t.parent[chain[1].number] = 'root'
   table.insert(t.kids.root, chain[1].number)
-  if not is_trunk(st, chain[1].base) then
+  -- the bottom PR's base when it is not the trunk (a branch without a PR, the repository's
+  -- default branch when the trunk is another, where a cycle or a cut stopped the chain)
+  if chain[1].base ~= st.trunk then
     t.bottom_base = chain[1].base
   end
   for _, num in ipairs(order) do
     local n = st.nodes[num]
     local r = (not n.fork) and M.rep(st, n.head)
     if r and r.number == num then
+      t.rep[n.head] = num
       t.kids[num] = {}
       if unexp[n.head] then
         t.unexpanded[num] = true
@@ -587,7 +598,22 @@ function M.reach(n, facts)
   return { mark = 'missing', how = 'none' }
 end
 
-M.MARK_TEXT = { missing = 'not fetched', behind = 'origin behind · fetch' }
+M.MARK_TEXT = { missing = 'not fetched', behind = 'origin behind · fetch', ['local'] = 'local branch differs' }
+
+---Is `name` a branch name git accepts in a refspec (`git check-ref-format --branch` rules)? A
+---guard before names from GitHub go into `git fetch` arguments; never true for anything that
+---could read as an option or a second refspec.
+function M.safe_ref(name)
+  if type(name) ~= 'string' or name == '' or name:sub(1, 1) == '-' or name:sub(1, 1) == '/' then
+    return false
+  end
+  if name:find('%.%.') or name:find('@{', 1, true) or name:find('//', 1, true) or name:find('[%c%s~%^:%?%*%[\\]')
+    or name:sub(-1) == '/' or name:sub(-1) == '.' or name:sub(-5) == '.lock' or name == '@'
+    or name:find('/%.') or name:sub(1, 1) == '.' then
+    return false
+  end
+  return true
+end
 
 ---What `git fetch` brings the given PRs with: branch refspecs for open PRs' heads (updating
 ---`<remote>/<head>`), `refs/pull/N/head` (objects only, no ref written) for forks, deleted
@@ -600,7 +626,7 @@ function M.fetch_specs(t, nums, facts)
     local r = n and M.reach(n, facts)
     if n and r and r.mark and not seen[num] then
       seen[num] = true
-      if not n.fork and n.head_exists and n.state == 'OPEN' then
+      if not n.fork and n.head_exists and n.state == 'OPEN' and M.safe_ref(n.head) and M.safe_ref(facts.remote) then
         specs[#specs + 1] = ('+refs/heads/%s:refs/remotes/%s/%s'):format(n.head, facts.remote, n.head)
       else
         specs[#specs + 1] = ('refs/pull/%d/head'):format(num)
@@ -631,14 +657,34 @@ function M.stack(t, path, view, facts)
   for _, num in ipairs(path) do
     on_path[num] = true
   end
-  local current, view_index
+  local current, view_index, base_missing
   local prev
   for _, num in ipairs(path) do
     local n = t.nodes[num]
     local name, tip, remote, unfetched, key
     local r = M.reach(n, facts)
-    if not n.fork and facts.heads[n.head] then
-      name, tip, key = n.head, facts.heads[n.head], n.head
+    -- a local branch of the head's name is the layer only when it is this PR's: at its head
+    -- commit; or, for the branch's open PR, containing it (your commits on top), or checked out
+    -- (its working tree is the layer's, whatever it holds: noted when it is not the PR's). An
+    -- older closed PR of a moved branch, or a local copy behind or off the PR, is shown from
+    -- GitHub's side (remote ref or commit) with a note.
+    local lb = (not n.fork) and facts.heads[n.head] or nil
+    local use_local, differs = false, nil
+    if lb then
+      if not n.head_oid or lb == n.head_oid then
+        use_local = true
+      elseif n.state == 'OPEN' and t.rep[n.head] == num then
+        if (facts.contains or {})[n.head] then
+          use_local = true
+        elseif n.head == facts.current then
+          use_local, differs = true, 'head'
+        else
+          differs = 'other'
+        end
+      end
+    end
+    if use_local then
+      name, tip, key = n.head, lb, n.head
     elseif r.tip then
       remote = true
       if n.fork then
@@ -655,11 +701,14 @@ function M.stack(t, path, view, facts)
       local others, closed = M.others(t, num, on_path)
       local parent = prev and prev.name or facts.trunk
       local parent_rev = prev and prev.tip or facts.trunk_rev
-      if not prev and t.bottom_base and num == t.chain[1] then
+      if not prev and t.bottom_base and path[1] == t.chain[1] then
+        -- the chain's bottom base (also below a bottom PR that is missing here)
         local b = t.bottom_base
         local brev = facts.heads[b] or facts.refs[facts.remote .. '/' .. b]
         if brev then
           parent, parent_rev = facts.heads[b] and b or (facts.remote .. '/' .. b), brev
+        else
+          base_missing = facts.remote .. '/' .. b
         end
       end
       local is_head = tip == facts.head and (name == facts.current or (facts.detached and true or false))
@@ -680,8 +729,11 @@ function M.stack(t, path, view, facts)
         pr = num,
         others = others > 0 and others or nil,
         others_closed = closed > 0 and closed or nil,
-        fetch = r.mark,
+        fetch = r.mark or (differs and 'local') or nil,
+        local_differs = differs,
         fork_pr = n.fork or nil,
+        pr_head = n.head,
+        pr_owner = n.head_owner,
       }
       layers[#layers + 1] = layer
       if layer.is_head then
@@ -708,6 +760,7 @@ function M.stack(t, path, view, facts)
     notes = {},
     missing = missing,
     path = path,
+    base_missing = base_missing,
   }
 end
 
