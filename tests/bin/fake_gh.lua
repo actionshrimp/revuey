@@ -731,6 +731,94 @@ for alias, owner, name, branch in (query or ''):gmatch(pat) do
     data[alias] = { nameWithOwner = repo, pullRequests = { nodes = answer(prs[repo .. ':' .. branch]) }, parent = parent }
   end
 end
+-- the stack tree (stack_tree.lua): `_tree` = { ["owner/name"] = [PullRequest nodes as GitHub has
+-- them: number, title, url, state, isDraft, updatedAt, headRefName, baseRefName, headRefOid,
+-- isCrossRepository, headRepositoryOwner, headRef (null: the branch was deleted; default: present),
+-- reviewDecision] }, `_default_branch` = { ["owner/name"] = "main" } (default "main"). Answers
+-- `sdN` (a head branch's PRs, each with its base's PRs nested as deep as the query asks through
+-- `baseRef { associatedPullRequests }`) and `skN` (PRs based on a branch), newest first, cut at
+-- the query's `first` with the real `totalCount`. `REVUEY_FAKE_GH_TREE_SCENARIO=fail` fails the
+-- tree's own rounds (the first one, inside the PR lookup, still answers).
+local tree_all = prs._tree or {}
+if query and query:find('fragment tnode on PullRequest', 1, true) and not query:find('fragment pr on PullRequest', 1, true)
+  and (os.getenv('REVUEY_FAKE_GH_TREE_SCENARIO') or '') == 'fail' then
+  io.stderr:write('error connecting to api.github.com\n')
+  os.exit(1)
+end
+local function tree_node(n)
+  local out = vim.deepcopy(n)
+  if out.headRef == nil then
+    out.headRef = { name = n.headRefName }
+  end
+  out.headRepositoryOwner = out.headRepositoryOwner or { login = 'acme' }
+  out.isCrossRepository = out.isCrossRepository == true
+  out.isDraft = out.isDraft == true
+  return out
+end
+local function newest_first(list)
+  table.sort(list, function(a, b)
+    if a.updatedAt ~= b.updatedAt then
+      return (a.updatedAt or '') > (b.updatedAt or '')
+    end
+    return a.number > b.number
+  end)
+  return list
+end
+local function tree_conn(list, first, fn)
+  local out = {}
+  for i = 1, math.min(#list, first) do
+    out[i] = fn and fn(list[i]) or tree_node(list[i])
+  end
+  return { totalCount = #list, nodes = out }
+end
+for line in (query or ''):gmatch('[^\n]+') do
+  local alias, owner, name, rest = line:match('^%s*(s[dk]%d+): repository%(owner: (%b""), name: (%b"")%) { (.*)$')
+  if alias then
+    local repo = vim.json.decode(owner) .. '/' .. vim.json.decode(name)
+    local all = tree_all[repo] or {}
+    -- `pullRequests(headRefName:)` lists forks' PRs of that head name too; a Ref's
+    -- `associatedPullRequests` only the repository's own
+    local function heads(b, forks)
+      local l = {}
+      for _, n in ipairs(all) do
+        if n.headRefName == b and (forks or not n.isCrossRepository) then
+          l[#l + 1] = n
+        end
+      end
+      return newest_first(l)
+    end
+    if alias:sub(2, 2) == 'd' then
+      local b, first = rest:match('pullRequests%(headRefName: (%b""), first: (%d+)')
+      b = vim.json.decode(b)
+      local _, depth = line:gsub('associatedPullRequests%(', '')
+      local nfirst = tonumber(line:match('associatedPullRequests%(first: (%d+)') or '2')
+      local function nest(level)
+        return function(n)
+          local out = tree_node(n)
+          if level > 0 then
+            out.baseRef = { name = n.baseRefName, associatedPullRequests = tree_conn(heads(n.baseRefName), nfirst, nest(level - 1)) }
+          end
+          return out
+        end
+      end
+      local answer = { pullRequests = tree_conn(heads(b, true), tonumber(first), nest(depth)) }
+      if rest:find('defaultBranchRef', 1, true) then
+        answer.defaultBranchRef = { name = (prs._default_branch or {})[repo] or 'main' }
+      end
+      data[alias] = answer
+    else
+      local b, first = rest:match('pullRequests%(baseRefName: (%b""), first: (%d+)')
+      b = vim.json.decode(b)
+      local l = {}
+      for _, n in ipairs(all) do
+        if n.baseRefName == b then
+          l[#l + 1] = n
+        end
+      end
+      data[alias] = { pullRequests = tree_conn(newest_first(l), tonumber(first)) }
+    end
+  end
+end
 io.stdout:write(vim.json.encode({ data = data, errors = #errors > 0 and errors or nil }), '\n')
 if #errors > 0 then
   io.stderr:write('gh: ' .. errors[1].message .. '\n')
