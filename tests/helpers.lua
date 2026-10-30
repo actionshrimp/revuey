@@ -345,6 +345,145 @@ function M.skip_spec(reason)
   M.exit(0)
 end
 
+-- CI runs every test: a missing prerequisite there fails instead of skipping.
+local function on_ci()
+  local ci = os.getenv('CI')
+  return ci ~= nil and ci ~= '' and ci ~= 'false' and ci ~= '0'
+end
+
+local function frame(msg)
+  local body = vim.json.encode(msg)
+  return ('Content-Length: %d\r\n\r\n%s'):format(#body, body)
+end
+
+---Start typescript-language-server in an empty dir and initialize it (which is where it looks for
+---tsserver and fails when it finds none), then shut it down. Returns why it is unusable, or nil.
+---(~0.1s either way; a server that fails at initialize would otherwise cost each LSP test its
+---whole 20s wait.)
+local function probe_ts_ls()
+  if vim.fn.executable('typescript-language-server') ~= 1 then
+    return 'typescript-language-server not on PATH'
+  end
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, 'p')
+  local buf, msgs = '', {}
+  local started, proc = pcall(vim.system, { 'typescript-language-server', '--stdio' }, {
+    cwd = dir,
+    env = { TMPDIR = dir }, -- (where it makes a dir for each tsserver it starts, and leaves it)
+    stdin = true,
+    stdout = function(_, data)
+      buf = buf .. (data or '')
+      while true do
+        local head_end = buf:find('\r\n\r\n', 1, true)
+        local len = head_end and tonumber(buf:sub(1, head_end):match('Content%-Length: (%d+)'))
+        if not len or #buf < head_end + 3 + len then
+          break
+        end
+        local ok, msg = pcall(vim.json.decode, buf:sub(head_end + 4, head_end + 3 + len))
+        msgs[#msgs + 1] = ok and msg or {}
+        buf = buf:sub(head_end + 4 + len)
+      end
+    end,
+  })
+  if not started then
+    vim.fn.delete(dir, 'rf')
+    return 'typescript-language-server does not start: ' .. tostring(proc)
+  end
+  local function answer(id, ms)
+    local found
+    vim.wait(ms, function()
+      for _, m in ipairs(msgs) do
+        if m.id == id then
+          found = m
+          return true
+        end
+      end
+      return false
+    end, 10)
+    return found
+  end
+  proc:write(frame({
+    jsonrpc = '2.0',
+    id = 1,
+    method = 'initialize',
+    params = { processId = vim.uv.os_getpid(), rootUri = vim.uri_from_fname(dir), capabilities = vim.empty_dict() },
+  }))
+  local init = answer(1, 15000)
+  if init and init.result then
+    proc:write(frame({ jsonrpc = '2.0', id = 2, method = 'shutdown' }))
+    answer(2, 5000)
+    proc:write(frame({ jsonrpc = '2.0', method = 'exit' }))
+  end
+  proc:write(nil)
+  proc:wait(5000) -- (killed when it outlives that)
+  vim.fn.delete(dir, 'rf')
+  if not init then
+    return 'typescript-language-server did not answer initialize within 15s'
+  elseif init.error then
+    -- (its first sentence: "Could not find a valid TypeScript installation" with no tsserver)
+    local why = tostring(init.error.message):gsub('^Request initialize failed with message: ', '')
+    return 'typescript-language-server cannot start: ' .. (why:match('^(.-)%.%s') or why)
+  end
+end
+
+local ts_ls_problem
+---Why typescript-language-server cannot serve the LSP tests here, or nil when it can. Probed once
+---per `make test` run (cached in $REVUEY_TEST_RUN), else once per spec.
+function M.ts_ls_problem()
+  if ts_ls_problem == nil then
+    local run = os.getenv('REVUEY_TEST_RUN')
+    local cache = run and run ~= '' and vim.fs.joinpath(run, 'ts_ls-probe')
+    if cache and vim.uv.fs_stat(cache) then
+      ts_ls_problem = vim.fn.readfile(cache)[1] or ''
+    else
+      ts_ls_problem = probe_ts_ls() or ''
+      if cache then
+        vim.fn.writefile({ ts_ls_problem }, cache .. '.' .. vim.uv.os_getpid())
+        vim.uv.fs_rename(cache .. '.' .. vim.uv.os_getpid(), cache)
+      end
+    end
+  end
+  return ts_ls_problem ~= '' and ts_ls_problem or nil
+end
+
+---Register and enable `ts_ls` (typescript-language-server for the fixture's TypeScript).
+function M.enable_ts_ls()
+  vim.lsp.config('ts_ls', {
+    cmd = { 'typescript-language-server', '--stdio' },
+    -- it leaves a dir in $TMPDIR for each tsserver it starts: keep them with the spec's files
+    cmd_env = { TMPDIR = M.tmpdir('ts_ls-tmp-' .. vim.uv.os_getpid()) },
+    filetypes = { 'typescript', 'typescriptreact' },
+    root_markers = { 'tsconfig.json' },
+  })
+  vim.lsp.enable('ts_ls')
+end
+
+---Inside a test that needs a working typescript-language-server: skip it when there is none
+---(fail on CI, which must run it), else enable `ts_ls`.
+function M.need_ts_ls()
+  local why = M.ts_ls_problem()
+  if why and on_ci() then
+    error('CI must run the LSP tests: ' .. why, 2)
+  elseif why then
+    M.skip(why)
+  end
+  M.enable_ts_ls()
+end
+
+---At the top of a spec that needs a working typescript-language-server: skip the whole spec when
+---there is none (fail it on CI), else enable `ts_ls`.
+function M.need_ts_ls_spec()
+  local why = M.ts_ls_problem()
+  if why and on_ci() then
+    io.write('  FAIL ' .. spec_file(2) .. ' :: (all tests) — CI must run the LSP tests: ' .. why .. '\n')
+    M.exit(1)
+  elseif why then
+    skip_line(spec_file(2), '(all tests)', why)
+    M.exit(0)
+  end
+  M.enable_ts_ls()
+end
+
 local function on_error(err)
   if type(err) == 'table' and err.revuey_skip then
     return err

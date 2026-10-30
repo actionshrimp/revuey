@@ -16,7 +16,11 @@ deleted files).
 Real git repositories built in a temp dir by test helpers (see `tests/helpers.lua` and `scripts/make-fixture.sh`).
 Open a review headlessly and assert on buffer lines, the line side-table, extmarks and highlight groups, folds, and
 the effect of keymaps driven with `normal`/`feedkeys`. LSP tests run the real `typescript-language-server` against
-fixture TypeScript files; they skip with a clear message when the server is not installed.
+fixture TypeScript files. They go through `h.need_ts_ls()` (or `h.need_ts_ls_spec()` for a whole spec), which
+starts the server once per `make test` run and checks that `initialize` succeeds (that is where it fails when it
+finds no tsserver, e.g. with only TypeScript 7 installed; cached in `$REVUEY_TEST_RUN`): the tests skip with the
+server's reason when it is missing or cannot start, instead of each waiting out its timeout, and fail instead of
+skipping when `CI` is set.
 
 ### End-to-end (screen)
 Drive a child Neovim over RPC with a UI attached and assert on what the user actually sees: the rendered screen grid
@@ -124,7 +128,8 @@ attached (`screen_spec.lua`), which may be resized freely.
 (superseded PR runs on the same ref are cancelled; runs on `main` are not). It pins Neovim to the official v0.12.4
 release tarball (sha256-checked), because the screenshots depend on its rendering, and installs git, tmux,
 `typescript-language-server` and `typescript` (pinned npm versions), with a `C.UTF-8` locale and
-`TERM=xterm-256color`. The job summary lists the `  skip …` lines printed by the test harness, so skips must go
+`TERM=xterm-256color`. GitHub sets `CI`, so the LSP tests fail there rather than skip if the server cannot start.
+The job summary lists the `  skip …` lines printed by the test harness, so skips must go
 through `h.skip`/`h.skip_spec` to appear there.
 - The TypeScript highlight check in `e2e_spec.lua` skips in CI, as it does locally: Neovim bundles no TypeScript
   highlights query, so providing the parser alone would not enable it.

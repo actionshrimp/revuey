@@ -1,15 +1,7 @@
--- LSP projection against typescript-language-server (skipped when not installed).
+-- LSP projection against typescript-language-server (skipped when it cannot start here; CI fails).
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
-if vim.fn.executable('typescript-language-server') ~= 1 then
-  h.skip_spec('typescript-language-server not on PATH')
-end
+h.need_ts_ls_spec()
 vim.cmd('runtime plugin/revuey.lua')
-vim.lsp.config('ts_ls', {
-  cmd = { 'typescript-language-server', '--stdio' },
-  filetypes = { 'typescript', 'typescriptreact' },
-  root_markers = { 'tsconfig.json' },
-})
-vim.lsp.enable('ts_ls')
 
 local fixture = h.fixture()
 require('revuey').setup({ state_dir = h.tmpdir('lsp-state') })

@@ -1,24 +1,15 @@
 -- Integration: the in-process proxy LSP client ("revuey") attached to review buffers, so the
 -- user's own vim.lsp.buf.* mappings (and pickers built on LSP requests) work in the diff and the
 -- guide. Lifecycle, capabilities, routing errors and LspAttach handlers are tested without any
--- language server; navigation runs against typescript-language-server (skipped when missing).
+-- language server; navigation runs against typescript-language-server (skipped when it cannot
+-- start here; CI fails instead).
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
 
-local have_ts = vim.fn.executable('typescript-language-server') == 1
-if have_ts then
-  vim.lsp.config('ts_ls', {
-    cmd = { 'typescript-language-server', '--stdio' },
-    filetypes = { 'typescript', 'typescriptreact' },
-    root_markers = { 'tsconfig.json' },
-  })
-  vim.lsp.enable('ts_ls')
+if not h.ts_ls_problem() then
+  h.enable_ts_ls()
 end
-local function need_ts()
-  if not have_ts then
-    h.skip('typescript-language-server not on PATH')
-  end
-end
+local need_ts = h.need_ts_ls
 
 -- (no headless grid resize here: with ts_ls warm-up and a reopened review, Neovim 0.12.4
 -- headless has been seen to segfault after `vim.o.lines = 50`, independent of the proxy)

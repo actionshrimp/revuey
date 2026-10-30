@@ -642,15 +642,7 @@ h.test('closing the review closes the float; the buffer keeps its unsaved change
 end)
 
 h.test('LSP works in the float, before and after a save (typescript-language-server)', function()
-  if vim.fn.executable('typescript-language-server') ~= 1 then
-    h.skip('typescript-language-server not on PATH')
-  end
-  vim.lsp.config('ts_ls', {
-    cmd = { 'typescript-language-server', '--stdio' },
-    filetypes = { 'typescript', 'typescriptreact' },
-    root_markers = { 'tsconfig.json' },
-  })
-  vim.lsp.enable('ts_ls')
+  h.need_ts_ls()
   local d = make('edit-lsp')
   local s = open(d)
   press(s, row_of(s, 'src/math.ts', 'return values.reduce', 'add'))

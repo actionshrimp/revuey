@@ -857,15 +857,7 @@ end)
 -- ---------------------------------------------------------------------------
 
 h.test('gd in the PR review goes to the worktree\'s files (LSP root is the worktree)', function()
-  if vim.fn.executable('typescript-language-server') ~= 1 then
-    h.skip('typescript-language-server not on PATH')
-  end
-  vim.lsp.config('ts_ls', {
-    cmd = { 'typescript-language-server', '--stdio' },
-    filetypes = { 'typescript', 'typescriptreact' },
-    root_markers = { 'tsconfig.json' },
-  })
-  vim.lsp.enable('ts_ls')
+  h.need_ts_ls()
   local fixture = h.fixture()
   h.git(fixture, 'checkout', '-q', 'main')
   reset('ok', 'feature/cart')
