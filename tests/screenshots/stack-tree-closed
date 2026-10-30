@@ -22,11 +22,11 @@
 21| layer 2/3                              │                                                                               
 22| working tree  ● uncommitted            │                                                                               
 23|                                        │                                                                               
-24|   A  tax.ts  src                  +1 −0│                                                                               
-25|                                        │                                                                               
-26| <CR> show  mr reviewed  gp diff        │                                                                               
-27| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                               
-28| gd def  K hover  go open  R refresh    │                                                                               
+24| src:                                   │                                                                               
+25|     A  tax.ts                     +1 −0│                                                                               
+26|                                        │                                                                               
+27| <CR> show  mr reviewed  gp diff        │                                                                               
+28| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                               
 29|revuey://files [-]    3,1            Top                                                                                
 30|                                                                                                      9,1           All 
 
@@ -54,10 +54,10 @@
 21|::::::::::8888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 22|:::::::::::::<<<<<<<<<<<<<<<8888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 23|88888888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-24|?R?RA?SSSSSSTTTTT??????????????????==CCC4QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-25|88888888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-26|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-27|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-28|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<88884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+24|8::::888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+25|???R?RA?SSSSSS?????????????????????==CCC4QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+26|88888888888888888888888888888888888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+27|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+28|<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<888884QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 29|00000000000000000000000000000000000000000QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
-30|UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+30|TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
