@@ -244,18 +244,31 @@ local function reset(scenario, branch)
   h.use_fake_wt(log, scenario, branch)
 end
 
----Run `:Revuey pr <arg>` from `cwd` and wait for the review to open (or `ms` to pass).
+---Run `:Revuey pr <arg>` from `cwd` and wait for the review to open (or `ms` to pass), or for
+---the attempt to end without one: no setup running any more, and a warning or error said why
+---(pr_view clears `current` before it says so; a review that opens says nothing).
 local function open_pr(arg, cwd, ms)
-  local session
-  require('revuey').pr(arg, {
+  local session, said
+  local notify = vim.notify -- (the test's own capture, when it has one, still gets everything)
+  vim.notify = function(msg, level, ...)
+    if level and level >= vim.log.levels.WARN and pr_view.current == nil then
+      said = true
+    end
+    return notify(msg, level, ...)
+  end
+  local ok, err = pcall(require('revuey').pr, arg, {
     cwd = cwd,
     on_open = function(s)
       session = s
     end,
   })
-  vim.wait(ms or 10000, function()
-    return session ~= nil
-  end, 10)
+  if ok then
+    vim.wait(ms or 10000, function()
+      return session ~= nil or (said and pr_view.current == nil)
+    end, 10)
+  end
+  vim.notify = notify
+  assert(ok, err)
   return session
 end
 

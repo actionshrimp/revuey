@@ -197,7 +197,7 @@ end)
 local function remote_fixture(name)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', '--remote-stack', d }, { text = true }):wait()
+  local res = h.make_fixture('--remote-stack', d)
   assert(res.code == 0, res.stderr)
   return { root = d, review = d .. '/review', someone = d .. '/someone', upstream = d .. '/upstream.git' }
 end

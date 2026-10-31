@@ -343,7 +343,7 @@ local GH_URL = 'git@github.com:acme/shop.git'
 local function stack_fixture(name)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }, { text = true }):wait()
+  local res = h.make_fixture('--stack', d)
   assert(res.code == 0, res.stderr)
   h.git(d, 'remote', 'add', 'origin', GH_URL)
   return d
@@ -354,8 +354,15 @@ local function rev(d, r)
 end
 
 ---GitHub's files of a PR from `base...head` (REST shape: filename, status, sha, patch).
+---Memoized by the two commits (the same commits always give the same files).
+local files_memo = {}
 local function pr_files(d, base, head)
+  local key = rev(d, base) .. '...' .. rev(d, head)
+  if files_memo[key] then
+    return vim.deepcopy(files_memo[key])
+  end
   local out = {}
+  files_memo[key] = out
   local status = { A = 'added', D = 'removed', M = 'modified' }
   for line in h.git(d, 'diff', '--no-renames', '--name-status', base .. '...' .. head):gmatch('[^\n]+') do
     local st, path = line:match('^(%a)%s+(.+)$')
@@ -363,7 +370,7 @@ local function pr_files(d, base, head)
     patch = patch:match('\n(@@.*)$'):gsub('\n$', '')
     out[#out + 1] = { filename = path, status = status[st] or 'modified', sha = st ~= 'D' and rev(d, head .. ':' .. path) or nil, patch = patch }
   end
-  return out
+  return vim.deepcopy(out)
 end
 
 local function pr_node(o)
@@ -415,11 +422,11 @@ local function open(dir, opts)
 end
 
 local function idle(s)
-  assert(vim.wait(15000, function()
+  -- (h.settle: and every task done, what they scheduled (redraws) run)
+  assert(h.settle(function()
     return not s.refreshing and not s.pending and not s.pending_scope
       and s.forge and s.forge.ready and not s.forge.busy and not s.forge.scheduled
-  end, 10), 'refresh / PR lookup did not finish')
-  vim.wait(50)
+  end, 15000), 'refresh / PR lookup did not finish')
 end
 
 local function reset()
@@ -540,10 +547,9 @@ local function answer(answers)
 end
 
 local function wait_job()
-  assert(vim.wait(20000, function()
+  assert(h.settle(function()
     return fpv.job == nil
-  end, 10), 'submit did not finish: ' .. vim.inspect(fpv.job and fpv.job.phase) .. vim.inspect(log.entries))
-  vim.wait(50)
+  end, 20000), 'submit did not finish: ' .. vim.inspect(fpv.job and fpv.job.phase) .. vim.inspect(log.entries))
 end
 
 local function get(s, id)

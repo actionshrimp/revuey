@@ -40,9 +40,8 @@ local function test(name, fn, allow)
   h.test(name, function()
     errors = {}
     fn()
-    vim.wait(100, function()
-      return false
-    end)
+    -- errors of tasks still running (up to 100ms) or already scheduled land before the check
+    h.settle(nil, 100)
     local bad = vim.tbl_filter(function(m)
       return not (allow and allow(m))
     end, errors)
@@ -80,12 +79,10 @@ local function open(name, scenario, o)
     return (not tv.enabled() or (gt and gt.fetched and not gt.running and (gt.reason or (gt.tree and not gt.loading))))
       and s.forge and not s.forge.busy and not s.refreshing
   end, 20), 'the tree did not load')
-  vim.wait(200, function()
-    return false
-  end)
-  h.ok(vim.wait(5000, function()
+  -- and what that started (the stack rebuilt from the tree, its PRs' lookup) is over too
+  h.ok(h.settle(function()
     return not s.refreshing and not (s.forge and s.forge.busy)
-  end, 20))
+  end, 5000))
   return s, r, calls, ssh_log
 end
 
@@ -100,11 +97,13 @@ local function tree_calls(calls)
   return out
 end
 
+---Wait until the review is idle: no refresh, lookup, tree round or fetch, no task left running
+---and nothing left scheduled (h.settle), so a refresh just asked for has run.
 local function wait_idle(s)
-  return vim.wait(10000, function()
+  return h.settle(function()
     return not s.refreshing and not s.pending and not (s.forge and s.forge.busy)
       and not (s.gh_tree and (s.gh_tree.fetching or s.gh_tree.running))
-  end, 20)
+  end, 10000)
 end
 
 test('open: the tree comes with the PR lookup, in batched rounds; the stack is the default route', function()
@@ -394,9 +393,7 @@ test('the footer follows the window: hidden when too short, back when it grows',
   local function wait_resized()
     -- WinResized comes with a screen redraw, which a headless Neovim without a UI never does
     api.nvim_exec_autocmds('WinResized', { modeline = false })
-    vim.wait(300, function()
-      return false
-    end)
+    h.flush()
   end
   h.ok(shown())
   local full = api.nvim_win_get_height(s.diff_win)
@@ -512,9 +509,6 @@ test('R: the tree is fetched again (and only then); the chosen path stays', func
   s.gh_tree.sel = 16
   local _, restore = h.capture_notify()
   view.refresh({ force = true, forge = true })
-  vim.wait(300, function()
-    return false
-  end)
   h.ok(vim.wait(15000, function()
     return #tree_calls(calls) >= 2 * before - 1 and not s.gh_tree.loading and not s.forge.busy and not s.refreshing
   end, 20))
@@ -935,9 +929,6 @@ test('only R refetches the tree: not the refetch after a post', function()
   end, 20))
   h.eq(n, #tree_calls(calls), 'the PRs, not the tree')
   view.refresh({ force = true, forge = true })
-  vim.wait(300, function()
-    return false
-  end)
   h.ok(wait_idle(s))
   h.ok(#tree_calls(calls) > n, 'R')
   view.close()
@@ -951,9 +942,6 @@ test('R keeps a chosen PR under a closed one, and the stack object when nothing 
   h.eq({ 'origin/stack/a', 'origin/stack/old1' }, names(s))
   local msgs, restore = h.capture_notify()
   view.refresh({ force = true, forge = true })
-  vim.wait(300, function()
-    return false
-  end)
   h.ok(wait_idle(s))
   restore()
   h.eq(16, s.gh_tree.sel)
@@ -965,29 +953,26 @@ test('R keeps a chosen PR under a closed one, and the stack object when nothing 
   tv.select(s, 17)
   h.ok(wait_idle(s))
   view.refresh({ force = true, forge = true })
-  vim.wait(300, function()
-    return false
-  end)
   h.ok(wait_idle(s))
   h.eq(17, s.gh_tree.sel)
   view.close()
 end)
 
 test('the tree\'s rounds run outside the PR lookup, and stop when the review closes', function()
-  local s, _, calls = open('tree-slow', 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '0.5'
+  local s, _, calls = open('tree-slow') -- (gh is slow from the refetch on: opening needs no wait)
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.5'
   view.refresh({ force = true, forge = true })
   h.ok(vim.wait(10000, function()
     return s.gh_tree.running ~= nil and not s.forge.busy
   end, 10), 'the lookup is done while the tree\'s rounds run')
   local version, n = s.gh_tree.version, #h.read_calls(calls)
   view.close()
-  vim.wait(2500, function()
-    return false
-  end)
+  -- the rounds' task ends (its gh stopped, or answering into a closed review) and nothing it
+  -- scheduled is left: whatever it would still do has been done
+  h.ok(h.settle(nil, 5000), 'the rounds stopped')
   h.eq(version, s.gh_tree.version, 'nothing taken after close')
   h.ok(#h.read_calls(calls) <= n + 1, 'no round after close')
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
 end)
 
 test('gF: a branch gone on GitHub comes by its pull ref, the rest is fetched; no prompts', function()
@@ -1101,9 +1086,6 @@ test('R: a chosen PR GitHub no longer has is dropped, back to the default route'
   vim.fn.writefile({ vim.json.encode(prs) }, calls .. '.prs.json')
   local _, restore = h.capture_notify()
   view.refresh({ force = true, forge = true })
-  vim.wait(300, function()
-    return false
-  end)
   h.ok(wait_idle(s))
   restore()
   h.eq(nil, s.gh_tree.sel)
@@ -1176,10 +1158,10 @@ test('HEAD\'s branch with a closed PR and work on top: still the HEAD layer, vie
 end)
 
 test('a chosen PR not in the tree after R (moved under another closed PR): default route, then its path', function()
-  vim.env.REVUEY_FAKE_GH_DELAY = '0.3'
-  local s, r, calls = open('tree-sel-moved', 'slow')
+  local s, r, calls = open('tree-sel-moved')
   tv.select(s, 17)
   h.ok(wait_idle(s))
+  vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = 'slow', '0.3' -- (from R on)
   local prs = vim.deepcopy(r.prs)
   for _, n in ipairs(prs._tree['acme/shop']) do
     if n.number == 17 then
@@ -1189,12 +1171,12 @@ test('a chosen PR not in the tree after R (moved under another closed PR): defau
   vim.fn.writefile({ vim.json.encode(prs) }, calls .. '.prs.json')
   local _, restore = h.capture_notify()
   view.refresh({ force = true, forge = true })
-  pause(300)
   h.ok(vim.wait(20000, function()
     return not s.gh_tree.loading and not s.gh_tree.running and wait_idle(s)
   end, 20))
   restore()
   vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH = nil
   h.eq(17, s.gh_tree.sel, 'kept through phase one')
   h.eq({ 11, 12, 14, 17 }, (tv.path(s)))
   h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/x' }, names(s))
@@ -1249,6 +1231,7 @@ test('HEAD leaves before its tree arrived: coming back fetches it', function()
   h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
   local _, restore = h.capture_notify()
   view.refresh({ force = true })
+  vim.env.REVUEY_FAKE_GH = 'ok' -- (the calls in flight stay slow; later ones need not be)
   h.ok(vim.wait(20000, function()
     return s.gh_tree.for_branch == 'unrelated' and s.gh_tree.reason ~= nil and wait_idle(s)
   end, 20))
@@ -1274,6 +1257,7 @@ test('HEAD leaves while closed PRs load: coming back reads them', function()
   h.git(r.dir, 'checkout', '-q', '-b', 'unrelated', 'main')
   local _, restore = h.capture_notify()
   view.refresh({ force = true })
+  vim.env.REVUEY_FAKE_GH = 'ok' -- (the calls in flight stay slow; later ones need not be)
   h.ok(vim.wait(20000, function()
     return s.gh_tree.for_branch == 'unrelated' and s.gh_tree.reason ~= nil and wait_idle(s)
   end, 20))
@@ -1298,12 +1282,10 @@ test('R refetches the other branches\' trees too, when HEAD goes back', function
   end, 20))
   h.ok(s.gh_tree.saved['stack/b'] ~= nil)
   view.refresh({ force = true, forge = true })
-  pause(300)
   h.ok(wait_idle(s))
   local n = #tree_calls(calls)
   h.git(r.dir, 'checkout', '-q', 'stack/b')
   view.refresh({ force = true })
-  pause(300)
   h.ok(vim.wait(10000, function()
     return s.gh_tree.tree ~= nil and wait_idle(s)
   end, 20))
@@ -1431,11 +1413,9 @@ test('R twice: the first fetch\'s rounds stop, and nothing of it is taken', func
     return s.gh_tree.running ~= nil and not s.forge.busy
   end, 10))
   view.refresh({ force = true, forge = true })
-  pause(300)
   h.ok(vim.wait(30000, function()
     return not s.gh_tree.running and not s.gh_tree.loading and wait_idle(s)
   end, 20))
-  pause(1500)
   vim.env.REVUEY_FAKE_GH, vim.env.REVUEY_FAKE_GH_DELAY = nil, nil
   local extra = #tree_calls(calls) - full
   h.ok(extra < 2 * full, ('%d tree calls for two R, a full fetch is %d'):format(extra, full))
@@ -1472,7 +1452,8 @@ test('gF then closing the review: the fetch stops, nothing starts after', functi
     end, vim.fn.readfile(ssh_log)) > 0
   end, 20), 'ssh started')
   view.close()
-  pause(3000)
+  -- the fetch's task ends, and nothing it scheduled is left (a retry would start in it)
+  h.ok(h.settle(nil, 3000), 'the fetch stopped')
   restore()
   vim.env.REVUEY_FAKE_SSH_HANG = nil
   local lines = vim.fn.readfile(ssh_log)
@@ -1485,9 +1466,15 @@ test('gF then closing the review: the fetch stops, nothing starts after', functi
     end
   end
   h.eq(1, starts, 'no fetch after the close')
-  local alive = vim.tbl_filter(function(pid)
-    return vim.uv.kill(pid, 0) == 0
-  end, pids)
+  local function living()
+    return vim.tbl_filter(function(pid)
+      return vim.uv.kill(pid, 0) == 0
+    end, pids)
+  end
+  vim.wait(3000, function()
+    return #living() == 0
+  end, 10)
+  local alive = living()
   if #alive > 0 then
     pause(6000) -- not stopped: let it end on its own before failing (no process outlives a spec)
   end

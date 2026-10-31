@@ -123,8 +123,8 @@ io.stdout:write(('\n== summary: %d specs, %d at a time%s\n'):format(#all, jobs,
 for _, spec in ipairs(all) do
   local r = results[spec]
   sum = sum + r.secs
-  for line in r.out:gmatch('[^\n]+') do
-    local kind = line:match('^  (%a+) +%S+_spec%.lua :: ')
+  -- (a result line can follow a message Neovim printed without a newline)
+  for kind in r.out:gmatch('  (%a+) +[%w_]+_spec%.lua :: ') do
     if counts[kind] then
       counts[kind] = counts[kind] + 1
     end

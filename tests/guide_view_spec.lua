@@ -793,7 +793,7 @@ local function run_and_quit(scenario, cancel)
   os.remove(log .. '.kids')
   local fx = h.tmpdir('guide-quit')
   vim.fn.delete(fx, 'rf')
-  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', fx }):wait().code == 0)
+  assert(h.make_fixture(fx).code == 0)
   local script = h.tmpdir('guide-quit-script') .. '/quit.lua'
   vim.fn.writefile({
     'vim.opt.rtp:prepend(' .. vim.inspect(h.root) .. ')',
@@ -855,7 +855,7 @@ h.test('a run outlives its review: reopening shows progress, then the guide', fu
   vim.env.REVUEY_FAKE_CLAUDE = 'slow'
   local d = h.tmpdir('guide-reopen')
   vim.fn.delete(d, 'rf')
-  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', d }):wait().code == 0)
+  assert(h.make_fixture(d).code == 0)
   local s = open(d)
   view.guide_command(true)
   view.close()
@@ -871,7 +871,7 @@ h.test('stack: layer and full scope have separate guides', function()
   vim.env.REVUEY_FAKE_CLAUDE = 'good'
   local d = h.tmpdir('guide-stack')
   vim.fn.delete(d, 'rf')
-  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  assert(h.make_fixture('--stack', d).code == 0)
   local s = open(d, { base = '' })
   h.eq({ kind = 'layer', index = 2 }, s.scope)
   view.guide_command(true)

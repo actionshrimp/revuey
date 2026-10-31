@@ -277,7 +277,7 @@ end)
 -- a full stack with uncommitted work at the top: stack/ui checked out, src/index.ts edited
 local stack_dir = h.tmpdir('guide-diagram-stack')
 vim.fn.delete(stack_dir, 'rf')
-assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', stack_dir }):wait().code == 0)
+assert(h.make_fixture('--stack', stack_dir).code == 0)
 h.git(stack_dir, 'checkout', '-q', 'stack/ui')
 do
   local path = stack_dir .. '/src/index.ts'

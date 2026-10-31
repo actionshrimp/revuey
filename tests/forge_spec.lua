@@ -227,7 +227,7 @@ local GH_URL = 'git@github.com:acme/shop.git'
 local function stack_fixture(name)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }, { text = true }):wait()
+  local res = h.make_fixture('--stack', d)
   assert(res.code == 0, res.stderr)
   h.git(d, 'remote', 'add', 'origin', GH_URL)
   return d
@@ -251,11 +251,12 @@ end
 
 ---Wait until refreshes and the PR lookup are done.
 local function idle(s)
-  assert(vim.wait(10000, function()
+  -- (h.settle: and every task done, what they scheduled (redraws) run: the layer stats too,
+  -- which fill the panel in at their own moment)
+  assert(h.settle(function()
     return not s.refreshing and not s.pending and not s.pending_scope
       and (not require('revuey.forge_view').enabled() or (s.forge and s.forge.ready and not s.forge.busy and not s.forge.scheduled))
-  end, 10), 'refresh / PR lookup did not finish')
-  vim.wait(50) -- scheduled redraws
+  end, 10000), 'refresh / PR lookup did not finish')
 end
 
 ---Panel lines with their right-aligned virtual text appended after ` | `.
@@ -436,7 +437,7 @@ h.test('remote-layer stack: branch names on the remote, without the remote prefi
   })
   local d = h.tmpdir('forge-remote')
   vim.fn.delete(d, 'rf')
-  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--remote-stack', d }):wait().code == 0)
+  assert(h.make_fixture('--remote-stack', d).code == 0)
   h.git(d .. '/review', 'remote', 'set-url', 'origin', 'https://github.com/acme/shop.git')
   local s = open(d .. '/review')
   idle(s)

@@ -24,12 +24,7 @@ local comments = require('revuey.comments')
 local function make(name, flag)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local args = { h.root .. '/scripts/make-fixture.sh' }
-  if flag then
-    args[#args + 1] = flag
-  end
-  args[#args + 1] = d
-  local res = vim.system(args, { text = true }):wait()
+  local res = flag and h.make_fixture(flag, d) or h.make_fixture(d)
   assert(res.code == 0, res.stderr)
   return d
 end

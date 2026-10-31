@@ -12,4 +12,5 @@
 dir=$(cd "$(dirname "$0")" && pwd)
 stdin_file=$(mktemp "${TMPDIR:-/tmp}/revuey-fake-claude.XXXXXX")
 cat > "$stdin_file"
-exec "${REVUEY_FAKE_NVIM:-nvim}" --clean --headless -l "$dir/fake_claude.lua" "$stdin_file" "$@"
+# -u NONE -i NONE: no config, plugins or shada (see tests/bin/gh)
+exec "${REVUEY_FAKE_NVIM:-nvim}" -u NONE -i NONE --headless -l "$dir/fake_claude.lua" "$stdin_file" "$@"

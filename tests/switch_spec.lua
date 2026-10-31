@@ -173,7 +173,7 @@ local function fixture(kind, name)
   fixture_n = fixture_n + 1
   local d = h.tmpdir(name .. '-' .. fixture_n)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', kind, d }, { text = true }):wait()
+  local res = h.make_fixture(kind, d)
   assert(res.code == 0, res.stderr)
   return kind == '--remote-stack' and d .. '/review' or d
 end
@@ -761,13 +761,19 @@ end)
 
 h.test('hidden LSP buffers reload with the new files (or go); the user\'s buffers follow checktime', function()
   local dir = fixture('--stack', 'lsp')
+  -- distinct mtimes: what the switch writes is newer by far than what the buffers loaded (no
+  -- need to sleep past a second, the coarsest mtime a filesystem keeps)
+  local function backdate(path)
+    local t = os.time() - 60
+    assert(vim.uv.fs_utime(path, t, t))
+  end
+  local index = dir .. '/src/index.ts'
+  backdate(index)
   local s = open(dir)
   local lsp = require('revuey.lsp')
   -- on stack/cart: index.ts differs on stack/math
-  local index = dir .. '/src/index.ts'
   local hidden = lsp.file_buffer(index)
   local before = vim.api.nvim_buf_get_lines(hidden, 0, -1, false)
-  vim.uv.sleep(1100) -- distinct mtimes
   h.eq(true, do_switch(1, nil, 'stack/math').ok)
   local after = vim.api.nvim_buf_get_lines(hidden, 0, -1, false)
   h.eq(vim.fn.readfile(index), after, 'hidden buffer reloaded')
@@ -783,11 +789,11 @@ h.test('hidden LSP buffers reload with the new files (or go); the user\'s buffer
   -- the user's own clean buffer: autoread reloads it
   vim.o.autoread = true
   local cart = dir .. '/src/cart.ts'
+  backdate(cart)
   vim.cmd('tabnew ' .. vim.fn.fnameescape(cart))
   local user = vim.api.nvim_get_current_buf()
   local before_user = vim.api.nvim_buf_get_lines(user, 0, -1, false)
   vim.cmd('tabprevious')
-  vim.uv.sleep(1100)
   h.eq(true, do_switch(3, nil, 'stack/ui').ok)
   local after_user = vim.api.nvim_buf_get_lines(user, 0, -1, false)
   h.eq(vim.fn.readfile(cart), after_user, 'clean user buffer reloaded (autoread)')

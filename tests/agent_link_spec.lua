@@ -647,7 +647,7 @@ end)
 h.test('switching stack layers updates the registry; closing the review removes it', function()
   local stack = h.tmpdir('link-stack')
   vim.fn.delete(stack, 'rf')
-  h.eq(0, vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', stack }):wait().code)
+  h.eq(0, h.make_fixture('--stack', stack).code)
   local ready
   require('revuey').open({ cwd = stack, on_ready = function(x)
     ready = x

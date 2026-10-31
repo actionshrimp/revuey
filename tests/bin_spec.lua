@@ -103,7 +103,7 @@ end)
 h.test('bin/revuey passes arguments through (--stack on the stack fixture)', function()
   local d = h.tmpdir('bin-stack')
   vim.fn.delete(d, 'rf')
-  h.eq(0, vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code)
+  h.eq(0, h.make_fixture('--stack', d).code)
   local cmd = table.concat({
     'env',
     -- the spec's PATH: the pane's shell may prepend the developer's (version-manager shims

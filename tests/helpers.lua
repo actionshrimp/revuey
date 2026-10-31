@@ -130,6 +130,7 @@ function M.use_fake_gh(log, prs, scenario, threads, post)
   vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
   vim.env.REVUEY_FAKE_GH_CHECK_SCENARIO = nil
   vim.env.REVUEY_FAKE_GH_CHECK_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   local file = log .. '.prs.json'
   vim.fn.writefile({ vim.json.encode(prs or vim.empty_dict()) }, file)
   vim.env.REVUEY_FAKE_GH_PRS = file
@@ -172,11 +173,47 @@ function M.tmpdir(name)
   return d
 end
 
+---`scripts/make-fixture.sh [--stack] <dir>`, built once per `make test` run (cached in
+---$REVUEY_TEST_RUN, else once per spec) and copied: its dates are fixed, so every copy has the
+---same commits, and nothing in it names its own path. Other arguments (--remote-stack, whose
+---clones name their origin's path) run the script. Returns {code, stderr} as vim.system would.
+local fixture_cache
+function M.make_fixture(...)
+  local args = { ... }
+  local mode, dest = (#args == 2 and args[1] == '--stack') and 'stack' or (#args == 1 and 'default'), args[#args]
+  local function script(...)
+    return vim.system({ M.root .. '/scripts/make-fixture.sh', ... }, { text = true }):wait()
+  end
+  if not mode or (vim.uv.fs_stat(dest) and #vim.fn.readdir(dest) > 0) then
+    return script(...)
+  end
+  if not fixture_cache then
+    local run = os.getenv('REVUEY_TEST_RUN')
+    fixture_cache = (run and run ~= '') and vim.fs.joinpath(run, 'fixture-cache') or vim.fn.tempname()
+    vim.fn.mkdir(fixture_cache, 'p')
+  end
+  local cached = vim.fs.joinpath(fixture_cache, mode)
+  if not vim.uv.fs_stat(cached) then
+    -- built aside, then renamed into place: specs running at once never see half a fixture
+    local tmp = cached .. '.' .. vim.uv.os_getpid()
+    vim.fn.delete(tmp, 'rf')
+    local res = mode == 'stack' and script('--stack', tmp) or script(tmp)
+    if res.code ~= 0 then
+      return res
+    end
+    if not vim.uv.fs_rename(tmp, cached) then
+      vim.fn.delete(tmp, 'rf') -- another spec's copy got there first
+    end
+  end
+  vim.fn.mkdir(dest, 'p')
+  return vim.system({ 'cp', '-Rp', cached .. '/.', dest }, { text = true }):wait()
+end
+
 ---Create the TS fixture repo; returns its path.
 function M.fixture()
   local d = M.tmpdir('fixture')
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ M.root .. '/scripts/make-fixture.sh', d }, { text = true }):wait()
+  local res = M.make_fixture(d)
   assert(res.code == 0, 'make-fixture failed: ' .. (res.stderr or ''))
   return d
 end
@@ -276,8 +313,7 @@ end
 ---`origin.git` through tests/bin/fake-ssh (`M.use_fake_ssh`). Returns {dir, bare, author, oid =
 ---{name -> commit}, prs = PR file for M.use_fake_gh (`_tree` and per-branch lookups)}. Branch
 ---and commit names in `oid`: main, a, c_old, old1, old2, b, x, fork, c1, c2, d.
-function M.tree_repo(name)
-  local root = M.tmpdir(name)
+local function build_tree_repo(root)
   local bare, author, review = root .. '/origin.git', root .. '/author', root .. '/review'
   M.git(root, 'init', '--bare', '-q', '-b', 'main', bare)
   vim.fn.mkdir(author, 'p')
@@ -375,6 +411,23 @@ function M.tree_repo(name)
   return { dir = review, bare = bare, author = author, oid = oid, prs = prs }
 end
 
+-- built once per spec and copied: the dates are fixed, so a copy has the same commits; only the
+-- author's `origin` names a path (the review's is GitHub's URL)
+local tree_cache
+function M.tree_repo(name)
+  if not tree_cache then
+    tree_cache = build_tree_repo(M.tmpdir('tree-repo-cache'))
+  end
+  local root = M.tmpdir(name)
+  local from = vim.fs.dirname(tree_cache.bare)
+  local res = vim.system({ 'cp', '-Rp', from .. '/.', root }, { text = true }):wait()
+  assert(res.code == 0, 'copying the tree repo failed: ' .. (res.stderr or ''))
+  local r = vim.deepcopy(tree_cache)
+  r.bare, r.author, r.dir = root .. '/origin.git', root .. '/author', root .. '/review'
+  M.git(r.author, 'remote', 'set-url', 'origin', r.bare)
+  return r
+end
+
 ---Grow a tree_repo's GitHub side into a long, nested tree (PRs only: their commits are not in
 ---the clone, so their layers are "not fetched"): 15 open PRs below #11 (#100..#114, main ← #100
 ---← … ← #114 ← #11: a 19-PR path to #15), a 4-PR closed chain off #13 (#120..#123) with a 3-PR
@@ -441,6 +494,46 @@ function M.open_review(opts)
   end, 10)
   assert(session, 'review did not open')
   return session
+end
+
+---Run everything already scheduled (vim.schedule) by now, `rounds` times over (default 3: what
+---those callbacks schedule in turn runs too).
+function M.flush(rounds)
+  for _ = 1, rounds or 3 do
+    local done = false
+    vim.schedule(function()
+      done = true
+    end)
+    vim.wait(1000, function()
+      return done
+    end, 1)
+  end
+end
+
+---Wait until `cond()` holds once background work is over: no revuey task (git.async) left
+---unfinished and nothing left scheduled, with `cond()` still true after that. The positive end
+---of a burst of async work, instead of a fixed pause. Returns false after `ms` (default 10s).
+function M.settle(cond, ms)
+  cond = cond or function()
+    return true
+  end
+  local git = require('revuey.git')
+  local deadline = vim.uv.hrtime() + (ms or 10000) * 1e6
+  local function left()
+    return math.max(0, math.floor((deadline - vim.uv.hrtime()) / 1e6))
+  end
+  while true do
+    local ok = vim.wait(left(), function()
+      return not git.busy() and cond()
+    end, 5)
+    if not ok then
+      return false
+    end
+    M.flush()
+    if not git.busy() and cond() then
+      return true
+    end
+  end
 end
 
 ---Capture vim.notify messages while running fn (restored afterwards).

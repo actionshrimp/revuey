@@ -10,12 +10,25 @@ local M = {}
 ---@param fn fun()
 ---@param on_error? fun(err: string)
 local error_handlers = setmetatable({}, { __mode = 'k' }) ---@type table<thread, fun(err: string)>
+-- the tasks started by M.async that have not finished (weak: a task nothing can resume any more
+-- is gone with it)
+local live = setmetatable({}, { __mode = 'k' }) ---@type table<thread, true>
+
+---Is any task started by M.async still unfinished (waiting for a process, or for another task)?
+---Tests wait for this to know that a burst of background work is over.
+function M.busy()
+  return next(live) ~= nil
+end
 
 function M.async(fn, on_error)
   local co = coroutine.create(fn)
   error_handlers[co] = on_error
+  live[co] = true
   local function step(...)
     local ok, err = coroutine.resume(co, ...)
+    if coroutine.status(co) == 'dead' then
+      live[co] = nil
+    end
     if not ok then
       err = debug.traceback(co, err)
       if on_error then
@@ -52,6 +65,9 @@ end
 ---(so callers' cleanup always runs), or are reported.
 function M.resume(co, ...)
   local ok, err = coroutine.resume(co, ...)
+  if coroutine.status(co) == 'dead' then
+    live[co] = nil
+  end
   if not ok then
     local handler = error_handlers[co]
     err = debug.traceback(co, err)

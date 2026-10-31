@@ -147,6 +147,14 @@ attached (`screen_spec.lua`), which may be resized freely.
 - The README's Keymaps tables are generated from `lua/revuey/keys.lua` (the list `g?` shows):
   after changing a key or its description run `nvim --headless --clean -l scripts/readme-keys.lua`;
   `key_help_spec.lua` fails while the README differs or a keymap option is missing from the list.
+- Wait for a positive signal, never a fixed time. `h.settle(cond, ms)` waits until `cond()` holds with no revuey
+  task (`git.async`, see `git.busy()`) left unfinished and nothing left scheduled (`h.flush()`): the end of a burst
+  of background work (a refresh, a PR lookup, the layer stats, the tree's rounds), also after a review closed, to
+  show that nothing more happens. A `gh` that must answer late uses `REVUEY_FAKE_GH=slow` with a gate file
+  (`REVUEY_FAKE_GH_GATE`, answered when the test creates it) rather than a delay when the test can say when.
+  Fixtures from `h.fixture()`/`h.make_fixture()` (`scripts/make-fixture.sh` without `--remote-stack`) are built once
+  per run and copied, as is `h.tree_repo` once per spec (fixed dates: every copy has the same commits). The fake
+  `gh` and `claude` run their Lua half with `nvim -u NONE -i NONE` (half the start-up of `--clean`).
 - Skip with `h.skip(reason)` inside a test, or `h.skip_spec(reason)` at the top of a spec to skip all of it. Both print
   `  skip <spec> :: <test> — <reason>` (`<test>` is `(all tests)` for a whole spec).
 

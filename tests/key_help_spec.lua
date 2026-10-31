@@ -256,7 +256,7 @@ end)
 local function stack_fixture(name)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }, { text = true }):wait()
+  local res = h.make_fixture('--stack', d)
   assert(res.code == 0, res.stderr)
   h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
   return d

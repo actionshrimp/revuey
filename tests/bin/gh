@@ -2,7 +2,8 @@
 # Fake `gh` CLI for tests (never the real one). Put tests/bin first on PATH.
 #   REVUEY_FAKE_GH       scenario: ok (default), fail (exit 1), garbage (not JSON), ratelimit,
 #                        errors (GraphQL errors and no data), slow (ok after
-#                        $REVUEY_FAKE_GH_DELAY seconds, default 1), hang (sleeps 60s; its pid goes to
+#                        $REVUEY_FAKE_GH_DELAY seconds, default 1, or once the file
+#                        $REVUEY_FAKE_GH_GATE exists when that is set), hang (sleeps 60s; its pid goes to
 #                        $REVUEY_FAKE_GH_LOG.pid, as for every call)
 #                        `gh repo set-default --view` answers from git config (gh-resolved),
 #                        offline as gh does (only hang and slow apply to it)
@@ -39,6 +40,14 @@ if [ "${REVUEY_FAKE_GH:-}" = hang ]; then
   exec sleep 60
 fi
 if [ "${REVUEY_FAKE_GH:-}" = slow ]; then
-  sleep "${REVUEY_FAKE_GH_DELAY:-1}" # answers like ok, late
+  if [ -n "${REVUEY_FAKE_GH_GATE:-}" ]; then
+    # answers like ok once the test creates the gate file (at most 30s on)
+    i=0
+    while [ ! -e "$REVUEY_FAKE_GH_GATE" ] && [ $i -lt 1500 ]; do sleep 0.02; i=$((i+1)); done
+  else
+    sleep "${REVUEY_FAKE_GH_DELAY:-1}" # answers like ok, late
+  fi
 fi
-exec "${REVUEY_FAKE_NVIM:-nvim}" --clean --headless -l "$dir/fake_gh.lua" "$@"
+# -u NONE -i NONE: no config, plugins or shada (half the start-up of --clean, which matters
+# at hundreds of calls per spec; the XDG dirs are the spec's own, see tests/helpers.lua)
+exec "${REVUEY_FAKE_NVIM:-nvim}" -u NONE -i NONE --headless -l "$dir/fake_gh.lua" "$@"

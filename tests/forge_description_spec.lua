@@ -230,7 +230,7 @@ local GH_URL = 'git@github.com:acme/shop.git'
 local function stack_fixture(name)
   local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
-  local res = vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }, { text = true }):wait()
+  local res = h.make_fixture('--stack', d)
   assert(res.code == 0, res.stderr)
   h.git(d, 'remote', 'add', 'origin', GH_URL)
   return d
@@ -253,11 +253,23 @@ local function open(dir, opts)
 end
 
 local function idle(s)
-  assert(vim.wait(15000, function()
+  -- (h.settle: and every task done, what they scheduled (redraws) run)
+  assert(h.settle(function()
     return not s.refreshing and not s.pending and not s.pending_scope
       and s.forge and s.forge.ready and not s.forge.busy and not s.forge.scheduled
-  end, 10), 'refresh / PR lookup did not finish')
-  vim.wait(50)
+  end, 15000), 'refresh / PR lookup did not finish')
+end
+
+---The fake gh (scenario slow) answers only once the returned function is called, so a lookup
+---arrives exactly as late as the test needs, with no fixed delay.
+local gates = 0
+local function hold_gh()
+  gates = gates + 1
+  local gate = h.tmpdir('fd-gate-' .. gates) .. '/open'
+  vim.env.REVUEY_FAKE_GH_GATE = gate
+  return function()
+    vim.fn.writefile({}, gate)
+  end
 end
 
 local function reset()
@@ -506,7 +518,7 @@ h.test('arriving late: the view and cursor stay on the code; comments, ]m, marks
   reset()
   local calls = h.tmpdir('fd-gh-late') .. '/calls.ndjson'
   h.use_fake_gh(calls, prs({ cart = LONG }), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(stack_fixture('fd-late'))
   h.ok(s.forge and s.forge.busy, 'the lookup is still running')
   h.eq(nil, s.layout.description, 'not there yet')
@@ -521,8 +533,9 @@ h.test('arriving late: the view and cursor stay on the code; comments, ]m, marks
   local before = vim.api.nvim_win_call(s.diff_win, function()
     return { winline = vim.fn.winline(), col = vim.fn.col('.'), topline = vim.fn.line('w0') }
   end)
+  release()
   idle(s)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.ok(s.layout.description, 'arrived')
   local n = desc_rows(s)
   consistent(s)
@@ -583,7 +596,7 @@ h.test('a plain review: its branch\'s PR; an unchanged-line fold the user opened
   h.git(d, 'remote', 'add', 'origin', GH_URL)
   local calls = h.tmpdir('fd-gh-plain') .. '/calls.ndjson'
   h.use_fake_gh(calls, { ['acme/shop:feat'] = { pr({ number = 5, title = 'Feat', head = 'feat', body = LONG }) } }, 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(d, { base = 'main' })
   -- the long unchanged run is folded; the user opens it while the lookup runs
   local r10 = row_of(s, 'a.txt', 'ctx', 10)
@@ -591,8 +604,9 @@ h.test('a plain review: its branch\'s PR; an unchanged-line fold the user opened
   h.ok(fold ~= -1, 'context folded')
   keys(s, 'zo', r10)
   h.eq(-1, closed(s, r10))
+  release()
   idle(s)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.eq(5, s.layout.description.blocks[1].number, 'the plain review\'s PR')
   consistent(s)
   local n = desc_rows(s)
@@ -820,7 +834,7 @@ h.test('arriving late: a closed unchanged-line fold above the cursor stays close
   setup({ context_lines = 30 })
   local d = plain_repo('fd-zv')
   h.use_fake_gh(h.tmpdir('fd-gh-zv') .. '/calls.ndjson', feat(LONG), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(d, { base = 'main' })
   local r20 = row_of(s, 'a.txt', 'ctx', 20)
   h.ok(closed(s, r20) ~= -1, 'folded')
@@ -830,8 +844,9 @@ h.test('arriving late: a closed unchanged-line fold above the cursor stays close
     vim.fn.winrestview({ topline = 1, lnum = r39 })
   end)
   local winline = vim.api.nvim_win_call(s.diff_win, vim.fn.winline)
+  release()
   idle(s)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.ok(s.layout.description, 'arrived')
   h.ok(closed(s, row_of(s, 'a.txt', 'ctx', 20)) ~= -1, 'the fold above is still closed')
   h.eq(39, s.layout.map[cursor(s)].new_lnum)
@@ -846,7 +861,7 @@ h.test('arriving late: another window on the review keeps its line and its view'
   setup({ context_lines = 30 })
   local d = plain_repo('fd-split')
   h.use_fake_gh(h.tmpdir('fd-gh-split') .. '/calls.ndjson', feat(LONG), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(d, { base = 'main' })
   vim.api.nvim_set_current_win(s.diff_win)
   vim.cmd('vsplit')
@@ -864,8 +879,9 @@ h.test('arriving late: another window on the review keeps its line and its view'
     end)
   end
   local v2 = view_of(w2)
+  release()
   idle(s)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.ok(s.layout.description)
   h.eq(39, s.layout.map[vim.api.nvim_win_get_cursor(w2)[1]].new_lnum, 'the split follows its line')
   h.eq({ v2[1] + desc_rows(s), v2[2] }, view_of(w2), 'the split\'s view: top shifted by the rows, cursor on the same window line')
@@ -879,7 +895,7 @@ h.test('arriving late: drawn outside the lookup\'s task, with no git call (a com
   reset()
   local calls = h.tmpdir('fd-gh-task') .. '/calls.ndjson'
   h.use_fake_gh(calls, prs({ cart = LONG }), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(stack_fixture('fd-task'), { mode = 'committed' })
   h.eq('committed', s.review.mode)
   local git = require('revuey.git')
@@ -912,6 +928,7 @@ h.test('arriving late: drawn outside the lookup\'s task, with no git call (a com
   local r = row_of(s, 'src/cart.ts', 'add', 13)
   vim.api.nvim_set_current_win(s.diff_win)
   vim.api.nvim_win_set_cursor(s.diff_win, { r, 0 })
+  release()
   local ok, err = pcall(idle, s)
   for name, fn in pairs(wrapped) do
     view[name] = fn
@@ -919,7 +936,7 @@ h.test('arriving late: drawn outside the lookup\'s task, with no git call (a com
   for name, fn in pairs(git_orig) do
     git[name] = fn
   end
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   assert(ok, err)
   h.ok(s.layout.description, 'arrived')
   h.eq({ false }, in_task, 'drawn once, not inside the lookup task')
@@ -1078,7 +1095,7 @@ h.test('arriving late with threads off: comment rows, signs, threads and word di
   local d = plain_repo('fd-nothreads')
   local calls = h.tmpdir('fd-gh-nothreads') .. '/calls.ndjson'
   h.use_fake_gh(calls, feat(LONG), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  local release = hold_gh() -- (the lookup answers once released: it arrives late)
   local s = open(d, { base = 'main' })
   local c41 = add_comment(s, 'a.txt', 41, 'Why 41?')
   local old41 = row_of(s, 'a.txt', 'add', 41)
@@ -1086,8 +1103,9 @@ h.test('arriving late with threads off: comment rows, signs, threads and word di
   -- the word diff of the pair has been looked at (drawn) before the description arrives
   h.eq(row_of(s, 'a.txt', 'del', 41), s.pair_of(old41))
   h.ok(s.word_spans(old41 - 1))
+  release()
   idle(s)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.ok(s.layout.description, 'arrived')
   h.eq(0, #vim.tbl_filter(function(x)
     return (x.argv[5] or ''):find('reviewThreads', 1, true) ~= nil
@@ -1349,11 +1367,19 @@ h.test('closing the review while the description loads: nothing is drawn afterwa
   reset()
   local calls = h.tmpdir('fd-gh-close') .. '/calls.ndjson'
   h.use_fake_gh(calls, prs({ cart = LONG }), 'slow')
-  vim.env.REVUEY_FAKE_GH_DELAY = '1'
+  hold_gh() -- never released: only closing the review ends the lookup
   local s = open(stack_fixture('fd-close'))
+  h.ok(vim.wait(10000, function()
+    return s.forge and s.forge.job ~= nil
+  end, 5), 'gh is running')
+  local pid = s.forge.job.pid
   view.close()
-  vim.wait(1500)
-  vim.env.REVUEY_FAKE_GH_DELAY = nil
+  -- gh stopped with the review, and whatever its end scheduled has run
+  h.ok(vim.wait(5000, function()
+    return vim.uv.kill(pid, 0) ~= 0
+  end, 5), 'gh stopped')
+  h.ok(h.settle(nil, 5000))
+  vim.env.REVUEY_FAKE_GH_GATE = nil
   h.ok(s.cleaned)
   h.eq(nil, s.layout.description)
   h.eq(nil, view.session)

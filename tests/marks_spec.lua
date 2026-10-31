@@ -472,7 +472,7 @@ end)
 h.test('layer and full scope keep separate unit marks, even for identical hunks', function()
   local d = h.tmpdir('marks-stack')
   vim.fn.delete(d, 'rf')
-  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  assert(h.make_fixture('--stack', d).code == 0)
   view.close()
   require('revuey').open({ cwd = d, on_ready = function(x)
     s = x
