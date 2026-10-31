@@ -161,8 +161,8 @@ h.test('large visible file: main loop never blocked beyond the gap budget', func
   start(repo, 'main', 30, 120, { collapse_large_files = 1000000, max_file_bytes = 10 * 1024 * 1024 })
   h.ok(wait_syntax(3), 'big.lua highlights did not load')
   local gap = child.lua_get('_G.revuey_maxgap')
-  -- Shared CI runners are slower and noisier; CI raises the budget via REVUEY_TEST_MAX_GAP_MS.
-  local max_gap = tonumber(os.getenv('REVUEY_TEST_MAX_GAP_MS')) or 50
+  -- 100ms catches real blocking (users notice 300ms+) without flaking on a loaded machine; override with REVUEY_TEST_MAX_GAP_MS.
+  local max_gap = tonumber(os.getenv('REVUEY_TEST_MAX_GAP_MS')) or 100
   io.write(('    (largest main-loop gap: %.0fms, budget %dms)\n'):format(gap, max_gap))
   h.ok(gap < max_gap, ('main loop blocked for %.0fms'):format(gap))
 end)
@@ -938,7 +938,7 @@ h.test('keys: the winbar hint on a comment, the g? float, the cost of the hint',
     child.type_keys('j')
   end
   local gap = child.lua_get('_G.revuey_maxgap')
-  local max_gap = tonumber(os.getenv('REVUEY_TEST_MAX_GAP_MS')) or 50
+  local max_gap = tonumber(os.getenv('REVUEY_TEST_MAX_GAP_MS')) or 100
   io.write(('    (largest main-loop gap moving over comments: %.0fms, budget %dms)\n'):format(gap, max_gap))
   h.ok(gap < max_gap, ('main loop blocked for %.0fms'):format(gap))
   child.lua([[

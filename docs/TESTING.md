@@ -168,5 +168,5 @@ The job summary lists the `  skip …` lines printed by the test harness, so ski
 through `h.skip`/`h.skip_spec` to appear there.
 - The TypeScript highlight check in `e2e_spec.lua` skips in CI, as it does locally: Neovim bundles no TypeScript
   highlights query, so providing the parser alone would not enable it.
-- CI sets `REVUEY_TEST_MAX_GAP_MS=100` for the main-loop responsiveness check in `screen_spec.lua` (default 50ms),
-  because shared runners are slower and noisier than a laptop.
+- The main-loop responsiveness check in `screen_spec.lua` allows a 100ms gap by default (`REVUEY_TEST_MAX_GAP_MS` overrides it; CI sets 100 explicitly):
+  enough to catch real blocking (users notice 300ms and more) without flaking on a loaded machine.
