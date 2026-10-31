@@ -5,8 +5,9 @@ if vim.fn.executable('tmux') ~= 1 then
 end
 
 local socket = 'revuey-test-' .. vim.fn.getpid()
+-- a server of its own (-L), without the developer's ~/.tmux.conf and its plugins (-f)
 local function tmux(...)
-  return vim.system({ 'tmux', '-L', socket, ... }, { text = true }):wait()
+  return vim.system({ 'tmux', '-L', socket, '-f', '/dev/null', ... }, { text = true }):wait()
 end
 local function capture()
   return tmux('capture-pane', '-p', '-t', 'smoke').stdout or ''
@@ -37,6 +38,9 @@ h.test('bin/revuey opens the review, ignoring $NVIM, and q quits', function()
   local cmd = table.concat({
     'env',
     'NVIM=/nonexistent/nvim.sock',
+    -- the spec's PATH: the pane's shell may prepend the developer's (version-manager shims
+    -- that prompt in a terminal)
+    'PATH=' .. vim.fn.shellescape(vim.env.PATH),
     'XDG_CONFIG_HOME=' .. home .. '/config',
     'XDG_DATA_HOME=' .. home .. '/data',
     'XDG_STATE_HOME=' .. home .. '/state',
@@ -102,6 +106,9 @@ h.test('bin/revuey passes arguments through (--stack on the stack fixture)', fun
   h.eq(0, vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code)
   local cmd = table.concat({
     'env',
+    -- the spec's PATH: the pane's shell may prepend the developer's (version-manager shims
+    -- that prompt in a terminal)
+    'PATH=' .. vim.fn.shellescape(vim.env.PATH),
     'XDG_CONFIG_HOME=' .. home .. '/config',
     'XDG_DATA_HOME=' .. home .. '/data',
     'XDG_STATE_HOME=' .. home .. '/state',

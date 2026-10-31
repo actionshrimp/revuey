@@ -115,6 +115,16 @@ attached (`screen_spec.lua`), which may be resized freely.
 
 ## Running
 - `make test` runs everything; each spec runs in a fresh `nvim --headless --clean` so specs cannot leak state.
+  Specs run in parallel, `JOBS` at a time (default: one per CPU thread; `make test JOBS=1` runs them one by one),
+  started slowest first in the order of `SPECS` in the `Makefile`; `screen_spec.lua` (`ALONE`) runs afterwards
+  with nothing beside it, because it measures main-loop gaps. `scripts/run-tests.lua` prints each spec's output as
+  one block when it ends, then a summary with every spec's time (re-sort `SPECS` from it when the order drifts)
+  and the ok/FAIL/skip counts. `REVUEY_TEST_PROFILE=1` adds each test's time to its `ok` line.
+- Specs share nothing on disk: each gets its own `<run dir>/<spec>/` as `REVUEY_TEST_TMP` (every `h.tmpdir`, the
+  fixture) with its `TMPDIR` inside, and `tests/helpers.lua` points `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `XDG_STATE_HOME` and `XDG_CACHE_HOME` there too, so the default state dir, `revuey.log` and `lsp.log` are the
+  spec's, never the developer's. Tmux servers are per process (`-L` with the pid, a private `TMUX_TMPDIR`, and
+  `-f /dev/null` so the developer's `~/.tmux.conf` never loads); git never reads the developer's config.
 - Specs must not depend on the developer's own Neovim config, parsers excepted: tests that need a tree-sitter parser
   or query skip clearly when it is unavailable rather than failing obscurely.
 - Specs never reach the developer's terminal multiplexer. `tests/helpers.lua` unsets `TMUX*`,

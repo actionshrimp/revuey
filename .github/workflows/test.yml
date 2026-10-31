@@ -26,7 +26,8 @@ env:
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
   TERM: xterm-256color
-  # Main-loop responsiveness budget for screen_spec (50ms by default); shared runners are slower.
+  # Main-loop responsiveness budget for screen_spec (50ms by default; it runs alone, after the
+  # parallel specs); shared runners are slower.
   REVUEY_TEST_MAX_GAP_MS: 100
   # sha256 of nvim-linux-x86_64.tar.gz for NVIM_VERSION (from the GitHub release asset digest).
   NVIM_SHA256: 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
@@ -78,7 +79,8 @@ jobs:
           tsc --version
 
       - name: make test
-        run: make test 2>&1 | tee test-output.log
+        # specs run in parallel, one per core (`nproc`); screen_spec runs alone afterwards
+        run: make test JOBS="$(nproc)" 2>&1 | tee test-output.log
 
       - name: Summarise skipped tests
         if: always()

@@ -12,6 +12,18 @@ vim.env.GIT_AUTHOR_NAME, vim.env.GIT_AUTHOR_EMAIL = 'revuey', 'revuey@example.co
 vim.env.GIT_COMMITTER_NAME, vim.env.GIT_COMMITTER_EMAIL = 'revuey', 'revuey@example.com'
 vim.env.GIT_AUTHOR_DATE, vim.env.GIT_COMMITTER_DATE = '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
 
+-- Neovim's data, state (logs: revuey.log, lsp.log), cache and config dirs are the spec's own, for
+-- it and everything it starts: never the developer's, and never another spec's (specs run in
+-- parallel). Parsers are still found in the real ~/.local/share (M.add_parsers_rtp).
+do
+  local xdg = vim.fs.joinpath(os.getenv('REVUEY_TEST_TMP') or vim.fn.tempname(), '.xdg')
+  for _, kind in ipairs({ 'CONFIG', 'DATA', 'STATE', 'CACHE' }) do
+    local d = xdg .. '/' .. kind:lower()
+    vim.fn.mkdir(d, 'p')
+    vim.env['XDG_' .. kind .. '_HOME'] = d
+  end
+end
+
 -- Never reach the user's terminal multiplexers (their live tmux, herdr, zellij or cmux session):
 -- drop every variable that points at one, give tmux a private socket dir (so even a plain
 -- `tmux` talks to a server of the tests' own), and put blockers for the others first on PATH;
@@ -665,12 +677,16 @@ local function on_error(err)
   return debug.traceback(tostring(err), 2)
 end
 
+-- REVUEY_TEST_PROFILE=1: each ok line ends with the test's time
+local profile = os.getenv('REVUEY_TEST_PROFILE') == '1'
+
 function M.run()
   local file = spec_file(2)
   for _, t in ipairs(tests) do
+    local t0 = vim.uv.hrtime()
     local ok, err = xpcall(t.fn, on_error)
     if ok then
-      io.write('  ok   ' .. file .. ' :: ' .. t.name .. '\n')
+      io.write('  ok   ' .. file .. ' :: ' .. t.name .. (profile and ('  (%.2fs)'):format((vim.uv.hrtime() - t0) / 1e9) or '') .. '\n')
     elseif type(err) == 'table' and err.revuey_skip then
       skip_line(file, t.name, err.revuey_skip)
     else
