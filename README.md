@@ -243,7 +243,9 @@ lower layer, `gS` (on a layer row in the panel, or in the diff for the layer bei
 - **One at a time:** a `gS` (or `]s`) while a switch runs is dropped with a message.
 
 Afterwards the review refreshes: the layer gets `@`, the working tree and the `●` markers, and the
-view stays on it (cursor and folds as you left them). The session registry records the new branch
+view moves to it (cursor and folds as you left them there), whichever layer you were viewing:
+`gS` on a layer row in the full-stack scope views that layer, and the guide view shows its guide
+(or offers one). A refused switch leaves the view as it was. The session registry records the new branch
 (`checked_out`, shown by `bin/revuey sessions`) for agents. revuey's hidden LSP buffers reload (or
 are dropped when the file is gone), then `:checktime` runs, so your own buffers follow your
 `autoread` setting. A failing `post-checkout` hook gives a warning, but the switch happened and

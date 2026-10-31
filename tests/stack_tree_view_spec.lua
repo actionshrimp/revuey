@@ -791,6 +791,140 @@ test('HEAD on a branch of the tree (gS to a layer): the path stays, @ follows HE
   view.close()
 end)
 
+---gS on layer `index` (view.switch_layer), waiting until HEAD is `branch` and the review is idle.
+local function switch_to(s, index, branch)
+  local done
+  local msgs, restore = h.capture_notify()
+  view.switch_layer(index, { on_done = function(ok, msg)
+    done = { ok = ok, msg = msg }
+  end })
+  h.ok(vim.wait(15000, function()
+    return done ~= nil
+  end, 10), 'switch did not finish')
+  h.ok(done.ok, done.msg)
+  h.ok(vim.wait(15000, function()
+    local l = s.review.stack and s.review.stack.layers[s.review.stack.head_index or 0]
+    return wait_idle(s) and require('revuey.git').current_branch(s.review.root) == branch and l and l.name == branch
+  end, 20), 'HEAD layer did not become ' .. branch)
+  h.ok(wait_idle(s))
+  restore()
+  return msgs
+end
+
+---The viewed layer's name (▶) and HEAD's (@), from the panel.
+local function marks(s)
+  local text = table.concat(api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')
+  return { (text:match('▶[@ ] (%S+)')), (text:match('[▶ ]@ (%S+)')) }
+end
+
+test('gS in a GitHub stack views the switched layer: the top, the bottom, the middle (the tree kept)', function()
+  local s, r, calls = open('tree-switch-follows')
+  local n = #tree_calls(calls)
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c' }, names(s))
+  h.eq({ kind = 'layer', index = 2 }, s.scope)
+  switch_to(s, 3, 'stack/c')
+  h.eq({ 'origin/stack/a', 'stack/b', 'stack/c' }, names(s))
+  h.eq(3, s.scope.index, 'the switched layer, not the old one')
+  h.eq({ 'stack/c', 'stack/c' }, marks(s))
+  switch_to(s, 1, 'stack/a')
+  h.eq(1, s.scope.index, 'the bottom, not the route\'s start')
+  h.eq({ 'stack/a', 'stack/a' }, marks(s))
+  view.set_scope({ kind = 'layer', index = 3 })
+  h.ok(wait_idle(s))
+  switch_to(s, 2, 'stack/b')
+  h.eq(2, s.scope.index, 'the middle, not the top')
+  h.eq({ 'stack/b', 'stack/b' }, marks(s))
+  h.eq(n, #tree_calls(calls), 'the tree is kept: HEAD stayed on its branches')
+  -- the guide view (no guide yet) follows too: its scope is the switched layer
+  view.set_view('guide')
+  h.ok(wait_idle(s))
+  switch_to(s, 3, 'stack/c')
+  h.eq(3, s.scope.index)
+  h.eq('guide', s.view_mode)
+  h.ok(view.guide_winbar(s, s.diff_win):find('layer stack/c', 1, true), view.guide_winbar(s, s.diff_win))
+  view.set_view('diff')
+  h.ok(wait_idle(s))
+  switch_to(s, 2, 'stack/b')
+  -- a chosen path: gS views the switched layer, not the chosen PR's
+  tv.select(s, 13)
+  h.ok(wait_idle(s))
+  h.eq(3, s.scope.index)
+  switch_to(s, 1, 'stack/a')
+  h.eq(1, s.scope.index, 'the switched layer, not the chosen PR\'s')
+  h.eq(13, s.gh_tree.sel, 'the path stays chosen')
+  h.eq({ 'stack/a', 'stack/a' }, marks(s))
+  -- ]s with switch_on_navigate: the view and HEAD move together
+  require('revuey.config').options.stack.switch_on_navigate = true
+  local ok, err = pcall(function()
+    api.nvim_set_current_win(s.diff_win)
+    local _, restore = h.capture_notify()
+    api.nvim_feedkeys(vim.keycode(']s'), 'mtx', false)
+    h.ok(vim.wait(15000, function()
+      return require('revuey.git').current_branch(r.dir) == 'stack/b' and wait_idle(s)
+        and s.review.stack.layers[s.review.stack.head_index].name == 'stack/b'
+    end, 20), ']s switched')
+    restore()
+    h.eq(2, s.scope.index)
+    h.eq({ 'stack/b', 'stack/b' }, marks(s))
+  end)
+  require('revuey.config').options.stack.switch_on_navigate = false
+  assert(ok, err)
+  view.close()
+end)
+
+test('HEAD on the top PR\'s branch, gS to the middle: the middle is viewed, not the top', function()
+  local s = open('tree-switch-from-top', nil, {
+    prepare = function(r)
+      h.git(r.dir, 'checkout', '-q', '--track', 'origin/stack/c')
+    end,
+  })
+  h.eq({ 'origin/stack/a', 'stack/b', 'stack/c' }, names(s))
+  h.eq(3, s.scope.index)
+  view.set_scope({ kind = 'layer', index = 1 })
+  h.ok(wait_idle(s))
+  switch_to(s, 2, 'stack/b')
+  h.eq(2, s.scope.index, 'the middle layer, not the top')
+  h.eq({ 'stack/b', 'stack/b' }, marks(s))
+  view.close()
+end)
+
+test('gS to a local layer above the top PR (a first fetch for its branch): that layer is viewed', function()
+  local s, r = open('tree-switch-local-above')
+  fetch_and_wait(s)
+  h.git(r.dir, 'branch', 'stack/d', 'origin/stack/d')
+  h.git(r.dir, 'branch', 'stack/e', 'stack/d')
+  h.git(r.dir, 'checkout', '-q', 'stack/e')
+  h.write(r.dir, 'src/e.ts', 'export const e = 1\n')
+  h.git(r.dir, 'add', '-A')
+  h.git(r.dir, 'commit', '-q', '-m', 'e')
+  h.git(r.dir, 'checkout', '-q', 'stack/b')
+  view.refresh({ force = true })
+  h.ok(wait_idle(s))
+  h.eq({ 'origin/stack/a', 'stack/b', 'origin/stack/c', 'stack/d', 'stack/e' }, names(s))
+  h.eq(2, s.scope.index)
+  local done
+  view.switch_layer(5, { on_done = function(ok)
+    done = ok
+  end })
+  h.ok(vim.wait(15000, function()
+    return done ~= nil
+  end, 10))
+  h.eq(true, done)
+  h.ok(vim.wait(15000, function()
+    return s.gh_tree.fetched and not s.gh_tree.running and not s.gh_tree.loading and wait_idle(s)
+      and s.review.stack and s.review.stack.layers[s.scope.index]
+  end, 20))
+  vim.wait(300, function()
+    return false
+  end)
+  h.ok(wait_idle(s))
+  local stack = s.review.stack
+  h.eq('stack/e', stack.layers[s.scope.index].name, vim.inspect(names(s)))
+  h.eq('stack/e', marks(s)[1])
+  h.eq('stack/e', marks(s)[2])
+  view.close()
+end)
+
 test('only R refetches the tree: not the refetch after a post', function()
   local s, _, calls = open('tree-post-refetch')
   local n = #tree_calls(calls)

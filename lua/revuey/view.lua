@@ -3116,13 +3116,33 @@ function M.check_refs(s)
   end, function() end)
 end
 
----Keep the scope on the same layer (by name) when the stack is re-detected.
+---The layer of the checked-out HEAD in `stack`: the layer marked `@`, else the one of `branch`
+---(the branch just switched to, by name or state key). Not `stack.current`: a GitHub stack's
+---current layer is the one it views (the chosen PR's, or the route's start), wherever HEAD is.
+local function head_index(stack, branch)
+  for i, l in ipairs(stack.layers) do
+    if l.is_head then
+      return i
+    end
+  end
+  for i, l in ipairs(stack.layers) do
+    if branch and (l.name == branch or l.state_branch == branch) then
+      return i
+    end
+  end
+end
+
+---Keep the scope on the same layer (by name) when the stack is re-detected. `head`: the layer
+---HEAD is on (after a switch: the switched layer is the one viewed).
 local function rescope(old_stack, new_stack, scope)
   if not new_stack then
     return nil
   end
-  if not scope or scope.head then
+  if not scope then
     return { kind = 'layer', index = new_stack.current }
+  end
+  if scope.head then
+    return { kind = 'layer', index = head_index(new_stack, scope.branch) or new_stack.current }
   end
   if scope.kind == 'full' then
     return scope
@@ -3457,7 +3477,7 @@ function M.switch_layer(index, o)
     lsp.checktime()
     pcall(vim.cmd, 'checktime')
     if M.session == s and not s.cleaned then
-      M.refresh({ scope = { kind = 'layer', head = true }, force = true })
+      M.refresh({ scope = { kind = 'layer', head = true, branch = p.branch }, force = true })
     end
     if o.on_done then
       o.on_done(true, msg)

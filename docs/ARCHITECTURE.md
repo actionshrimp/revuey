@@ -230,9 +230,13 @@ are in `reports/Terminal code review tool landscape.md`.
    names, a colleague's start) never become layers; a detached worktree shows the whole remote
    stack. After a switch: `lsp.checktime()` (hidden buffers reloaded, or wiped when the file is
    gone), then `:checktime` for the user's buffers (their autoread decides; modified buffers are
-   never forced), then `refresh{scope = {head = true}}`: `rescope` maps it to the new HEAD layer,
-   which keeps the scope on the switched layer (same scope key: per-scope cursor and folds) and
-   gives it the working tree. The registry entry gains `checked_out` (the HEAD layer's branch, nil
+   never forced), then `refresh{scope = {head = true, branch}}`: `rescope` maps it to the new HEAD
+   layer (`is_head`, else the switched branch by name or state key; never `stack.current`, which
+   for a GitHub stack is the viewed layer), so the switched layer is the viewed one whatever was
+   viewed before (its scope key: per-scope cursor and folds, its guide) and gets the working tree.
+   `gS` on a layer row from the full-stack scope views that layer too: a switch says "work on
+   this layer now" (the agent is told the review shows it), and a full-stack view would leave
+   `@` without `▶`. A refused or failed switch never refreshes, so the view stays. The registry entry gains `checked_out` (the HEAD layer's branch, nil
    when detached) next to the viewed `branch`; `bin/revuey sessions` shows it when they differ.
    Remote layers record a `local_copy` (a local branch tracking them off the line) for the panel
    hint. The panel draws a `virt_lines` hint (`panel.switch_hint`) under the layer row the cursor
@@ -1767,7 +1771,10 @@ are in `reports/Terminal code review tool landscape.md`.
       default route of one PR leaves a plain review (no stack) until a path is chosen.
     - **HEAD moves** (`follow_head`, each refresh; the tree remembers `for_branch`). To a branch
       of the tree (`gS` to a layer, a checkout of a PR's branch): the tree stays, the path too
-      when the branch is on it (else the route through its PR), and `@` follows HEAD. To any
+      when the branch is on it (else the route through its PR), and `@` follows HEAD; after `gS`
+      the view does too (the switch refreshes with scope `{head = true, branch}`, and `rescope`
+      takes HEAD's layer, never `stack.current`, which here is the viewed layer: the chosen
+      PR's, else the route's start). A checkout elsewhere leaves the view on its layer. To any
       other branch: that branch's own stack, from a tree this review fetched before that has
       the branch (kept per branch it was fetched for, found by any branch in it), else a first
       fetch for it (decision 20 allows it: never fetched in this review), with git detection

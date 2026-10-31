@@ -918,4 +918,54 @@ h.test('stack: layer and full scope have separate guides', function()
   h.ok(s.guide.resolved, 'layer 2 got its guide')
 end)
 
+h.test('stack: gS in the guide view shows the switched layer\'s guide (or none yet), never the old one', function()
+  vim.env.REVUEY_FAKE_CLAUDE = 'good'
+  local d = h.tmpdir('guide-switch')
+  vim.fn.delete(d, 'rf')
+  assert(vim.system({ h.root .. '/scripts/make-fixture.sh', '--stack', d }):wait().code == 0)
+  local s = open(d, { base = '' })
+  h.eq({ kind = 'layer', index = 2 }, s.scope)
+  -- a guide for stack/ui (viewed, not checked out), none for stack/math
+  view.set_scope({ kind = 'layer', index = 3 })
+  idle(s)
+  view.guide_command(true)
+  wait_job(s)
+  local ui_ks = s.guide.ks
+  h.ok(s.guide.resolved)
+  -- back on stack/cart (no guide), in the guide view; gS on stack/ui's panel row
+  keys(s, '[s')
+  h.eq(2, s.scope.index)
+  h.eq('guide', s.view_mode)
+  h.eq(nil, s.guide.resolved)
+  local function gS(index, branch)
+    local done
+    view.switch_layer(index, { on_done = function(ok)
+      done = ok
+    end })
+    assert(vim.wait(10000, function()
+      return done ~= nil
+    end, 10))
+    h.eq(true, done)
+    assert(vim.wait(10000, function()
+      return not s.refreshing and not s.pending and require('revuey.git').current_branch(d) == branch
+        and s.review.stack.layers[s.scope.index].is_head
+    end, 10))
+  end
+  gS(3, 'stack/ui')
+  h.eq({ kind = 'layer', index = 3 }, s.scope)
+  h.eq('guide', s.view_mode, 'stays in the guide view')
+  h.eq(ui_ks, s.guide.ks)
+  h.ok(s.guide.resolved, 'stack/ui\'s guide')
+  h.ok(view.guide_winbar(s, s.diff_win):find('layer stack/ui', 1, true), view.guide_winbar(s, s.diff_win))
+  -- gS to stack/math from stack/ui's guide: none yet, not stack/ui's over stack/math's diff
+  gS(1, 'stack/math')
+  h.eq({ kind = 'layer', index = 1 }, s.scope)
+  h.eq('guide', s.view_mode)
+  h.ok(s.guide.ks ~= ui_ks)
+  h.eq(nil, s.guide.resolved)
+  h.ok(find(s, 'No guide for this review yet.'), text(s))
+  h.ok(view.guide_winbar(s, s.diff_win):find('layer stack/math', 1, true), view.guide_winbar(s, s.diff_win))
+  view.close()
+end)
+
 h.run()
