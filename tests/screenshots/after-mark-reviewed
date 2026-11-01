@@ -18,7 +18,7 @@
 17|     A  Total.tsx                  +5 −0│      8 +     .addItem({ name: "apple", price: 0.5, quantity: 6 })             
 18|                                        │      9 +     .addItem({ name: "pear", price: 0.75, quantity: 2 });            
 19| <CR> show  mr reviewed  gp diff        │     10 +   console.log(capitalize("total"), formatCurrency(cart.total()));    
-20| ]c [c hunk  ]f [f file  <Tab> fold     │     11 +   console.log(cart.describe());                                      
+20| ]h [h hunk  ]f [f file  <Tab> fold     │     11 +   console.log(cart.describe());                                      
 21| gd def  K hover  go open  R refresh    │  9  12     console.log("area", circleArea(2));                                
 22| gu committed/working tree  q close     │ 10     -   console.log("sum", add(2, 3));                                     
 23| gG AI guide                            │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));             

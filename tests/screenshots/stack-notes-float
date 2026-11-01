@@ -18,7 +18,7 @@
 17|     A  b.t│    dave/abc-1058-report-flow  old copy of stack/a                   x ignore  X pattern│         
 18|           │    dave/abc-1061-cleanup  old copy of stack/a                       x ignore  X pattern│         
 19| <CR> show │                                                                                        │         
-20| ]c [c hunk│x ignore branch · X ignore pattern · <CR> choose · q close                              │         
+20| ]h [h hunk│x ignore branch · X ignore pattern · <CR> choose · q close                              │         
 21| gd def  K ╰────────────────────────────────────────────────────────────────────────────────────────╯         
 22| gu committed/working tree  q close     │                                                                     
 23| gG AI guide                            │                                                                     

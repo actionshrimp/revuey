@@ -682,7 +682,7 @@ end
 ---Place the GitHub review threads of the scope's open PRs (forge_view.thread_items) and add them
 ---to `attach` like comments: on their lines, else in a group at the end of their file ("not
 ---shown here": outdated, changed locally, outside the hunks), else at the end of the review.
----Gutter bars, `cover` (so `cz`, `cr` and `gx` find them) and `jump` (`]m`, the list) as for
+---Gutter bars, `cover` (so `cz`, `cr` and `gx` find them) and `jump` (`]c`, the list) as for
 ---comments; the items live in `c.forge_items` only, never in the comments store.
 function M.place_forge(s, ctx, idx, attach)
   local c = cm(s)
@@ -1525,7 +1525,8 @@ local function goto_row(s, row)
   end)
 end
 
----`]m` / `[m`: next or previous comment (takes a count).
+---`]c` / `[c`: next or previous comment (local, agent, AI, GitHub threads unless gH hides them;
+---takes a count).
 function M.next(s, dir)
   if not s or not s.cm or not s.cm.jump then
     return

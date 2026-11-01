@@ -469,19 +469,19 @@ h.test('a comment deleted elsewhere is not resurrected by an edit, a draft or a 
   h.eq(nil, comments.get(store(), c.id))
 end)
 
-h.test(']m and [m move between comments; gC hides and shows the threads', function()
+h.test(']c and [c move between comments; gC hides and shows the threads', function()
   -- a.txt's header (row 1) has a file-level comment
   vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
-  keys(s, ']m')
+  keys(s, ']c')
   h.eq(row_of('m.txt', 'ctx', 19), vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  keys(s, '[m')
+  keys(s, '[c')
   h.eq(file_row('a.txt'), vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  keys(s, ']m')
+  keys(s, ']c')
   h.eq(row_of('m.txt', 'ctx', 19), vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  keys(s, '2]m')
+  keys(s, '2]c')
   local r2 = vim.api.nvim_win_get_cursor(s.diff_win)[1]
   h.ok(r2 > row_of('m.txt', 'ctx', 19), r2)
-  keys(s, '[m')
+  keys(s, '[c')
   h.ok(vim.api.nvim_win_get_cursor(s.diff_win)[1] < r2)
   local row = row_of('m.txt', 'add', 20)
   h.ok(vlines(row) ~= '')
@@ -730,7 +730,7 @@ h.test('two instances: comments made in each are merged, live', function()
 end)
 
 -- Regression (review): comments on a file that left the review vanished from both views.
-h.test('comments on files no longer in the review: a group at the end, ]m, panel count, list', function()
+h.test('comments on files no longer in the review: a group at the end, ]c, panel count, list', function()
   local whole = by_body('whole file')
   h.ok(whole, 'a.txt has a file-level comment')
   -- a.txt was added on the branch; removing it from the working tree takes it out of the review
@@ -743,9 +743,9 @@ h.test('comments on files no longer in the review: a group at the end, ]m, panel
   h.ok(v:find('Comments on files no longer in this review', 1, true), v)
   h.ok(v:find('a.txt', 1, true), v)
   h.ok(v:find('whole file', 1, true), v)
-  -- ]m reaches it
+  -- ]c reaches it
   vim.api.nvim_win_set_cursor(s.diff_win, { last - 1, 0 })
-  keys(s, ']m')
+  keys(s, ']c')
   h.eq(last, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   -- the panel counts them
   local panel = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')

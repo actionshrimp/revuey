@@ -15,7 +15,7 @@
 14|   ◐ M  m.txt                  1/3 +3 −3│            Introduces the new total helper.                                   
 15|                                        │      1 + new                                                                  
 16| ]] [[ section  mr reviewed             │      2 + file                                                                 
-17| ]c [c hunk  <Tab> fold  gp diff        │                                                                               
+17| ]h [h hunk  <Tab> fold  gp diff        │                                                                               
 18| gd def  K hover  go open  R refresh    │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1                             
 19| gG diff view  gR regenerate  q close   │ 17  17   line 17                                                              
 20| g? all keys                            │ 18  18   line 18                                                              

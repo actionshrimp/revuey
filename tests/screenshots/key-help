@@ -14,17 +14,17 @@
 13|     D  legacy.ts  │   ga       ask the agent about this line or the selection                        │                 
 14|     M  math.ts    │   cs       send the comment on this line to the agent                            │──────────────── 
 15|     R  text.ts    │   <C-a>    in the comment editor: save and send to the agent                     │                 
-16| src/components:   │   ]m [m    next / previous comment (takes a count)                               │                 
+16| src/components:   │   ]c [c    next / previous comment (takes a count)                               │                 
 17|     A  Total.tsx  │   gC       hide / show the comment threads                                       │                 
 18|                   │   cl       all comments in a float (<CR> jumps)                                  │                 
 19| <CR> show  mr revi│                                                                                  │──────────────── 
-20| ]c [c hunk  ]f [f │ Review and posting                                                               │                 
+20| ]h [h hunk  ]f [f │ Review and posting                                                               │                 
 21| gd def  K hover  g│   mr       mark reviewed: the hunk, the file on its header, the selection        │                 
 22| gu committed/worki│   ci       add the comment on this line to the GitHub review / take it out       │                 
 23| gG AI guide       │   gP       submit the review to GitHub: a verdict, then a confirmation           │                 
 24| g? all keys       │                                                                                  │──────────────── 
 25|~                  │ Navigation                                                                       │                 
-26|~                  │   ]c [c    next / previous hunk (takes a count)                                  │                 
+26|~                  │   ]h [h    next / previous hunk (takes a count)                                  │                 
 27|~                  │   ]f [f    next / previous file                                                  │                 
 28|~                  │   ]] [[    guide: next / previous section (diff: file)                           │                 
 29|~                  │   gd       LSP definition (in the diff when shown there)                         │──────────────── 

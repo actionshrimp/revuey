@@ -2,7 +2,7 @@
 --
 -- Design choice: ONE continuous buffer for all files (GitHub "Files changed" style) rather than one
 -- buffer per file. Reasons:
---   * reviewing is reading top to bottom; `]c`, `/search`, `n`, scrolling and visual selections flow
+--   * reviewing is reading top to bottom; `]h`, `/search`, `n`, scrolling and visual selections flow
 --     across file boundaries without buffer switching;
 --   * per-file collapse (reviewed files fold closed) gives the "one file at a time" feel on demand;
 --   * syntax and diff decoration are applied lazily per visible line (decoration provider) and the

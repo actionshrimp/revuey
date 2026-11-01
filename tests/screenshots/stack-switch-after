@@ -17,7 +17,7 @@
 16|     M  math.ts                   +11 −5│  9     -   for (let i = 0; i < b; i++) {                                      
 17|                                        │ 10     -     result = add(result, a);                                         
 18| <CR> show  mr reviewed  gp diff        │ 11     -   }                                                                  
-19| ]c [c hunk  ]f [f file  <Tab> fold     │ 12     -   return result;                                                     
+19| ]h [h hunk  ]f [f file  <Tab> fold     │ 12     -   return result;                                                     
 20| gd def  K hover  go open  R refresh    │     13 +   return a * b;                                                      
 21| gu committed/working tree  q close     │     14 + }                                                                    
 22| gG AI guide                            │     15 +                                                                      

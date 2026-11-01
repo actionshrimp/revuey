@@ -25,7 +25,8 @@ M.GROUPS = {
       readme = '[Ask the agent](#connect-an-agent) about this line or the selection' },
     { names = { 'send_comment' }, desc = 'send the comment on this line to the agent' },
     { names = { 'comment_send' }, desc = 'in the comment editor: save and send to the agent' },
-    { names = { 'comment_next', 'comment_prev' }, desc = 'next / previous comment (takes a count)' },
+    { names = { 'comment_next', 'comment_prev' }, desc = 'next / previous comment (takes a count)',
+      readme = 'Next / previous comment: yours, the agent\'s, AI findings, GitHub threads (skips threads hidden by `gH`; takes a count)' },
     { names = { 'comment_toggle' }, desc = 'hide / show the comment threads' },
     { names = { 'comment_list' }, desc = 'all comments in a float (<CR> jumps)', readme = 'List all comments (`<CR>` jumps)' },
   },
@@ -131,7 +132,7 @@ function M.first(name)
   return M.list(name)[1]
 end
 
----Keys of an entry as shown (`]c [c`), or nil when every one of them is disabled.
+---Keys of an entry as shown (`]h [h`), or nil when every one of them is disabled.
 ---@param sep? string between keys (default ' ')
 function M.text(entry, defaults, sep)
   if entry.fixed then

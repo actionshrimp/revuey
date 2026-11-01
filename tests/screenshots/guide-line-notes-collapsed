@@ -22,7 +22,7 @@
 21|     A  Total.tsx                  +5 −0│     11 +   console.log(cart.describe());                                                
 22|                                        │  9  12     console.log("area", circleArea(2));                                          
 23| ]] [[ section  mr reviewed             │ 10     -   console.log("sum", add(2, 3));                                               
-24| ]c [c hunk  <Tab> fold  gp diff        │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));                       
+24| ]h [h hunk  <Tab> fold  gp diff        │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));                       
 25| gd def  K hover  go open  R refresh    │ 11  14   }                                                                              
 26| gG diff view  gR regenerate  q close   │ 12  15                                                                                  
 27| ]n [n line note  gN show/collapse      │ 13  16   main();                                                                        

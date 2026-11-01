@@ -8,7 +8,7 @@
 07|                                        │                                                           
 08|                                        │                                                           
 09| <CR> show  mr reviewed  gp diff        │                                                           
-10| ]c [c hunk  ]f [f file  <Tab> fold     │                                                           
+10| ]h [h hunk  ]f [f file  <Tab> fold     │                                                           
 11|revuey://files [-]    1,1            Top revuey://feature/cart..HEAD [-]          1,1            All
 12|                                                                                                    
 

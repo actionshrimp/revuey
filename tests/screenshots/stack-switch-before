@@ -19,7 +19,7 @@
 18|     M  index.ts                   +3 −2│     14 +     return this;                                                     
 19|                                        │     15 +   }                                                                  
 20| <CR> show  mr reviewed  gp diff        │     16 +                                                                      
-21| ]c [c hunk  ]f [f file  <Tab> fold     │     17 +   total(): number {                                                  
+21| ]h [h hunk  ]f [f file  <Tab> fold     │     17 +   total(): number {                                                  
 22| gd def  K hover  go open  R refresh    │     18 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));
 23| gu committed/working tree  q close     │     19 +   }                                                                  
 24| gG AI guide                            │     20 + }                                                                    

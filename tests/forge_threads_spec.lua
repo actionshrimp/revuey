@@ -582,7 +582,7 @@ h.test('threads of the viewed layer\'s PR: inline, collapsed when resolved or ou
   view.close()
 end)
 
-h.test('gH cycles all / open only / none; ]m reaches threads; the list shows them; gx opens one', function()
+h.test('gH cycles all / open only / none; ]c reaches threads; the list shows them; gx opens one', function()
   reset()
   local calls = h.tmpdir('ft-gh-keys') .. '/calls.ndjson'
   h.use_fake_gh(calls, PRS, nil, THREADS)
@@ -602,9 +602,9 @@ h.test('gH cycles all / open only / none; ]m reaches threads; the list shows the
   restore()
   h.eq('revuey: GitHub threads: open only (resolved hidden)', msgs[1].msg)
   h.eq('revuey: GitHub threads: hidden', msgs[2].msg)
-  -- ]m from the top of the file stops at the threads
+  -- ]c from the top of the file stops at the threads
   local first = file_row(s, 'src/cart.ts')
-  keys(s, ']m', first)
+  keys(s, ']c', first)
   h.eq(row_of(s, 'src/cart.ts', 'add', 12), vim.api.nvim_win_get_cursor(s.diff_win)[1])
   -- the comments list
   local lines = vim.tbl_map(function(l)
@@ -892,6 +892,67 @@ h.test('ce on a file\'s last row edits the local comment there, not a grouped th
   h.ok(ed and not ed.done, 'the editor opened without asking which comment')
   h.eq({ 'Closing brace comment' }, vim.api.nvim_buf_get_lines(ed.buf, 0, -1, false))
   pcall(vim.api.nvim_win_close, ed.win, true)
+  view.close()
+end)
+
+h.test(']c / [c visit every comment shown in buffer order: threads, yours, the agent\'s, an AI finding; a count; gH hides', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-next') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, THREADS)
+  local d = stack_fixture('ft-next')
+  local s = open(d)
+  idle(s)
+  local store = cv.sync_store(s)
+  local U = require('revuey.review').units(s.review)
+  local function at(line)
+    return comments.anchor_for_lines(s.review.files, U, { path = 'src/cart.ts', side = 'new', start_line = line, end_line = line }, cv.context(s).get_line)
+  end
+  local finding = comments.new(at(14), 'Returning this invites mutation.', { author = { kind = 'ai', name = 'claude' } })
+  finding.ai = { review = 'r1', severity = 'minor', title = 'Mutable chaining' }
+  comments.put(store, finding)
+  comments.put(store, comments.new(at(15), 'Mine.'))
+  comments.put(store, comments.new(at(16), 'The agent\'s.', { author = { kind = 'agent', name = 'agent' } }))
+  cv.render(s)
+  local function cur()
+    return vim.api.nvim_win_get_cursor(s.diff_win)[1]
+  end
+  local function line(n)
+    return row_of(s, 'src/cart.ts', 'add', n)
+  end
+  h.ok(vlines(s, line(14)):find('claude (ai)', 1, true), vlines(s, line(14)))
+  h.ok(vlines(s, line(16)):find('╭─ agent', 1, true), vlines(s, line(16)))
+  local top, outside = file_row(s, 'src/cart.ts'), s.cm.forge_rows['gh:T_old'].first
+  ---From `from`, `]c` (or `[c`) stops at each of `want` in turn; with `last`, then stays put.
+  local function walk(key, from, want, what, last)
+    vim.api.nvim_win_set_cursor(s.diff_win, { from, 0 })
+    for i, r in ipairs(want) do
+      keys(s, key)
+      h.eq(r, cur(), what .. ': ' .. key .. ' #' .. i)
+    end
+    if last then
+      keys(s, key)
+      h.eq(want[#want], cur(), what .. ': nothing further')
+    end
+  end
+  -- the file-level thread is on the header; then T_add (12-13), the finding, yours, the agent's,
+  -- T_round, T_old ("not shown here"); index.ts's thread comes after
+  walk(']c', top, { line(12), line(14), line(15), line(16), line(18), outside }, 'all')
+  keys(s, '[c')
+  h.eq(line(18), cur(), '[c')
+  keys(s, '3[c')
+  h.eq(line(14), cur(), '3[c')
+  keys(s, '2[c')
+  h.eq(top, cur(), 'the file-level thread')
+  keys(s, '4]c')
+  h.eq(line(16), cur(), '4]c: the agent\'s')
+  -- gH: open threads only (T_add is resolved), then none: ]c / [c skip what is not drawn
+  local _, restore = h.capture_notify()
+  keys(s, 'gH')
+  walk(']c', top, { line(14), line(15), line(16), line(18), outside }, 'open only')
+  keys(s, 'gH')
+  walk(']c', top, { line(14), line(15), line(16) }, 'none', true)
+  walk('[c', #s.layout.lines, { line(16), line(15), line(14) }, 'none', true)
+  restore()
   view.close()
 end)
 

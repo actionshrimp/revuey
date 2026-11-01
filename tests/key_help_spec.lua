@@ -41,6 +41,12 @@ h.test('keys.lua lists every keymap option once, and only those', function()
     h.ok(listed[n], n .. ' is missing from keys.lua (and so from g? and the README)')
   end
   h.eq('g?', config.defaults.keymaps.help)
+  -- ]c/[c are the comments (Neovim's diff-mode change jumps), hunks ]h/[h; ]m/[m are left alone
+  local km = config.defaults.keymaps
+  h.eq({ ']c', '[c', ']h', '[h' }, { km.comment_next, km.comment_prev, km.next_hunk, km.prev_hunk })
+  for n, v in pairs(km) do
+    h.ok(v ~= ']m' and v ~= '[m', n .. ' is on ]m/[m')
+  end
 end)
 
 h.test('the README Keymaps tables are the ones keys.lua makes (scripts/readme-keys.lua)', function()
@@ -60,10 +66,10 @@ h.test('keys.markdown: a `|` in a description is escaped (it would end the cell)
 end)
 
 h.test('keys.line: panel help from the config; a rebound key shows, a disabled one leaves its part out', function()
-  h.eq(' ]c [c hunk  ]f [f file  <Tab> fold', keys.line(' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold'))
+  h.eq(' ]h [h hunk  ]f [f file  <Tab> fold', keys.line(' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold'))
   h.eq(' gd def  K hover  go open  R refresh', keys.line(' {definition} def  {hover} hover  {open_file#2} open  {refresh} refresh'))
   setup({ next_file = 'J', toggle_fold = false, open_file = '<CR>', help = '<F1>' })
-  h.eq(' ]c [c hunk  J [f file', keys.line(' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold'))
+  h.eq(' ]h [h hunk  J [f file', keys.line(' {next_hunk} {prev_hunk} hunk  {next_file} {prev_file} file  {toggle_fold} fold'))
   h.eq(' gd def  K hover  <CR> open  R refresh', keys.line(' {definition} def  {hover} hover  {open_file#2} open  {refresh} refresh'))
   h.eq(' <F1> all keys', keys.line(' {help} all keys'))
   setup({ help = false })
@@ -238,14 +244,15 @@ h.test('g? sheet: grouped, from the config (rebinds, disabled keys)', function()
     last = at
   end
   h.ok(t:find('\n   ce +edit the comment on this line\n'), t)
-  h.ok(t:find('\n   ]c %[c +next / previous hunk'), t)
+  h.ok(t:find('\n   ]h %[h +next / previous hunk'), t)
+  h.ok(t:find('\n   ]c %[c +next / previous comment'), t)
   h.ok(t:find('\n   <CR> go +open the file at this line'), t)
   h.ok(t:find('\n   g%? +this list of keys'), t)
   setup({ comment_edit = 'E', comment_delete = false, next_hunk = 'J' })
   t = sheet()
   h.ok(t:find('\n   E +edit the comment on this line\n'), t)
   h.ok(not t:find('delete the comment', 1, true), 'a disabled key is left out')
-  h.ok(t:find('\n   J %[c +next / previous hunk'), t)
+  h.ok(t:find('\n   J %[h +next / previous hunk'), t)
   setup()
 end)
 
@@ -448,7 +455,7 @@ h.test('the panel: one help line g? all keys (rebound; gone when disabled); its 
   s = open(d)
   lines = panel()
   h.eq(' <F1> all keys', lines[#lines])
-  h.ok(vim.tbl_contains(lines, ' J [c hunk  ]f [f file  <Tab> fold'), table.concat(lines, '\n'))
+  h.ok(vim.tbl_contains(lines, ' J [h hunk  ]f [f file  <Tab> fold'), table.concat(lines, '\n'))
   setup({ help = false })
   s = open(d)
   lines = panel()

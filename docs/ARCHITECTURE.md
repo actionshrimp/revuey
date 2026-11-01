@@ -404,7 +404,7 @@ are in `reports/Terminal code review tool landscape.md`.
      `gN` collapses all of them to a `◆ guide` end-of-line marker and back (per session, kept
      across re-renders; one toggle for all, since notes are one-liners and per-note collapse
      would need a key nobody remembers); `]n`/`[n` move between them, a pair of their own
-     because `]m`/`[m` is the comment list's order and covers items with actions (`ce`, `ca`,
+     because `]c`/`[c` is the comment list's order and covers items with actions (`ce`, `ca`,
      `cn`), which notes have none of. `]n`/`[n` are unused by Neovim and `gN` (select the
      previous match) means nothing in a read-only buffer; the keys are configurable
      (`keymaps.next_note`, `prev_note`, `toggle_notes`) and only mapped in the review buffer.
@@ -1177,7 +1177,7 @@ are in `reports/Terminal code review tool landscape.md`.
       N` when moved. Resolved and outdated threads are collapsed to their first line like
       resolved comments (`cz` expands); at a shared row local comments come first, threads in
       creation order. `gH` (`keymaps.forge_threads`) cycles `all` / `open` / `none` per review,
-      starting from `forge.threads.show`. `]m`/`[m` and `cl` (a "GitHub threads" part) include
+      starting from `forge.threads.show`. `]c`/`[c` and `cl` (a "GitHub threads" part) include
       them; `keymaps.forge_open` (`gx`) in the diff on a thread opens its URL; elsewhere that key's
       global mapping runs (an expr mapping's returned keys are fed; else the built-in command). Grouped threads cover the file's last row
       (the only way to reach them with `cz`/`gx`), so actions that only work on local comments
@@ -1446,7 +1446,7 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Real rows, not virtual lines.** The rows are buffer lines at the top of the layout
       (`layout.compose(files, head)`), prose rows with `role = 'description'` (`kind = 'prose'`,
       which every diff feature already skips for the guide: comments, marks, `ge`, LSP and its
-      proxy, syntax, word diff, `]c`, `]f`). Virtual lines above row 1 were tried and rejected:
+      proxy, syntax, word diff, `]h`, `]f`). Virtual lines above row 1 were tried and rejected:
       Neovim shows them only through `topfill` (`<C-y>`), not with `gg`, and not at all while
       row 1 is in a closed fold, so a review whose first file is reviewed (folded) would never
       show the description. Real rows are reachable with `gg`/`k`, searchable and yankable, and

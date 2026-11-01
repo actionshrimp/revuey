@@ -30,7 +30,7 @@
 29|     M  index.ts                   +3 −2│  3   3   import { capitalize } from "./utils/strings";                        
 30|                                        │  4   4   import { oldTotal } from "./legacy";                                 
 31| <CR> show  mr reviewed  gp diff        │      5 + import { Cart } from "./cart";                                       
-32| ]c [c hunk  ]f [f file  <Tab> fold     │  5   6                                                                        
+32| ]h [h hunk  ]f [f file  <Tab> fold     │  5   6                                                                        
 33| gd def  K hover  go open  R refresh    │  6   7   export function main(): void {                                       
 34| gu committed/working tree  q close     │  7     -   const total = oldTotal([1, 2, 3]);                                 
 35| gG AI guide                            │  8     -   console.log(capitalize("total"), formatCurrency(total));           

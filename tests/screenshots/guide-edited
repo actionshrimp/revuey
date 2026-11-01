@@ -16,7 +16,7 @@
 15|     M● m.txt                      +3 −3│                                                                               
 16|                                        │  A       a.txt  @@ -0,0 +1,2 @@   +2 −0  added                                
 17| ]] [[ section  mr reviewed             │            Introduces the new total helper.                                   
-18| ]c [c hunk  <Tab> fold  gp diff        │      1 + new                                                                  
+18| ]h [h hunk  <Tab> fold  gp diff        │      1 + new                                                                  
 19| gd def  K hover  go open  R refresh    │      2 + file                                                                 
 20| gG diff view  gR regenerate  q close   │                                                                               
 21| g? all keys                            │  M       m.txt  @@ -17,7 +17,7 @@ line 16   +1 −1  ✎ edited since guide       

@@ -182,7 +182,7 @@ h.test('gG offers to generate, then shows the guide; claude gets read-only flags
   h.eq(total, seen, 'every hunk line appears exactly once in the guide')
   h.eq('prose', s.layout.map[1].kind)
 
-  -- folds: one per section; ]] / [[ move between sections; ]c works inside
+  -- folds: one per section; ]] / [[ move between sections; ]h works inside
   vim.api.nvim_win_set_cursor(s.diff_win, { 1, 0 })
   keys(s, ']]')
   h.eq(sec1, vim.api.nvim_win_get_cursor(s.diff_win)[1])
@@ -190,7 +190,7 @@ h.test('gG offers to generate, then shows the guide; claude gets read-only flags
   h.eq(sec2, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   keys(s, '[[')
   h.eq(sec1, vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  keys(s, ']c')
+  keys(s, ']h')
   local e = s.layout.map[vim.api.nvim_win_get_cursor(s.diff_win)[1]]
   h.ok(e.kind == 'add' or e.kind == 'del', 'on a change')
   h.eq(1, e.section_idx)
@@ -530,7 +530,7 @@ h.test('line notes: above their lines in the guide, bad anchors dropped and coun
   for _, g in ipairs({ 'RevueyGuideLineNote', 'RevueyGuideLineNoteLabel', 'RevueyGuideLineNoteMarker' }) do
     h.ok(next(vim.api.nvim_get_hl(0, { name = g })) ~= nil, g)
   end
-  -- not comments: no gutter bars, nothing for ]m, the comment list or exports
+  -- not comments: no gutter bars, nothing for ]c, the comment list or exports
   for _, r in pairs(s.cm and s.cm.jump or {}) do
     h.ok(r ~= marks[1].row and r ~= marks[2].row and r ~= marks[3].row, 'a note is not a comment')
   end

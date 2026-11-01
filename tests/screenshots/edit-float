@@ -12,7 +12,7 @@
 11|     M  m.txt                      +3 −3│          @@ -17,7 +17,7 @@ line 16                                            
 12|                                        │ 17  17   line 17                                                              
 13| <CR> show  mr reviewed  gp diff        │ 18  18   line 18                                                              
-14| ]c [c hunk  ]f [f file  <Tab> fold     │ 19  19   line 19                                                              
+14| ]h [h hunk  ]f [f file  <Tab> fold     │ 19  19   line 19                                                              
 15| gd def  K hover  go open  R refresh    │ 20     - line 20                                                              
 16| gu committed/working tree  q close     │╭ m.txt:17-23 ────────────────────────────────────────────────────────────────╮
 17| gG AI guide                            ││  1 +-- 13 lines: line 1·····················································│

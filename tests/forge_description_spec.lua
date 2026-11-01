@@ -2,7 +2,7 @@
 -- cleaning GitHub Markdown (template comments, images, HTML, entities, code left alone), rows
 -- and the collapsed fold; then real git stacks with a fake `gh` (tests/bin/gh) on PATH: shown
 -- for an open PR with a body, absent without one, arriving late without moving the cursor or
--- breaking rows (comments, `]m`, marks, folds), <Tab>/zo expanding it, `R`, failures, scopes and
+-- breaking rows (comments, `]c`, marks, folds), <Tab>/zo expanding it, `R`, failures, scopes and
 -- the guide view.
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
@@ -462,8 +462,8 @@ h.test('an open PR with a body: its description above the first file, collapsed,
   end, msgs), vim.inspect(msgs))
   h.ok(msgs[1].msg:find('move to a diff line', 1, true), vim.inspect(msgs))
   h.eq({}, comments.list(s.cm.store, { include_resolved = true, include_drafts = true }))
-  keys(s, ']c', 1)
-  h.eq(s.layout.hunks[1].first_change, cursor(s), ']c from the description reaches the first hunk')
+  keys(s, ']h', 1)
+  h.eq(s.layout.hunks[1].first_change, cursor(s), ']h from the description reaches the first hunk')
   keys(s, ']f', 1)
   h.eq(file_row(s, 'src/cart.ts'), cursor(s), ']f reaches the first file')
   -- the winbar names the PR on description rows
@@ -514,7 +514,7 @@ h.test('no description: no PR, an empty body, a template-only body, a merged PR,
   end
 end)
 
-h.test('arriving late: the view and cursor stay on the code; comments, ]m, marks and rows follow', function()
+h.test('arriving late: the view and cursor stay on the code; comments, ]c, marks and rows follow', function()
   reset()
   local calls = h.tmpdir('fd-gh-late') .. '/calls.ndjson'
   h.use_fake_gh(calls, prs({ cart = LONG }), 'slow')
@@ -549,13 +549,13 @@ h.test('arriving late: the view and cursor stay on the code; comments, ]m, marks
   h.eq(before.winline, after.winline, 'the cursor did not move on screen')
   h.eq(before.col, after.col)
   h.eq(before.topline + n, after.topline, 'the view scrolled with the rows inserted above')
-  -- the comment moved with its line: drawn there, ]m reaches it
+  -- the comment moved with its line: drawn there, ]c reaches it
   local r18 = row_of(s, 'src/cart.ts', 'add', 18)
   h.ok(vlines(s, r18):find('Round to cents?', 1, true), vlines(s, r18))
   h.eq(r18, s.cm.jump[c18.id])
-  keys(s, ']m', file_row(s, 'src/cart.ts'))
+  keys(s, ']c', file_row(s, 'src/cart.ts'))
   h.eq(r18, cursor(s))
-  keys(s, '[m', s.layout.files[2].start_row)
+  keys(s, '[c', s.layout.files[2].start_row)
   h.eq(r18, cursor(s))
   -- marks: mr on a hunk line marks that hunk, at its new rows; its header chip is updated in
   -- place (one header mark per hunk, on the hunk's row)

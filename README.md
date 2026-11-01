@@ -649,7 +649,7 @@ for authors.
 - **State.** Resolved threads (`resolved by alice`) and threads GitHub marks `outdated` are
   collapsed to their first line, like resolved comments; `cz` expands one. The viewer's own
   unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
-  ones only, none. `]m`/`[m` and the comments list (`cl`, a "GitHub threads" part) include them.
+  ones only, none. `]c`/`[c` and the comments list (`cl`, a "GitHub threads" part) include them.
   The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
   when the list was cut, `(new)` when threads were added, answered or resolved on GitHub since
   (`R` shows them), and `(stale)` when the last fetch failed and these are the threads from
@@ -898,7 +898,7 @@ src/cart.ts"), and you can keep reviewing the diff with `gG`. A small stack laye
 10 seconds; a 3,500-line branch about 35 seconds (Opus, $0.10 to $0.70 per guide in our runs).
 
 The guide view uses the same renderer as the diff: syntax, word diff, `gd`, `K`, `go`/`<CR>`,
-`]c`/`[c` and folds all work inside it. Each section is a fold with a heading, a reviewed
+`]h`/`[h` and folds all work inside it. Each section is a fold with a heading, a reviewed
 checkbox and its hunk count, followed by the explanation and its hunks. Each hunk has a
 `path  @@ … @@` header and sometimes a one-line note from Claude. The prose is real buffer text
 (so you can search and yank it), wrapped to the window and re-wrapped when it is resized,
@@ -929,7 +929,7 @@ never a bug report (those belong in an [AI review](#ai-review)).
 - `]n` / `[n`: next / previous line note (takes a count).
 - `gN`: collapse every note to a `◆ guide` marker at the end of its line, and back.
 
-Notes belong to the guide, not to your comments: they are not in the comment list, `]m`,
+Notes belong to the guide, not to your comments: they are not in the comment list, `]c`,
 exports, the agent link or anything posted, and they are not shown in the diff view, where the
 code stays yours. Claude points at a line by its hunk id and the line's number within the hunk,
 as AI review findings do; a note on a line the prompt did not show (or an unknown hunk) is
@@ -1155,8 +1155,10 @@ Comment while you review, in the diff or the guide view:
   comments (and resolved ones) are cut with `… N more lines`; `cz` expands them. `gC` hides or
   shows every thread (the gutter bars stay). The panel shows `✎2` on files with open comments.
 - On a commented line (or its range): `ce` edit, `cr` reply, `cx` resolve / reopen, `cd` delete
-  (asks first), `cz` expand. `]m` / `[m` move to the next / previous comment. `cl` (also in the
-  panel) or `:RevueyComments` lists them all.
+  (asks first), `cz` expand. `]c` / `[c` move to the next / previous comment: yours, the
+  agent's, AI findings and GitHub threads, skipping threads hidden by `gH` (while `gC` hides the
+  threads they still stop at each one). `cl` (also in the panel) or `:RevueyComments` lists them
+  all.
 - **Moving code.** Each comment remembers the hunk it was made in and a hash of its lines plus two
   lines of context either side. When the hunk is unchanged (edits elsewhere just shift it) the
   comment moves with it; otherwise it goes to the nearest place with the same lines and context,
@@ -1174,8 +1176,9 @@ Comment while you review, in the diff or the guide view:
 
 `gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
 where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn` shadow `c{motion}` and
-`]m`/`[m` the method motions, which do nothing in a read-only diff. Remap them under `keymaps`
-(`comment_add`, `comment_edit`, ...; `false` disables one).
+`]c`/`[c` the diff-mode change jumps, which do nothing in a review buffer (hunks are `]h`/`[h`,
+unmapped in Neovim). Remap them under `keymaps` (`comment_add`, `comment_edit`, ...; `false`
+disables one).
 
 **Export** with `:RevueyCommentsExport`: Markdown meant for pasting into an AI session. A short
 header names the review (repo, branch, scope, base and merge-base), then each comment in file
@@ -1456,7 +1459,7 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `ga` | [Ask the agent](#connect-an-agent) about this line or the selection |
 | `cs` | Send the comment on this line to the agent |
 | `<C-a>` | In the comment editor: save and send to the agent |
-| `]m` / `[m` | Next / previous comment (takes a count) |
+| `]c` / `[c` | Next / previous comment: yours, the agent's, AI findings, GitHub threads (skips threads hidden by `gH`; takes a count) |
 | `gC` | Hide / show the comment threads |
 | `cl` | List all comments (`<CR>` jumps) |
 
@@ -1472,7 +1475,7 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 
 | Key | Action |
 |---|---|
-| `]c` / `[c` | Next / previous hunk (skips collapsed files and hunks; takes a count) |
+| `]h` / `[h` | Next / previous hunk (skips collapsed files and hunks; takes a count) |
 | `]f` / `[f` | Next / previous file |
 | `]]` / `[[` | Guide view: next / previous section. Diff view: next / previous file |
 | `gd` | LSP definition (added/context lines). Jumps within the diff when the target is shown there, otherwise opens the file below |
@@ -1593,7 +1596,7 @@ cd /tmp/revuey-fixture
 ```
 
 Things to try:
-- `]f` / `]c` to move around.
+- `]f` / `]h` to move around.
 - `gd` on `sum(` in `src/cart.ts`: jumps to the new `sum` in the math.ts diff.
 - `gd` on `formatCurrency(`: opens `src/format.ts` below.
 - `K` on a call.
@@ -1610,7 +1613,7 @@ Things to try:
 Comments:
 - `gc` on `+ import { multiply, sum } ...` in `src/cart.ts`, type a note, `<C-s>`. `Vjgc` on two
   lines, `gc` on a `-` line (old side), `gc` on a file header (whole file).
-- `cr` to reply, `cx` to resolve, `]m` / `[m` between comments, `cl` for the list.
+- `cr` to reply, `cx` to resolve, `]c` / `[c` between comments, `cl` for the list.
 - `:RevueyCommentsExport` and paste the clipboard into an AI chat.
 - In a second terminal in the fixture: `~/dev/revuey/main/bin/revuey watch`, then comment again:
   each comment prints one line. `~/dev/revuey/main/bin/revuey reply <id from that line> "On it"`
@@ -1699,7 +1702,7 @@ cd /tmp/revuey-guide
 
 - `gG`, then pick "Generate a guide". Watch the spinner in the panel; `gG` goes back to the diff
   while it runs. The guide appears after about 10 seconds.
-- `]]` / `[[` between sections, `]c` within them, `gd` on `sum(` or `K` on a call.
+- `]]` / `[[` between sections, `]h` within them, `gd` on `sum(` or `K` on a call.
 - `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
   `mr` on one hunk instead: the section shows `◐ 1/2`, and `gG` shows that file's progress in the diff.
 - `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
@@ -1720,7 +1723,7 @@ In the same review (needs `claude` too):
 
 - `:RevueyAIReview`. The panel shows "AI review" with a spinner; after a few seconds the verdict,
   the findings to triage and the summary appear, and each finding is a `claude (ai)` thread on
-  its lines. `]m` moves between them.
+  its lines. `]c` moves between them.
 - `ca` on one: it becomes your comment. `cn` on another: it collapses as "dismissed" (`cn` again
   restores it). `cl` lists them all under the verdict.
 - `:RevueyAIReview` again asks before replacing the findings you have not touched; the ones you

@@ -50,8 +50,9 @@ M.defaults = {
     github = true,
   },
   keymaps = {
-    next_hunk = ']c',
-    prev_hunk = '[c',
+    -- ]h/[h are free in Neovim (]c/[c, its diff-mode change jumps, are the comment keys below)
+    next_hunk = ']h',
+    prev_hunk = '[h',
     next_file = ']f',
     prev_file = '[f',
     open_file = { '<CR>', 'go' },
@@ -103,8 +104,10 @@ M.defaults = {
     comment_resolve = 'cx', -- resolve / reopen
     comment_expand = 'cz', -- expand / collapse a long or resolved comment
     comment_toggle = 'gC', -- show / hide the threads (gutter bars stay)
-    comment_next = ']m', -- ]m/[m shadow the method motions, which mean nothing in a diff
-    comment_prev = '[m',
+    -- every comment: yours, the agent's, AI findings, GitHub threads (not those gH hides).
+    -- ]c/[c shadow the diff-mode change jumps, which mean nothing in a review buffer.
+    comment_next = ']c',
+    comment_prev = '[c',
     comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
     -- AI review findings (:RevueyAIReview) and a coding agent's comments (`bin/revuey
     -- comment`): accept one as your own comment, or dismiss it (again: restore). `cs` sends one

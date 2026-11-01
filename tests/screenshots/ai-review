@@ -23,7 +23,7 @@
 22|     A  Total.tsx                  +5 −0│     11 + export class Cart {                                                  
 23|                                        │     12 +   private items: LineItem[] = [];                                    
 24| <CR> show  mr reviewed  gp diff        │     13 +                                                                      
-25| ]c [c hunk  ]f [f file  <Tab> fold     │     14 +   addItem(item: LineItem): this {                                    
+25| ]h [h hunk  ]f [f file  <Tab> fold     │     14 +   addItem(item: LineItem): this {                                    
 26| gd def  K hover  go open  R refresh    │     15 +     this.items.push(item);                                           
 27| gu committed/working tree  q close     │     16 +     return this;                                                     
 28| gG AI guide                            │     17 +   }                                                                  

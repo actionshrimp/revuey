@@ -27,7 +27,7 @@
 26|     M  index.ts                   +3 −2│          │ … 2 more lines (cz expands)                                        
 27|                                        │          ╰─                                                                   
 28| <CR> show  mr reviewed  gp diff        │     14 +     return this;                                                     
-29| ]c [c hunk  ]f [f file  <Tab> fold     │     15 +   }                                                                  
+29| ]h [h hunk  ]f [f file  <Tab> fold     │     15 +   }                                                                  
 30| gd def  K hover  go open  R refresh    │     16 +                                                                      
 31| gu committed/working tree  q close     │     17 +   total(): number {                                                  
 32| gG AI guide                            │     18▍+     return sum(this.items.map((i) => multiply(i.price, i.quantity)));

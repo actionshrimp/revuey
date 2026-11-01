@@ -18,7 +18,7 @@
 17|     A  b.txt                      +1 −0│                                                                     
 18|                                        │                                                                     
 19| <CR> show  mr reviewed  gp diff        │                                                                     
-20| ]c [c hunk  ]f [f file  <Tab> fold     │                                                                     
+20| ]h [h hunk  ]f [f file  <Tab> fold     │                                                                     
 21| gd def  K hover  go open  R refresh    │                                                                     
 22| gu committed/working tree  q close     │                                                                     
 23| gG AI guide                            │                                                                     

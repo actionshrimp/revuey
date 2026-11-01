@@ -18,7 +18,7 @@
 17|     A  Total.tsx  │  1-2 (new)  Is `multiply` still needed here? **Check** the callers.  [1 reply]  │                  
 18|                   │  3 (new)  Looks off by one.                                                     │                  
 19| <CR> show  mr revi╰───────────────────────────────────────────────────────────── <CR> jump  q close ╯                  
-20| ]c [c hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
+20| ]h [h hunk  ]f [f file  <Tab> fold     │     10 +                                                                      
 21| gd def  K hover  go open  R refresh    │     11 + export class Cart {                                                  
 22| gu committed/working tree  q close     │     12 +   private items: LineItem[] = [];                                    
 23| gG AI guide                            │     13 +                                                                      

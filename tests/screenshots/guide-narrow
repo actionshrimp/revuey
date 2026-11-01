@@ -22,7 +22,7 @@
 21|   ✓ A  Total.tsx                  +5 −0│      5 + export interface LineItem {                      
 22|                                        │      6 +   name: string;                                  
 23| ]] [[ section  mr reviewed             │      7 +   price: number;                                 
-24| ]c [c hunk  <Tab> fold  gp diff        │      8 +   quantity: number;                              
+24| ]h [h hunk  <Tab> fold  gp diff        │      8 +   quantity: number;                              
 25| gd def  K hover  go open  R refresh    │      9 + }                                                
 26| gG diff view  gR regenerate  q close   │     10 +                                                  
 27| g? all keys                            │     11 + export class Cart {                              
