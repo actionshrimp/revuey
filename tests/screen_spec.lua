@@ -859,8 +859,8 @@ h.test('edit float over the diff, then the guide with an edited hunk', function(
   screenshot('guide-edited')
 end)
 
--- Comments: an inline thread (with a reply) under a commented range with gutter bars, the
--- editor float opened by `gc`, and the comments list.
+-- Comments: an inline thread (with a reply) under a commented range with gutter bars, and the
+-- editor float opened by `gc`. (The comments view has its own test below.)
 h.test('comments: inline thread, editor float', function()
   start(fixture, 'main', 34, 120)
   child.lua([[

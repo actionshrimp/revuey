@@ -1227,9 +1227,11 @@ back to it, with the cursor where you left it.
 ```
 
 - **Grouped by file** in the diff's order (files no longer in the review last), file-level threads
-  first, then by line. In the full-stack scope (`gs`, which also works in the view) every layer's
-  threads are listed under their layer and PR first: a GitHub thread under its PR's layer, your
-  comment under the layer that changed its lines.
+  first, then by line. In the full-stack scope (`gs`, which also works in the view) the list has
+  the GitHub threads of every layer's PR and the full scope's own comments (comments are kept per
+  scope, so those made while viewing one layer stay with that layer), grouped by layer first: a
+  GitHub thread under its PR's layer, a comment under the topmost layer that changed its lines
+  (lines only your uncommitted changes touched count for the top layer).
 - **Each thread** starts with its line (`12-13`, `20 (old)`, `file`), a status and the code it is
   on, then the thread as the diff draws it (author, time, the same chips, every reply). Statuses:
   `open`, `resolved`, `dismissed`, `outdated`, `draft` (not saved yet, or an agent's comment or AI
@@ -1240,7 +1242,7 @@ back to it, with the cursor where you left it.
 - **The header** counts the open and resolved threads, and your comments that could go to GitHub
   but are not in the review yet (`ci` adds them). GitHub threads follow `gH` as in the diff (all,
   open only, none); `gH` in the view cycles it too.
-- **Keys.** `<CR>` on any line of a thread shows it in the diff, on the comment (in the guide when
+- **Keys.** `q`, `<Esc>` or `cl` go back. `<CR>` on any line of a thread shows it in the diff, on the comment (in the guide when
   you opened the view from the guide and it shows the line). `]c` / `[c` move between threads.
   The comment keys work on the thread under the cursor, as on its line in the diff: `cr` reply
   (on a GitHub thread: a local reply), `ce` edit, `cd` delete, `cx` resolve, `ci` add to the

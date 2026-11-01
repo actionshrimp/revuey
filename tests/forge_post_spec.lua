@@ -704,7 +704,7 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   h.eq('&Submit\n&Write body\n&Add to pending review\n&Cancel', asked[2].choices)
   -- what went to GitHub, in order
   local m = mutations(calls)
-  -- (in the order of the comments list: by file, then line)
+  -- (in the order of the comments: by file, then line)
   h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread', 'addPullRequestReviewThread', 'addPullRequestReviewThreadReply',
     'addPullRequestReviewThread', 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
   h.eq({ pullRequestId = 'PR_12', commitOID = rev(s.review.root, 'stack/cart') }, m[1].input)

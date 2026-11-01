@@ -324,7 +324,14 @@ h.test('<CR> shows the comment in the diff; from the guide, in the guide', funct
   h.eq(s.cm.jump[mine.id], vim.api.nvim_win_get_cursor(s.diff_win)[1])
   local m = s.layout.map[s.cm.jump[mine.id]]
   h.eq({ 'src/cart.ts', 10 }, { m.path, m.new_lnum })
-  view.set_view('diff')
+  -- a comment the guide does not show (every hunk is in some section, so the guide's placement
+  -- is stubbed): <CR> goes to the diff instead, on the comment
+  feed('cl')
+  vim.api.nvim_win_set_cursor(s.clist.win, { vrow(s, 'Readonly array?'), 0 })
+  s.cm.jump[mine.id] = nil
+  vkeys(s, '<CR>')
+  h.eq('diff', s.view_mode)
+  h.eq(row_of(s, 'src/cart.ts', 'add', 10), vim.api.nvim_win_get_cursor(s.diff_win)[1])
 end)
 
 h.test('cr on a GitHub thread: a local reply; cx resolves, ci toggles, the cursor stays on the thread', function()
@@ -460,6 +467,25 @@ h.test('scope: the viewed layer\'s threads; full stack: every layer, grouped by 
   all = text(s)
   h.ok(vrow(s, ' stack/math') < vrow(s, 'Negative results?') and vrow(s, 'Negative results?') < vrow(s, ' stack/cart  GitHub #12'), all)
   h.ok(vrow(s, ' stack/ui  GitHub #13') < vrow(s, 'Join with a comma?'), all)
+  -- a hunk the working tree changed on top of a layer: the topmost real layer, not "Not attributed";
+  -- one only the working tree touched: the top layer
+  local math_c
+  for _, x in ipairs(comments.list(s.cm.store)) do
+    if x.body == 'Negative results?' then
+      math_c = x
+    end
+  end
+  local u = s.cm.place[math_c.id].unit
+  local labels = s.review.layer_labels
+  labels[u.file_idx][u.hunk_idx] = { 'stack/math', require('revuey.attribution').UNCOMMITTED }
+  cv.refresh(s)
+  all = text(s)
+  h.ok(not all:find('Not attributed', 1, true), all)
+  h.ok(vrow(s, ' stack/math') < vrow(s, 'Negative results?') and vrow(s, 'Negative results?') < vrow(s, ' stack/cart  GitHub #12'), all)
+  labels[u.file_idx][u.hunk_idx] = { require('revuey.attribution').UNCOMMITTED }
+  cv.refresh(s)
+  all = text(s)
+  h.ok(not all:find('Not attributed', 1, true) and vrow(s, ' stack/ui  GitHub #13') < vrow(s, 'Negative results?'), all)
   vim.g.statusline_winid = s.diff_win
   h.ok(view.winbar():find('Comments · full stack', 1, true), view.winbar())
   -- back to the layer
@@ -470,5 +496,207 @@ h.test('scope: the viewed layer\'s threads; full stack: every layer, grouped by 
   end), 'layer scope again')
   vkeys(s, 'q')
 end)
+
+h.test(']c past the last thread and [c above the first stay; q, <Esc> and cl close', function()
+  local s = open()
+  seed(s)
+  feed('cl')
+  local last = s.clist.blocks[s.clist.order[#s.clist.order]]
+  vim.api.nvim_win_set_cursor(s.clist.win, { last.first, 0 })
+  vkeys(s, ']c')
+  h.eq(last.first, vim.api.nvim_win_get_cursor(s.clist.win)[1])
+  vim.api.nvim_win_set_cursor(s.clist.win, { last.last, 0 })
+  vkeys(s, ']c')
+  h.eq(last.last, vim.api.nvim_win_get_cursor(s.clist.win)[1], 'inside the last thread: nothing below')
+  vkeys(s, '[c')
+  h.eq(last.first, vim.api.nvim_win_get_cursor(s.clist.win)[1], 'inside a thread: its start')
+  vim.api.nvim_win_set_cursor(s.clist.win, { 1, 0 })
+  vkeys(s, '[c')
+  h.eq(1, vim.api.nvim_win_get_cursor(s.clist.win)[1], 'above the first thread')
+  vkeys(s, '<Esc>')
+  h.eq(false, cl.active(s))
+end)
+
+h.test('the view keeps its own cut threads: the diff never offers cz for one only the view collapsed', function()
+  local s = open()
+  local one = put(s, 'src/cart.ts', 4, 'Short and resolved.', { status = 'resolved' })
+  local row = row_of(s, 'src/cart.ts', 'add', 4)
+  local function diff_keys()
+    return vim.tbl_map(function(x)
+      return x.key
+    end, require('revuey.key_help').items(s, row))
+  end
+  h.ok(not vim.tbl_contains(diff_keys(), 'cz'), 'one line: nothing to expand in the diff')
+  feed('cl')
+  h.eq(true, s.clist.cut[one.id])
+  h.eq(nil, s.cm.cut[one.id], 'never in the diff\'s set')
+  local _, view_keys = nil, vim.tbl_map(function(x)
+    return x.key .. ' ' .. x.label
+  end, require('revuey.key_help').comment_items(s, { one.id }, s.clist.cut))
+  h.ok(vim.tbl_contains(view_keys, 'cz expand'), vim.inspect(view_keys))
+  -- M.texts (tests, a sidebar) leaves the diff's set alone too
+  require('revuey.comments_list').texts(s, 60)
+  h.eq(nil, s.cm.cut[one.id])
+  vkeys(s, 'q')
+  h.ok(not vim.tbl_contains(diff_keys(), 'cz'), vim.inspect(diff_keys()))
+  h.eq(nil, s.cm.expanded[one.id])
+end)
+
+h.test('opened from another float (the stack tree): q goes back to it; the view stacks above it', function()
+  local s = open()
+  local fbuf = vim.api.nvim_create_buf(false, true)
+  local float = vim.api.nvim_open_win(fbuf, true, { relative = 'win', win = s.diff_win, row = 0, col = 0, width = 20, height = 3, zindex = 40 })
+  vim.cmd('RevueyComments')
+  h.ok(cl.active(s))
+  h.eq(cl.ZINDEX, vim.api.nvim_win_get_config(s.clist.win).zindex)
+  h.ok(cl.ZINDEX > 41, 'above the tree and its footer')
+  vkeys(s, 'q')
+  h.eq(float, vim.api.nvim_get_current_win())
+  -- that window gone by then: the diff
+  vim.cmd('RevueyComments')
+  h.ok(cl.active(s))
+  vim.api.nvim_win_close(float, true)
+  vkeys(s, 'q')
+  h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  -- opened from the panel: back to the panel
+  vim.api.nvim_set_current_win(s.panel_win)
+  feed('cl')
+  h.ok(cl.active(s))
+  vkeys(s, 'q')
+  h.eq(s.panel_win, vim.api.nvim_get_current_win())
+end)
+
+h.test('gp goes to the panel and back to the view; the panel\'s <CR> on a file closes it first', function()
+  local s = open()
+  seed(s)
+  feed('cl')
+  vkeys(s, 'gp')
+  h.eq(s.panel_win, vim.api.nvim_get_current_win())
+  feed('gp') -- the panel's gp focuses the diff window, which the view covers
+  h.flush()
+  h.eq(s.clist.win, vim.api.nvim_get_current_win())
+  -- <CR> on a file in the panel: the view closes, the diff shows the file
+  vkeys(s, 'gp')
+  local fi = require('revuey.review').units(s.review).by_path['src/index.ts']
+  vim.api.nvim_win_set_cursor(s.panel_win, { s.panel_rows[fi], 0 })
+  feed('<CR>')
+  h.eq(false, cl.active(s))
+  h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  h.eq('src/index.ts', s.layout.map[vim.api.nvim_win_get_cursor(s.diff_win)[1]].path)
+end)
+
+h.test('ce, cd, cs and cn act on the thread under the cursor; a comment gone says so', function()
+  local s = open()
+  local mine, _, ai = seed(s)
+  feed('cl')
+  -- ce: the editor under the thread, with its text
+  vkeys(s, 'ce', 'Readonly array?')
+  local ed = editor.current
+  h.ok(ed and not ed.done, 'editor open')
+  h.eq(s.clist.win, vim.api.nvim_win_get_config(ed.win).win)
+  h.eq({ 'Readonly array?' }, vim.api.nvim_buf_get_lines(ed.buf, 0, -1, false))
+  vim.api.nvim_buf_set_lines(ed.buf, 0, -1, false, { 'Readonly array, surely?' })
+  vim.cmd('stopinsert')
+  editor.save()
+  h.flush()
+  h.eq('Readonly array, surely?', comments.get(s.cm.store, mine.id).body)
+  h.ok(cursor_text(s) and s.clist.rows[vim.api.nvim_win_get_cursor(s.clist.win)[1]] == mine.id, 'cursor kept')
+  -- cs: sent to the agent (queued: none connected)
+  local msgs, restore = h.capture_notify()
+  vkeys(s, 'cs')
+  restore()
+  h.ok(comments.get(s.cm.store, mine.id).sent_at ~= nil, 'sent')
+  h.ok(text(s):find('queued: no agent connected', 1, true), text(s))
+  -- cn: the AI finding dismissed
+  vkeys(s, 'cn', 'Unused import')
+  h.eq('dismissed', comments.get(s.cm.store, ai.id).status)
+  -- cd: deleted (after asking)
+  local orig = cv.confirm_delete
+  cv.confirm_delete = function()
+    return true
+  end
+  vkeys(s, 'cd', 'Readonly array, surely?')
+  cv.confirm_delete = orig
+  h.eq(nil, comments.get(s.cm.store, mine.id))
+  h.ok(not text(s):find('Readonly array', 1, true), text(s))
+  -- a comment that went between the render and the key
+  msgs, restore = h.capture_notify()
+  cv.edit(s, { id = 'gone-0000', win = s.clist.win, row = 1 })
+  restore()
+  h.eq('revuey: this comment is gone', msgs[1] and msgs[1].msg)
+  vkeys(s, 'q')
+end)
+
+h.test('back from the view: the diff\'s folds, topline and cursor are as they were, after R too', function()
+  local s = open()
+  seed(s)
+  vim.api.nvim_set_current_win(s.diff_win)
+  local hdr
+  for row, e in ipairs(s.layout.map) do
+    if e.path == 'src/index.ts' and e.meta == 'file' then
+      hdr = row
+    end
+  end
+  vim.api.nvim_win_set_cursor(s.diff_win, { hdr, 0 })
+  vim.cmd('normal! zc')
+  h.ok(vim.fn.foldclosed(hdr) ~= -1, 'file folded')
+  local r = row_of(s, 'src/cart.ts', 'add', 12)
+  vim.fn.winrestview({ lnum = r, topline = r - 2 })
+  local before = vim.fn.winsaveview()
+  feed('cl')
+  vkeys(s, 'R')
+  idle(s)
+  h.ok(cl.active(s), 'still open after R')
+  vkeys(s, 'cx', 'Readonly array?')
+  vkeys(s, 'q')
+  h.eq(s.diff_win, vim.api.nvim_get_current_win())
+  local after = vim.fn.winsaveview()
+  h.eq({ before.lnum, before.topline }, { after.lnum, after.topline })
+  h.ok(vim.fn.foldclosed(hdr) ~= -1, 'still folded')
+end)
+
+h.test('closing the review, its tab or the view\'s buffer with the view open leaves nothing behind', function()
+  local function leftovers()
+    local out = {}
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(b):find('revuey://comments', 1, true) then
+        out[#out + 1] = 'buffer ' .. b
+      end
+    end
+    for _, a in ipairs(vim.api.nvim_get_autocmds({})) do
+      if a.group_name and a.group_name:find('revuey.comments.list', 1, true) then
+        out[#out + 1] = 'autocmd ' .. a.group_name .. ' ' .. a.event
+      end
+    end
+    return out
+  end
+  -- the view's buffer wiped
+  local s = open()
+  feed('cl')
+  local buf = s.clist.buf
+  vim.cmd('bwipeout! ' .. buf)
+  h.flush()
+  h.eq(false, cl.active(s))
+  h.eq(nil, s.clist)
+  h.eq({}, leftovers())
+  -- closing the review
+  feed('cl')
+  view.close()
+  h.flush()
+  h.eq(nil, s.clist)
+  h.eq({}, leftovers())
+  -- :tabclose on the review's tab
+  s = open()
+  feed('cl')
+  vim.cmd('tabclose ' .. vim.api.nvim_tabpage_get_number(s.tab))
+  h.flush()
+  h.ok(s.cleaned, 'the review ended')
+  h.eq(nil, s.clist)
+  h.eq({}, leftovers())
+end)
+
+-- Not covered: resizing (WinResized / VimResized re-place and re-wrap the view). Headless specs
+-- cannot grow the screen (docs/TESTING.md), and shrinking the diff window is not a WinResized
+-- the view's float would follow without a UI.
 
 h.run()

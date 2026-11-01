@@ -24,6 +24,12 @@ local function cv()
   return require('revuey.comments_view')
 end
 
+local UNCOMMITTED = require('revuey.attribution').UNCOMMITTED
+
+-- Above the stack tree (40, its footer 41), so the view opened from inside the tree shows; below
+-- the comment editor and other floats (50 and up).
+M.ZINDEX = 45
+
 local function key(name)
   return require('revuey.keys').first(name)
 end
@@ -139,18 +145,24 @@ local function layer_of(s, e)
     local set, n = {}, 0
     for _, list in pairs(per) do
       for _, name in ipairs(list) do
-        if not set[name] then
+        if not set[name] and name ~= UNCOMMITTED then
           set[name], n = true, n + 1
         end
       end
     end
     names = n == 1 and vim.tbl_keys(set) or nil
   end
-  local name = names and names[#names] -- the topmost layer that touched it
-  for i, l in ipairs(st.layers) do
-    if l.name == name then
-      return i
+  -- the topmost layer that touched it; uncommitted changes (the working tree, on top of the
+  -- stack) count for the top layer when no layer touched it
+  for j = #(names or {}), 1, -1 do
+    for i, l in ipairs(st.layers) do
+      if l.name == names[j] then
+        return i
+      end
     end
+  end
+  if names and vim.tbl_contains(names, UNCOMMITTED) then
+    return #st.layers
   end
 end
 
@@ -313,7 +325,8 @@ end
 ---`o.compact`: one line (location, status, author, first line, replies). Otherwise the location
 ---line (where, status, why it is not on its line, the code there) and the thread box the diff
 ---draws (comments_view.thread_lines: author, chips, body wrapped to the width, replies).
----@param o {width:integer, compact?:boolean, indent?:string}
+---`o.cut`: where a thread cut short is recorded (the host's own set; `cz` expands it).
+---@param o {width:integer, compact?:boolean, indent?:string, cut?:table<string, true>}
 ---@return table[] lines
 function M.thread_lines(s, e, o)
   local indent = o.indent or '  '
@@ -356,7 +369,7 @@ function M.thread_lines(s, e, o)
     end
   end
   local lines = { head }
-  for _, l in ipairs(cv().thread_lines(s, c, e.p or {}, width)) do
+  for _, l in ipairs(cv().thread_lines(s, c, e.p or {}, width, o.cut or {})) do
     local ch = { { indent, 'Normal' } }
     vim.list_extend(ch, l)
     lines[#lines + 1] = ch
@@ -376,8 +389,11 @@ end
 
 ---The view's lines for a host `width` cells wide: {chunks, id?, start?, last?} per line (`id`: the
 ---thread the line belongs to, `start`: its first line, `last`: its last), and the counts.
----@param o {width:integer, compact?:boolean}
+---`o.cut` collects the threads shown cut (collapsed or shortened: `cz` expands them); never the
+---diff's own set, since the view's width and one-line form cut other threads.
+---@param o {width:integer, compact?:boolean, cut?:table<string, true>}
 function M.build(s, o)
+  o.cut = o.cut or {}
   local entries = M.entries(s)
   local n = M.counts(entries)
   local out = {}
@@ -432,9 +448,9 @@ function M.build(s, o)
       line(ch)
     end
     local compact = o.compact or collapsed(s, e)
-    local tl = M.thread_lines(s, e, { width = o.width, compact = compact })
-    if compact and not o.compact and s.cm and s.cm.cut then
-      s.cm.cut[e.c.id] = true -- `cz` expands it (the key hint offers it)
+    local tl = M.thread_lines(s, e, { width = o.width, compact = compact, cut = o.cut })
+    if compact and not o.compact then
+      o.cut[e.c.id] = true -- `cz` expands it (the key hint offers it)
     end
     local first = #out + 1
     for _, l in ipairs(tl) do
@@ -511,10 +527,9 @@ function M.render(s)
     local id, first, _, row = at_cursor(v)
     local keep = id and { id = id, off = row - first, index = v.order_index and v.order_index[id] }
     local width = api.nvim_win_get_width(v.win) - 1
-    if s.cm then
-      s.cm.cut = s.cm.cut or {}
-    end
-    local lines, n = M.build(s, { width = width })
+    local cut = {}
+    local lines, n = M.build(s, { width = width, cut = cut })
+    v.cut = cut
     v.counts = n
     local texts, rows, blocks, order, order_index = {}, {}, {}, {}, {}
     for i, l in ipairs(lines) do
@@ -573,6 +588,7 @@ function M.render(s)
     end
   end)
   v.rendering = false
+  v.hint_id = (at_cursor(v))
   redraw_winbar(s)
   if not ok then
     error(err, 0)
@@ -614,33 +630,46 @@ function M.show(s)
   cv().jump(s, id)
 end
 
----`]c` / `[c` in the view: the next or previous thread (takes a count).
+---`]c` / `[c` in the view: the next or previous thread start (takes a count), as `]c` in the
+---diff: inside a thread `[c` goes to its start first; past the last (before the first) thread
+---nothing moves.
 function M.next(s, dir)
   local v = valid(s)
   if not v or #v.order == 0 then
     return
   end
   local row = api.nvim_win_get_cursor(v.win)[1]
-  local id = v.rows[row]
-  local i = id and v.order_index[id]
-  if not i then
-    -- between threads: the first one below (or above)
-    for j, x in ipairs(v.order) do
-      if v.blocks[x].first > row then
-        i = dir > 0 and j - 1 or j
-        break
+  local target
+  for _ = 1, vim.v.count1 do
+    local t
+    if dir > 0 then
+      for _, x in ipairs(v.order) do
+        if v.blocks[x].first > row then
+          t = v.blocks[x].first
+          break
+        end
+      end
+    else
+      for i = #v.order, 1, -1 do
+        if v.blocks[v.order[i]].first < row then
+          t = v.blocks[v.order[i]].first
+          break
+        end
       end
     end
-    i = i or (dir > 0 and #v.order or #v.order + 1)
-  elseif dir < 0 and v.blocks[id].first < row then
-    i = i + 1 -- inside a thread: [c goes to its start first
+    if not t then
+      break
+    end
+    row, target = t, t
   end
-  local j = math.max(1, math.min(#v.order, i + dir * vim.v.count1))
-  api.nvim_win_set_cursor(v.win, { v.blocks[v.order[j]].first, 0 })
+  if target then
+    api.nvim_win_set_cursor(v.win, { target, 0 })
+  end
 end
 
----Close the view; the diff (or guide) below is as it was. Remembers the thread under the cursor
----for the next open.
+---Close the view; the diff (or guide) below is as it was. Focus goes back to the window it was
+---opened from while that is still there (the panel, the stack tree's float), else to the diff.
+---Remembers the thread under the cursor for the next open.
 function M.close(s)
   local v = s and s.clist
   if not v then
@@ -660,8 +689,9 @@ function M.close(s)
     pcall(api.nvim_buf_delete, v.buf, { force = true })
   end
   if not s.cleaned then
-    if s.diff_win and api.nvim_win_is_valid(s.diff_win) then
-      pcall(api.nvim_set_current_win, s.diff_win)
+    local back = v.from and v.from ~= v.win and api.nvim_win_is_valid(v.from) and v.from or s.diff_win
+    if back and api.nvim_win_is_valid(back) then
+      pcall(api.nvim_set_current_win, back)
     end
     require('revuey.panel').render(s)
     redraw_winbar(s)
@@ -694,7 +724,7 @@ local function keymaps(s, v)
   map({ '<CR>', '<2-LeftMouse>' }, function()
     M.show(s)
   end, 'comments view: show the comment in the diff')
-  map('q', function()
+  map({ 'q', '<Esc>' }, function()
     M.close(s)
   end, 'comments view: back to the diff')
   map(k.comment_list, function()
@@ -760,16 +790,17 @@ function M.open(s)
     return
   end
   require('revuey.highlights').setup()
+  local from = api.nvim_get_current_win()
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'revuey-comments'
   pcall(api.nvim_buf_set_name, buf, 'revuey://comments')
-  local win = api.nvim_open_win(buf, true, vim.tbl_extend('force', geometry(s), { style = 'minimal', border = 'none', zindex = 40 }))
+  local win = api.nvim_open_win(buf, true, vim.tbl_extend('force', geometry(s), { style = 'minimal', border = 'none', zindex = M.ZINDEX }))
   vim.wo[win].wrap = false
   vim.wo[win].cursorline = true
   vim.wo[win].scrolloff = 3
   vim.wo[win].winhighlight = 'NormalFloat:Normal'
-  v = { buf = buf, win = win, rows = {}, blocks = {}, order = {}, order_index = {}, want = s.clist_last }
+  v = { buf = buf, win = win, from = from, rows = {}, blocks = {}, order = {}, order_index = {}, cut = {}, want = s.clist_last }
   s.clist = v
   keymaps(s, v)
   local group = api.nvim_create_augroup('revuey.comments.list.' .. buf, { clear = true })
@@ -778,7 +809,13 @@ function M.open(s)
     group = group,
     buffer = buf,
     callback = function()
-      redraw_winbar(s)
+      -- the hint follows the thread under the cursor: redraw only when that changed (a render
+      -- redraws it anyway)
+      local id = at_cursor(v)
+      if id ~= v.hint_id then
+        v.hint_id = id
+        redraw_winbar(s)
+      end
     end,
   })
   -- the diff window resized (the screen, the panel): the view follows it, wrapped again
@@ -851,7 +888,7 @@ function M.winbar(s, win)
   local right = '%#Comment#' .. esc(counts_text(n)) .. ' '
   if v and api.nvim_get_current_win() == v.win then
     local id = at_cursor(v)
-    local items = id and require('revuey.key_help').comment_items(s, { id }) or {}
+    local items = id and require('revuey.key_help').comment_items(s, { id }, v.cut) or {}
     if #items > 0 then
       local k = require('revuey.key_help')
       return k.compose(left, '', vim.list_extend({ { key = '<CR>', label = 'show' } }, items), api.nvim_win_get_width(win))

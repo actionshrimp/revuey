@@ -309,8 +309,10 @@ local function author_hl(a)
 end
 
 ---Virtual lines of one thread (also the comments view's thread boxes, comments_list.lua).
+---`cut`: the set a cut thread is recorded in (default: the diff's, `s.cm.cut`; the comments
+---view keeps its own, as its width cuts other threads).
 ---@param p revuey.CommentPlacement
-local function thread_lines(s, c, p, width)
+local function thread_lines(s, c, p, width, cut)
   local expanded = cm(s).expanded[c.id]
   local max = opt('max_lines', 6)
   local B = 'RevueyCommentBorder'
@@ -428,7 +430,7 @@ local function thread_lines(s, c, p, width)
   end
   local limit = resolved and 1 or max
   if not expanded and #body > limit then
-    local cut = cm(s).cut
+    cut = cut or cm(s).cut
     if cut then
       cut[c.id] = true -- cz shows more (the key hint offers it)
     end
@@ -1024,14 +1026,18 @@ end
 ---actions below apply, so the winbar's key hint (key_help) offers only what would work.
 ---Returns true and a short label ("add to review", "reopen"), or false and why.
 ---Actions: edit, reply, resolve, delete, include, send, accept, dismiss, expand, open.
+---`o.cut`: the set of cut threads to ask for `expand` (default: the diff's; the comments view's
+---while it has focus).
+---@param o? {cut?:table<string, true>}
 ---@return boolean ok, string label_or_why
-function M.can(s, cmt, action)
+function M.can(s, cmt, action, o)
   local c = cm(s)
   if action == 'expand' then
     if c.expanded[cmt.id] then
       return true, 'collapse'
     end
-    if c.cut and c.cut[cmt.id] then
+    local cut = (o and o.cut) or c.cut
+    if cut and cut[cmt.id] then
       return true, 'expand'
     end
     return false, 'nothing more to show'

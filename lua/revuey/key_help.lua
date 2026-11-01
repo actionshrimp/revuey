@@ -19,8 +19,8 @@ local FORGE = { { 'comment_reply', 'reply' }, { 'forge_open', 'open' }, { 'comme
 
 ---Hint items for the comments and GitHub threads `ids` (those covering a row, or the thread under
 ---the comments view's cursor): {key, label} per key, the first item's label when several items
----take the key.
-local function comment_items(s, ids, out, seen)
+---take the key. `cut`: the cut threads `cz` expands (default: the diff's).
+local function comment_items(s, ids, out, seen, cut)
   local c = s.cm
   if not (c and ids) then
     return
@@ -37,7 +37,7 @@ local function comment_items(s, ids, out, seen)
       for _, a in ipairs(list) do
         local key = keys.first(a[1])
         if key and not seen[key] and (not a.resolved or cmt.status == 'resolved') then
-          local ok, label = cv.can(s, cmt, a[2])
+          local ok, label = cv.can(s, cmt, a[2], cut and { cut = cut } or nil)
           if ok then
             seen[key] = true
             out[#out + 1] = { key = key, label = label }
@@ -80,11 +80,12 @@ function M.items(s, row)
   return out
 end
 
----The keys that work on the comments or threads `ids` (the comments view's winbar).
+---The keys that work on the comments or threads `ids` (the comments view's winbar, with the
+---view's own set of `cut` threads).
 ---@return {key:string, label:string}[]
-function M.comment_items(s, ids)
+function M.comment_items(s, ids, cut)
   local out = {}
-  comment_items(s, ids, out, {})
+  comment_items(s, ids, out, {}, cut)
   return out
 end
 

@@ -1943,8 +1943,9 @@ are in `reports/Terminal code review tool landscape.md`.
       the same thread (or the thread now at its place when it went).
     - **Order.** Layer first in full-stack scope: a GitHub thread under the layer whose PR it
       is on (`forge_view.pr` of each layer), a local comment under the layer the branch labels
-      (`review.layer_labels`, decision 9) give its placed hunk (the topmost, when several
-      touched it; a file-level comment the file's only layer), else "Not attributed to a
+      (`review.layer_labels`, decision 9) give its placed hunk (the topmost real layer, when
+      several touched it; `attribution.UNCOMMITTED` alone: the top layer; a file-level comment
+      the file's only layer), else "Not attributed to a
       layer" last. Then the file's index in `r.files` (the diff order; files not in the review
       last, by path), file-level threads first, the placed first line (deleted lines just before
       the new-side line of the same number; `sort_line` when the anchor has one), creation time.
@@ -1972,11 +1973,28 @@ are in `reports/Terminal code review tool landscape.md`.
       guide's and the view's key lines (`comments_list.HELP`, `keys.line` templates); the diff
       window's winbar is `Comments · <scope>` with the counts, or `<CR> show` and the keys
       `key_help.comment_items` finds for the thread under the cursor while the view has focus.
-      The float `cl` list it replaces is gone (its `list_lines` with it).
+      The float `cl` list it replaces is gone (its `list_lines` with it). The winbar is redrawn
+      on `CursorMoved` only when the thread under the cursor changed (a render redraws it).
+    - **Its own cut set.** The view's width and one-line form cut other threads than the diff
+      does, so `build` records them in a set of the view's (`v.cut`, passed down to
+      `comments_view.thread_lines`), never in `s.cm.cut`; `key_help.comment_items(s, ids, cut)`
+      and `comments_view.can(..., {cut})` read it for the view's hint, so the diff never offers
+      `cz` for a thread only the view cut.
+    - **Stacking and focus.** The float's zindex (45) is above the stack tree's (40, 41) and
+      below the editor and other floats (50 and up), so `:RevueyComments` typed in the tree
+      shows the view. `q`, `<Esc>` and the toggle key close it and focus the window it was
+      opened from while that is still valid (the panel, the tree), else the diff window.
+      Resizing (`WinResized`, `VimResized`: re-placed, re-wrapped when the width changed) is not
+      covered by a test: headless specs cannot resize the screen (docs/TESTING.md).
     - **Tests**: `comments_list_spec.lua` (the fake `gh`'s threads with your, an agent's and an
       AI comment: statuses, authors, order, `]c`, `<CR>` into the diff and the guide, `cr` on a
-      GitHub thread, `cx`/`ci`/`cz`/`ca`/`gx` with the cursor kept, `q`, live redraws, `gH`,
-      layer and full-stack scope); screenshots `comments-view` and `comments-view-narrow`.
+      GitHub thread, `ce`/`cd`/`cs`/`cn`/`cx`/`ci`/`cz`/`ca`/`gx` by id with the cursor kept, a
+      comment gone, `]c`/`[c` stopping at the ends, the view's own cut set, focus back to a
+      float it was opened from and the zindex, `gp` and the panel's `<CR>`, folds and topline
+      kept through `R`, the guide's fallback to the diff (the guide's placement stubbed), `q` /
+      `<Esc>`, nothing left after closing the review, its tab or the view's buffer, live redraws,
+      `gH`, layer and full-stack scope with uncommitted labels); screenshots `comments-view` and
+      `comments-view-narrow`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
