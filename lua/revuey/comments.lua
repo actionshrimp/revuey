@@ -33,6 +33,9 @@ M.EVENT_KINDS = {
 -- Not about a comment (M.switch_event): the worktree was switched to another stack layer while an
 -- agent was connected. Delivered like a message by `watch --messages`, never caught up.
 M.SWITCHED = 'switched'
+-- Not about a comment either (requests.lua): the review asked the connected agent for something
+-- (a guide), or withdrew that request. Delivered like a message by `watch --messages`.
+M.REQUEST = 'request'
 
 ---@class revuey.CommentAnchor
 ---@field path string
@@ -1350,6 +1353,9 @@ end
 ---line>  (<bin> show <id> for full context)`. A `switched` event: `revuey switched <from> ->
 ---<to> (layer i of n, PR #N <url>): <what it means>`.
 function M.message_line(ev, bin)
+  if ev.kind == M.REQUEST then
+    return require('revuey.requests').line(ev, bin)
+  end
   if ev.kind == M.SWITCHED then
     return ('revuey switched %s: the worktree has %s checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on'):format(
       switch_summary(ev, true),
@@ -1506,6 +1512,9 @@ local VERB = {
 
 ---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
 function M.event_line(ev)
+  if ev.kind == M.REQUEST then
+    return ('request %s %s (%s)  #%s'):format(tostring(ev.request_kind), tostring(ev.status), tostring(ev.label or '?'), tostring(ev.request_id))
+  end
   if ev.kind == M.SWITCHED then
     return 'switch ' .. switch_summary(ev, false) .. '  #' .. tostring(ev.id)
   end

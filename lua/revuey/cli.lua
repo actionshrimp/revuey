@@ -27,8 +27,15 @@
 --   import-review [--name <n>] [--session <id>] <file|->   |   import-review --schema
 --       import an AI review document (ai_review_prompt.SCHEMA): its findings become AI comments
 --       to triage in the review, its summary and verdict the review's record
+--   guide [--json] [--session <id>]   |   guide --prompt [--request <id>]
+--       the guide the review shows (title, summary, sections with their hunk ids, prose and
+--       line notes, whether it is stale); --prompt: the instructions, diff and schema for the
+--       connected agent to write one (taking request <id>: requests.lua)
+--   import-guide [--request <id>] [--name <n>] [--session <id>] <file|->   |   --schema
+--       validate and save a guide the agent wrote (as revuey's own runs are), marking the
+--       request done; the running review shows it
 --   ack <id>           mark a sent message handled without replying (no re-delivery)
---   inbox [--json]     sent messages not acknowledged yet, then exit (no Monitor needed)
+--   inbox [--json]     sent messages not acknowledged yet and open requests, then exit
 --   comments [--json] [--all] [--scope current|all|<branch>]
 --       the comments of the current repo and branch (Markdown, like :RevueyCommentsExport)
 --   install-skill [--force] [--copy]
@@ -94,13 +101,17 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey sessions [--json] [--all]
       live reviews of this worktree (--all: every worktree of the repo) and whether an agent
       is connected to each
-  revuey watch --messages [--session <id>] [--json] [--replay]
+  revuey watch --messages [--session <id>] [--name <your name>] [--json] [--replay]
       attach to the review and print each message the user sends you, one line each:
         revuey message <id> <path>:<lines> (<side>) [<branch>]: <first line>  (revuey show <id> ...)
       Messages no watch has printed yet come first (catch-up), then new ones as they are sent.
       A printed message is not printed again by the next watch (--replay: print every message
       not yet answered or acknowledged). Messages of another running review (even a suspended
       one) are left to it; a review that ended is replaced by the next one of its scope.
+      When the user asks you to write the guide of the review (instead of a fresh claude run):
+        revuey request <id> guide [<branch>]: the user asked you to write the guide ... (revuey guide --prompt --request <id>)
+      and when they withdraw it: revuey request <id> cancelled [<branch>]: ...
+      --name <your name> is shown in the review ("Ask <name> (connected)").
       When the user checks out another stack layer in the review, a line says so:
         revuey switched <from> -> <to> (layer <i> of <n>, PR #<N> <url>): ...
       (live only: a watch started later does not print earlier switches).
@@ -130,10 +141,22 @@ For coding agents (no UI; run inside the reviewed worktree):
       `hunks` printed). Each finding becomes an AI comment for the user to accept or dismiss
       (local only, never posted). Findings with bad anchors are dropped and counted; untouched
       findings of the reviewer's previous import are replaced.
+  revuey guide [--json] [--session <id>]
+      the guide the review shows now, in Markdown: title, summary, each section's prose, hunk ids
+      (as `hunks` prints them), hunk and line notes, who generated it and whether the diff changed
+      since (stale); "no guide for this review" when there is none. Same review as comment.
+  revuey guide --prompt [--request <id>] [--session <id>]
+      the instructions, the diff (hunk ids, numbered lines) and the Diff: hash to write the guide
+      yourself; --request takes the user's request (they see that you started)
+  revuey import-guide [--request <id>] [--name <your name>] [--session <id>] <file|->
+      import a guide you wrote (JSON; `--schema` prints the schema; "diff" must match the hash
+      `guide --prompt` printed). Validated like revuey's own guides: every hunk id exactly once,
+      line notes on numbered lines; a problem is reported and nothing is saved, so fix it and
+      import again. The request is marked done and the running review shows the guide.
   revuey ack <id>                mark it handled without replying (it is not delivered again)
   revuey inbox [--session <id>] [--json]
-      messages not answered or acknowledged yet, then exit (also when Monitor is missing);
-      printed ones say "(delivered, not handled)". Same review and routing as watch.
+      messages not answered or acknowledged yet, and open requests, then exit (also when Monitor
+      is missing); printed ones say "(delivered, not handled)". Same review and routing as watch.
   revuey comments [--json] [--all] [--scope current|all|<branch>]
       all review comments of this branch (Markdown export)
   revuey watch [--json] [--since <event id>|all] [--all] [--scope ...]
@@ -154,6 +177,7 @@ local VALUE_FLAGS = {
   ['--end'] = 'end_line',
   ['--side'] = 'side',
   ['--name'] = 'name',
+  ['--request'] = 'request',
 }
 local BOOL_FLAGS = {
   ['--json'] = 'json',
@@ -465,6 +489,22 @@ local function pending(dirs, ctx, undelivered_only)
   return list
 end
 
+---Open requests of the repo's reviews in `dirs` as `request` events (oldest first), each
+---knowing whether a watch printed it (`delivered`) or the agent started on it (`acked`).
+local function open_requests(dirs, ctx, undelivered_only)
+  local requests = require('revuey.requests')
+  local list = {}
+  for _, rec in ipairs(requests.list(dirs, { open = true, repo = { ctx.root, ctx.real } })) do
+    if not (undelivered_only and rec.delivered_at) then
+      local ev = requests.event(rec, rec.at)
+      ev.delivered = rec.delivered_at ~= nil
+      ev.acked = rec.status == 'acked'
+      list[#list + 1] = ev
+    end
+  end
+  return list
+end
+
 local session_list_text
 
 ---The review session a watch or inbox works for: --session, else the worktree's only live one
@@ -513,16 +553,26 @@ function M.inbox(o)
       list[#list + 1] = ev
     end
   end
+  -- then the open requests (a guide the user asked for), routed the same way
+  for _, ev in ipairs(open_requests(state_dirs(o, ctx), ctx)) do
+    if M.routed(ev, attached, live_ids) then
+      list[#list + 1] = ev
+    end
+  end
   if o.json then
     out((#list > 0 and vim.json.encode(list) or '[]') .. '\n')
     return
   end
   if #list == 0 then
-    out('no unacknowledged messages\n')
+    out('no unacknowledged messages\n') -- (and no open requests)
     return
   end
   for _, ev in ipairs(list) do
-    out(comments.message_line(ev, bin()) .. (ev.delivered and '  (delivered, not handled)' or '') .. '\n')
+    local note = ev.delivered and '  (delivered, not handled)' or ''
+    if ev.kind == comments.REQUEST and ev.acked then
+      note = '  (started, not imported yet)'
+    end
+    out(comments.message_line(ev, bin()) .. note .. '\n')
   end
 end
 
@@ -636,7 +686,15 @@ function M.watch(o)
   local attached = pick_session(o, ctx, list)
 
   -- presence: a watcher record with a heartbeat, removed on exit
-  local me = { pid = vim.uv.os_getpid(), worktree = ctx.root, started_at = sessions.now_ms(), mode = o.messages and 'messages' or 'events' }
+  local agent_name = o.name or vim.env.REVUEY_AGENT_NAME
+  local me = {
+    pid = vim.uv.os_getpid(),
+    worktree = ctx.root,
+    started_at = sessions.now_ms(),
+    mode = o.messages and 'messages' or 'events',
+    -- shown in the review ("Ask <name> (connected)") and recorded on what the agent makes
+    name = (agent_name and agent_name ~= '') and agent_name or nil,
+  }
   local watcher_path
   local function heartbeat()
     me.session = attached and attached.id or vim.NIL
@@ -676,6 +734,23 @@ function M.watch(o)
     end
   end
 
+  ---Record that the agent was shown an open request (catch-up skips it from now on).
+  local function stamp_request(ev)
+    if not o.messages or not ev.path or ev.status == 'cancelled' then
+      return
+    end
+    local requests = require('revuey.requests')
+    local _, e = requests.update(ev.path, function(x)
+      if x.delivered_at then
+        return false
+      end
+      x.delivered_at = requests.now_ms()
+    end)
+    if e then
+      err('revuey: could not record the delivery of request ' .. tostring(ev.request_id) .. ': ' .. tostring(e) .. '\n')
+    end
+  end
+
   local lost -- the session that ended (its last events are still its own)
   local function emit(ev, file)
     -- a switch of the worktree to another layer is for the agent like a message (printed once),
@@ -689,12 +764,29 @@ function M.watch(o)
         return
       end
     end
-    local is_msg = ev.kind == 'sent' or is_switch
+    -- a request (the user asked the agent for a guide) is delivered like a message, caught up
+    -- while open; its cancellation is live only, and one done or cancelled meanwhile is not news
+    local is_request = ev.kind == comments.REQUEST
+    if is_request then
+      if ev.status == 'cancelled' then
+        if (tonumber(ev.at) or 0) < watch_started then
+          return
+        end
+      else
+        local rec = ev.path and require('revuey.requests').read(ev.path)
+        if rec and not require('revuey.requests').is_open(rec) then
+          return
+        end
+      end
+    end
+    local is_msg = ev.kind == 'sent' or is_switch or is_request
     if is_msg then
       if not M.matches(ev.review, ctx, 'all') or not (is_switch or for_me(ev)) then
         return
       end
-      local key = ev.kind == 'sent' and comments.message_key(ev) or ('switched:' .. tostring(ev.id))
+      local key = ev.kind == 'sent' and comments.message_key(ev)
+        or (is_request and require('revuey.requests').key(ev))
+        or ('switched:' .. tostring(ev.id))
       if seen[key] then
         return
       end
@@ -725,6 +817,8 @@ function M.watch(o)
     out(line .. '\n')
     if ev.kind == 'sent' then
       stamp_delivered(file, ev)
+    elseif is_request then
+      stamp_request(ev)
     end
   end
 
@@ -785,6 +879,9 @@ function M.watch(o)
   local function catch_up()
     for _, ev in ipairs(pending(dirs(), ctx, not o.replay)) do
       emit(ev, ev._file)
+    end
+    for _, ev in ipairs(open_requests(dirs(), ctx, not o.replay)) do
+      emit(ev)
     end
   end
 
@@ -1420,6 +1517,365 @@ function M.import_review(o, pos)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Guides: reading the review's guide, and writing one for a request (requests.lua)
+-- ---------------------------------------------------------------------------
+
+---Who made a guide (its generator), for people: "claude (connected)", a model, or "claude".
+function M.generator_label(gen)
+  gen = gen or {}
+  if gen.provider == 'agent' then
+    return (gen.agent or 'agent') .. ' (connected)'
+  end
+  return gen.model or gen.provider or '?'
+end
+
+---The request `id` of this repo (any unique part), or exit 1.
+local function find_request(o, ctx, id)
+  local requests = require('revuey.requests')
+  local rec, ferr = requests.find(state_dirs(o, ctx), id, { repo = { ctx.root, ctx.real } })
+  if not rec then
+    die(ferr)
+  end
+  return rec
+end
+
+---A request that names another review than the one loaded: what it was for, or nil when it fits.
+local function request_mismatch(req, r)
+  local key = require('revuey.guide').key(r.state)
+  local k = req.key or {}
+  if k.repo == key.repo and k.branch == key.branch and k.base == key.base then
+    return nil
+  end
+  return ('request %s was for %s (vs %s), but the review shows %s vs %s now'):format(req.id, req.label or k.branch or '?', k.base or '?', key.branch, key.base)
+end
+
+---The open guide request of this review (key), newest first, or nil.
+local function open_guide_request(o, ctx, r)
+  local requests = require('revuey.requests')
+  local key = require('revuey.guide').key(r.state)
+  local list = requests.list(state_dirs(o, ctx), { open = true, repo = { ctx.root, ctx.real } })
+  for i = #list, 1, -1 do
+    local k = list[i].key or {}
+    if list[i].kind == 'guide' and k.repo == key.repo and k.branch == key.branch and k.base == key.base then
+      return list[i]
+    end
+  end
+end
+
+---The guide request `--request` names, checked (exit 1 when it is no guide request or was
+---cancelled). Its review is the one to load when no --session is given and it still runs.
+local function take_guide_request(o, ctx, what)
+  local req = find_request(o, ctx, o.request)
+  if req.kind ~= 'guide' then
+    die(('request %s asks for a %s, not a guide'):format(req.id, req.kind))
+  elseif req.status == 'cancelled' then
+    die(('request %s was cancelled by the user: %s'):format(req.id, what))
+  end
+  if not o.session and req.session then
+    for _, e in ipairs(live_sessions(o, ctx)) do
+      if e.id == tostring(req.session) then
+        o.session = e.id
+      end
+    end
+  end
+  return req
+end
+
+local function guide_prompt_out(o, req, r, hunks, info, attached)
+  local requests = require('revuey.requests')
+  local guide = require('revuey.guide')
+  if req then
+    local mm = request_mismatch(req, r)
+    if mm then
+      die(mm .. '; tell the user, and write nothing')
+    end
+  end
+  local diff = guide.anchors_hash(hunks)
+  local text, perr = require('revuey.guide_prompt').build(require('revuey.guide_view').prompt_context(r), hunks, { budget = math.huge, agent = true })
+  if not text then
+    die(perr)
+  end
+  if req and req.status == 'pending' then
+    local _, uerr = requests.update(req._path, function(x)
+      if x.status ~= 'pending' then
+        return false
+      end
+      x.status, x.acked_at = 'acked', requests.now_ms()
+    end)
+    if uerr then
+      err('revuey: could not record that you took request ' .. req.id .. ': ' .. tostring(uerr) .. '\n')
+    end
+  end
+  local mode = info.mode == 'committed' and 'committed' or 'working tree'
+  out(('# Guide prompt for %s vs %s (%s): %d hunks%s\n'):format(sessions.scope_label(info), info.base or '?', mode, #hunks, req and (', request ' .. req.id) or ''))
+  out(('Diff: %s\n\n'):format(diff))
+  out(text)
+  local name = '--name <your name> '
+  out(('\n---\nWrite the guide as one JSON document (schema: `%s import-guide --schema`) with "diff": "%s", and import it with `%s import-guide %s%s-` (the JSON on stdin). '
+    .. 'It is validated like revuey\'s own guides: every hunk id exactly once (in a section or "unplaced"), line notes on lines this prompt numbered. '
+    .. 'If it reports a problem, fix the document and import it again.\n'):format(
+    bin(), diff, bin(), req and ('--request ' .. req.id .. ' ') or '', name))
+  return attached
+end
+
+---`guide [--json]`: the guide the review shows now, in Markdown (or JSON); `--prompt [--request
+---<id>]`: the prompt to write one (instructions for the connected agent, the diff, the schema).
+function M.guide(o)
+  local ctx = here(o)
+  if o.request and not o.prompt then
+    die('--request goes with --prompt (`guide --prompt --request <id>`)', 2)
+  end
+  local req = o.request and take_guide_request(o, ctx, 'nothing to do') or nil
+  local r, hunks, info, _, _, attached = review_hunks(o)
+  if o.prompt then
+    return guide_prompt_out(o, req, r, hunks, info, attached)
+  end
+  local guide = require('revuey.guide')
+  local diff = guide.anchors_hash(hunks)
+  local rec = guide.load(guide.dir(vim.fs.dirname(r.state._path)), guide.key(r.state), diff)
+  local mode = info.mode == 'committed' and 'committed' or 'working tree'
+  local where = ('%s vs %s (%s)%s'):format(sessions.scope_label(info), info.base or '?', mode, attached and (', session ' .. attached.id) or ', no review running')
+  req = open_guide_request(o, ctx, r)
+  if not rec then
+    if o.json then
+      out(vim.json.encode({ diff = diff, review = info, guide = vim.NIL, request = req and req.id or nil }) .. '\n')
+      return
+    end
+    out(('no guide for this review (%s)\n'):format(where))
+    if req then
+      out(('The user asked you to write one: request %s (`%s guide --prompt --request %s`).\n'):format(req.id, bin(), req.id))
+    end
+    return
+  end
+  local res = guide.resolve(rec, hunks)
+  local gen = res.generator or {}
+  local sections = {}
+  for _, sec in ipairs(res.sections) do
+    local items, notes = {}, {}
+    for _, item in ipairs(sec.items) do
+      items[#items + 1] = { id = item.hunk.id, path = item.hunk.path, note = item.note, edited = item.edited or nil }
+      for _, n in ipairs(item.line_notes or {}) do
+        notes[#notes + 1] = { hunk = item.hunk.id, line = n.line, end_line = n.end_line, side = n.side, text = n.text }
+      end
+    end
+    sections[#sections + 1] = {
+      title = sec.title,
+      overview = sec.overview,
+      kind = sec.kind,
+      outdated = sec.outdated or nil,
+      missing = sec.missing > 0 and sec.missing or nil,
+      hunks = items,
+      line_notes = notes,
+    }
+  end
+  if o.json then
+    out(vim.json.encode({
+      diff = diff,
+      review = info,
+      stale = res.stale,
+      title = res.title,
+      summary = res.summary,
+      generated_by = M.generator_label(gen),
+      generator = gen,
+      sections = sections,
+      request = req and req.id or nil,
+    }) .. '\n')
+    return
+  end
+  local o_ = {}
+  local function add(l)
+    o_[#o_ + 1] = l
+  end
+  add('# Guide: ' .. res.title)
+  add('')
+  add(('Review: %s'):format(where))
+  add(('Generated by %s%s'):format(M.generator_label(gen), gen.generated_at and (', ' .. os.date('%Y-%m-%d %H:%M', gen.generated_at)) or ''))
+  if res.stale then
+    local parts = {}
+    if res.outdated > 0 then
+      parts[#parts + 1] = res.outdated .. ' section(s) outdated'
+    end
+    if res.new > 0 then
+      parts[#parts + 1] = res.new .. ' new hunk(s), in "Not in guide"'
+    end
+    if (res.edited or 0) > 0 then
+      parts[#parts + 1] = res.edited .. ' hunk(s) edited'
+    end
+    if (res.notes_lost or 0) > 0 then
+      parts[#parts + 1] = res.notes_lost .. ' line note(s) lost'
+    end
+    add(('Stale: the diff changed since this guide was generated (%s). The text may describe code that is gone.'):format(table.concat(parts, ', ')))
+  else
+    add('Up to date: generated for the diff the review shows.')
+  end
+  add(('Diff: %s (hunk ids as `%s hunks` prints them)'):format(diff, bin()))
+  if req then
+    add(('A newer guide was requested from you: request %s.'):format(req.id))
+  end
+  if res.summary ~= '' then
+    add('')
+    add(res.summary)
+  end
+  for si, sec in ipairs(sections) do
+    add('')
+    add(('## %d. %s%s'):format(si, sec.title, sec.outdated and ' (outdated: ' .. sec.missing .. ' hunk(s) changed or gone)' or ''))
+    if sec.overview ~= '' then
+      add('')
+      add(sec.overview)
+    end
+    add('')
+    local hs = {}
+    for _, it in ipairs(sec.hunks) do
+      hs[#hs + 1] = it.id .. ' ' .. it.path .. (it.edited and ' (edited since)' or '')
+    end
+    add('Hunks: ' .. (#hs > 0 and table.concat(hs, ', ') or 'none'))
+    for _, it in ipairs(sec.hunks) do
+      if it.note then
+        add(('- %s: %s'):format(it.id, it.note))
+      end
+    end
+    if #sec.line_notes > 0 then
+      add('Line notes:')
+      for _, n in ipairs(sec.line_notes) do
+        local lines = n.end_line and n.end_line ~= n.line and (n.line .. '-' .. n.end_line) or tostring(n.line)
+        add(('- %s:%s (%s): %s'):format(n.hunk, lines, n.side or 'new', n.text))
+      end
+    end
+  end
+  out(table.concat(o_, '\n') .. '\n')
+end
+
+---The schema of an imported guide: the guide's (guide_prompt.SCHEMA) with an optional `diff`.
+local function import_guide_schema()
+  local sc = vim.deepcopy(require('revuey.guide_prompt').SCHEMA)
+  sc.properties.diff = { type = 'string', description = 'the Diff: hash `guide --prompt` printed' }
+  return sc
+end
+
+---`import-guide [--request <id>] [--name <n>] [--session <id>] <file|->`: validate a guide written
+---by the agent like revuey's own (guide.validate), save it where the review keeps its guides,
+---and mark the request done; the running review shows it.
+function M.import_guide(o, pos)
+  if o.schema then
+    out(vim.json.encode(import_guide_schema()) .. '\n')
+    return
+  end
+  local usage = 'usage: revuey import-guide [--request <id>] [--name <n>] [--session <id>] <file|->  (--schema prints the schema)'
+  if #pos ~= 1 then
+    die((#pos == 0 and 'import-guide needs a file (or - for stdin)\n' or 'import-guide takes one file\n') .. usage, 2)
+  end
+  local text
+  if pos[1] == '-' then
+    text = io.stdin:read('*a') or ''
+  else
+    local fd, ferr = io.open(pos[1], 'r')
+    if not fd then
+      die('cannot read ' .. pos[1] .. ': ' .. tostring(ferr))
+    end
+    text = fd:read('*a') or ''
+    fd:close()
+  end
+  if vim.trim(text) == '' then
+    die('empty guide')
+  end
+  local guide = require('revuey.guide')
+  local requests = require('revuey.requests')
+  local doc = guide.repair_json(text)
+  if type(doc) ~= 'table' or type(doc.sections) ~= 'table' then
+    die(('not a guide: expected one JSON object with "title", "summary" and "sections" (`%s import-guide --schema`)'):format(bin()))
+  end
+  local ctx = here(o)
+  local req = o.request and take_guide_request(o, ctx, 'nothing imported') or nil
+  local r, hunks, info, _, _, attached = review_hunks(o)
+  if req then
+    local mm = request_mismatch(req, r)
+    if mm then
+      die(mm .. '; nothing imported')
+    end
+  end
+  local diff = guide.anchors_hash(hunks)
+  if doc.diff ~= nil and doc.diff ~= diff then
+    die(('the guide was made for another diff (%s; the review shows %s now): the code changed since `guide --prompt`. Run `%s guide --prompt%s` again and rewrite the parts that changed; nothing imported'):format(
+      tostring(doc.diff), diff, bin(), req and (' --request ' .. req.id) or ''))
+  end
+  doc.diff = nil
+  local valid, w = guide.validate(doc, hunks, { level = 'full', abridged = {} })
+  if not valid then
+    die(tostring(w) .. '; nothing imported')
+  end
+  -- coverage problems are the writer's to fix (revuey's own runs put the rest in "Other changes")
+  local problems = {}
+  if w.unknown > 0 then
+    problems[#problems + 1] = w.unknown .. ' unknown hunk id(s)'
+  end
+  if w.duplicates > 0 then
+    problems[#problems + 1] = w.duplicates .. ' hunk id(s) listed twice'
+  end
+  if w.missed > 0 then
+    local missing = {}
+    for _, sec in ipairs(valid.sections) do
+      if sec.other then
+        for _, ref in ipairs(sec.hunks) do
+          missing[#missing + 1] = ref.id
+        end
+      end
+    end
+    problems[#problems + 1] = ('%d hunk id(s) in no section and not in "unplaced" (%s)'):format(w.missed, table.concat(missing, ' '))
+  end
+  if #problems > 0 then
+    die(('the guide does not cover the diff: %s. Every id h1 to h%d must appear exactly once, in a section or in "unplaced"; fix it and import again (nothing imported)'):format(
+      table.concat(problems, ', '), #hunks))
+  end
+  local name = o.name or vim.env.REVUEY_AGENT_NAME
+  name = (name and name ~= '') and name or (req and req.agent) or 'agent'
+  local rec = guide.record(valid, hunks, {
+    key = guide.key(r.state),
+    generator = {
+      provider = 'agent',
+      agent = name,
+      request = req and req.id or nil,
+      source = pos[1] == '-' and 'stdin' or pos[1],
+      generated_at = os.time(),
+      head = r.head,
+      merge_base = r.merge_base,
+      mode = r.mode,
+      prompt_level = 'full',
+      warnings = w,
+    },
+  })
+  local dir = (req and req.guide_dir) or guide.dir(vim.fs.dirname(r.state._path))
+  local ok, serr = pcall(guide.save, dir, rec)
+  if not ok then
+    die(tostring(serr))
+  end
+  if req then
+    local _, uerr = requests.update(req._path, function(x)
+      x.status, x.done_at = 'done', requests.now_ms()
+      x.result = { sections = #rec.sections, agent = name }
+    end)
+    if uerr then
+      err('revuey: the guide is saved, but request ' .. req.id .. ' could not be marked done: ' .. tostring(uerr) .. '\n')
+    end
+  end
+  local n_notes = 0
+  for _, sec in ipairs(rec.sections) do
+    for _, a in ipairs(sec.hunks) do
+      n_notes = n_notes + #(a.line_notes or {})
+    end
+  end
+  out(('imported the guide (%d section%s, %d line note%s) into %s%s\n'):format(
+    #rec.sections, #rec.sections == 1 and '' or 's', n_notes, n_notes == 1 and '' or 's',
+    where_text(info, attached), attached and '; the review shows it' or ''))
+  local dropped = guide.dropped_text(w.notes)
+  if dropped then
+    out(('line notes dropped: %s (fix them and import again to replace this guide)\n'):format(dropped))
+  end
+  if w.diagram_dropped then
+    out('the diagram was dropped (fewer than two valid nodes)\n')
+  end
+end
+
 ---`install-skill`: link (default) or copy skill/revuey into $HOME/.claude/skills/revuey.
 ---`pr-target <number|url>`: print `pr:<N>` for `wt switch` (bin/revuey pr). A URL must be in
 ---this clone's GitHub repo: wt looks the number up there whatever the URL says.
@@ -1555,6 +2011,8 @@ local COMMANDS = {
   inbox = M.inbox,
   hunks = M.hunks,
   ['import-review'] = M.import_review,
+  guide = M.guide,
+  ['import-guide'] = M.import_guide,
   ['install-skill'] = M.install_skill,
   ['pr-target'] = M.pr_target,
   ['pr-path'] = M.pr_path,
