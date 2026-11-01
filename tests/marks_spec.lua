@@ -283,8 +283,17 @@ h.test('visual mr over collapsed files marks all of them, the last one included'
   end
 end)
 
--- The guide: section 1 = a.txt + m.txt's first hunk; section 2 = m.txt's other hunks + z.txt.
-local function guide()
+-- The guide: section 1 = a.txt + m.txt's first hunk; section 2 = m.txt's other hunks + z.txt
+-- (or `secs`: {title, pred} per section).
+local function guide(secs)
+  secs = secs or {
+    { 'First', function(hk)
+      return hk.path == 'a.txt' or (hk.path == 'm.txt' and hk.hunk_idx == 1)
+    end },
+    { 'Second', function(hk)
+      return hk.path == 'z.txt' or (hk.path == 'm.txt' and hk.hunk_idx > 1)
+    end },
+  }
   local hs = review_mod.units(s.review).hunks
   local function ids(pred)
     local out = {}
@@ -300,14 +309,9 @@ local function guide()
   fd:write(vim.json.encode({
     title = 'Marks guide',
     summary = 'Summary.',
-    sections = {
-      { title = 'First', overview = 'One.', hunks = ids(function(hk)
-        return hk.path == 'a.txt' or (hk.path == 'm.txt' and hk.hunk_idx == 1)
-      end) },
-      { title = 'Second', overview = 'Two.', hunks = ids(function(hk)
-        return hk.path == 'z.txt' or (hk.path == 'm.txt' and hk.hunk_idx > 1)
-      end) },
-    },
+    sections = vim.tbl_map(function(x)
+      return { title = x[1], overview = x[3] or (x[1] .. '.'), hunks = ids(x[2]) }
+    end, secs),
     unplaced = {},
   }))
   fd:close()
@@ -362,7 +366,7 @@ h.test('guide: mr on a section heading marks its units; files it covers are revi
   keys(s, 'mr')
   h.eq(true, gv.section_reviewed(s, sec(1)))
   h.eq(s.layout.sections[1].start_row, closed_at(s, s.layout.sections[1].start_row))
-  h.eq(s.layout.sections[2].start_row, cursor(s))
+  h.eq(guide_row('m.txt', 2), cursor(s), "on to section 2's first hunk")
   -- the guide's own meta line follows, in place (no re-render: the fold just closed stays)
   local text = table.concat(vim.api.nvim_buf_get_lines(s.diff_buf, 0, -1, false), '\n')
   h.ok(text:find('2 sections · 1/2 reviewed', 1, true), text:sub(1, 200))
@@ -553,6 +557,180 @@ h.test('split units: mr on each piece of a hunk, progress, folding', function()
     h.eq({ 0, 4 }, progress(s, 'm.txt'))
   end)
   review_mod.split = nil
+  assert(ok, err)
+end)
+
+-- Moving on in the guide: section 1 = a.txt + m.txt's first hunk; 2 = m.txt's others, with a
+-- longer overview; 3 = z.txt.
+local function three_sections(bullets)
+  guide({
+    { 'Start', function(hk)
+      return hk.path == 'a.txt' or (hk.path == 'm.txt' and hk.hunk_idx == 1)
+    end },
+    { 'Middle', function(hk)
+      return hk.path == 'm.txt' and hk.hunk_idx > 1
+    end, bullets and table.concat(vim.tbl_map(function(i)
+      return '- point ' .. i
+    end, vim.fn.range(1, bullets)), '\n') or nil },
+    { 'End', function(hk)
+      return hk.path == 'z.txt'
+    end },
+  })
+end
+
+-- unmark everything and open every fold (unmarking behind the view's back leaves folds as they are)
+local function reset()
+  unmark_all(s)
+  vim.api.nvim_win_call(s.diff_win, function()
+    vim.cmd('normal! zR')
+  end)
+end
+
+local function mr_at(row)
+  vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+  keys(s, 'mr')
+end
+
+local function view_top()
+  return vim.api.nvim_win_call(s.diff_win, function()
+    return vim.fn.line('w0')
+  end)
+end
+
+---Make the diff window `n` text rows high (its winbar not counted); growing 'cmdheight' takes up
+---the rest, as only vertical splits share the screen.
+local function text_height(n)
+  vim.api.nvim_win_set_height(s.diff_win, n + 1)
+  h.eq(n, vim.fn.winheight(s.diff_win), 'text rows')
+  h.ok(vim.wo[s.diff_win].winbar ~= '', 'the guide window has a winbar')
+end
+
+local function restore_height()
+  vim.o.cmdheight = 1
+  vim.api.nvim_win_set_height(s.diff_win, 999)
+end
+
+h.test("guide: completing a section moves to the next section's first unreviewed hunk", function()
+  s = open(repo)
+  unmark_all(s)
+  three_sections()
+  -- section 2's first hunk already reviewed: completing section 1 lands on its second
+  mr_at(guide_row('m.txt', 2))
+  mr_at(guide_row('a.txt', 1))
+  h.eq(guide_row('m.txt', 1), cursor(s), 'section 1 not complete yet: its next hunk')
+  mr_at(guide_row('m.txt', 1))
+  h.eq(true, gv.section_reviewed(s, sec(1)))
+  h.eq(guide_row('m.txt', 3), cursor(s), "section 2's first unreviewed hunk")
+  h.eq(-1, closed_at(s, cursor(s)), 'the hunk is open')
+  mr_at(guide_row('m.txt', 3))
+  h.eq(guide_row('z.txt', 1), cursor(s), "completing section 2: section 3's first hunk")
+  -- a fully reviewed next section is skipped
+  reset()
+  mr_at(guide_row('m.txt', 2))
+  mr_at(guide_row('m.txt', 3))
+  h.eq(true, gv.section_reviewed(s, sec(2)))
+  mr_at(guide_row('a.txt', 1))
+  mr_at(guide_row('m.txt', 1))
+  h.eq(guide_row('z.txt', 1), cursor(s), 'section 2 is reviewed: skipped')
+  -- a section mr on a heading lands on a hunk too
+  reset()
+  mr_at(s.layout.sections[1].start_row)
+  h.eq(guide_row('m.txt', 2), cursor(s))
+  -- a collapsed next section: its heading, still collapsed
+  reset()
+  view.toggle_section_fold(2)
+  mr_at(s.layout.sections[1].start_row)
+  h.eq(s.layout.sections[2].start_row, cursor(s))
+  h.eq(s.layout.sections[2].start_row, closed_at(s, s.layout.sections[2].start_row))
+  -- a collapsed unreviewed hunk is skipped for the next open one
+  reset()
+  vim.api.nvim_win_set_cursor(s.diff_win, { guide_row('m.txt', 2), 0 })
+  keys(s, '<Tab>')
+  h.eq(guide_row('m.txt', 2), closed_at(s, guide_row('m.txt', 2)))
+  mr_at(s.layout.sections[1].start_row)
+  h.eq(guide_row('m.txt', 3), cursor(s))
+  -- the last section: its heading, folded
+  reset()
+  mr_at(s.layout.sections[1].start_row)
+  mr_at(s.layout.sections[3].start_row)
+  mr_at(s.layout.sections[2].start_row)
+  h.eq(s.layout.sections[2].start_row, cursor(s), 'the rest is reviewed: stays on the heading')
+  h.eq(s.layout.sections[2].start_row, closed_at(s, s.layout.sections[2].start_row))
+  reset()
+end)
+
+h.test('guide: moving on keeps the next section heading in view; winbar and scrolloff', function()
+  three_sections(7)
+  local head = s.layout.sections[2].start_row
+  local function land()
+    reset()
+    mr_at(s.layout.sections[1].start_row)
+    h.eq(guide_row('m.txt', 2), cursor(s))
+  end
+  land()
+  -- screen rows from the heading down to the hunk header (prose, blank lines)
+  local above = vim.api.nvim_win_text_height(s.diff_win, { start_row = head - 1, end_row = cursor(s) - 2 }).all
+  h.eq(9, above, 'the overview fits the cases below (20 text rows at most)')
+  local ok, err = pcall(function()
+    -- exactly room for the heading over a centred hunk: centred, heading on the top row
+    text_height(2 * above + 1)
+    land()
+    h.eq(head, view_top(), 'zz keeps the heading')
+    -- one row less: centring would hide the heading, so the heading goes to the top
+    text_height(2 * above)
+    land()
+    h.eq(head, view_top(), 'heading at the top')
+    -- 'scrolloff' 8 still leaves room for it
+    vim.wo[s.diff_win].scrolloff = 8
+    text_height(above + 9)
+    land()
+    h.eq(head, view_top(), "heading at the top with 'scrolloff'")
+    -- a 'scrolloff' that always centres: centred, the hunk in view
+    vim.wo[s.diff_win].scrolloff = 999
+    land()
+    h.ok(view_top() > head and view_top() < cursor(s), 'centred')
+    vim.wo[s.diff_win].scrolloff = 0
+    -- no room for the prose and the start of the hunk: the hunk centred, the prose above it
+    text_height(above + 3)
+    land()
+    h.ok(view_top() > head and view_top() < cursor(s), 'long prose: centred')
+  end)
+  vim.wo[s.diff_win].scrolloff = 0
+  restore_height()
+  reset()
+  assert(ok, err)
+end)
+
+h.test('guide: a section left with no hunks is skipped', function()
+  guide({
+    { 'Start', function(hk)
+      return hk.path == 'a.txt' or (hk.path == 'm.txt' and hk.hunk_idx == 1)
+    end },
+    { 'Gone', function(hk)
+      return hk.path == 'z.txt'
+    end },
+    { 'Rest', function(hk)
+      return hk.path == 'm.txt' and hk.hunk_idx > 1
+    end },
+  })
+  -- z.txt changed back: section 2 shows no hunks any more
+  h.write(repo, 'z.txt', long)
+  view.refresh()
+  assert(vim.wait(10000, function()
+    return s.guide.resolved and sec(2) and #sec(2).items == 0
+  end, 10), 'section 2 emptied')
+  idle(s)
+  local ok, err = pcall(function()
+    reset()
+    h.eq('Gone', sec(2).title)
+    mr_at(guide_row('a.txt', 1))
+    mr_at(guide_row('m.txt', 1))
+    h.eq(true, gv.section_reviewed(s, sec(1)))
+    h.eq(guide_row('m.txt', 2), cursor(s), 'past the empty section to the next hunk')
+  end)
+  h.write(repo, 'z.txt', edit(long, { [5] = 'five', [30] = 'thirty' }))
+  view.refresh()
+  idle(s)
   assert(ok, err)
 end)
 

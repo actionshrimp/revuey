@@ -562,7 +562,12 @@ are in `reports/Terminal code review tool landscape.md`.
      close, ones that stopped being complete open; hunks marked on their own collapse, unmarked ones
      expand), the other view's remembered folds follow, and the cursor moves to the next unreviewed
      hunk (skipping hunks inside a collapsed file, section or hunk), file or section, or stays on
-     the last one without reopening it. Visual `mr` first widens the selection to whole collapsed
+     the last one without reopening it. In the guide a completed section moves on to the next
+     incomplete section's first visible unreviewed hunk rather than its heading (the heading only
+     when there is none; sections that show no hunks are skipped). The hunk is centred if the
+     heading stays on screen, else the heading goes to the top if a few hunk lines fit under it,
+     else it is centred anyway; each placement is checked against the view Neovim made (winbar,
+     wrapping, folds, 'scrolloff'). Visual `mr` first widens the selection to whole collapsed
      folds at either end. In the guide the in-buffer meta line ("1/2 reviewed") is rewritten in
      place, and with a UI attached the winbar is redrawn. A hunk appears in at most one guide section (resolution and validation place each hunk
      once), so hunk fold keys need no section scope. Hunk fold state is kept

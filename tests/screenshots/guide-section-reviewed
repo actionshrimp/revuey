@@ -1,83 +1,83 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//f/cart..main                                                                                                    X
-02| Files                       ○ no agent │ Guide 2. Follow-up wiring                                                   §2/2  ✓ 1/2 
-03| Guide                      1/2 reviewed│       ▾  ☐ 2. Follow-up wiring   3 hunks                                                
-04| ✓ 1 Core change                       4│          Call sites and glue.                                                           
+02| Files                       ○ no agent │ Guide Fake guide title                                                            ✓ 1/2 
+03| Guide                      1/2 reviewed│          Fake guide title                                                               
+04| ✓ 1 Core change                       4│          2 sections · 1/2 reviewed · claude-fake-1 · just now                           
 05|   2 Follow-up wiring                  3│                                                                                         
-06|                                        │          • one                                                                          
-07| feature/cart → main                    │          • two                                                                          
-08| 7 files  +57 −22  ✓ 4/7                │                                                                                         
-09| base ee2e6fcf  head 6b2be8a3           │  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added                                  
-10| working tree  ● uncommitted            │      1 + import { multiply, sum } from "./math";                                        
-11|                                        │      2 + import { formatCurrency } from "./format";                                     
-12| assets:                                │      3 + import { capitalize } from "./text";                                           
-13|   ✓ M  logo.png                     bin│      4 +                                                                                
-14| src:                                   │      5 + export interface LineItem {                                                    
-15|     A  cart.ts                   +27 −0│      6 +   name: string;                                                                
-16|   ✓ M  index.ts                   +9 −6│      7 +   price: number;                                                               
-17|     D  legacy.ts                  +0 −6│      8 +   quantity: number;                                                            
-18|   ✓ M  math.ts                   +14 −8│      9 + }                                                                              
-19|     R  text.ts                    +2 −2│     10 +                                                                                
-20| src/components:                        │     11 + export class Cart {                                                            
-21|   ✓ A  Total.tsx                  +5 −0│     12 +   private items: LineItem[] = [];                                              
-22|                                        │     13 +                                                                                
-23| ]] [[ section  mr reviewed             │     14 +   addItem(item: LineItem): this {                                              
-24| ]h [h hunk  <Tab> fold  gp diff        │     15 +     this.items.push(item);                                                     
-25| gd def  K hover  go open  R refresh    │     16 +     return this;                                                               
-26| gG diff view  gR regenerate  q close   │     17 +   }                                                                            
-27| g? all keys                            │     18 +                                                                                
-28|~                                       │     19 +   total(): number {                                                            
-29|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));          
-30|~                                       │     21 +   }                                                                            
-31|~                                       │     22 +                                                                                
-32|~                                       │     23 +   describe(): string {                                                         
-33|~                                       │     24 +     const names = this.items.map((i) => capitalize(i.name)).join(", ");        
-34|~                                       │     25 +     return `${names}: ${formatCurrency(this.total())}`;                        
-35|~                                       │     26 +   }                                                                            
-36|~                                       │     27 + }                                                                              
-37|~                                       │                                                                                         
-38|~                                       │  D       src/legacy.ts  @@ -1,6 +0,0 @@   +0 −6  deleted                                
-39|revuey://files [-]    3,1            All revuey://feature/cart..main [-]                                        79,1-3         81%
+06|                                        │          A fake summary for tests.                                                      
+07| feature/cart → main                    │                                                                                         
+08| 7 files  +57 −22  ✓ 4/7                │       ▸  ☑ 1. Core change  4 hunks  ✓ reviewed  (72 lines folded)                       
+09| base ee2e6fcf  head 6b2be8a3           │       ▾  ☐ 2. Follow-up wiring   3 hunks                                                
+10| working tree  ● uncommitted            │          Call sites and glue.                                                           
+11|                                        │                                                                                         
+12| assets:                                │          • one                                                                          
+13|   ✓ M  logo.png                     bin│          • two                                                                          
+14| src:                                   │                                                                                         
+15|     A  cart.ts                   +27 −0│  A       src/cart.ts  @@ -0,0 +1,27 @@   +27 −0  added                                  
+16|   ✓ M  index.ts                   +9 −6│      1 + import { multiply, sum } from "./math";                                        
+17|     D  legacy.ts                  +0 −6│      2 + import { formatCurrency } from "./format";                                     
+18|   ✓ M  math.ts                   +14 −8│      3 + import { capitalize } from "./text";                                           
+19|     R  text.ts                    +2 −2│      4 +                                                                                
+20| src/components:                        │      5 + export interface LineItem {                                                    
+21|   ✓ A  Total.tsx                  +5 −0│      6 +   name: string;                                                                
+22|                                        │      7 +   price: number;                                                               
+23| ]] [[ section  mr reviewed             │      8 +   quantity: number;                                                            
+24| ]h [h hunk  <Tab> fold  gp diff        │      9 + }                                                                              
+25| gd def  K hover  go open  R refresh    │     10 +                                                                                
+26| gG diff view  gR regenerate  q close   │     11 + export class Cart {                                                            
+27| g? all keys                            │     12 +   private items: LineItem[] = [];                                              
+28|~                                       │     13 +                                                                                
+29|~                                       │     14 +   addItem(item: LineItem): this {                                              
+30|~                                       │     15 +     this.items.push(item);                                                     
+31|~                                       │     16 +     return this;                                                               
+32|~                                       │     17 +   }                                                                            
+33|~                                       │     18 +                                                                                
+34|~                                       │     19 +   total(): number {                                                            
+35|~                                       │     20 +     return sum(this.items.map((i) => multiply(i.price, i.quantity)));          
+36|~                                       │     21 +   }                                                                            
+37|~                                       │     22 +                                                                                
+38|~                                       │     23 +   describe(): string {                                                         
+39|revuey://files [-]    3,1            All revuey://feature/cart..main [-]                                        85,1           Top
 40|                                                                                                                                  
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01|0000000000012111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 02|3333333333333333333333333333333333333333456666665555555555555555555555555555555555555555555555555555555555555555555555555555555555
-03|22222277777777777777777777778888888888884222222222299::;;;;;;;;;;;;;;;;;<<<=======<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-04|7>727888888888887777777777777777777777784??????????7777777777777777777777777777777777777777777777777777777777777777777777777777777
-05|@A@B@CCCCCCCCCCCCCCCC@@@@@@@@@@@@@@@@@@84??????????7777777777777777777777777777777777777777777777777777777777777777777777777777777
-06|77777777777777777777777777777777777777774??????????D777777777777777777777777777777777777777777777777777777777777777777777777777777
-07|22222222222222222222777777777777777777774??????????D777777777777777777777777777777777777777777777777777777777777777777777777777777
-08|7777777777>>>EEEE888888877777777777777774??????????7777777777777777777777777777777777777777777777777777777777777777777777777777777
-09|88888888888888888888888888888777777777774>>>>>>>>>>FFFFFFFFFFFGGGGGGGGGGGGGGGGGGHHHIIIJJJIIIIIIIHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
-10|DDDDDDDDDDDDD8888888888888887777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-11|77777777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-12|78888888777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-13|777>7DO7888888887777777777777777777778884KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-14|7DDDD777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-15|777>7>O744444447777777777777777777>>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-16|777>7DO7888888887777777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-17|777>7EO7444444444777777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-18|777>7DO788888887777777777777777777>>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-19|777>7DO7444444477777777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-20|78888888888888887777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-21|777>7>O7888888888777777777777777777>>EEE4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-22|77777777777777777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-23|88888888888888888888888888877777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-24|88888888888888888888888888888888777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-25|88888888888888888888888888888888888877774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-26|88888888888888888888888888888888888887774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-27|88888888888877777777777777777777777777774KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-28|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-29|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-30|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-31|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-32|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-33|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-34|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-35|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-36|????????????????????????????????????????4KKKKLLLMMMNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
-37|????????????????????????????????????????4??????????7777777777777777777777777777777777777777777777777777777777777777777777777777777
-38|????????????????????????????????????????4EEEEEEEEEEFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGHHHIIJJJJJJJJJJJJHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+03|2222227777777777777777777777888888888888499999999992222222222222222777777777777777777777777777777777777777777777777777777777777777
+04|7:72788888888888777777777777777777777778499999999998888888888888888888888888888888888888888888888888888777777777777777777777777777
+05|;<;=;>>>>>>>>>>>>>>>>;;;;;;;;;;;;;;;;;;8499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+06|7777777777777777777777777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+07|2222222222222222222277777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+08|7777777777:::????8888888777777777777777742222222222@@AAAAAAAAAAAAAAAAAAAAAAA@@@@@@@@@@@@AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+09|888888888888888888888888888887777777777742222222222AABBCCCCCCCCCCCCCCCCCCCCAAAAAAACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+10|DDDDDDDDDDDDD888888888888888777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+11|7777777777777777777777777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+12|788888887777777777777777777777777777777749999999999D777777777777777777777777777777777777777777777777777777777777777777777777777777
+13|777:7DE78888888877777777777777777777788849999999999D777777777777777777777777777777777777777777777777777777777777777777777777777777
+14|7DDDD77777777777777777777777777777777777499999999997777777777777777777777777777777777777777777777777777777777777777777777777777777
+15|777:7:E744444447777777777777777777:::???4FFFFFFFFFFGGGGGGGGGGGHHHHHHHHHHHHHHHHHHIIIJJJKKKJJJJJJJIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+16|777:7DE7888888887777777777777777777::???4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+17|777:7?E7444444444777777777777777777::???4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+18|777:7DE788888887777777777777777777:::???4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+19|777:7DE7444444477777777777777777777::???4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+20|78888888888888887777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+21|777:7:E7888888888777777777777777777::???4LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+22|77777777777777777777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+23|88888888888888888888888888877777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+24|88888888888888888888888888888888777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+25|88888888888888888888888888888888888877774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+26|88888888888888888888888888888888888887774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+27|88888888888877777777777777777777777777774LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+28|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+29|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+30|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+31|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+32|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+33|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+34|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+35|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+36|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+37|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+38|99999999999999999999999999999999999999994LLLLMMMNNNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 39|00000000000000000000000000000000000000000PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 40|QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ

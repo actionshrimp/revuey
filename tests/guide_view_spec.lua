@@ -267,7 +267,13 @@ h.test('mr marks a section reviewed, folds it, moves on; persists; resets when i
   keys(s, 'mr')
   local sec = s.guide.resolved.sections[1]
   h.eq(true, gv.section_reviewed(s, sec))
-  h.eq(s.layout.sections[2].start_row, vim.api.nvim_win_get_cursor(s.diff_win)[1], 'moved to the next section')
+  local first
+  for _, b in ipairs(s.layout.blocks) do
+    if not first and b.start_row > s.layout.sections[2].start_row then
+      first = b.start_row
+    end
+  end
+  h.eq(first, vim.api.nvim_win_get_cursor(s.diff_win)[1], "moved to the next section's first hunk")
   local closed = vim.api.nvim_win_call(s.diff_win, function()
     return vim.fn.foldclosed(s.layout.sections[1].start_row)
   end)

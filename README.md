@@ -910,9 +910,13 @@ with light markdown styling.
   and every section (or expands them all). A collapsed diagram stays collapsed across refreshes.
   Elsewhere `<Tab>` is `<C-i>` as in the diff.
 - `mr` on a section heading (or its prose): mark every hunk of the section reviewed (or unmark
-  them all when they all are). It folds, and the cursor moves to the next section that is not
-  reviewed. On a hunk header or inside a hunk: that hunk only; it folds and the cursor moves to
-  the next unreviewed hunk. Visual `mr` marks every hunk the selection touches.
+  them all when they all are). It folds, and the cursor moves to the first unreviewed hunk of the
+  next section that is not reviewed (sections that show no hunks are skipped), with that
+  section's heading and prose kept in view above it where they fit, so `mr`, `mr`, `mr` keeps
+  marking hunks. A collapsed section, or one whose unreviewed hunks you collapsed, gets its
+  heading instead. On a hunk header or inside a hunk: that hunk only; it folds and the cursor
+  moves to the next unreviewed hunk, into the next section the same way when this one is
+  complete. Visual `mr` marks every hunk the selection touches.
 - Marks are shared with the diff view: a hunk marked in the guide counts in the diff, and a file
   marked in the diff ticks off its hunks in every section that shows them. A section is reviewed
   when all of its hunks are: the heading shows `☑ … ✓ reviewed`, or `◐ 1/3` while partly reviewed,
@@ -1703,7 +1707,8 @@ cd /tmp/revuey-guide
 - `gG`, then pick "Generate a guide". Watch the spinner in the panel; `gG` goes back to the diff
   while it runs. The guide appears after about 10 seconds.
 - `]]` / `[[` between sections, `]h` within them, `gd` on `sum(` or `K` on a call.
-- `mr` on a section: it folds with `☑`, the cursor moves on, and the panel's "reviewed" count goes up.
+- `mr` on a section: it folds with `☑`, the cursor moves on to the next section's first hunk,
+  and the panel's "reviewed" count goes up.
   `mr` on one hunk instead: the section shows `◐ 1/2`, and `gG` shows that file's progress in the diff.
 - `<Tab>` on a section heading or a hunk header collapses it; `<Tab>` again expands it.
 - `ge` on a line of `src/cart.ts` in the guide, change it and `:w`: the hunk stays in its section

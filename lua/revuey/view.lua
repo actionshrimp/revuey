@@ -1387,6 +1387,43 @@ local function next_unreviewed_block(s, bi)
   end
 end
 
+---First unreviewed hunk block inside `range` (a guide section or a diff file) that the user can
+---see (next_unreviewed_block): its header row, or nil.
+local function first_unreviewed_in(s, range)
+  local before = 0
+  for bi, b in ipairs(s.layout.blocks or {}) do
+    if b.start_row > range.start_row then
+      break
+    end
+    before = bi
+  end
+  local row = next_unreviewed_block(s, before)
+  return row and row <= range.end_row and row or nil
+end
+
+---Move the cursor to hunk header `row` under the heading (section heading or file header) at
+---`head`, keeping the heading and what follows it (a section's prose) in view where possible: the
+---hunk centred (`zz`) if that leaves the heading on screen, else the heading at the top if a few
+---of the hunk's lines still show below it, else `zz` after all (long prose, or a 'scrolloff' that
+---will not keep the heading at the top), as the hunk is what `mr` acts on next. Each placement is
+---checked against the view Neovim actually made (winbar, wrapping, folds, virtual lines and
+---'scrolloff' all move it), not computed.
+local function goto_hunk_under(s, head, row)
+  local bi = block_at(s, row)
+  local last = math.min(row + 5, bi and s.layout.blocks[bi].end_row or row)
+  api.nvim_win_call(s.diff_win, function()
+    api.nvim_win_set_cursor(0, { row, 0 })
+    vim.cmd('normal! zz')
+    if vim.fn.line('w0') <= head then
+      return
+    end
+    vim.fn.winrestview({ topline = head })
+    if vim.fn.line('w0') ~= head or vim.fn.line('w$') < last then
+      vim.cmd('normal! zz')
+    end
+  end)
+end
+
 ---Rewrite the guide's meta line ("… · 1/2 reviewed · …") in place; a full re-render if its
 ---wrapped height changed.
 local function update_guide_meta(s)
@@ -1559,8 +1596,17 @@ local function apply_marks(s, target)
     local r = si and s.layout.sections[si]
     if target.level == 'section' or (si and s1[si]) then
       for j = (si or 0) + 1, #s.layout.sections do
-        if not s1[j] then
-          goto_row(s, s.layout.sections[j].start_row, 'top')
+        local sj = s.layout.sections[j]
+        if not s1[j] and #guide_view.section_units(s, s.guide.resolved.sections[j]) > 0 then
+          -- straight to its first unreviewed hunk, so the next `mr` marks a hunk again; a
+          -- collapsed section, or one whose unreviewed hunks are all collapsed, gets its heading
+          -- (sections showing no hunks are skipped)
+          local row = first_unreviewed_in(s, sj)
+          if row then
+            goto_hunk_under(s, sj.start_row, row)
+          else
+            goto_row(s, sj.start_row, 'top')
+          end
           return now
         end
       end
