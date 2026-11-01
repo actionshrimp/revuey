@@ -906,6 +906,8 @@ The guide is Claude's walk through the review. It splits the changes into a few 
 sections: the heart of the change first, then its consequences, then glue. Each section has a
 short explanation and the hunks it covers. A file's hunks can be spread over several sections.
 It is a reading order, not a bug hunt, but a section may carry an Important or Warning callout.
+With a coding agent connected, the agent you work with can write it instead (see "Written by
+your connected agent" below).
 
 `gG` (or `:RevueyGuide`) switches the diff window to the guide view; the panel and keys stay.
 With no guide for this review yet, it asks before generating one. Generation runs in the
@@ -944,7 +946,8 @@ look at: "The cache key is built here.", "Note the early return for empty carts.
 drawn right above its lines, as a violet band labelled `▼ guide` (`▼ guide · 3 lines` for a
 range), so it reads differently from comment boxes, AI review findings and GitHub threads, which
 sit below their lines. Notes are rare by design: at most 3 per section and 12 per guide, and
-never a bug report (those belong in an [AI review](#ai-review)).
+never a bug report (those belong in an [AI review](#ai-review)), except in a guide your
+connected agent wrote, where a note may flag a possible issue.
 
 - `]n` / `[n`: next / previous line note (takes a count).
 - `gN`: collapse every note to a `◆ guide` marker at the end of its line, and back.
@@ -1008,6 +1011,31 @@ and shows only the hunks that still exist. New hunks go to a final "Not in guide
 banner (counting outdated sections, new and edited hunks) offers `gR` to regenerate. The guide
 never re-runs by itself.
 
+**Written by your connected agent.** When a coding agent is [connected](#connect-an-agent) to
+the review, generating a guide (`gG` with none yet, `gR`, `:RevueyGuide!`) first asks who writes
+it:
+
+- **Ask claude (connected)**: the agent session you are working with writes it, with your whole
+  conversation as context, so the guide can say why the change exists and flag potential issues
+  as line notes ("Possible issue: …"), and you and the agent know the same guide. The placeholder
+  and the panel show `waiting for claude…`, then `claude is writing the guide` once it starts;
+  the guide appears as soon as the agent imports it. `:RevueyGuide cancel` withdraws the request
+  (the agent is told). If the agent has not started on it within a minute, the panel says so and
+  `gR` offers to withdraw it and run a fresh session instead.
+- **Fresh session**: the usual `claude -p` run below, with `ai.model`, which knows nothing of
+  your conversation.
+- **Fresh session with another model…**: the same with `opus`, `sonnet`, `haiku` or a model you
+  type, and an effort level.
+
+With no agent connected nothing changes: a fresh session, without the question. `ai.guide_by`
+sets the default: `'ask'` (the question above, when an agent is connected), `'agent'` (always
+the connected agent) or `'fresh'` (never). The guide's meta line names who wrote it
+("claude (connected)" or the model). The agent goes through the same checks as a fresh run:
+`bin/revuey guide --prompt` gives it revuey's prompt (worded for an agent that knows the
+conversation and may flag issues, and still only about what the diff shows) and
+`bin/revuey import-guide` validates its JSON with the same validator, refusing a guide that
+misses or repeats hunk ids or was made for code that changed since.
+
 **Per scope:** each review (branch and base, or a stack layer, or the full stack) has its own
 guide. Switching layers keeps a generation running for the layer it was started on. The guide's
 winbar names its scope ("Guide · layer stack/cart", "Guide · full stack"). For a layer, Claude is
@@ -1047,6 +1075,7 @@ require('revuey').setup({
     max_prompt_chars = 150000,
     cmd = nil,          -- path to the claude executable (default: `claude` on PATH)
     keep_guides = 5,    -- saved guides kept per review
+    guide_by = 'ask',   -- with an agent connected: 'ask' who writes a guide, 'agent' or 'fresh'
     restricted = true,  -- see below before turning this off
   },
 })
@@ -1389,6 +1418,11 @@ Then, in a Claude Code session running in your repo:
    them in" and it imports them as AI findings to triage (or as comment drafts, if you ask for
    that), or ask it about any of them. Your messages always come first. Say "no passes" to turn
    them off.
+6. **The guide.** Claude reads the [guide](#ai-guide) the review shows (`bin/revuey guide`) when
+   you mention it or ask about a section, so "what does section 2 mean?" works. When you
+   generate a guide and choose "Ask claude (connected)", the watch prints a request line and
+   Claude writes the guide itself, with your conversation as context and potential issues as
+   line notes, then imports it; it shows in the review at once.
 
 **From the shell** (any agent; run inside the reviewed worktree):
 
@@ -1404,6 +1438,10 @@ bin/revuey inbox                 # messages not handled yet, then exit (no Monit
 bin/revuey comment --path src/cart.ts --line 12 --end 14 "Is this rounding intended?"
 bin/revuey comment --path src/cart.ts --line 7 --side old -   # a deleted line; text on stdin
 bin/revuey comment --path src/cart.ts --file "Needs a test."  # the whole file
+bin/revuey guide                 # the guide the review shows: sections, hunk ids, line notes,
+                                 # who wrote it, stale or not (--json)
+bin/revuey guide --prompt [--request <id>]   # revuey's guide prompt, for the agent to write one
+bin/revuey import-guide [--request <id>] [--name claude] -   # validate and save it (--schema)
 ```
 
 `comment` leaves a new comment (author `agent`, saved, not added to any forge review) and
@@ -1450,6 +1488,21 @@ in the feed; live only: neither a later watch nor `--since` prints it again):
 ```
 revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on
 ```
+
+When you ask the connected agent for a guide, the watch prints a request (a `request` event in
+the feed, and a file under `state_dir/requests/`; `inbox` lists it until it is done, a later
+watch catches it up once like a message):
+
+```
+revuey request 19a3f0c2d4e1a8b7f guide [stack/cart]: the user asked you to write the guide for this review (/home/me/dev/revuey/main/bin/revuey guide --prompt --request 19a3f0c2d4e1a8b7f)
+```
+
+`guide --prompt --request <id>` marks it taken (the review shows "claude is writing the
+guide"), and `import-guide --request <id>` saves the guide where the review keeps its guides
+and marks it done; the review reads the request file twice a second while it waits and loads
+the guide then. Withdrawing it prints `revuey request <id> cancelled [...]`, and `import-guide`
+then refuses it. `watch --name <name>` names the agent in the review ("Ask <name>
+(connected)"; default `agent`).
 
 The review takes a moment to load the new layer after a switch, and the line comes first. So
 `hunks`, `comment` and `import-review` run while the review's newest `switched` event names the

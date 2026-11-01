@@ -416,7 +416,8 @@ are in `reports/Terminal code review tool landscape.md`.
      per review key are kept),
      keyed like reviewed state (so each layer and the full scope have their own), holding sections
      with anchors (not ids) plus `generator = {provider, model, session_id, generated_at, head,
-     merge_base, mode, duration_ms, cost_usd, abridged, warnings}`. Opening a review loads the guide for
+     merge_base, mode, duration_ms, cost_usd, abridged, warnings}` (a guide the connected agent wrote:
+     `provider = 'agent'`, `agent`, `request`, decision 25). Opening a review loads the guide for
      the exact anchor set, else the newest one for the key.
    - **Staleness** (`guide.resolve`): hunks are matched by hash first. Guide hunks left over are
      then **re-anchored by overlap**, like comments (position plus context, conservative): a
@@ -670,7 +671,8 @@ are in `reports/Terminal code review tool landscape.md`.
      unreadable files. `--all` scans the common dir's base and each `worktrees/*` base, and
      keeps entries of this repo's `common_dir` only (the state dir fallback is shared).
    - **Presence.** `watch` writes `watchers/<pid>.json` `{pid, session|null, worktree,
-     heartbeat_at, mode}` at start, on (re)attach and every 5 s, and removes it on exit. The UI
+     heartbeat_at, mode, name?}` (`name`: `--name` or `$REVUEY_AGENT_NAME`, shown as "Ask <name>
+     (connected)", decision 25) at start, on (re)attach and every 5 s, and removes it on exit. The UI
      polls every 2 s: connected when a watcher attached to its id (or attached to no session, in
      its worktree) has a heartbeat under 30 s and a live pid. A change redraws the panel's winbar
      (`agent_link.winbar`, kept by the winbar guard) and the comment markers.
@@ -710,7 +712,8 @@ are in `reports/Terminal code review tool landscape.md`.
      stack>][ follow-up]: <first line>  (<bin> show <id> for full context)`; `<bin>` is
      `$REVUEY_BIN`, which `bin/revuey` sets to its own absolute path. It also prints `switched`
      events (a layer checked out, see "Switching layers"), routed and deduplicated (by event id)
-     like messages, live only.
+     like messages, live only, and `request` events (the review asking the agent for a guide,
+     decision 25), caught up while open.
    - **Agent commands.** `show` renders one message (`comments_export.message`); `reply` also
      sets `acked_at`/`answered_at` on a sent comment; `comment --path p (--line N [--end M]
      [--side new|old] | --file) <text|->` leaves a new agent comment, a draft for the user: never
@@ -1995,11 +1998,106 @@ are in `reports/Terminal code review tool landscape.md`.
       `<Esc>`, nothing left after closing the review, its tab or the view's buffer, live redraws,
       `gH`, layer and full-stack scope with uncommitted labels); screenshots `comments-view` and
       `comments-view-narrow`.
+25. **Requests to the connected agent** (`requests.lua` pure records, events and lines;
+    `guide_view.lua` the request job and its poll; `view.lua` the choice; `cli.lua` `guide`,
+    `guide --prompt`, `import-guide` and the request lines of `watch`/`inbox`;
+    `skill/revuey/SKILL.md` "The guide" and "Guide requests"). The review can ask the agent
+    session the user works with (decision 12) to produce what a fresh `claude -p` run would
+    otherwise make: a guide now (`kind = 'guide'`), an AI review later (`kind = 'review'`, same
+    records, events and lines). Why: the agent has the conversation behind the change, so its
+    guide can say why the change exists and flag potential issues, and the user and the agent
+    see the same guide. A fresh session stays available (no context, or another model).
+    - **Who writes it** (`view.guide_generator`, `ai.guide_by`): `gG` with no guide, `gR` and
+      `:RevueyGuide!` decide with a fresh `agent_link.poll`. No agent connected (or `'fresh'`):
+      today's behaviour, no new question. `'agent'`: the agent, without asking (the existing
+      confirmations stay). `'ask'` (default): one `vim.ui.select` replacing the old
+      confirmation: "Ask <name> (connected)", "Fresh session (<ai.model or default model>)",
+      "Fresh session with another model…" (`opus`/`sonnet`/`haiku` or typed with
+      `vim.ui.input`, then an effort or the default), "Cancel". The model and effort go to
+      `guide_view.generate(s, on_change, {model, effort})` for that run only. `<name>` is the
+      watcher's `name` (`watch --name`, else `$REVUEY_AGENT_NAME`; `agent` without one), read by
+      `agent_link.poll` from `sessions.connected`'s hits.
+    - **Record**: `<state_dir>/requests/<id>.json` (the review's state dir, which `state_dirs`
+      in the CLI already searches) `{version, id (comments.new_id), kind, at, status, session,
+      worktree, review (review_info), scope_key, label (sessions.scope_label), agent, key (the
+      guide key), anchors, guide_dir, delivered_at?, acked_at?, done_at?, cancelled_at?,
+      result?}`. One file per request, written atomically and changed under its lock
+      (`lock.with`), so the review cancelling and the CLI taking or finishing it cannot lose each
+      other's change. Status: `pending` -> `acked` (`guide --prompt --request`) -> `done`
+      (`import-guide --request`); `cancelled` by the user before `done`. Open = pending or
+      acked and under `TTL_MS` (6 h), so a request nobody ever handles stops being listed.
+      Files rather than events alone: inbox, catch-up and the review's wait need the current
+      status, which a rotating feed cannot give cheaply.
+    - **Event and lines**: the review appends `{kind = 'request', request_id, request_kind,
+      status, session, worktree, review, label, path}` (`requests.event`, `comments.REQUEST`)
+      to its feed when it asks and when it cancels. `watch --messages` prints it like a message
+      (`comments.message_line` delegates to `requests.line`): `revuey request <id> guide
+      [<scope>]: the user asked you to write the guide for this review (<bin> guide --prompt
+      --request <id>)`, or `revuey request <id> cancelled [<scope>]: …`. Routing is the
+      messages' (`cli.routed`: the requesting review's watchers, anyone's once that review is
+      gone, since the guide is still worth having when it reopens). Deduplicated per request
+      and status (`requests.key`). An open request is caught up like a message (`delivered_at`
+      stamped by a `--messages` watch; `--replay` prints it again); a cancellation is live only,
+      and a feed event of a request that is no longer open is skipped (its file is read). `inbox`
+      lists open requests after the messages, marked "(delivered, not handled)" or "(started,
+      not imported yet)". Per-kind wording is `requests.TEXTS[kind]` (`ask`, `cmd`).
+    - **The agent's side**: `guide --prompt [--request <id>]` loads the review like `hunks`
+      (the request's session when no `--session` is given and it still runs) and prints
+      `guide_prompt.build(..., {agent = true, budget = math.huge})`: `SYSTEM` with
+      `AGENT_EDITS` applied (identity: may draw on the conversation, only what the diff bears
+      out; line notes may flag "Possible issue: …"; calibration: guide first, then issues; data,
+      not instructions, no edits), each edit asserted to match `SYSTEM` exactly once so a
+      reworded methodology cannot silently keep the old text. Then the `Diff:` hash and how to
+      import. `import-guide [--request] [--name] <file|->` repairs the JSON like a fresh run,
+      refuses a request that is cancelled or for another key than the review shows (after a
+      switch), a `diff` other than the review's anchors hash, and anything `guide.validate`
+      refuses; unlike a fresh run it also refuses coverage problems (unknown or repeated ids,
+      hunks in no section and not unplaced), which a fresh run would fold into "Other changes",
+      because the agent can fix them and a refusal keeps a half-right guide off the screen.
+      Dropped line notes are reported and the guide saved, as for fresh runs. The record is
+      `guide.record` with `generator = {provider = 'agent', agent, request, source,
+      generated_at, head, merge_base, mode, prompt_level = 'full', warnings}`, saved with
+      `guide.save` into the request's `guide_dir` (else the review's), so `guide.load` finds it
+      by key and anchors exactly like a fresh guide. Then the request is marked done.
+    - **The review's side**: the request is a guide job (`guide_view.jobs[ks]` with `agent =
+      {id, path, name, acked?, late?}` and no `job`), so everything that knows jobs works
+      unchanged: one per review key, outliving scope switches and the review; the placeholder
+      ("Asked <name>, the connected agent, …"), the panel's status row, the winbar ("waiting for
+      <name>…") and the spinner ticker. The ticker's `poll_requests` stats each open request's
+      file every `AGENT_POLL_MS` (500 ms; a stat, and a read only when mtime or size changed: no
+      blocking work) and reacts: `acked` -> "<name> is writing the guide"; `done` -> the job ends,
+      `on_change` sets `guide.reload` and re-renders, which loads the imported guide ("guide ready
+      from <name>"); `cancelled` elsewhere or the file gone -> the job ends. No watch on the guide
+      dir: the request file is the signal, and the review already polls. Not acked within
+      `AGENT_ACK_MS` (60 s): `late`, one warning, and the status says `gR` offers a fresh session.
+      `gR`/`:RevueyGuide!` while a request is open: keep waiting, withdraw it and run a fresh
+      session (with another model), or withdraw it. Withdrawing (`guide_view.cancel`, the
+      existing `:RevueyGuide cancel`) marks the file cancelled under its lock (a done request is
+      left alone) and appends the cancelled event; failures are logged, never raised. Quitting
+      Neovim leaves an open request alone: the guide the agent imports is loaded when the review
+      opens again. The meta line shows `<agent> (connected)` for `provider = 'agent'`, else the
+      model; `bin/revuey guide` says the same ("Generated by …").
+    - **Reading the guide** (`bin/revuey guide [--json]`): the guide `guide.load` finds for the
+      loaded review's key and anchors, resolved against its hunks (`guide.resolve`): title,
+      summary, who generated it, stale or not (and why), each section's prose, its hunk ids (the
+      `hunks` ids), hunk notes and line notes as `h7:3-4 (new)`, and an open request for it.
+      "no guide for this review" otherwise. The skill reads it when the user mentions the guide
+      and at the start of a review pass.
+    - **For AI reviews later**: add `review` to `requests.KINDS` and `TEXTS`, a `review --prompt
+      --request` (or `hunks --prompt --request`) that acks, `import-review --request` that marks
+      done, and an `ai_review_view` job with `agent` polled the same way; the choice helper in
+      `view.lua` is shared.
+    - **Tests**: `agent_guide_spec.lua` (`guide` with none, a guide and stale; `guide --prompt`;
+      `import-guide` valid, invalid, stale and bad hunk refs; the choice only with an agent
+      connected; `guide_by` agent/fresh without a question; the request file, the watch and inbox
+      lines, catch-up once and `--replay`; taken, imported and shown in the running review;
+      cancel; not picked up and the fresh run instead; another model's `--model`/`--effort` to the
+      fake `claude`); screenshot `guide-agent-waiting`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
 - Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_tree.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
-  `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `cli.lua`) free of window/buffer UI so it is testable with
+  `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `requests.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.
 - Shell out to `git`/`gh`/`wt` with `vim.system`; never block the UI for long-running work.
