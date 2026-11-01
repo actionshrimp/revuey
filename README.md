@@ -1379,6 +1379,13 @@ Then, in a Claude Code session running in your repo:
    dismisses it (collapsed, kept; again restores it). Until you accept it, it cannot be posted;
    [`gP`](#posting-a-review-to-github) can then add it to your pending review on GitHub, to
    finish there, or submit it. The agent never posts anything itself.
+5. **Review passes** (on by default): when Claude connects, and each time you check out another
+   layer, it reads that layer's diff (`bin/revuey hunks`) and keeps short notes on likely bugs,
+   risky changes and questions, without editing files or touching the review. It says in chat
+   when they are ready ("Reviewed stack/math (PR #12): 3 notes ready (1 likely bug)"); say "drop
+   them in" and it imports them as AI findings to triage (or as comment drafts, if you ask for
+   that), or ask it about any of them. Your messages always come first. Say "no passes" to turn
+   them off.
 
 **From the shell** (any agent; run inside the reviewed worktree):
 
