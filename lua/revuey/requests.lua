@@ -96,8 +96,36 @@ function M.new(kind, info, now)
   return rec
 end
 
----Write a new request into `dir`. Returns its path, or nil and an error.
+---When a request file was made, from its name (ids start with 11 hex digits of milliseconds,
+---comments.new_id), without reading it; nil for a name that is not an id.
+function M.name_ms(name)
+  local hex = name:match('^(%x%x%x%x%x%x%x%x%x%x%x)%x*%.json$')
+  return hex and tonumber(hex, 16) or nil
+end
+
+---Remove the requests of `dir` older than TTL_MS (expired if open, finished if closed: nobody
+---needs them any more), judged by their names, so no file is read; and the leftovers of
+---interrupted writes and locks of the same age.
+function M.prune(dir, now)
+  now = now or now_ms()
+  if not vim.uv.fs_stat(dir) then
+    return
+  end
+  for name, t in vim.fs.dir(dir) do
+    if t == 'file' then
+      local base = name:match('^(.-%.json)') or name
+      local ms = M.name_ms(base)
+      if ms and now - ms > M.TTL_MS then
+        os.remove(vim.fs.joinpath(dir, name))
+      end
+    end
+  end
+end
+
+---Write a new request into `dir` (old ones are pruned first). Returns its path, or nil and an
+---error.
 function M.create(dir, rec)
+  pcall(M.prune, dir)
   local path = M.path(dir, rec.id)
   local ok, err = write_atomic(path, clean(rec))
   if not ok then
@@ -153,7 +181,8 @@ function M.is_open(rec, now)
   return rec and (rec.status == 'pending' or rec.status == 'acked') and (now or now_ms()) - (tonumber(rec.at) or 0) < M.TTL_MS
 end
 
----Requests in the `dirs` (each a state dir), oldest first. `opts.open`: open ones only;
+---Requests in the `dirs` (each a state dir), oldest first. `opts.open`: open ones only (files
+---past the TTL are not even read: their names say how old they are, and they are pruned);
 ---`opts.repo` (a path and its real path): only requests of reviews of that repo.
 function M.list(dirs, opts)
   opts = opts or {}
@@ -163,8 +192,10 @@ function M.list(dirs, opts)
     local real = vim.uv.fs_realpath(dir) or dir
     if not seen[real] and vim.uv.fs_stat(dir) then
       seen[real] = true
+      pcall(M.prune, dir, now)
       for name, t in vim.fs.dir(dir) do
-        if t == 'file' and name:match('%.json$') then
+        local ms = t == 'file' and M.name_ms(name)
+        if ms and not (opts.open and now - ms > M.TTL_MS) then
           local rec = M.read(vim.fs.joinpath(dir, name))
           local repo = rec and type(rec.review) == 'table' and rec.review.repo
           local repo_ok = not opts.repo or (repo and (repo == opts.repo[1] or (vim.uv.fs_realpath(repo) or repo) == opts.repo[2]))

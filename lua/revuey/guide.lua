@@ -1064,7 +1064,9 @@ local function read(path)
   fd:close()
   local ok, rec = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
   if ok and type(rec) == 'table' and rec.kind == 'revuey-guide' then
-    return M.sanitize(rec)
+    rec = M.sanitize(rec)
+    rec._file = path -- (not stored: which file it came from)
+    return rec
   end
 end
 

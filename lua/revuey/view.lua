@@ -3139,14 +3139,19 @@ local function agent_job_choice(s, j)
     if choice == other then
       -- the model first: the request is withdrawn only once one is chosen
       return pick_model(function(c)
-        guide_view.cancel(s)
-        M.generate_guide(c)
+        guide_view.cancel(s, function(ok)
+          if ok then
+            M.generate_guide(c)
+          end
+        end)
       end)
     end
-    guide_view.cancel(s)
-    if choice == fresh then
-      M.generate_guide({ by = 'fresh' })
-    end
+    -- the fresh run starts once the request is withdrawn (a failed withdrawal keeps waiting)
+    guide_view.cancel(s, function(ok)
+      if ok and choice == fresh then
+        M.generate_guide({ by = 'fresh' })
+      end
+    end)
   end)
 end
 

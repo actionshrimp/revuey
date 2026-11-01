@@ -83,6 +83,7 @@ function M.prepare(s, force)
     anchors = anchors,
     record = rec,
     resolved = rec and guide.resolve(rec, hunks) or nil,
+    file_sig = M.file_sig(rec),
   }
   if fresh then
     adopt(s, s.guide)
@@ -759,8 +760,10 @@ adopt = function(s, g)
   for _, rec in ipairs(requests.list({ state_dir(s) }, { open = true })) do
     local k = rec.key or {}
     local sid = rec.session and tostring(rec.session)
+    -- the requesting Neovim is this one (the job was lost) or has exited; one this Neovim
+    -- tried to withdraw is never taken back
     local owner_gone = not sid or sid == mine or not sessions.alive({ pid = tonumber(sid) })
-    if rec.kind == 'guide' and owner_gone and k.repo == g.key.repo and k.branch == g.key.branch and k.base == g.key.base then
+    if rec.kind == 'guide' and owner_gone and not M.cancel_tried[rec.id] and k.repo == g.key.repo and k.branch == g.key.branch and k.base == g.key.base then
       local age_ns = math.max(0, requests.now_ms() - (tonumber(rec.at) or 0)) * 1e6
       M.jobs[g.ks] = {
         label = s.review.branch,
@@ -790,9 +793,19 @@ function M.dir_sig(s)
   return st and (st.mtime.sec .. '.' .. st.mtime.nsec) or 'none'
 end
 
+---Which file a loaded guide record came from, and its mtime and size.
+function M.file_sig(rec)
+  local p = rec and rec._file
+  local st = p and vim.uv.fs_stat(p)
+  return st and (p .. ':' .. st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'none'
+end
+
 ---Every couple of seconds (agent_link's poll): a guide saved for this review from outside
----(`bin/revuey import-guide` without a request) is loaded. The guides directory's mtime says
----something was written there (guide.save renames into it); only then is the guide reloaded.
+---(`bin/revuey import-guide` without a request, or a re-import) is loaded. The guides
+---directory is shared by every repo and scope, so its mtime (one stat) only says something was
+---written there; then `guide.load` for this review's key says whether this review's guide is
+---another file now, and only that re-renders, in the guide view. In the diff view the record is
+---just marked for reloading by the next render.
 function M.notice_saved(s)
   if not s or s.cleaned or not s.guide then
     return
@@ -802,9 +815,17 @@ function M.notice_saved(s)
     s.guide_dir_sig = sig
     return
   end
-  if sig ~= s.guide_dir_sig then
-    s.guide_dir_sig = sig
-    s.guide.reload = true
+  if sig == s.guide_dir_sig then
+    return
+  end
+  s.guide_dir_sig = sig
+  local g = s.guide
+  local rec = guide.load(guide.dir(state_dir(s)), g.key, g.anchors)
+  if M.file_sig(rec) == g.file_sig then
+    return
+  end
+  g.reload = true
+  if s.view_mode == 'guide' then
     M.default_on_change()
   end
 end
@@ -868,24 +889,57 @@ end
 
 ---Withdraw a request to the agent: the file says cancelled (import-guide refuses it) and the feed
 ---tells the agent.
-local function cancel_request(s, ks, j)
+---How long a withdrawal keeps trying while the request's lock is busy (an import holds it
+---only for the moment it saves), in steps of CANCEL_STEP_MS, never blocking the main loop.
+M.CANCEL_RETRY_MS = 3000
+M.CANCEL_STEP_MS = 50
+---Requests this Neovim tried to withdraw: never adopted again, whatever their file says.
+M.cancel_tried = {}
+
+local function cancel_request(s, ks, j, after)
   local requests = require('revuey.requests')
   local comments = require('revuey.comments')
-  M.jobs[ks] = nil
-  local rec, uerr = requests.update(j.agent.path, function(x)
-    if x.status == 'done' or x.status == 'cancelled' then
-      return false
+  local a = j.agent
+  M.cancel_tried[a.id] = true
+  a.cancelling = true
+  local deadline = vim.uv.now() + M.CANCEL_RETRY_MS
+  local function finish(drop, msg, level, ok)
+    a.cancelling = nil
+    if drop and M.jobs[ks] == j then
+      M.jobs[ks] = nil
     end
-    x.status, x.cancelled_at = 'cancelled', requests.now_ms()
-  end)
-  if rec and rec.status == 'cancelled' then
+    vim.notify(msg, level)
+    if drop then
+      j.on_change()
+    end
+    if after then
+      after(ok)
+    end
+  end
+  local function attempt()
+    local rec, uerr = requests.update(a.path, function(x)
+      if x.status == 'done' or x.status == 'cancelled' then
+        return false
+      end
+      x.status, x.cancelled_at = 'cancelled', requests.now_ms()
+    end)
+    if not rec and not vim.uv.fs_stat(a.path) then
+      return finish(true, ('revuey: the guide request to %s is gone'):format(a.name), vim.log.levels.INFO, true)
+    elseif not rec then
+      if vim.uv.now() < deadline then
+        return vim.defer_fn(attempt, M.CANCEL_STEP_MS)
+      end
+      require('revuey.log').write('agent', 'could not cancel request ' .. a.id .. ': ' .. tostring(uerr))
+      return finish(false, ('revuey: could not withdraw the guide request to %s (%s); still waiting: try :RevueyGuide cancel again'):format(
+        a.name, tostring(uerr)), vim.log.levels.ERROR, false)
+    elseif rec.status == 'done' then
+      return finish(true, ('revuey: %s had already imported the guide; it is shown'):format(a.name), vim.log.levels.INFO, true)
+    end
     local events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path)
     pcall(comments.append_event, events, requests.event(rec))
-  elseif uerr then
-    require('revuey.log').write('agent', 'could not cancel request ' .. j.agent.id .. ': ' .. tostring(uerr))
+    finish(true, ('revuey: guide request to %s cancelled'):format(a.name), vim.log.levels.INFO, true)
   end
-  vim.notify(('revuey: guide request to %s cancelled'):format(j.agent.name), vim.log.levels.INFO)
-  j.on_change()
+  attempt()
 end
 
 ---Start generating a guide for the session's current review (no-op if one is running for it).
@@ -996,14 +1050,18 @@ function M.generate(s, on_change, opts)
 end
 
 ---Cancel the run for the session's review.
-function M.cancel(s)
+---`after(ok)` (a request to the agent only): called once the withdrawal is done or failed.
+function M.cancel(s, after)
   local g = M.prepare(s)
   local j = M.jobs[g.ks]
   if not j then
     return false
   end
   if j.agent then
-    cancel_request(s, g.ks, j)
+    if j.agent.cancelling then
+      return true
+    end
+    cancel_request(s, g.ks, j, after)
   elseif j.job and j.job.proc then
     j.job:cancel()
   else

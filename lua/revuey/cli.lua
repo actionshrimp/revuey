@@ -1563,17 +1563,32 @@ local function open_guide_request(o, ctx, r)
   end
 end
 
+---Who writes with `--name` / $REVUEY_AGENT_NAME, else the agent the request was made for.
+local function writer_name(o, req)
+  local requests = require('revuey.requests')
+  return requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
+end
+
+---May `writer` import (again) into request `x`? An open request: yes. A done one: only its own
+---writer, replacing the guide it imported (after fixing dropped notes, say); anyone else would
+---silently replace another agent's guide.
+local function may_reimport(x, writer)
+  return x.status ~= 'done' or (x.result ~= nil and x.result.agent == writer)
+end
+
 ---The guide request `--request` names, checked (exit 1 when it is no guide request or was
----cancelled). Its review is the one to load when no --session is given and it still runs.
-local function take_guide_request(o, ctx, what)
+---cancelled, or done: with `reimport`, a done request is open to its own writer's import).
+---Its review is the one to load when no --session is given and it still runs.
+local function take_guide_request(o, ctx, what, reimport)
   local req = find_request(o, ctx, o.request)
   if req.kind ~= 'guide' then
     die(('request %s asks for a %s, not a guide'):format(req.id, req.kind))
   elseif req.status == 'cancelled' then
     die(('request %s was cancelled by the user: %s'):format(req.id, what))
-  elseif req.status == 'done' then
-    die(('request %s is done already (the guide %s imported is shown): %s; ask the user before writing another'):format(
-      req.id, tostring(req.result and req.result.agent or 'an agent'), what))
+  elseif req.status == 'done' and not (reimport and may_reimport(req, writer_name(o, req))) then
+    die(('request %s is done already (the guide %s imported is shown): %s; ask the user before writing another%s'):format(
+      req.id, tostring(req.result and req.result.agent or 'an agent'), what,
+      reimport and ' (its writer may import again with the same --request and --name to replace it)' or ''))
   end
   if not o.session and req.session then
     for _, e in ipairs(live_sessions(o, ctx)) do
@@ -1789,7 +1804,7 @@ function M.import_guide(o, pos)
     die(('not a guide: expected one JSON object with "title", "summary" and "sections" (`%s import-guide --schema`)'):format(bin()))
   end
   local ctx = here(o)
-  local req = o.request and take_guide_request(o, ctx, 'nothing imported') or nil
+  local req = o.request and take_guide_request(o, ctx, 'nothing imported', true) or nil
   local r, hunks, info, _, _, attached = review_hunks(o)
   if req then
     local mm = request_mismatch(req, r)
@@ -1833,7 +1848,7 @@ function M.import_guide(o, pos)
     die(('the guide does not cover the diff: %s. Every id h1 to h%d must appear exactly once, in a section or in "unplaced"; fix it and import again (nothing imported)'):format(
       table.concat(problems, ', '), #hunks))
   end
-  local name = requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
+  local name = writer_name(o, req)
   local rec = guide.record(valid, hunks, {
     key = guide.key(r.state),
     generator = {
@@ -1864,7 +1879,7 @@ function M.import_guide(o, pos)
     local _, uerr = requests.update(req._path, function(x)
       if x.status == 'cancelled' then
         return false, ('request %s was cancelled by the user meanwhile: nothing imported'):format(req.id)
-      elseif x.status == 'done' then
+      elseif not may_reimport(x, name) then
         return false, ('request %s was done meanwhile (by %s): nothing imported'):format(req.id, tostring(x.result and x.result.agent or '?'))
       end
       local ok, serr = pcall(guide.save, dir, rec)
@@ -1894,7 +1909,8 @@ function M.import_guide(o, pos)
     where_text(info, attached), attached and '; the running review shows it within a few seconds' or ''))
   local dropped = guide.dropped_text(w.notes)
   if dropped then
-    out(('line notes dropped: %s (fix them and import again to replace this guide)\n'):format(dropped))
+    out(('line notes dropped: %s (fix them and import again%s to replace this guide)\n'):format(dropped,
+      req and (' with the same --request ' .. req.id .. ' and --name ' .. name) or ''))
   end
   if w.diagram_dropped then
     out('the diagram was dropped (fewer than two valid nodes)\n')
