@@ -1133,6 +1133,8 @@ show up the same way:
 bin/revuey hunks                 # the diff with hunk ids and numbered lines, and the diff hash
 bin/revuey hunks --prompt        # the whole prompt revuey's own review sends (instructions too)
 bin/revuey hunks --json          # {diff, review, hunks: [{id, path, header, lines}]}
+bin/revuey hunks --stat          # the changed files: +/- counts and hunk ids (--json too)
+bin/revuey hunks --path src/cart.ts --path src/index.ts   # those files' hunks only (same ids)
 bin/revuey import-review --schema            # the JSON schema
 bin/revuey import-review review.json         # import (- reads stdin); --name names the reviewer
 ```
@@ -1448,10 +1450,12 @@ in the feed; live only: neither a later watch nor `--since` prints it again):
 revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on
 ```
 
-The review takes a moment to load the new layer after a switch, so `hunks`, `comment` and
-`import-review` run just after the line wait (up to 10 s) until the review's registry entry
-shows the branch checked out in the worktree; if it never does (you switched outside revuey),
-they go on with what the review shows and say so on stderr.
+The review takes a moment to load the new layer after a switch, and the line comes first. So
+`hunks`, `comment` and `import-review` run while the review's newest `switched` event names the
+branch checked out, is under 10 s old and is newer than the review's last registry change (its
+`changed_at`) wait until that entry changes (or the review closes), saying so on stderr. A branch
+checked out outside revuey sends no event, so they never wait for it: they use what the review
+shows until it refreshes.
 
 How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the

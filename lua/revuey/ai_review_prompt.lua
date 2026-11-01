@@ -149,8 +149,10 @@ function M.build(ctx, hunks, opts)
 end
 
 ---The user message alone (also what `bin/revuey hunks` prints for an outside reviewer).
+---`opts.ids` replaces the line naming the hunk ids (a part of the diff).
 function M.user_message(ctx, hunks, opts)
-  return guide_prompt.user_message(ctx, hunks, { budget = opts and opts.budget, texts = M.TEXTS, numbered = true })
+  local texts = (opts and opts.ids) and vim.tbl_extend('force', M.TEXTS, { ids = opts.ids }) or M.TEXTS
+  return guide_prompt.user_message(ctx, hunks, { budget = opts and opts.budget, texts = texts, numbered = true })
 end
 
 return M

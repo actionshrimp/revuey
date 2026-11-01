@@ -18,11 +18,12 @@
 --   comment --path <path> (--line N [--end M] [--side new|old] | --file) [--session <id>] <text|->
 --       leave a new comment (author agent) on lines of the review's diff or on a whole changed
 --       file, in the review the session (or, with none running, the CLI's scope) shows
---   hunks [--json] [--prompt] [--session <id>]
+--   hunks [--json] [--prompt | --stat | --path <p>...] [--session <id>]
 --       the review's hunks with their ids and numbered lines (what an AI review sees), and the
---       diff hash; --prompt: the whole prompt revuey's own AI review sends. Right after a switch
---       (`comment` and `import-review` too) it waits for the running review to show the layer
---       checked out (caught_up)
+--       diff hash; --prompt: the whole prompt revuey's own AI review sends; --stat: the changed
+--       files with +/- counts and hunk ids; --path (repeatable): those files' hunks only. Right
+--       after a `switched` event (`comment` and `import-review` too) it waits for the running
+--       review to show the new layer (caught_up)
 --   import-review [--name <n>] [--session <id>] <file|->   |   import-review --schema
 --       import an AI review document (ai_review_prompt.SCHEMA): its findings become AI comments
 --       to triage in the review, its summary and verdict the review's record
@@ -115,12 +116,14 @@ For coding agents (no UI; run inside the reviewed worktree):
       inside a hunk on that side, or on a whole changed file (--file). Prints the comment id
       and where it went. Same review as watch: the only live one, else --session <id>; with
       none running, the review `revuey` would open here.
-  revuey hunks [--json] [--prompt] [--session <id>]
+  revuey hunks [--json] [--prompt | --stat | --path <path>...] [--session <id>]
       the review's hunks, each under its id (`@@ h7 path @@`) with its lines numbered within
       the hunk (`3|+code`), and the diff hash; --prompt prints the whole prompt revuey's own
-      AI review uses (instructions, then the diff). Same review as comment. Right after the
-      user checks out another layer, hunks, comment and import-review wait (up to 10 s) for the
-      running review to show it.
+      AI review uses (instructions, then the diff); --stat only the changed files (+/- and
+      hunk ids); --path (repeatable) only those files' hunks, with the whole review's ids and
+      hash. Same review as comment. When the user just checked out another layer in revuey
+      (a `revuey switched` line under 10 s old), hunks, comment and import-review first wait
+      for the review to show it; a branch checked out outside revuey is not waited for.
   revuey import-review [--name <reviewer>] [--session <id>] <file|->
       import a review (JSON: summary, verdict, findings anchored to a hunk id and line numbers
       of that hunk; `--schema` prints the JSON schema; an optional "diff" must match the hash
@@ -162,6 +165,7 @@ local BOOL_FLAGS = {
   ['--file'] = 'file',
   ['--schema'] = 'schema',
   ['--prompt'] = 'prompt',
+  ['--stat'] = 'stat',
 }
 
 ---@return table opts, string[] positional
@@ -184,6 +188,10 @@ function M.parse(args)
         die(a .. ' needs a value\n' .. M.USAGE, 2)
       end
       o[VALUE_FLAGS[a]] = args[i + 1]
+      if a == '--path' then
+        o.paths = o.paths or {}
+        table.insert(o.paths, args[i + 1])
+      end
       i = i + 1
     elseif a:match('^%-%-[%w-]+=') then
       local k, v = a:match('^(%-%-[%w-]+)=(.*)$')
@@ -191,6 +199,10 @@ function M.parse(args)
         die('unknown option ' .. k .. '\n' .. M.USAGE, 2)
       end
       o[VALUE_FLAGS[k]] = v
+      if k == '--path' then
+        o.paths = o.paths or {}
+        table.insert(o.paths, v)
+      end
     elseif BOOL_FLAGS[a] then
       o[BOOL_FLAGS[a]] = true
     elseif a == '-h' or a == '--help' then
@@ -1008,32 +1020,72 @@ function M.repo_path(root, cwd, p)
   return (p:gsub('^%./', ''))
 end
 
----The attached session once its review shows the branch checked out in the worktree: right after
----a switch (`revuey switched ...`) the review is still loading the new layer and its registry
----entry names the old one, so `hunks`, `comment` and `import-review` would use the old layer's
----diff. Waits up to REVUEY_CATCH_UP_MS (default 10 s) for the entry to follow, then goes on with
----what it shows and says so.
+---The newest `switched` event of session `e` in its feed (the file's last 256 KB), or nil.
+local function last_switch(e)
+  local fd = e.events and io.open(e.events, 'r')
+  if not fd then
+    return nil
+  end
+  local size = fd:seek('end') or 0
+  fd:seek('set', math.max(0, size - 262144))
+  local text = fd:read('*a') or ''
+  fd:close()
+  local last
+  for _, ev in ipairs(comments.decode_events(text)) do
+    if ev.kind == comments.SWITCHED and tostring(ev.session) == e.id and (not last or (tonumber(ev.at) or 0) >= (tonumber(last.at) or 0)) then
+      last = ev
+    end
+  end
+  return last
+end
+
+---A registry entry without what a mere refresh changes.
+local function entry_sig(e)
+  local c = {}
+  for k, v in pairs(e) do
+    if k:sub(1, 1) ~= '_' and k ~= 'updated_at' then
+      c[k] = v
+    end
+  end
+  return vim.inspect(c)
+end
+
+---The attached session once its review follows a switch. The `switched` line is sent before the
+---review has loaded the new layer, so for a moment its registry entry still names the old one,
+---and `hunks`, `comment` and `import-review` would use the old layer's diff. Waits only when the
+---session's newest `switched` event is to the branch checked out now, the entry has not changed
+---since, and the event is under REVUEY_CATCH_UP_MS (10 s) old; stops when the entry changes in
+---any way or goes (the review closed: nil). A switch made outside revuey sends no event, so it
+---never waits for one.
 local function caught_up(o, ctx, attached)
-  local want = attached and attached.checked_out and git.current_branch(ctx.root)
-  if not want or want == attached.checked_out then
+  local want = ctx.branch
+  if not attached or want == attached.checked_out then
     return attached
   end
-  local deadline = vim.uv.now() + (tonumber(os.getenv('REVUEY_CATCH_UP_MS')) or 10000)
-  while vim.uv.now() < deadline do
+  local sw = last_switch(attached)
+  local at = sw and tonumber(sw.at) or 0
+  local deadline = at + (tonumber(os.getenv('REVUEY_CATCH_UP_MS')) or 10000)
+  if not (sw and sw.to == want and at >= (tonumber(attached.changed_at) or 0) and sessions.now_ms() < deadline) then
+    return attached
+  end
+  err(('revuey: waiting for the review to show %s (it was just checked out)\n'):format(want))
+  local sig = entry_sig(attached)
+  while sessions.now_ms() < deadline do
     vim.wait(100)
+    local now
     for _, e in ipairs(live_sessions(o, ctx)) do
       if e.id == attached.id then
-        attached = e
+        now = e
       end
     end
-    if attached.checked_out == want then
-      return attached
+    if not now then
+      err('revuey: the review closed; using what revuey opens here\n')
+      return nil
+    elseif entry_sig(now) ~= sig then
+      return now
     end
   end
-  err(('revuey: the review still shows %s, not %s (checked out in the worktree); using what it shows\n'):format(
-    tostring(attached.checked_out),
-    want
-  ))
+  err(('revuey: the review still shows %s, not %s; using what it shows\n'):format(tostring(attached.checked_out or attached.branch), want))
   return attached
 end
 
@@ -1216,8 +1268,60 @@ local function review_hunks(o)
 end
 
 function M.hunks(o)
+  if o.prompt and (o.stat or o.paths) then
+    die('--prompt is the whole review; it takes neither --stat nor --path', 2)
+  end
   local r, hunks, info = review_hunks(o)
+  -- the hash of the whole diff, whatever is shown (import-review checks against it)
   local diff = require('revuey.guide').anchors_hash(hunks)
+  local total = #hunks
+  if o.paths then
+    local want, found = {}, {}
+    for _, p in ipairs(o.paths) do
+      want[M.repo_path(r.root, vim.fn.getcwd(), p)] = p
+    end
+    local shown = {}
+    for _, h in ipairs(hunks) do
+      local key = want[h.path] and h.path or (h.old_path and want[h.old_path] and h.old_path)
+      if key then
+        found[key] = true
+        shown[#shown + 1] = h
+      end
+    end
+    for path, given in pairs(want) do
+      if not found[path] then
+        die(('%s is not a changed file in this review (`%s hunks --stat` lists them)'):format(given, bin()))
+      end
+    end
+    hunks = shown
+  end
+  local mode = info.mode == 'committed' and 'committed' or 'working tree'
+  local count = o.paths and ('%d of %d'):format(#hunks, total) or tostring(total)
+  if o.stat then
+    local files, by = {}, {}
+    for _, h in ipairs(hunks) do
+      local f = by[h.file_idx]
+      if not f then
+        f = { path = h.path, old_path = h.old_path, status = h.status, added = 0, removed = 0, hunks = {} }
+        by[h.file_idx] = f
+        files[#files + 1] = f
+      end
+      f.added, f.removed = f.added + (h.added or 0), f.removed + (h.removed or 0)
+      f.hunks[#f.hunks + 1] = h.id
+    end
+    if o.json then
+      out(vim.json.encode({ diff = diff, review = info, files = files }) .. '\n')
+      return
+    end
+    out(('# Files of %s vs %s (%s): %d, hunks: %s\n'):format(sessions.scope_label(info), info.base or '?', mode, #files, count))
+    out(('Diff: %s\n\n'):format(diff))
+    for _, f in ipairs(files) do
+      local name = (f.old_path and f.old_path ~= f.path) and (f.old_path .. ' -> ' .. f.path) or f.path
+      local status = ({ A = ' [added]', D = ' [deleted]', R = ' [renamed]' })[f.status] or ''
+      out(('%s%s (+%d -%d): %s\n'):format(name, status, f.added, f.removed, table.concat(f.hunks, ' ')))
+    end
+    return
+  end
   if o.json then
     local list = {}
     for _, h in ipairs(hunks) do
@@ -1239,12 +1343,16 @@ function M.hunks(o)
   if o.prompt then
     text, perr = prompt.build(pctx, hunks, { budget = math.huge })
   else
-    text, perr = prompt.user_message(pctx, hunks, { budget = math.huge })
+    text, perr = prompt.user_message(pctx, hunks, {
+      budget = math.huge,
+      -- a part of the diff: its ids and line numbers are the whole review's
+      ids = o.paths and 'Only the hunks of the files asked for (--path); their ids and line numbers are those of the whole review.' or nil,
+    })
   end
   if not text then
     die(perr)
   end
-  out(('# Hunks of %s vs %s (%s): %d\n'):format(info.branch or '?', info.base or '?', info.mode == 'committed' and 'committed' or 'working tree', #hunks))
+  out(('# Hunks of %s vs %s (%s): %s\n'):format(sessions.scope_label(info), info.base or '?', mode, count))
   out(('Diff: %s (give it as "diff" in the review, so import-review can tell when the code changed)\n\n'):format(diff))
   out(text)
   if o.prompt then

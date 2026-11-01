@@ -115,6 +115,12 @@ function M.update(s, refresh)
   if not refresh and sig == l.sig and l.path and vim.uv.fs_stat(l.path) then
     return
   end
+  -- when the entry last said something new (not a refresh): `bin/revuey` waits for a review
+  -- that has not followed a switch yet (cli.lua caught_up)
+  if sig ~= l.sig or not l.changed_at then
+    l.changed_at = sessions.now_ms()
+  end
+  e.changed_at = l.changed_at
   local path = sessions.register(l.bases, e)
   if path then
     if l.path and l.path ~= path then

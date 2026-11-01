@@ -191,36 +191,195 @@ h.test('hunks --prompt in the full-stack scope tags each hunk with its branch (n
   end
 end)
 
-h.test('hunks right after a switch wait for the running review to show the new layer', function()
-  local d = h.tmpdir('import-review-switch')
+-- ---------------------------------------------------------------------------
+-- Right after a switch: the `switched` line goes out before the review has loaded the new layer
+-- ---------------------------------------------------------------------------
+
+-- long enough that a wait never times out in these tests: an output that names the new layer
+-- shows that the command waited for the review
+local WAIT_ENV = vim.tbl_extend('force', ENV, { REVUEY_CATCH_UP_MS = '120000' })
+
+local function stack_fixture(name)
+  local d = h.tmpdir(name)
   vim.fn.delete(d, 'rf')
   assert(h.make_fixture('--stack', d).code == 0)
+  return d
+end
+
+---Check `to` out the way gS does, without the refresh that follows: the branch, and the
+---`switched` event revuey tells the agent with (agent_link.tell_switch).
+local function switch_untold(d, s, to)
+  h.git(d, 'switch', '-q', to)
+  local ev = comments.switch_event(comments.review_info(s.review), {
+    session = s.link.id,
+    worktree = d,
+    from = s.review.branch,
+    to = to,
+    layer = to,
+  })
+  assert(comments.append_event(s.cm.events, ev))
+end
+
+---Start `bin/revuey <args>` in `d`; returns a table that gets `stderr` as it comes and `done`
+---(the result) at the end.
+local function start(d, args, o)
+  o = o or {}
+  local p = { stderr = '', started = vim.uv.now() }
+  local cmd = { BIN }
+  vim.list_extend(cmd, args)
+  vim.system(cmd, {
+    cwd = d,
+    env = o.env or WAIT_ENV,
+    text = true,
+    stdin = o.stdin,
+    stderr = function(_, data)
+      if data then
+        p.stderr = p.stderr .. data
+      end
+    end,
+  }, function(r)
+    p.ms = vim.uv.now() - p.started
+    p.done = r
+  end)
+  return p
+end
+
+local function until_done(p)
+  vim.wait(60000, function()
+    return p.done ~= nil
+  end, 20)
+  h.ok(p.done, 'finished; stderr: ' .. p.stderr)
+  h.eq(0, p.done.code, p.stderr)
+  return p.done.stdout
+end
+
+---Wait for the command to say it waits for the review (then it is in the loop).
+local function until_waiting(p, to)
+  local line = 'waiting for the review to show ' .. to
+  vim.wait(60000, function()
+    return p.stderr:find(line, 1, true) ~= nil or p.done ~= nil
+  end, 20)
+  h.ok(p.stderr:find(line, 1, true), 'waits; stderr: ' .. p.stderr .. ' stdout: ' .. (p.done and p.done.stdout or ''))
+end
+
+local function follow(to)
+  require('revuey.view').refresh({ scope = { kind = 'layer', head = true, branch = to }, force = true })
+end
+
+h.test('after a switched event, hunks, comment and import-review wait for the review to show the new layer', function()
+  local d = stack_fixture('import-review-switch')
   local s = h.open_review({ cwd = d, base = '' })
   h.eq('stack/cart', s.review.branch)
-  -- the worktree has another layer checked out; the review has not refreshed yet (as when an
-  -- agent runs hunks on the `switched` line while revuey still loads the new layer)
-  h.git(d, 'switch', '-q', 'stack/ui')
-  local done
-  vim.system({ BIN, 'hunks' }, { cwd = d, env = ENV, text = true }, function(r)
-    done = r
-  end)
-  vim.wait(600)
-  h.eq(nil, done, 'hunks waits for the review')
-  require('revuey.view').refresh({ scope = { kind = 'layer', head = true, branch = 'stack/ui' }, force = true })
-  vim.wait(20000, function()
-    return done ~= nil
-  end, 20)
-  h.ok(done, 'hunks finished')
-  h.eq(0, done.code, done.stderr)
-  h.ok(done.stdout:find('# Hunks of stack/ui vs stack/cart', 1, true), done.stdout)
-  -- the review not following (the user switched outside revuey): it gives up and says so
-  h.git(d, 'switch', '-q', 'stack/math')
-  local env = vim.tbl_extend('force', ENV, { REVUEY_CATCH_UP_MS = '300' })
-  local r = vim.system({ BIN, 'hunks' }, { cwd = d, env = env, text = true }):wait(20000)
-  h.eq(0, r.code, r.stderr)
-  h.ok(r.stderr:find('the review still shows stack/ui, not stack/math', 1, true), r.stderr)
-  h.ok(r.stdout:find('# Hunks of stack/ui vs stack/cart', 1, true), r.stdout)
+  -- hunks: stack/ui's own diff, not stack/cart's (nor stack/cart's against stack/ui's files)
+  switch_untold(d, s, 'stack/ui')
+  local p = start(d, { 'hunks' })
+  until_waiting(p, 'stack/ui')
+  follow('stack/ui')
+  local out = until_done(p)
+  h.ok(out:find('# Hunks of stack/ui vs stack/cart (working tree): 3', 1, true), out)
+  -- comment: src/math.ts is changed by stack/math only
+  switch_untold(d, s, 'stack/math')
+  p = start(d, { 'comment', '--path', 'src/math.ts', '--file', 'a note' })
+  until_waiting(p, 'stack/math')
+  follow('stack/math')
+  out = until_done(p)
+  h.ok(out:find('commented on src/math.ts (file) in stack/math vs main', 1, true), out)
+  -- import-review: into stack/ui's review
+  switch_untold(d, s, 'stack/ui')
+  local doc = vim.json.encode({
+    summary = 's',
+    verdict = 'comment',
+    findings = { { hunk = 'h2', severity = 'minor', title = 'About Total', body = 'b' } },
+  })
+  p = start(d, { 'import-review', '--name', 'pass', '-' }, { stdin = doc })
+  until_waiting(p, 'stack/ui')
+  follow('stack/ui')
+  out = until_done(p)
+  h.ok(out:find('imported 1 finding %(verdict: [^)]*%) into stack/ui vs stack/cart'), out)
   require('revuey').close()
+end)
+
+h.test('no wait: plain and full-stack reviews, and a branch checked out outside revuey', function()
+  local function quick(d, want)
+    local p = start(d, { 'hunks' })
+    local out = until_done(p)
+    h.ok(not p.stderr:find('waiting', 1, true), p.stderr)
+    h.ok(p.ms < 30000, ('took %d ms'):format(p.ms))
+    h.ok(out:find(want, 1, true), out)
+  end
+  h.open_review({ cwd = repo })
+  quick(repo, '# Hunks of feat vs main')
+  require('revuey').close()
+  local d = stack_fixture('import-review-nowait')
+  h.open_review({ cwd = d, base = '', scope = 'full' })
+  quick(d, '# Hunks of full stack vs main')
+  require('revuey').close()
+  -- the user checks a branch out in a terminal: no event, so nothing to wait for; the review
+  -- shows its layer until it refreshes
+  h.open_review({ cwd = d, base = '' })
+  h.git(d, 'switch', '-q', 'stack/ui')
+  quick(d, '# Hunks of stack/cart vs stack/math')
+  require('revuey').close()
+end)
+
+h.test('the wait ends when the review closes, or when its entry changes in any way', function()
+  local d = stack_fixture('import-review-wait-ends')
+  local s = h.open_review({ cwd = d, base = '' })
+  switch_untold(d, s, 'stack/ui')
+  local p = start(d, { 'hunks' })
+  until_waiting(p, 'stack/ui')
+  require('revuey').close()
+  -- no review running: what revuey opens here, the layer checked out
+  local out = until_done(p)
+  h.ok(p.stderr:find('the review closed', 1, true), p.stderr)
+  h.ok(out:find('# Hunks of stack/ui vs stack/cart', 1, true), out)
+  -- a refresh that lands on no branch (checked_out = nil) ends it too
+  s = h.open_review({ cwd = d, base = '' })
+  h.eq('stack/ui', s.review.branch)
+  switch_untold(d, s, 'stack/math')
+  p = start(d, { 'hunks' })
+  until_waiting(p, 'stack/math')
+  h.git(d, 'switch', '-q', '--detach', 'stack/math')
+  require('revuey.view').refresh({ force = true })
+  until_done(p)
+  h.ok(not p.stderr:find('still shows', 1, true), 'ended by the change, not the timeout: ' .. p.stderr)
+  require('revuey').close()
+end)
+
+h.test('hunks --stat and --path: the file list, and some files\' hunks with the whole review\'s ids and hash', function()
+  local d = stack_fixture('import-review-stat')
+  require('revuey').close()
+  local function run_in(args)
+    local r = vim.system(vim.list_extend({ BIN }, args), { cwd = d, env = ENV, text = true }):wait(20000)
+    return r
+  end
+  local full = run_in({ 'hunks' })
+  h.eq(0, full.code, full.stderr)
+  local diff = full.stdout:match('Diff: (%x+)')
+  local st = run_in({ 'hunks', '--stat' })
+  h.eq(0, st.code, st.stderr)
+  h.ok(st.stdout:find('# Files of stack/cart vs stack/math (working tree): 2, hunks: 2\nDiff: ' .. diff .. '\n\n', 1, true), st.stdout)
+  h.ok(st.stdout:find('\nsrc/cart.ts [added] (+20 -0): h1\nsrc/index.ts (+3 -2): h2\n', 1, true), st.stdout)
+  h.ok(not st.stdout:find('@@', 1, true), 'no diff: ' .. st.stdout)
+  local sj = vim.json.decode(run_in({ 'hunks', '--stat', '--json' }).stdout)
+  h.eq(diff, sj.diff)
+  h.eq({ 'src/index.ts', 3, 2, { 'h2' } }, { sj.files[2].path, sj.files[2].added, sj.files[2].removed, sj.files[2].hunks })
+  local one = run_in({ 'hunks', '--path', 'src/index.ts' })
+  h.eq(0, one.code, one.stderr)
+  h.ok(one.stdout:find('# Hunks of stack/cart vs stack/math (working tree): 1 of 2\nDiff: ' .. diff, 1, true), one.stdout)
+  h.ok(one.stdout:find('\n@@ h2 src/index.ts @@\n', 1, true), one.stdout)
+  h.ok(not one.stdout:find('@@ h1', 1, true), one.stdout)
+  h.ok(one.stdout:find('Only the hunks of the files asked for', 1, true), one.stdout)
+  local two = run_in({ 'hunks', '--path', 'src/index.ts', '--path=./src/cart.ts', '--json' })
+  h.eq(0, two.code, two.stderr)
+  h.eq({ 'h1', 'h2' }, vim.tbl_map(function(x)
+    return x.id
+  end, vim.json.decode(two.stdout).hunks))
+  local bad = run_in({ 'hunks', '--path', 'src/math.ts' })
+  h.eq(1, bad.code)
+  h.ok(bad.stderr:find('src/math.ts is not a changed file in this review', 1, true), bad.stderr)
+  local both = run_in({ 'hunks', '--prompt', '--stat' })
+  h.eq(2, both.code)
 end)
 
 h.test('hunks follow the review\'s file order: folders (the default), or git\'s with panel_folders = false', function()
