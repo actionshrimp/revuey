@@ -160,7 +160,7 @@ h.test('diff: the remaining hunks complete the file: it folds, gets a file mark,
   keys(s, 'mr')
   h.eq({ 3, 3 }, progress(s, 'm.txt'))
   h.eq(r.start_row, closed_at(s, r.start_row), 'the complete file folds')
-  h.eq(rows(s, 'z.txt').start_row, cursor(s), 'next unreviewed file')
+  h.eq(rows(s, 'z.txt').hunk_rows[1], cursor(s), "next unreviewed file's first hunk")
   local f = s.review.files[fidx(s, 'm.txt')]
   h.eq(true, state.is_reviewed(s.review.state, f.path, state.content_key(f)), 'file-level mark stored')
   h.ok(virt(s, r.start_row):find('✓ reviewed', 1, true))
@@ -281,6 +281,54 @@ h.test('visual mr over collapsed files marks all of them, the last one included'
   for _, p in ipairs({ 'a.txt', 'm.txt', 'z.txt' }) do
     tab_expand(p)
   end
+end)
+
+h.test("diff: completing a file moves to the next file's first unreviewed hunk, its header in view", function()
+  local function reset_diff()
+    unmark_all(s)
+    vim.api.nvim_win_call(s.diff_win, function()
+      vim.cmd('normal! zR')
+    end)
+  end
+  local function at(path, i)
+    return rows(s, path).hunk_rows[i]
+  end
+  local function mark(row)
+    vim.api.nvim_win_set_cursor(s.diff_win, { row, 0 })
+    keys(s, 'mr')
+  end
+  reset_diff()
+  -- the hunk completes a.txt: on to m.txt's first hunk, m.txt's header on screen
+  mark(at('a.txt', 1) + 1)
+  h.eq(at('m.txt', 1), cursor(s))
+  h.eq(-1, closed_at(s, cursor(s)), 'the hunk is open')
+  h.ok(vim.api.nvim_win_call(s.diff_win, function()
+    return vim.fn.line('w0')
+  end) <= rows(s, 'm.txt').start_row, 'the file header in view')
+  -- the next file's first hunk already reviewed: its second
+  reset_diff()
+  mark(at('m.txt', 1))
+  mark(rows(s, 'a.txt').start_row)
+  h.eq(at('m.txt', 2), cursor(s), 'a file mr lands on a hunk too')
+  -- a fully reviewed next file is skipped
+  reset_diff()
+  mark(rows(s, 'm.txt').start_row)
+  mark(at('a.txt', 1))
+  h.eq(at('z.txt', 1), cursor(s))
+  -- a collapsed next file: its header, still collapsed
+  reset_diff()
+  tab_collapse('m.txt')
+  mark(at('a.txt', 1))
+  h.eq(rows(s, 'm.txt').start_row, cursor(s))
+  h.eq(rows(s, 'm.txt').start_row, closed_at(s, rows(s, 'm.txt').start_row))
+  tab_expand('m.txt')
+  -- a collapsed unreviewed hunk is skipped for the next open one
+  reset_diff()
+  vim.api.nvim_win_set_cursor(s.diff_win, { at('m.txt', 1), 0 })
+  keys(s, '<Tab>')
+  mark(at('a.txt', 1))
+  h.eq(at('m.txt', 2), cursor(s))
+  reset_diff()
 end)
 
 -- The guide: section 1 = a.txt + m.txt's first hunk; section 2 = m.txt's other hunks + z.txt

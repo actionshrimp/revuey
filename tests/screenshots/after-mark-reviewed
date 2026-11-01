@@ -1,63 +1,63 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01| [No Name]  2 r//f/cart..main                                                                                          X
-02| Files                       ○ no agent │ M src/index.ts +9 −6                                                      3/7 
-03| feature/cart → main                    │  M     ▾ src/index.ts   +9 −6                                                 
-04| 7 files  +57 −22  ✓ 1/7                │          @@ -1,13 +1,16 @@                                                    
-05| base ee2e6fcf  head 6b2be8a3           │  1     - import { add, circleArea } from "./math";                            
-06| working tree  ● uncommitted            │      1 + import { add, circleArea, subtract } from "./math";                  
-07|                                        │  2   2   import { formatCurrency } from "./format";                           
-08| assets:                                │  3     - import { capitalize } from "./utils/strings";                        
-09|     M  logo.png                     bin│  4     - import { oldTotal } from "./legacy";                                 
-10| src:                                   │      3 + import { capitalize } from "./text";                                 
-11|   ✓ A  cart.ts                   +27 −0│      4 + import { Cart } from "./cart";                                       
-12|     M  index.ts                   +9 −6│  5   5                                                                        
-13|     D  legacy.ts                  +0 −6│  6   6   export function main(): void {                                       
-14|     M  math.ts                   +14 −8│  7     -   const total = oldTotal([1, 2, 3]);                                 
-15|     R  text.ts                    +2 −2│  8     -   console.log(capitalize("total"), formatCurrency(total));           
-16| src/components:                        │      7 +   const cart = new Cart()                                            
-17|     A  Total.tsx                  +5 −0│      8 +     .addItem({ name: "apple", price: 0.5, quantity: 6 })             
-18|                                        │      9 +     .addItem({ name: "pear", price: 0.75, quantity: 2 });            
-19| <CR> show  mr reviewed  gp diff        │     10 +   console.log(capitalize("total"), formatCurrency(cart.total()));    
-20| ]h [h hunk  ]f [f file  <Tab> fold     │     11 +   console.log(cart.describe());                                      
-21| gd def  K hover  go open  R refresh    │  9  12     console.log("area", circleArea(2));                                
-22| gu committed/working tree  q close     │ 10     -   console.log("sum", add(2, 3));                                     
-23| gG AI guide                            │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));             
-24| g? all keys                            │ 11  14   }                                                                    
-25|~                                       │ 12  15                                                                        
-26|~                                       │ 13  16   main();                                                              
-27|~                                       │                                                                               
-28|~                                       │  D     ▾ src/legacy.ts   +0 −6  deleted                                       
-29|revuey://files [-]    10,1           All revuey://feature/cart..main [-]                              34,1           34%
+02| Files                       ○ no agent │ M assets/logo.png binary                                                  1/7 
+03| feature/cart → main                    │  M     ▾ assets/logo.png   binary                                             
+04| 7 files  +57 −22  ✓ 1/7                │          Binary file not shown                                                
+05| base ee2e6fcf  head 6b2be8a3           │                                                                               
+06| working tree  ● uncommitted            │  A     ▸ src/cart.ts  +27 −0  added  ✓ reviewed  (27 lines folded)            
+07|                                        │  M     ▾ src/index.ts   +9 −6                                                 
+08| assets:                                │          @@ -1,13 +1,16 @@                                                    
+09|     M  logo.png                     bin│  1     - import { add, circleArea } from "./math";                            
+10| src:                                   │      1 + import { add, circleArea, subtract } from "./math";                  
+11|   ✓ A  cart.ts                   +27 −0│  2   2   import { formatCurrency } from "./format";                           
+12|     M  index.ts                   +9 −6│  3     - import { capitalize } from "./utils/strings";                        
+13|     D  legacy.ts                  +0 −6│  4     - import { oldTotal } from "./legacy";                                 
+14|     M  math.ts                   +14 −8│      3 + import { capitalize } from "./text";                                 
+15|     R  text.ts                    +2 −2│      4 + import { Cart } from "./cart";                                       
+16| src/components:                        │  5   5                                                                        
+17|     A  Total.tsx                  +5 −0│  6   6   export function main(): void {                                       
+18|                                        │  7     -   const total = oldTotal([1, 2, 3]);                                 
+19| <CR> show  mr reviewed  gp diff        │  8     -   console.log(capitalize("total"), formatCurrency(total));           
+20| ]h [h hunk  ]f [f file  <Tab> fold     │      7 +   const cart = new Cart()                                            
+21| gd def  K hover  go open  R refresh    │      8 +     .addItem({ name: "apple", price: 0.5, quantity: 6 })             
+22| gu committed/working tree  q close     │      9 +     .addItem({ name: "pear", price: 0.75, quantity: 2 });            
+23| gG AI guide                            │     10 +   console.log(capitalize("total"), formatCurrency(cart.total()));    
+24| g? all keys                            │     11 +   console.log(cart.describe());                                      
+25|~                                       │  9  12     console.log("area", circleArea(2));                                
+26|~                                       │ 10     -   console.log("sum", add(2, 3));                                     
+27|~                                       │     13 +   console.log("sum", add(2, 3), "diff", subtract(5, 3));             
+28|~                                       │ 11  14   }                                                                    
+29|revuey://files [-]    10,1           All revuey://feature/cart..main [-]                              35,1           Top
 30|                                                                                                                        
 
 --|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
 01|000000000001211111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-02|333333333333333333333333333333333333333345666666666666666777885555555555555555555555555555555555555555555555555555555555
-03|22222222222222222222999999999999999999994::::::::::;;;;;;;;;;;;<<<==>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-04|9999999999???@@@@AAAAAAA99999999999999994BBBBBBBBBBCCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-05|AAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999999994EEEEEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-06|HHHHHHHHHHHHHAAAAAAAAAAAAAAA9999999999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-07|99999999999999999999999999999999999999994IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-08|9HHHHHHH999999999999999999999999999999994EEEEEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNGGGGGGGGGGGGGGGGGGGGGGGGGG
-09|999?9HO944444444999999999999999999999AAA4EEEEEEEFFFGGGGGGGGGNNNNNNNNGGGGGGGGGGGNNNNNNGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-10|9HHHH999999999999999999999999999999999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-11|999?9?O9AAAAAAA9999999999999999999???@@@4IIIIJJJKKKLLLLLLLLLMMMMLLLLLLLLLLLMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-12|PPPQPRSPTTTTTTTTPPPPPPPPPPPPPPPPPPP??@@@4IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-13|999?9@O9444444444999999999999999999??@@@4IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-14|999?9HO944444449999999999999999999???@@@4EEEEEEEFFFGGGGGGGGNNNNNGGGNNNNNNNNGNNNNNNNNNGNGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-15|999?9HO9444444499999999999999999999??@@@4EEEEEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-16|9HHHHHHHHHHHHHHH9999999999999999999999994IIIIJJJKKKLLLLLLLLMMMMLLLMMMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-17|999?9?O9444444444999999999999999999??@@@4IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-18|99999999999999999999999999999999999999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-19|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-20|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
-21|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA99994IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-22|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA999994EEEEEEEFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
-23|AAAAAAAAAAAA99999999999999999999999999994IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLL
-24|AAAAAAAAAAAA99999999999999999999999999994IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-25|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-26|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4IIIIIIIIII999999999999999999999999999999999999999999999999999999999999999999999
-27|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4BBBBBBBBBB999999999999999999999999999999999999999999999999999999999999999999999
-28|BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4@@@@@@@@@@UUUUUUUUUUUUU<<<==>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-29|00000000000000000000000000000000000000000VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
-30|WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+02|333333333333333333333333333333333333333345666666666666666666555555555555555555555555555555555555555555555555555555555555
+03|222222222222222222227777777777777777777748888888888999999999999999:::;;;;;;:::::::::::::::::::::::::::::::::::::::::::::
+04|7777777777<<<====>>>>>>>77777777777777774??????????>>>>>>>>>>>>>>>>>>>>>777777777777777777777777777777777777777777777777
+05|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777777774??????????777777777777777777777777777777777777777777777777777777777777777777777
+06|8888888888888>>>>>>>>>>>>>>>7777777777774<<<<<<<<<<99999999999;;@@@AAA@@@@@@@@@@@@@@@@@@@;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+07|777777777777777777777777777777777777777748888888888999999999999:::@@AAA:::::::::::::::::::::::::::::::::::::::::::::::::
+08|78888888777777777777777777777777777777774BBBBBBBBBBCCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+09|777<78E744444444777777777777777777777>>>4FFFFFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+10|78888777777777777777777777777777777777774IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+11|777<7<E7>>>>>>>7777777777777777777<<<===4IIIIIIIIII777777777777777777777777777777777777777777777777777777777777777777777
+12|NNNONPQNRRRRRRRRNNNNNNNNNNNNNNNNNNN<<===4FFFFFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHSSSSSSSSSSSSSHHHHHHHHHHHHHHHHHHHHHHHHHH
+13|777<7=E7444444444777777777777777777<<===4FFFFFFFGGGHHHHHHHHHSSSSSSSSHHHHHHHHHHHSSSSSSHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+14|777<78E744444447777777777777777777<<<===4IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+15|777<78E7444444477777777777777777777<<===4IIIIJJJKKKLLLLLLLLLMMMMLLLLLLLLLLLMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+16|78888888888888887777777777777777777777774IIIIIIIIII777777777777777777777777777777777777777777777777777777777777777777777
+17|777<7<E7444444444777777777777777777<<===4IIIIIIIIII777777777777777777777777777777777777777777777777777777777777777777777
+18|77777777777777777777777777777777777777774FFFFFFFGGGHHHHHHHHSSSSSHHHSSSSSSSSHSSSSSSSSSHSHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+19|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777777774FFFFFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+20|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774IIIIJJJKKKLLLLLLLLMMMMLLLMMMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+21|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>77774IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+22|>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>777774IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+23|>>>>>>>>>>>>77777777777777777777777777774IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+24|>>>>>>>>>>>>77777777777777777777777777774IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL
+25|????????????????????????????????????????4IIIIIIIIII777777777777777777777777777777777777777777777777777777777777777777777
+26|????????????????????????????????????????4FFFFFFFGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+27|????????????????????????????????????????4IIIIJJJKKKLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLL
+28|????????????????????????????????????????4IIIIIIIIII777777777777777777777777777777777777777777777777777777777777777777777
+29|00000000000000000000000000000000000000000TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
+30|UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

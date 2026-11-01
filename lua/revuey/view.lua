@@ -1620,7 +1620,15 @@ local function apply_marks(s, target)
     local fi = target.file
     for j = fi + 1, #s.layout.files do
       if not f1[j] then
-        goto_row(s, s.layout.files[j].start_row, 'top')
+        -- its first unreviewed hunk, as in the guide; a collapsed file, one whose unreviewed hunks
+        -- are all collapsed, or one without hunks (binary) gets its header
+        local fr = s.layout.files[j]
+        local row = first_unreviewed_in(s, fr)
+        if row then
+          goto_hunk_under(s, fr.start_row, row)
+        else
+          goto_row(s, fr.start_row, 'top')
+        end
         return now
       end
     end
