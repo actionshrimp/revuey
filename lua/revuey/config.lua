@@ -108,7 +108,9 @@ M.defaults = {
     -- ]c/[c shadow the diff-mode change jumps, which mean nothing in a review buffer.
     comment_next = ']c',
     comment_prev = '[c',
-    comment_list = 'cl', -- all comments in a float (also in the panel; :RevueyComments)
+    -- the comments view over the diff: every thread in one list (<CR> shows one in the diff; the
+    -- comment keys act on the thread under the cursor; again or q: back). Also :RevueyComments.
+    comment_list = 'cl',
     -- AI review findings (:RevueyAIReview) and a coding agent's comments (`bin/revuey
     -- comment`): accept one as your own comment, or dismiss it (again: restore). `cs` sends one
     -- to the agent session to follow up, as any comment.

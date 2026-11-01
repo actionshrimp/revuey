@@ -177,6 +177,10 @@ function M.setup()
   set('RevueyForgeDescriptionMore', { link = 'Comment' }) -- "… N more lines" while collapsed
   set('RevueyForgeDescriptionRule', { link = 'Comment' }) -- horizontal rules, table separators
   set('RevueyCommentInReview', { link = 'DiagnosticHint' }) -- added to the review to post on GitHub
+  -- the comments view (comments_list.lua)
+  set('RevueyCommentsHeader', { link = 'Title' }) -- the counts at the top
+  set('RevueyCommentsLayer', { link = 'Title' }) -- a layer's heading (full-stack scope)
+  set('RevueyCommentsCode', { link = 'Comment' }) -- the code line a thread is on
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

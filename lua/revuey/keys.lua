@@ -28,7 +28,10 @@ M.GROUPS = {
     { names = { 'comment_next', 'comment_prev' }, desc = 'next / previous comment (takes a count)',
       readme = 'Next / previous comment: yours, the agent\'s, AI findings, GitHub threads (skips threads hidden by `gH`; takes a count)' },
     { names = { 'comment_toggle' }, desc = 'hide / show the comment threads' },
-    { names = { 'comment_list' }, desc = 'all comments in a float (<CR> jumps)', readme = 'List all comments (`<CR>` jumps)' },
+    { names = { 'comment_list' }, desc = 'the comments view: every thread in one list (again: back)',
+      readme = 'The [comments view](#the-comments-view): every thread in one list, over the diff (`<CR>` shows one in the diff; the comment keys work on the thread under the cursor; again or `q`: back)' },
+    { fixed = '<CR>', where = 'in the comments view', desc = 'comments view: show the thread in the diff (guide)',
+      readme = 'Show the thread under the cursor in the diff (in the guide, when you came from there and it shows the line); `]c`/`[c` move between threads' },
   },
   {
     name = 'Review and posting',

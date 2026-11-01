@@ -58,7 +58,7 @@ Requirements:
 | `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
 | `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
 | `:RevueyAIReview cancel` | Stop a running AI review. |
-| `:RevueyComments` | All [comments](#comments) of the review in a float; `<CR>` jumps to one. |
+| `:RevueyComments` | The [comments view](#the-comments-view): every thread of the review in one list; `<CR>` shows one in the diff. |
 | `:RevueySubmit [approve\|comment\|request-changes\|pending]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `pending` adds them to your pending review on GitHub without submitting it. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
 | `:RevueyClose` | Close the review tab. |
@@ -649,7 +649,7 @@ for authors.
 - **State.** Resolved threads (`resolved by alice`) and threads GitHub marks `outdated` are
   collapsed to their first line, like resolved comments; `cz` expands one. The viewer's own
   unsubmitted review comments are marked `pending`. `gH` cycles what is drawn: all threads, open
-  ones only, none. `]c`/`[c` and the comments list (`cl`, a "GitHub threads" part) include them.
+  ones only, none. `]c`/`[c` and the [comments view](#the-comments-view) (`cl`) include them.
   The PR section in the panel counts them (`threads: 2 open, 1 resolved`, plus `more on GitHub`
   when the list was cut, `(new)` when threads were added, answered or resolved on GitHub since
   (`R` shows them), and `(stale)` when the last fetch failed and these are the threads from
@@ -949,7 +949,7 @@ never a bug report (those belong in an [AI review](#ai-review)).
 - `]n` / `[n`: next / previous line note (takes a count).
 - `gN`: collapse every note to a `◆ guide` marker at the end of its line, and back.
 
-Notes belong to the guide, not to your comments: they are not in the comment list, `]c`,
+Notes belong to the guide, not to your comments: they are not in the comments view, `]c`,
 exports, the agent link or anything posted, and they are not shown in the diff view, where the
 code stays yours. Claude points at a line by its hunk id and the line's number within the hunk,
 as AI review findings do; a note on a line the prompt did not show (or an unknown hunk) is
@@ -1093,8 +1093,8 @@ and optionally a suggested change.
 
 The panel shows the latest review of the scope under the stack and guide blocks: the verdict
 (`✓ approve`, `● comment`, `✗ request changes`), how many findings are left to triage, how many
-were dropped, and the summary. `cl` lists the verdict and summary above the comments; findings
-there are tagged with their severity and `to triage`. A spinner with the elapsed time and what
+were dropped, and the summary. The [comments view](#the-comments-view) (`cl`) shows the verdict and
+summary above the threads; findings there are `draft` until you accept them, with their severity. A spinner with the elapsed time and what
 Claude is doing ("reading src/cart.ts") shows while it runs, and you keep reviewing.
 
 **Anchors.** Claude never gives file line numbers. The prompt shows every hunk under its id with
@@ -1177,8 +1177,8 @@ Comment while you review, in the diff or the guide view:
 - On a commented line (or its range): `ce` edit, `cr` reply, `cx` resolve / reopen, `cd` delete
   (asks first), `cz` expand. `]c` / `[c` move to the next / previous comment: yours, the
   agent's, AI findings and GitHub threads, skipping threads hidden by `gH` (while `gC` hides the
-  threads they still stop at each one). `cl` (also in the panel) or `:RevueyComments` lists them
-  all.
+  threads they still stop at each one). `cl` (also in the panel) or `:RevueyComments` opens the
+  [comments view](#the-comments-view) with all of them.
 - **Moving code.** Each comment remembers the hunk it was made in and a hash of its lines plus two
   lines of context either side. When the hunk is unchanged (edits elsewhere just shift it) the
   comment moves with it; otherwise it goes to the nearest place with the same lines and context,
@@ -1193,6 +1193,63 @@ Comment while you review, in the diff or the guide view:
 - When the branch has an open pull request, its GitHub review threads are drawn next to your
   comments, read-only (see [Review threads from GitHub](#review-threads-from-github)). They are
   not in your comments file, the export or the agent feed; a local reply (`cr` on a thread) is.
+
+### The comments view
+
+`cl` (also in the panel, or `:RevueyComments`) shows every comment thread of the review in one
+list over the diff: GitHub review threads, your comments and local replies, the agent's comments
+and AI review findings, accepted or not. It takes the whole diff window, so long threads fit and
+bodies wrap to its width; the diff (or guide) underneath stays as it was. `cl` again or `q` goes
+back to it, with the cursor where you left it.
+
+```
+ Comments · layer stack/cart                     <CR> show · cr reply · gx open
+ 6 open · 1 resolved
+ GitHub threads: all (gH cycles)
+
+ src/cart.ts
+  file  open
+  ╭─ erin · 2026-01-01 · GitHub #42 · file ──────────────────────────────
+  │ Needs a test for an empty cart.
+  ╰─
+  3  draft  │ export interface LineItem {
+  ╭─ claude (agent) · just now · ca accept · cn dismiss ─────────────────
+  │ Why an interface and not a type?
+  ╰─
+  5  outdated · not on a shown line  carol: Use a Money type here.
+  10  in review  │ private items: LineItem[] = [];
+  ╭─ You · just now · in review ─────────────────────────────────────────
+  │ Readonly array?
+  │ ↳ claude (agent) · just now
+  │   It is never reassigned, so yes.
+  ╰─
+  12-13  resolved  dan: Return a copy instead? · 1 reply
+```
+
+- **Grouped by file** in the diff's order (files no longer in the review last), file-level threads
+  first, then by line. In the full-stack scope (`gs`, which also works in the view) every layer's
+  threads are listed under their layer and PR first: a GitHub thread under its PR's layer, your
+  comment under the layer that changed its lines.
+- **Each thread** starts with its line (`12-13`, `20 (old)`, `file`), a status and the code it is
+  on, then the thread as the diff draws it (author, time, the same chips, every reply). Statuses:
+  `open`, `resolved`, `dismissed`, `outdated`, `draft` (not saved yet, or an agent's comment or AI
+  finding you have not accepted), `in review` (added with `ci`), `pending on GitHub` (in your
+  unsubmitted review there) and `posted`. Threads that are not on a shown line say so (`not on a
+  shown line`, `file not in this review`). Resolved, dismissed, posted and GitHub-outdated
+  threads take one line; `cz` expands one.
+- **The header** counts the open and resolved threads, and your comments that could go to GitHub
+  but are not in the review yet (`ci` adds them). GitHub threads follow `gH` as in the diff (all,
+  open only, none); `gH` in the view cycles it too.
+- **Keys.** `<CR>` on any line of a thread shows it in the diff, on the comment (in the guide when
+  you opened the view from the guide and it shows the line). `]c` / `[c` move between threads.
+  The comment keys work on the thread under the cursor, as on its line in the diff: `cr` reply
+  (on a GitHub thread: a local reply), `ce` edit, `cd` delete, `cx` resolve, `ci` add to the
+  review, `ca` / `cn` accept / dismiss, `cs` send to the agent, `cz` expand, `gx` open a GitHub
+  thread in the browser. The editor opens under the thread, and the list redraws in place with
+  the cursor on the same thread. `R` refreshes; comments arriving from elsewhere (an agent, another
+  Neovim, a GitHub fetch) show up at once.
+- The panel shows a `Comments` section with the counts and the view's keys while it is open; the
+  winbar says `Comments` and the scope, and the keys that work on the thread under the cursor.
 
 `gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
 where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn` shadow `c{motion}` and
@@ -1426,7 +1483,7 @@ The review opens in a new tab:
   `packages/…/routes`, then `…/routes`); when every folder shares leading folders (everything
   under `src/`), they are left out of the headers and named once above them (` in src/`). A
   folder whose files are all reviewed is dimmed. `panel_folders = false` gives the flat list (git's
-  path order, each file's folder after its name). The comment list, the AI findings and
+  path order, each file's folder after its name). The comments view, the AI findings and
   `bin/revuey hunks` follow the same order.
 
   Upgrading to the folder order: hunk ids follow the file order, so an AI review document made
@@ -1481,7 +1538,8 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `<C-a>` | In the comment editor: save and send to the agent |
 | `]c` / `[c` | Next / previous comment: yours, the agent's, AI findings, GitHub threads (skips threads hidden by `gH`; takes a count) |
 | `gC` | Hide / show the comment threads |
-| `cl` | List all comments (`<CR>` jumps) |
+| `cl` | The [comments view](#the-comments-view): every thread in one list, over the diff (`<CR>` shows one in the diff; the comment keys work on the thread under the cursor; again or `q`: back) |
+| `<CR>` in the comments view | Show the thread under the cursor in the diff (in the guide, when you came from there and it shows the line); `]c`/`[c` move between threads |
 
 **Review and posting**
 
@@ -1633,7 +1691,7 @@ Things to try:
 Comments:
 - `gc` on `+ import { multiply, sum } ...` in `src/cart.ts`, type a note, `<C-s>`. `Vjgc` on two
   lines, `gc` on a `-` line (old side), `gc` on a file header (whole file).
-- `cr` to reply, `cx` to resolve, `]c` / `[c` between comments, `cl` for the list.
+- `cr` to reply, `cx` to resolve, `]c` / `[c` between comments, `cl` for the comments view (`q` back).
 - `:RevueyCommentsExport` and paste the clipboard into an AI chat.
 - In a second terminal in the fixture: `~/dev/revuey/main/bin/revuey watch`, then comment again:
   each comment prints one line. `~/dev/revuey/main/bin/revuey reply <id from that line> "On it"`
@@ -1746,7 +1804,7 @@ In the same review (needs `claude` too):
   the findings to triage and the summary appear, and each finding is a `claude (ai)` thread on
   its lines. `]c` moves between them.
 - `ca` on one: it becomes your comment. `cn` on another: it collapses as "dismissed" (`cn` again
-  restores it). `cl` lists them all under the verdict.
+  restores it). `cl` shows them all under the verdict, as drafts until accepted.
 - `:RevueyAIReview` again asks before replacing the findings you have not touched; the ones you
   accepted or dismissed stay.
 - `bin/revuey hunks` in the repo prints what Claude saw; `bin/revuey import-review --schema` the

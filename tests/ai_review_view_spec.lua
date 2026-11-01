@@ -209,16 +209,12 @@ h.test(':RevueyAIReview runs claude read-only with the review schema; findings l
   h.ok(p:find(' AI review  ✗ request changes', 1, true), p)
   h.ok(p:find(' 3 to triage · 2 dropped', 1, true), p)
   h.ok(p:find('Renames line 20 and adds a file.', 1, true), p)
-  -- the comments list starts with the review
-  local list = cv.list_lines(s)
-  h.eq('AI review: ✗ request changes · claude', list[1].text)
-  local found
-  for _, l in ipairs(list) do
-    if l.text:find('Twenty is spelled out', 1, true) then
-      found = l.text
-    end
-  end
-  h.ok(found and found:find('[major, to triage, by claude (ai)]', 1, true) and not found:find('**', 1, true), tostring(found))
+  -- the comments view starts with the review
+  local list = require('revuey.comments_list').texts(s, 100)
+  local text = table.concat(list, '\n')
+  h.ok(text:find(' AI review: ✗ request changes · claude', 1, true), text)
+  h.ok(text:find('draft', 1, true) and text:find('claude (ai)', 1, true) and text:find('major', 1, true), text)
+  h.ok(text:find('Twenty is spelled out', 1, true), text)
   h.eq({}, vim.tbl_keys(ai.live), 'no claude left running')
 end)
 

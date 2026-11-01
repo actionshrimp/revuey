@@ -121,7 +121,8 @@ function M.ai_review(bang, arg)
   require('revuey.view').ai_review_command(bang, arg)
 end
 
----`:RevueyComments`: all comments of the open review in a float (<CR> jumps to one).
+---`:RevueyComments`: the comments view of the open review (every thread in one list; <CR> shows
+---one in the diff).
 function M.comments()
   return require('revuey.view').comments_list()
 end

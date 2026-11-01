@@ -511,6 +511,10 @@ function M.winbar()
     return ''
   end
   local s = session_for_buf(api.nvim_win_get_buf(win))
+  if s and s.clist then
+    -- the comments view covers the diff window
+    return require('revuey.comments_list').winbar(s, win)
+  end
   if s and s.view_mode == 'guide' then
     return M.guide_winbar(s, win)
   end
@@ -1919,7 +1923,7 @@ function M.comment_keymaps(s)
   map(buf, k.comment_resolve, with(comments_view.resolve), 'resolve / reopen the comment on this line')
   map(buf, k.comment_expand, with(comments_view.toggle_expand), 'expand / collapse a long comment')
   map(buf, k.comment_toggle, with(comments_view.toggle_visible), 'show / hide comment threads')
-  map(buf, k.comment_list, with(comments_view.open_list), 'list all comments')
+  map(buf, k.comment_list, with(require('revuey.comments_list').toggle), 'the comments view: every thread in one list')
   map(buf, k.comment_accept, with(comments_view.accept), 'accept the AI review finding on this line')
   map(buf, k.comment_dismiss, with(comments_view.dismiss), 'dismiss / restore the AI review finding on this line')
   map(buf, k.forge_threads, with(comments_view.toggle_forge), 'GitHub threads: all / open only / hidden')
@@ -1974,9 +1978,9 @@ function M.submit(verdict)
   return require('revuey.forge_post_view').start(M.session, verdict)
 end
 
----`:RevueyComments`: the comments list of the open review.
+---`:RevueyComments`: the comments view of the open review.
 function M.comments_list()
-  return comments_view.open_list(M.session)
+  return require('revuey.comments_list').open(M.session)
 end
 
 ---`:RevueyCommentsExport [markdown|json] [--all] [register|file]`.
@@ -2009,6 +2013,9 @@ local function panel_keymaps(s)
     if not r then
       return
     end
+    if focus then
+      require('revuey.comments_list').close(s) -- back to the guide below it
+    end
     section_fold(s, si, false)
     goto_row(s, r.start_row, 'top')
     panel.set_current_section(s, si)
@@ -2030,6 +2037,9 @@ local function panel_keymaps(s)
     end
     if not fi then
       return
+    end
+    if focus then
+      require('revuey.comments_list').close(s) -- back to the diff (guide) below it
     end
     local row
     if s.view_mode == 'guide' then
@@ -2085,8 +2095,8 @@ local function panel_keymaps(s)
     api.nvim_set_current_win(s.diff_win)
   end, 'focus diff')
   map(buf, k.comment_list, function()
-    comments_view.open_list(s)
-  end, 'list all comments')
+    require('revuey.comments_list').toggle(s)
+  end, 'the comments view: every thread in one list')
   map(buf, k.forge_open, function()
     require('revuey.forge_view').open(s, api.nvim_win_get_cursor(0)[1])
   end, 'open the pull request in the browser')
@@ -2742,6 +2752,7 @@ cleanup = function(s)
   end
   require('revuey.notes_float').update(s) -- closes it
   require('revuey.edit_float').detach(s) -- closes the edit float (its buffer keeps any changes)
+  require('revuey.comments_list').detach(s)
   comments_view.detach(s)
   agent_link.detach(s)
   require('revuey.forge_view').detach(s) -- stops a running gh

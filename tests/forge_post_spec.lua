@@ -643,10 +643,8 @@ h.test('ci adds a comment to the review and takes it out; refuses AI findings, d
   keys(s, 'ci', r19)
   h.eq(true, get(s, c.id).in_review)
   h.ok(vlines(s, r19):find('· in review', 1, true), vlines(s, r19))
-  local list = table.concat(vim.tbl_map(function(l)
-    return l.text
-  end, cv.list_lines(s)), '\n')
-  h.ok(list:find('Round the total?  [in review]', 1, true), list)
+  local list = table.concat(require('revuey.comments_list').texts(s, 100), '\n')
+  h.ok(list:find('  18  in review', 1, true) and list:find('Round the total?', 1, true), list)
   h.ok(panel():find('gP submit review (1 in review)', 1, true), panel())
   keys(s, 'ci', r19)
   h.eq(false, get(s, c.id).in_review)
@@ -740,9 +738,7 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   local _, nr = all:gsub('No, see formatCurrency', '')
   h.eq(1, nr, all)
   h.ok(not all:find('posted to GitHub', 1, true), 'shown as GitHub threads: ' .. all)
-  local list = table.concat(vim.tbl_map(function(l)
-    return l.text
-  end, cv.list_lines(s)), '\n')
+  local list = table.concat(require('revuey.comments_list').texts(s, 100), '\n')
   local _, nl = list:gsub('Return a copy%?', '')
   h.eq(1, nl, list)
   -- with GitHub threads hidden, the posted comment is drawn locally, marked posted

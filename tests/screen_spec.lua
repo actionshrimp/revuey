@@ -483,6 +483,109 @@ h.test('stack with pull requests: GitHub review threads inline', function()
   screenshot('forge-threads')
 end)
 
+-- The comments view (`cl`): every thread of the layer in one list over the diff window, grouped
+-- by file, with statuses (open, resolved collapsed to one line, outdated, draft for an agent's
+-- comment and an AI finding, in review), the code line, the thread boxes, the panel's section and
+-- the winbar; then the same in a narrow window.
+h.test('comments view: every thread in one list, at a normal width and narrow', function()
+  local d = h.tmpdir('screen-comments-view')
+  vim.fn.delete(d, 'rf')
+  assert(h.make_fixture('--stack', d).code == 0)
+  h.git(d, 'remote', 'add', 'origin', 'git@github.com:acme/shop.git')
+  local cart = vim.split(h.git(d, 'show', 'stack/cart:src/cart.ts'), '\n')
+  local function hunk(n)
+    local out = { '@@ -0,0 +1,20 @@' }
+    for i = 1, n do
+      out[#out + 1] = '+' .. cart[i]
+    end
+    return table.concat(out, '\n')
+  end
+  local function comment(id, who, body, at, diff_hunk)
+    return {
+      id = id, databaseId = 1, url = 'https://github.com/acme/shop/pull/42#discussion_r1', body = body,
+      createdAt = at, lastEditedAt = vim.NIL, state = 'SUBMITTED', diffHunk = diff_hunk or vim.NIL,
+      author = { login = who }, replyTo = vim.NIL,
+    }
+  end
+  local function thread(o)
+    return {
+      id = o.id, isResolved = o.resolved or false, isOutdated = o.outdated or false, path = 'src/cart.ts', line = o.line or vim.NIL,
+      startLine = o.start_line or vim.NIL, originalLine = o.original_line or o.line or vim.NIL, originalStartLine = o.start_line or vim.NIL,
+      diffSide = 'RIGHT', startDiffSide = o.start_line and 'RIGHT' or vim.NIL, subjectType = o.file and 'FILE' or 'LINE',
+      resolvedBy = o.resolved and { login = 'alice' } or vim.NIL, comments = o.comments,
+    }
+  end
+  h.use_fake_gh(h.tmpdir('screen-comments-view-gh') .. '/calls.ndjson', {
+    ['acme/shop:stack/cart'] = { {
+      number = 42, title = 'Cart totals', url = 'https://github.com/acme/shop/pull/42', state = 'OPEN', isDraft = false,
+      author = { login = 'alice' }, latestReviews = { nodes = {} }, reviewRequests = { nodes = {} }, mergeable = 'MERGEABLE',
+      baseRefName = 'stack/math', headRefName = 'stack/cart', headRepositoryOwner = { login = 'acme' }, commits = { nodes = {} },
+      updatedAt = '2026-01-01T00:00:00Z',
+    } },
+  }, nil, {
+    ['acme/shop#42'] = {
+      thread({ id = 'T1', file = true, comments = { comment('C1', 'erin', 'Needs a test for an empty cart.', '2026-01-01T00:00:00Z') } }),
+      thread({ id = 'T2', line = 13, start_line = 12, resolved = true, comments = {
+        comment('C2', 'dan', 'Return a copy instead?', '2026-01-02T00:00:00Z', hunk(13)),
+        comment('C3', 'alice', 'Chaining is the point here.', '2026-01-02T01:00:00Z'),
+      } }),
+      thread({ id = 'T3', line = 18, comments = {
+        comment('C4', 'carol', 'Should the **total** be rounded to cents? A long question that wraps when the window is narrow.', '2026-01-03T00:00:00Z', hunk(18)),
+        comment('C5', 'alice', 'Good point, will do.', '2026-01-03T01:00:00Z'),
+      } }),
+      thread({ id = 'T4', outdated = true, original_line = 5, comments = {
+        comment('C6', 'carol', 'Use a Money type here.', '2026-01-03T02:00:00Z', '@@ -0,0 +1,5 @@\n+x\n+  oldPrice: number;'),
+      } }),
+    },
+  })
+  local function fill(panel_w)
+    h.ok(child.lua([[
+      local panel_w = ...
+      local s = require('revuey.view').session
+      local ok = vim.wait(10000, function()
+        return s and not s.refreshing and s.review.stack and s.review.stack.full_stats ~= nil
+          and s.forge and s.forge.ready and not s.forge.busy and s.cm and s.cm.forge_items and next(s.cm.forge_items) ~= nil
+      end, 10)
+      local comments = require('revuey.comments')
+      local cv = require('revuey.comments_view')
+      local store = cv.sync_store(s)
+      local now = comments.now_ms()
+      local function add(path, l, body, extra)
+        local anchor = comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+          { path = path, side = 'new', start_line = l, end_line = l }, cv.context(s).get_line)
+        local c = comments.new(anchor, body, { author = extra.author, now = now })
+        for k, v in pairs(extra) do
+          if k ~= 'author' then
+            c[k] = v
+          end
+        end
+        comments.put(store, c)
+        return c
+      end
+      local mine = add('src/cart.ts', 10, 'Readonly array?', { in_review = true })
+      comments.reply(store, mine.id, 'It is never reassigned, so yes.', { kind = 'agent', name = 'claude' })
+      add('src/cart.ts', 3, 'Why an interface and not a type?', { author = { kind = 'agent', name = 'claude' } })
+      add('src/index.ts', 5, 'Is `Cart` used before `main()` runs?', { author = { kind = 'ai', name = 'claude' },
+        ai = { review = 'r1', severity = 'minor', title = 'Import order' } })
+      comments.save(store)
+      cv.refresh(s)
+      if panel_w ~= vim.NIL then
+        vim.api.nvim_win_set_width(s.panel_win, panel_w)
+      end
+      vim.api.nvim_feedkeys('cl', 'mtx', false)
+      vim.cmd('redraw')
+      return ok and s.clist ~= nil
+    ]], { panel_w or vim.NIL }), 'comments view did not open')
+  end
+  start(d, '', 44, 120)
+  fill()
+  screenshot('comments-view')
+  -- narrow: the threads wrap to the window, long chips and code lines are cut
+  start(d, '', 44, 80)
+  fill(30)
+  screenshot('comments-view-narrow')
+end)
+
 h.test('posting a review: comments added to the review, one in the pending review, the panel hint', function()
   local d = h.tmpdir('screen-forge-post')
   vim.fn.delete(d, 'rf')
@@ -758,7 +861,7 @@ end)
 
 -- Comments: an inline thread (with a reply) under a commented range with gutter bars, the
 -- editor float opened by `gc`, and the comments list.
-h.test('comments: inline thread, editor float, comments list', function()
+h.test('comments: inline thread, editor float', function()
   start(fixture, 'main', 34, 120)
   child.lua([[
     local s = require('revuey.view').session
@@ -789,9 +892,7 @@ h.test('comments: inline thread, editor float, comments list', function()
   child.type_keys('Looks off by one.')
   child.type_keys('<Esc>')
   screenshot('comment-editor')
-  child.type_keys('<C-s>', 'cl')
-  screenshot('comment-list')
-  child.type_keys('q')
+  child.type_keys('<C-s>')
 end)
 
 -- The agent link: "● agent connected" in the panel header (a watcher with a fresh heartbeat),

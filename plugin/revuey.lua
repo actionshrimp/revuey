@@ -122,7 +122,7 @@ end, {
 
 vim.api.nvim_create_user_command('RevueyComments', function()
   require('revuey').comments()
-end, { desc = 'List the comments of the open review (<CR> jumps)' })
+end, { desc = 'The comments view of the open review: every thread in one list (<CR> shows one)' })
 
 vim.api.nvim_create_user_command('RevueyCommentsExport', function(cmd)
   require('revuey').comments_export(cmd.fargs)

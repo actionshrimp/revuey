@@ -481,6 +481,9 @@ function M.render(s, o)
   -- the viewed layer's pull request (title, reviews, checks, base), when it has one
   forge_view.render_detail(s, add, add_virt, width)
   require('revuey.guide_view').panel(s, add, add_virt, width)
+  -- the comments view, while it is open (it covers the diff or guide)
+  local clist = require('revuey.comments_list')
+  clist.panel(s, add, add_virt, width)
   -- the latest AI review of this scope: verdict, findings to triage, summary
   require('revuey.ai_review_view').panel(s, add, add_virt, width)
   local total_add, total_del, reviewed = 0, 0, 0
@@ -554,7 +557,9 @@ function M.render(s, o)
     end
     return out
   end
-  if s.view_mode == 'guide' then
+  if clist.active(s) then
+    help = from_templates(clist.HELP)
+  elseif s.view_mode == 'guide' then
     help = from_templates({
       ' {next_section} {prev_section} section  {toggle_reviewed} reviewed',
       ' {next_hunk} {prev_hunk} hunk  {toggle_fold} fold  {focus_panel} diff',

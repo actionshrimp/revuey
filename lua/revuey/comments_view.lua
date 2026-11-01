@@ -1,8 +1,8 @@
 -- Comments in the review UI (diff and guide views): placement on every render, inline threads
 -- as virtual lines (buffer text and the side table never change, so LSP, marks and folds keep
 -- working), gutter signs through the statuscolumn, the editor float, actions on the comment
--- under the cursor (or one given by id), the comments list, export, the event feed and live
--- reload when another instance or `bin/revuey reply` changes the comments file.
+-- under the cursor (or the one the comments view names, comments_list.lua), export, the event
+-- feed and live reload when another instance or `bin/revuey reply` changes the comments file.
 local api = vim.api
 local comments = require('revuey.comments')
 local export = require('revuey.comments_export')
@@ -308,7 +308,7 @@ local function author_hl(a)
   return a and (a.kind == 'agent' or a.kind == 'ai') and 'RevueyCommentAgent' or 'RevueyCommentAuthor'
 end
 
----Virtual lines of one thread.
+---Virtual lines of one thread (also the comments view's thread boxes, comments_list.lua).
 ---@param p revuey.CommentPlacement
 local function thread_lines(s, c, p, width)
   local expanded = cm(s).expanded[c.id]
@@ -680,6 +680,10 @@ function M.render(s, o)
   end
   -- the winbar's key hint follows what is on the cursor row now
   require('revuey.key_help').update(s)
+  -- the comments view lists what was just placed (live: comments changed, threads arrived)
+  if s.clist then
+    require('revuey.comments_list').render(s)
+  end
 end
 
 ---Place the GitHub review threads of the scope's open PRs (forge_view.thread_items) and add them
@@ -832,7 +836,7 @@ local function editor_col(s, at)
   return 2 * (s.numw or 3) + 4
 end
 
----The window an action's editor opens in: the target's, else the diff window.
+---The window an action's editor opens in: the target's (the comments view) or the diff window.
 local function editor_win(s, at)
   return at and at.win or s.diff_win
 end
@@ -957,7 +961,7 @@ end
 ---which when several cover the row. `local_first`: GitHub threads are left out when a local
 ---comment covers the row too (actions that only work on local comments; on a file's last row
 ---the "not shown here" group's threads would otherwise get in the way).
----`at` (revuey.CommentTarget): the comment is given by id instead (a list's row map).
+---`at` (revuey.CommentTarget): the comment is given by id instead (the comments view's row map).
 function M.with_comment(s, fn, row, local_first, at)
   if not s then
     return
@@ -1111,7 +1115,7 @@ local function attach_row(s, cmt, at)
 end
 
 ---`ce`: edit a comment (a draft continues where it was left). `at`: the comment to edit
----(by id), else the one on the cursor row.
+---(the comments view), else the one on the cursor row.
 ---@param at? revuey.CommentTarget
 function M.edit(s, at)
   M.with_comment(s, function(cmt)
@@ -1546,7 +1550,8 @@ function M.delete(s, at)
   end, nil, true, at)
 end
 
----`cz`: expand or collapse a long (or resolved) comment.
+---`cz`: expand or collapse a long (or resolved) comment (in the diff, the guide and the
+---comments view alike).
 ---@param at? revuey.CommentTarget
 function M.toggle_expand(s, at)
   M.with_comment(s, function(cmt)
@@ -1626,7 +1631,7 @@ function M.next(s, dir)
   end
 end
 
----Jump to a comment by id (from the list). `quiet`: no message when it is not shown
+---Jump to a comment by id (from the comments view). `quiet`: no message when it is not shown
 ---(the caller tries another view). Returns true when the cursor moved there.
 function M.jump(s, id, quiet)
   local row = s.cm and s.cm.jump and s.cm.jump[id]
@@ -1638,247 +1643,6 @@ function M.jump(s, id, quiet)
   end
   goto_row(s, row)
   return true
-end
-
--- ---------------------------------------------------------------------------
--- Comments list
--- ---------------------------------------------------------------------------
-
-M.list_state = nil
-
----Lines of the comments list: {text, id?, hls}.
-function M.list_lines(s)
-  local c = cm(s)
-  local store = M.sync_store(s)
-  local list = comments.list(store, { include_resolved = true, include_drafts = true })
-  local out = {}
-  local path
-  list = vim.tbl_filter(function(x)
-    return not (c.superseded and c.superseded[x.id])
-  end, list)
-  for _, cmt in ipairs(list) do
-    if cmt.anchor.path ~= path then
-      path = cmt.anchor.path
-      if #out > 0 then
-        out[#out + 1] = { text = '' }
-      end
-      out[#out + 1] = { text = path, hls = { { 0, #path, 'RevueyFilePath' } } }
-    end
-    local p = c.place and c.place[cmt.id] or { outdated = cmt.outdated }
-    local where = cmt.file_level and 'file' or (cmt.anchor.start_line == cmt.anchor.end_line and tostring(cmt.anchor.start_line) or (cmt.anchor.start_line .. '-' .. cmt.anchor.end_line))
-    where = '  ' .. where .. ' (' .. (cmt.file_level and 'file' or cmt.anchor.side) .. ')'
-    local tags = {}
-    if cmt.ai and cmt.status ~= 'accepted' then
-      tags[#tags + 1] = cmt.ai.severity or 'minor'
-    end
-    if cmt.status == 'resolved' then
-      tags[#tags + 1] = '✓ resolved'
-    elseif cmt.status == 'draft' then
-      tags[#tags + 1] = 'draft'
-    elseif cmt.status == 'dismissed' then
-      tags[#tags + 1] = 'dismissed'
-    elseif cmt.status == 'accepted' then
-      tags[#tags + 1] = M.accepted_label(cmt)
-    elseif require('revuey.ai_review').untriaged(cmt) or require('revuey.ai_review').agent_untriaged(cmt) then
-      tags[#tags + 1] = 'to triage'
-    end
-    if cmt.author and cmt.author.kind and cmt.author.kind ~= 'user' then
-      tags[#tags + 1] = 'by ' .. author_label(cmt.author)
-    end
-    if cmt.forge_reply then
-      tags[#tags + 1] = 'local reply to GitHub #' .. tostring(cmt.forge_reply.pr)
-    end
-    local pl = M.post_label(cmt)
-    if pl then
-      tags[#tags + 1] = pl.text
-    end
-    if p.how == 'missing' then
-      tags[#tags + 1] = 'not in this review'
-    elseif p.outdated then
-      tags[#tags + 1] = 'outdated'
-    end
-    local n = 0
-    for _, r in ipairs(cmt.thread or {}) do
-      n = n + (r.deleted and 0 or 1)
-    end
-    if n > 0 then
-      tags[#tags + 1] = n .. (n == 1 and ' reply' or ' replies')
-    end
-    local d = M.delivery_label(s, cmt)
-    if d then
-      tags[#tags + 1] = d.text
-    end
-    local tag = #tags > 0 and ('  [' .. table.concat(tags, ', ') .. ']') or ''
-    local first = comments.first_line(cmt.body):gsub('^%*%*(.-)%*%*$', '%1')
-    local text = where .. '  ' .. first .. tag
-    out[#out + 1] = {
-      text = text,
-      id = cmt.id,
-      hls = { { 0, #where, 'RevueyCommentMeta' }, { #text - #tag, #text, 'RevueyCommentOutdated' } },
-    }
-  end
-  -- GitHub review threads drawn in this view (read-only), after the local comments
-  local gh = {}
-  for id, it in pairs(c.forge_items or {}) do
-    gh[#gh + 1] = { it = it, p = c.forge_place[id] }
-  end
-  table.sort(gh, function(x, y)
-    local px, py = x.p.path or x.it.anchor.path, y.p.path or y.it.anchor.path
-    if px ~= py then
-      return px < py
-    end
-    local lx, ly = x.it.anchor.start_line or 0, y.it.anchor.start_line or 0
-    if lx ~= ly then
-      return lx < ly
-    end
-    return x.it.created_at < y.it.created_at
-  end)
-  path = nil
-  for i, x in ipairs(gh) do
-    local it, p = x.it, x.p
-    if i == 1 then
-      if #out > 0 then
-        out[#out + 1] = { text = '' }
-      end
-      out[#out + 1] = { text = 'GitHub threads', hls = { { 0, 14, 'RevueyCommentTitle' } } }
-    end
-    local fp = p.path or it.anchor.path
-    if fp ~= path then
-      path = fp
-      out[#out + 1] = { text = path, hls = { { 0, #path, 'RevueyFilePath' } } }
-    end
-    local where = it.file_level and 'file' or ((p.start_line and p.how ~= 'outside') and p.start_line or it.anchor.start_line)
-    if not it.file_level and p.how ~= 'outside' and p.end_line and p.end_line ~= p.start_line then
-      where = where .. '-' .. p.end_line
-    end
-    where = '  ' .. tostring(where) .. ' (' .. (it.file_level and 'file' or it.anchor.side) .. ')'
-    local tags = { 'GitHub #' .. it.forge.pr, 'by ' .. author_label(it.author) }
-    if it.forge.resolved then
-      tags[#tags + 1] = '✓ resolved'
-    end
-    if it.forge.outdated then
-      tags[#tags + 1] = 'outdated'
-    end
-    if it.forge.pending then
-      tags[#tags + 1] = 'pending'
-    end
-    if p.how == 'outside' or p.how == 'missing' then
-      tags[#tags + 1] = 'not on a shown line'
-    end
-    local n = #it.thread + it.forge.hidden
-    if n > 0 then
-      tags[#tags + 1] = n .. (n == 1 and ' reply' or ' replies')
-    end
-    local tag = '  [' .. table.concat(tags, ', ') .. ']'
-    local text = where .. '  ' .. comments.first_line(it.body) .. tag
-    out[#out + 1] = {
-      text = text,
-      id = it.id,
-      hls = { { 0, #where, 'RevueyCommentMeta' }, { #text - #tag, #text, 'RevueyCommentOutdated' } },
-    }
-  end
-  if #out == 0 then
-    local k = config.options.keymaps.comment_add or 'gc'
-    out[1] = { text = 'No comments yet: ' .. k .. ' on a line (or a selection) adds one.' }
-  end
-  -- the latest AI review's verdict and summary first
-  local rec = require('revuey.ai_review_view').record(s)
-  if rec then
-    local head = require('revuey.ai_review_view').verdict_line(rec)
-    local top = { { text = head, hls = { { 0, #head, 'RevueyCommentTitle' } } } }
-    for _, l in ipairs(require('revuey.panel').wrap(rec.summary ~= '' and rec.summary or '(no summary)', 76, '  ')) do
-      top[#top + 1] = { text = l, hls = { { 0, #l, 'RevueyCommentMeta' } } }
-    end
-    top[#top + 1] = { text = '' }
-    vim.list_extend(top, out)
-    out = top
-  end
-  return out
-end
-
----`:RevueyComments` / `cl`: all comments of the review in a float; <CR> jumps, q closes.
-function M.open_list(s)
-  if not s then
-    return vim.notify('revuey: no review open', vim.log.levels.WARN)
-  end
-  if M.list_state and api.nvim_win_is_valid(M.list_state.win) then
-    api.nvim_win_close(M.list_state.win, true)
-  end
-  local lines = M.list_lines(s)
-  local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
-  local texts = vim.tbl_map(function(l)
-    return l.text
-  end, lines)
-  api.nvim_buf_set_lines(buf, 0, -1, false, texts)
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].filetype = 'revuey-comments'
-  local lns = api.nvim_create_namespace('revuey.comments.list')
-  local widest = 30
-  for i, l in ipairs(lines) do
-    widest = math.max(widest, api.nvim_strwidth(l.text))
-    for _, h in ipairs(l.hls or {}) do
-      if h[2] > h[1] then
-        pcall(api.nvim_buf_set_extmark, buf, lns, i - 1, h[1], { end_col = h[2], hl_group = h[3] })
-      end
-    end
-  end
-  local width = math.min(widest + 2, vim.o.columns - 6)
-  local height = math.min(#lines, math.max(3, vim.o.lines - 8))
-  local n = 0
-  for _, l in ipairs(lines) do
-    n = n + (l.id and 1 or 0)
-  end
-  local win = api.nvim_open_win(buf, true, {
-    relative = 'editor',
-    row = math.floor((vim.o.lines - height) / 2) - 1,
-    col = math.floor((vim.o.columns - width) / 2),
-    width = width,
-    height = height,
-    border = 'rounded',
-    style = 'minimal',
-    title = (' Comments (%d) '):format(n),
-    title_pos = 'left',
-    footer = ' <CR> jump  q close ',
-    footer_pos = 'right',
-    zindex = 55,
-  })
-  vim.wo[win].cursorline = true
-  M.list_state = { win = win, buf = buf, lines = lines }
-  -- start on the first comment
-  for i, l in ipairs(lines) do
-    if l.id then
-      api.nvim_win_set_cursor(win, { i, 0 })
-      break
-    end
-  end
-  local function close()
-    if api.nvim_win_is_valid(win) then
-      api.nvim_win_close(win, true)
-    end
-  end
-  local function jump()
-    local l = lines[api.nvim_win_get_cursor(win)[1]]
-    if not l or not l.id then
-      return
-    end
-    close()
-    M.jump(s, l.id)
-  end
-  for _, k in ipairs({ 'q', '<Esc>' }) do
-    vim.keymap.set('n', k, close, { buffer = buf, nowait = true, silent = true, desc = 'revuey: close the comments list' })
-  end
-  for _, k in ipairs({ '<CR>', 'o', '<2-LeftMouse>' }) do
-    vim.keymap.set('n', k, jump, { buffer = buf, nowait = true, silent = true, desc = 'revuey: jump to the comment' })
-  end
-  api.nvim_create_autocmd('WinLeave', {
-    buffer = buf,
-    once = true,
-    callback = function()
-      vim.schedule(close)
-    end,
-  })
-  return M.list_state
 end
 
 -- ---------------------------------------------------------------------------

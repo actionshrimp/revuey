@@ -606,15 +606,12 @@ h.test('gH cycles all / open only / none; ]c reaches threads; the list shows the
   local first = file_row(s, 'src/cart.ts')
   keys(s, ']c', first)
   h.eq(row_of(s, 'src/cart.ts', 'add', 12), vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  -- the comments list
-  local lines = vim.tbl_map(function(l)
-    return l.text
-  end, cv.list_lines(s))
-  local text = table.concat(lines, '\n')
-  h.ok(text:find('GitHub threads', 1, true), text)
-  h.ok(text:find('  18 (new)  Should the total be rounded?  [GitHub #12, by carol, 1 reply]', 1, true), text)
-  h.ok(text:find('  12-13 (new)  Return a copy instead?  [GitHub #12, by dan, ✓ resolved, 2 replies]', 1, true), text)
-  h.ok(text:find('  5 (new)  Use a Money type here.  [GitHub #12, by carol, outdated, not on a shown line]', 1, true), text)
+  -- the comments view
+  local text = table.concat(require('revuey.comments_list').texts(s, 100), '\n')
+  h.ok(text:find('GitHub threads: all', 1, true), text)
+  h.ok(text:find('  18  open  │ return sum(', 1, true) and text:find('╭─ carol · ', 1, true), text)
+  h.ok(text:find('  12-13  resolved  dan: Return a copy instead? · 2 replies', 1, true), text)
+  h.ok(text:find('  5  outdated · not on a shown line  carol: Use a Money type here.', 1, true), text)
   -- gx on a thread row opens it; elsewhere it is the usual gx
   local opened = {}
   local orig = vim.ui.open

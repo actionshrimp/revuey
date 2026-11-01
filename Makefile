@@ -5,7 +5,7 @@ JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 # placed by its CI time, where its LSP tests run), so a slow spec never starts last and holds up
 # the end of the run; guard_spec, which checks the isolation itself, starts first.
 SPECS := tests/guard_spec.lua tests/stack_tree_view_spec.lua tests/forge_post_spec.lua tests/switch_spec.lua \
-  tests/agent_link_spec.lua tests/forge_check_spec.lua tests/stack_spec.lua tests/forge_threads_spec.lua \
+  tests/agent_link_spec.lua tests/forge_check_spec.lua tests/stack_spec.lua tests/forge_threads_spec.lua tests/comments_list_spec.lua \
   tests/forge_description_spec.lua tests/forge_spec.lua tests/lsp_proxy_spec.lua tests/stack_view_spec.lua \
   tests/pr_spec.lua tests/stack_remote_spec.lua tests/agent_comment_spec.lua tests/guide_view_spec.lua \
   tests/e2e_spec.lua tests/lock_spec.lua tests/ai_review_view_spec.lua tests/worktree_edge_spec.lua \

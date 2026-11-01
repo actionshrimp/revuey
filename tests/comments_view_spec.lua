@@ -526,28 +526,31 @@ h.test('threads wrap to the window width', function()
   vim.api.nvim_win_set_width(s.panel_win, panel_w)
 end)
 
-h.test('the comments list shows every comment; <CR> jumps to one', function()
-  local st = cv.open_list(s)
-  local lines = vim.api.nvim_buf_get_lines(st.buf, 0, -1, false)
+h.test('the comments view shows every comment; <CR> jumps to one', function()
+  keys(s, 'cl')
+  local v = s.clist
+  h.ok(v and vim.api.nvim_win_is_valid(v.win), 'open')
+  local lines = vim.api.nvim_buf_get_lines(v.buf, 0, -1, false)
   local text = table.concat(lines, '\n')
-  h.ok(text:find('a.txt', 1, true), text)
-  h.ok(text:find('20 (old)  old side', 1, true), text)
-  h.ok(text:find('19-21 (new)  a range', 1, true), text)
+  h.ok(text:find(' a.txt', 1, true), text)
+  h.ok(text:find('  20 (old)  open', 1, true), text)
+  h.ok(text:find('  19-21  open', 1, true), text)
   local target
-  for i, l in ipairs(st.lines) do
-    if l.id and l.text:find('old side', 1, true) then
+  for i, l in ipairs(lines) do
+    if v.rows[i] and l:find('old side', 1, true) then
       target = i
     end
   end
-  vim.api.nvim_win_set_cursor(st.win, { target, 0 })
+  vim.api.nvim_win_set_cursor(v.win, { target, 0 })
   vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
-  h.eq(false, vim.api.nvim_win_is_valid(st.win))
+  h.eq(false, vim.api.nvim_win_is_valid(v.win))
   h.eq(row_of('m.txt', 'del', 20), vim.api.nvim_win_get_cursor(s.diff_win)[1])
-  -- also from :RevueyComments
+  -- also from :RevueyComments; q goes back
   vim.cmd('RevueyComments')
-  h.ok(vim.api.nvim_win_is_valid(cv.list_state.win))
+  h.ok(s.clist and vim.api.nvim_win_is_valid(s.clist.win))
+  v = s.clist
   vim.api.nvim_feedkeys('q', 'mtx', false)
-  h.eq(false, vim.api.nvim_win_is_valid(cv.list_state.win))
+  h.eq(false, vim.api.nvim_win_is_valid(v.win))
 end)
 
 h.test(':RevueyCommentsExport to a register: markdown by default, json, --all', function()
@@ -750,18 +753,15 @@ h.test('comments on files no longer in the review: a group at the end, ]c, panel
   -- the panel counts them
   local panel = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), '\n')
   h.ok(panel:find('on files no longer in this review', 1, true), panel)
-  -- the list shows them, and <CR> jumps to the group
-  local st = cv.open_list(s)
-  local target
-  for i, l in ipairs(st.lines) do
-    if l.id == whole.id then
-      target = i
-    end
-  end
-  h.ok(target, 'listed')
-  h.ok(st.lines[target].text:find('not in this review', 1, true), st.lines[target].text)
-  vim.api.nvim_win_set_cursor(st.win, { 1, 0 })
-  vim.api.nvim_win_set_cursor(st.win, { target, 0 })
+  -- the comments view shows them, and <CR> jumps to the group
+  keys(s, 'cl')
+  local v = s.clist
+  local b = v.blocks[whole.id]
+  h.ok(b, 'listed')
+  local lines = vim.api.nvim_buf_get_lines(v.buf, 0, -1, false)
+  h.ok(lines[b.first]:find('file not in this review', 1, true), lines[b.first])
+  h.ok(lines[b.first - 1]:find(' a.txt  not in this review', 1, true), lines[b.first - 1])
+  vim.api.nvim_win_set_cursor(v.win, { b.first, 0 })
   vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'mtx', false)
   h.eq(last, vim.api.nvim_win_get_cursor(s.diff_win)[1])
   -- in the guide too

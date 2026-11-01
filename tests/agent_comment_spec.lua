@@ -262,14 +262,9 @@ h.test('opening the review afterwards places them, and stores their unit and hun
     h.ok(a.hunk_line and a.unit_line, k .. ' offsets: ' .. vim.inspect(a))
   end
   h.eq(nil, disk[ids.file].c.anchor.unit_key, 'file-level: nothing to resolve')
-  -- the comments list says who wrote them
-  local found = false
-  for _, l in ipairs(cv.list_lines(s)) do
-    if l.text:find('Why twenty?', 1, true) and l.text:find('by agent', 1, true) then
-      found = true
-    end
-  end
-  h.ok(found, vim.inspect(cv.list_lines(s)))
+  -- the comments view says who wrote them
+  local text = table.concat(require('revuey.comments_list').texts(s, 100), '\n')
+  h.ok(text:find('Why twenty?', 1, true) and text:find('╭─ agent · ', 1, true), text)
 end)
 
 -- ---------------------------------------------------------------------------
