@@ -1060,12 +1060,15 @@ local function read(path)
   if not fd then
     return nil
   end
+  -- the file as it was read (taken before reading: a write after it shows as a change)
+  local st = vim.uv.fs_stat(path)
   local text = fd:read('*a')
   fd:close()
   local ok, rec = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
   if ok and type(rec) == 'table' and rec.kind == 'revuey-guide' then
     rec = M.sanitize(rec)
-    rec._file = path -- (not stored: which file it came from)
+    rec._file = path -- (not stored: which file it came from, and its stat when read)
+    rec._file_sig = st and (path .. ':' .. st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or nil
     return rec
   end
 end

@@ -865,6 +865,56 @@ h.test('guides of other reviews re-render nothing; one for this review in the di
   h.eq('Seen from the diff view.', s.guide.resolved.summary)
 end)
 
+h.test('a same-second re-save of the shown guide is noticed even when a render came in between', function()
+  view.set_view('guide')
+  idle()
+  local shown = s.guide.record
+  local sig0 = s.guide.file_sig
+  local again = {}
+  for k, v in pairs(vim.deepcopy(shown)) do
+    if type(k) ~= 'string' or k:sub(1, 1) ~= '_' then
+      again[k] = v
+    end
+  end
+  again.summary = 'Saved again in the same second.'
+  -- the same file name (same key, anchors and generated_at), renamed into place
+  require('revuey.guide').save(guides_dir(), again)
+  view.rerender(s) -- reuses the record: it must keep the stat taken when it was read
+  h.eq(sig0, s.guide.file_sig)
+  h.ok(vim.wait(10000, function()
+    return s.guide.resolved and s.guide.resolved.summary == 'Saved again in the same second.'
+  end, 50), 'the re-save was not noticed')
+end)
+
+h.test('a fresh run waiting for a withdrawal does not start after its review closed (nor in the next one)', function()
+  local wp = fake_agent()
+  h.ok(connected(), 'connected')
+  local req = agent_request()
+  local holder = vim.system({ 'sleep', '60' })
+  local lockp = req._path .. '.lock'
+  vim.fn.writefile({ ('%d %s %d %06x'):format(holder.pid, sessions.host, os.time(), 3) }, lockp)
+  vim.fn.delete(log)
+  -- the withdrawal keeps trying while the review closes and the next one opens (slow under load)
+  local retry = gv.CANCEL_RETRY_MS
+  gv.CANCEL_RETRY_MS = 20000
+  answer('Cancel the request and run a fresh session')
+  view.guide_command(true)
+  h.ok(gv.job(s).agent.cancelling, 'withdrawing')
+  view.close()
+  open() -- another review is open when the withdrawal goes through
+  os.remove(lockp)
+  holder:kill('sigterm')
+  holder:wait(5000)
+  h.ok(vim.wait(10000, function()
+    return requests.read(req._path).status == 'cancelled' and next(gv.jobs) == nil
+  end, 20), 'not withdrawn: ' .. tostring(requests.read(req._path).status) .. ' ' .. vim.inspect(gv.jobs) .. vim.inspect(msgs))
+  h.settle()
+  h.eq(0, #calls(), 'no fresh run for a closed review')
+  h.eq(nil, gv.job(s), 'nothing started in the new one')
+  gv.CANCEL_RETRY_MS = retry
+  sessions.remove(wp)
+end)
+
 h.test('request files past the TTL are pruned without being read; recent ones stay', function()
   local dir = requests.dir(state_dir)
   local now = requests.now_ms()

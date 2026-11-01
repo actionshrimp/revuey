@@ -66,9 +66,9 @@ function M.prepare(s, force)
       end
     end
   end
-  local rec
+  local rec, file_sig
   if not force and g and g.ks == ks and g.anchors == anchors and not g.reload then
-    rec = g.record
+    rec, file_sig = g.record, g.file_sig
   else
     -- what the guides directory looked like when it was read (notice_saved)
     s.guide_dir_sig = M.dir_sig(s)
@@ -83,7 +83,7 @@ function M.prepare(s, force)
     anchors = anchors,
     record = rec,
     resolved = rec and guide.resolve(rec, hunks) or nil,
-    file_sig = M.file_sig(rec),
+    file_sig = file_sig or M.file_sig(rec),
   }
   if fresh then
     adopt(s, s.guide)
@@ -794,10 +794,9 @@ function M.dir_sig(s)
 end
 
 ---Which file a loaded guide record came from, and its mtime and size.
+---Taken when guide.load read the file, never later: a re-save after the read must differ.
 function M.file_sig(rec)
-  local p = rec and rec._file
-  local st = p and vim.uv.fs_stat(p)
-  return st and (p .. ':' .. st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'none'
+  return rec and rec._file_sig or 'none'
 end
 
 ---Every couple of seconds (agent_link's poll): a guide saved for this review from outside

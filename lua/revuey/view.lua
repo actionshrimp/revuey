@@ -3140,7 +3140,8 @@ local function agent_job_choice(s, j)
       -- the model first: the request is withdrawn only once one is chosen
       return pick_model(function(c)
         guide_view.cancel(s, function(ok)
-          if ok then
+          -- (up to CANCEL_RETRY_MS later: only for the review it was asked in)
+          if ok and M.session == s and not s.cleaned then
             M.generate_guide(c)
           end
         end)
@@ -3148,7 +3149,7 @@ local function agent_job_choice(s, j)
     end
     -- the fresh run starts once the request is withdrawn (a failed withdrawal keeps waiting)
     guide_view.cancel(s, function(ok)
-      if ok and choice == fresh then
+      if ok and choice == fresh and M.session == s and not s.cleaned then
         M.generate_guide({ by = 'fresh' })
       end
     end)
