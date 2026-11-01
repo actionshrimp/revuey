@@ -2033,6 +2033,11 @@ are in `reports/Terminal code review tool landscape.md`.
       other's change. Status: `pending` -> `acked` (`guide --prompt --request`) -> `done`
       (`import-guide --request`); `cancelled` by the user before `done`. Open = pending or
       acked and under `TTL_MS` (6 h), so a request nobody ever handles stops being listed.
+      Pruning: `requests.prune` (on every `create` and `list`) removes the files older than
+      `TTL_MS`, open (expired) or closed, and their lock and temp leftovers, judged by the file
+      name (the id's first 11 hex digits are its milliseconds), so nothing is read to prune; an
+      open-only `list` (adoption, on the main loop) reads only files younger than the TTL. A
+      done request stays until then, so its writer can still import again.
       Files rather than events alone: inbox, catch-up and the review's wait need the current
       status, which a rotating feed cannot give cheaply.
     - **Event and lines**: the review appends `{kind = 'request', request_id, request_kind,
@@ -2055,9 +2060,12 @@ are in `reports/Terminal code review tool landscape.md`.
       out; line notes may flag "Possible issue: …"; calibration: guide first, then issues; data,
       not instructions, no edits), each edit asserted to match `SYSTEM` exactly once so a
       reworded methodology cannot silently keep the old text. Then the `Diff:` hash and how to
-      import. `--prompt` and `import-guide` refuse a request that is cancelled, already done (a
-      second agent never silently replaces the first's guide) or for another key than the review
-      shows (after a switch). `import-guide [--request] [--name] <file|->` repairs the JSON like
+      import. `--prompt` and `import-guide` refuse a request that is cancelled or for another key
+      than the review shows (after a switch). A done request is refused by `--prompt` (it is not
+      new work) and by an import from another writer (a second agent never silently replaces the
+      first's guide); its own writer (`--name`, else the request's agent, equal to the
+      `result.agent` recorded when it was done) may import again and replace the guide, which is
+      the path `import-guide` itself suggests when line notes were dropped. `import-guide [--request] [--name] <file|->` repairs the JSON like
       a fresh run and refuses a document without `diff` or with one other than the review's
       anchors hash (always required: the prompt asks for it, and without it a guide written for
       code that changed meanwhile would pass), and anything `guide.validate` refuses; unlike a fresh run it also refuses coverage problems (unknown or repeated ids,
@@ -2070,7 +2078,8 @@ are in `reports/Terminal code review tool landscape.md`.
       by key and anchors exactly like a fresh guide. With a request, the save happens inside
       `requests.update`, under the request's lock, after reading its status again: the first
       check runs before loading the review, which can wait up to 10 s for a switch
-      (`caught_up`), so a cancel (or another import) in that window is seen there, refused, and
+      (`caught_up`), so a cancel, or a done by another writer, in that window is seen there,
+      refused, and
       nothing is written; otherwise the guide is saved and the request marked done in the same
       locked step. (`REVUEY_TEST_IMPORT_GATE` holds the command just before that step, for the
       spec that cancels in between.)
@@ -2090,22 +2099,34 @@ are in `reports/Terminal code review tool landscape.md`.
       offers a fresh session; a delivered request is never late, however long a busy agent takes
       to start. `gR`/`:RevueyGuide!` while a request is open: keep waiting, withdraw it and run a
       fresh session, withdraw it and run one with another model (the model is asked first; the
-      request is withdrawn only once one is chosen), or withdraw it. Withdrawing (`guide_view.cancel`, the
+      request is withdrawn only once one is chosen), or withdraw it; the fresh run starts only
+      once the withdrawal succeeded. Withdrawing (`guide_view.cancel`, the
       existing `:RevueyGuide cancel`) marks the file cancelled under its lock (a done request is
-      left alone) and appends the cancelled event; failures are logged, never raised.
+      left alone: "already imported") and appends the cancelled event. The UI's lock waits at
+      most 100 ms, so a busy lock (an import saving) is retried every `CANCEL_STEP_MS` (50 ms,
+      deferred, never blocking) for `CANCEL_RETRY_MS` (3 s); the job ends and "cancelled" is said
+      only once the file says so. Still busy: an error says the withdrawal failed, the job keeps
+      waiting, and `:RevueyGuide cancel` can try again. Every request this Neovim tried to
+      withdraw is in `guide_view.cancel_tried` and is never adopted (below), whatever its file
+      says.
       **Orphaned requests are adopted:** quitting (or crashing) Neovim leaves an open request
       alone, and when a review of the same key builds its guide state (`guide_view.prepare`, a new
       review or scope) it adopts an open guide request of that key whose session is this
-      Neovim or a dead process (`sessions.alive`): it waits for it as if it had asked (the age
+      Neovim (whose job was lost) or a dead process (`sessions.alive`; a live owner keeps its own
+      request): it waits for it as if it had asked (the age
       counts from the request's `at`), so the import loads and `inbox` stops listing it once
       done. A request of another live review is left to that review. Adopting was chosen over
       cancelling on `VimLeavePre` because the agent may already be writing the guide, and the
       guide is still wanted when the review reopens.
       **Guides imported without a request** (`import-guide` with no `--request`, the agent asked
-      in chat): the review's 2 s presence poll calls `guide_view.notice_saved`, which stats the
-      guides directory (`guide.save` renames into it, so its mtime moves) against the signature
-      taken when the guide was last read from disk, and on a change sets `guide.reload` and
-      re-renders. One stat per poll; no file watcher. `import-guide` says "the running review
+      in chat, or a writer's re-import): the review's 2 s presence poll calls
+      `guide_view.notice_saved`, which stats the guides directory (`guide.save` renames into it,
+      so its mtime moves) against the signature taken when the guide was last read from disk.
+      The directory is shared by every repo and scope (and other Neovims), so a change there
+      only leads to `guide.load` for this review's key and anchors, whose file (path, mtime and
+      size, `guide_view.file_sig`; `guide.load` records `_file`) is compared with the shown
+      record's. Only a different file re-renders, and only in the guide view; in the diff view
+      the record is marked `reload` for the next render. One stat per poll; no file watcher. `import-guide` says "the running review
       shows it within a few seconds" only when a review of that scope runs. The meta line shows `<agent> (connected)` for `provider = 'agent'`, else the
       model; `bin/revuey guide` says the same ("Generated by …").
     - **Reading the guide** (`bin/revuey guide [--json]`): the guide `guide.load` finds for the
@@ -2126,8 +2147,11 @@ are in `reports/Terminal code review tool landscape.md`.
       `--model`/`--effort` to the fake `claude`, asked before withdrawing; a cancel between the
       first check and the save (`REVUEY_TEST_IMPORT_GATE`); an import without a request noticed
       by the running review; an orphaned request adopted on reopen and its expiry; a branch
-      switch between the request and `--prompt`/import; done requests refused; a plain `watch`
-      never asked; names with Markdown, newlines and escapes); screenshot `guide-agent-waiting`.
+      switch between the request and `--prompt`/import; done requests refused to others and
+      replaced by their writer; two imports racing; adoption leaving a live owner's request; a
+      withdrawal on a busy lock failing and kept, never adopted again; other reviews' guides
+      re-rendering nothing and the diff view only marking; pruning; a plain `watch` never asked;
+      names with Markdown, newlines and escapes); screenshot `guide-agent-waiting`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

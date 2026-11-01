@@ -126,9 +126,12 @@ Below, `<request id>` is the id on that line and `<session id>` the review's ses
    with the JSON on stdin. It validates the guide like revuey's own: a problem (not JSON, a
    hunk id unknown, missing or listed twice, the code changed since step 1) is reported and
    nothing is saved; fix the document (after a code change, run step 1 again) and import
-   again. A request that is done already (another agent, or you, imported it) is refused:
-   ask the user before writing another. On success the running review shows the guide within a
-   few seconds; say so in one line in chat.
+   again. On success the request is done and the running review shows the guide within a few
+   seconds; say so in one line in chat. If it says line notes were dropped (a line the hunk
+   does not have), the guide is saved without them: fix those notes and run the same
+   `import-guide` again, with the same `--request` and `--name`, which replaces your guide. A
+   request another agent finished is refused, and so is `guide --prompt` for any done request:
+   ask the user before writing another.
 
 If the review shows another layer than the request was for (after a switch), `--prompt` and
 `import-guide` refuse it: tell the user in chat instead. A cancelled request is refused too.

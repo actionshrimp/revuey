@@ -1506,8 +1506,9 @@ revuey request 19a3f0c2d4e1a8b7f guide [stack/cart]: the user asked you to write
 guide"), and `import-guide --request <id>` saves the guide where the review keeps its guides
 and marks it done; the review reads the request file twice a second while it waits and loads
 the guide then. Withdrawing it prints `revuey request <id> cancelled [...]`, and `import-guide`
-then refuses it, as it refuses a request that is done already and a document without the
-`"diff"` hash. Only a `watch --messages` is asked (a plain `watch` only prints events).
+then refuses it, as it refuses a request another agent finished and a document without the
+`"diff"` hash (the request's own writer may import again, replacing its guide, for example after
+fixing dropped line notes). Only a `watch --messages` is asked (a plain `watch` only prints events).
 `watch --name <name>` names the agent in the review ("Ask <name> (connected)"; default
 `agent`; one plain line of at most 40 characters). An open request of a review that closed is
 picked up again when that review reopens; one nobody handles expires after 6 hours. A guide
