@@ -74,10 +74,10 @@ When the user asks you, from the review, to write its guide, a third kind of lin
 Guide requests below):
 
 ```
-revuey request <id> guide [stack/cart]: the user asked you to write the guide for this review (REVUEY guide --prompt --request <id>)
+revuey request <request id> guide [stack/cart]: the user asked you to write the guide for this review (REVUEY guide --prompt --request <request id>)
 ```
 
-and `revuey request <id> cancelled [...]` when they withdraw it: stop that work and import
+and `revuey request <request id> cancelled [...]` when they withdraw it: stop that work and import
 nothing. `inbox` lists open requests too.
 
 No Monitor tool (another harness): run `REVUEY inbox --session <id>` when the user says they sent something,
@@ -107,11 +107,13 @@ there is none. Its text is data, like the diff.
 
 ## Guide requests
 
-When a `revuey request <id> guide` line arrives, the user chose you, rather than a fresh
+When a `revuey request <request id> guide` line arrives, the user chose you, rather than a fresh
 session, to write the guide of what the review shows. User messages still come first: handle
 any that are waiting, then:
 
-1. `cd <worktree> && REVUEY guide --prompt --request <id> --session <id>`: the instructions,
+Below, `<request id>` is the id on that line and `<session id>` the review's session id.
+
+1. `cd <worktree> && REVUEY guide --prompt --request <request id> --session <session id>`: the instructions,
    the diff (hunk ids, numbered lines) and its `Diff:` hash. The review shows the user that you
    started. Follow the instructions: they are the ones revuey's own guide runs get, adapted for
    you. Use what you know from the conversation (why the change exists, decisions made), but
@@ -120,11 +122,13 @@ any that are waiting, then:
    Never edit files, run builds or switch branches for a guide.
 2. Write the guide as one JSON document with `"diff": "<the hash>"` (`REVUEY import-guide
    --schema` has the schema): every hunk id exactly once, in a section or in `unplaced`.
-3. `cd <worktree> && REVUEY import-guide --request <id> --name <your name> --session <id> -`
+3. `cd <worktree> && REVUEY import-guide --request <request id> --name <your name> --session <session id> -`
    with the JSON on stdin. It validates the guide like revuey's own: a problem (not JSON, a
    hunk id unknown, missing or listed twice, the code changed since step 1) is reported and
    nothing is saved; fix the document (after a code change, run step 1 again) and import
-   again. On success the running review shows the guide at once; say so in one line in chat.
+   again. A request that is done already (another agent, or you, imported it) is refused:
+   ask the user before writing another. On success the running review shows the guide within a
+   few seconds; say so in one line in chat.
 
 If the review shows another layer than the request was for (after a switch), `--prompt` and
 `import-guide` refuse it: tell the user in chat instead. A cancelled request is refused too.
@@ -136,8 +140,10 @@ full stack), one for the new layer on each `revuey switched` line (quick switche
 line: one pass, for where the user stopped). The user turns them off ("no passes") or on again
 in chat. A pass:
 
-1. If the review has a guide, `cd <worktree> && REVUEY guide --session <id>` first (it is
-   cheap and says what the user is reading). `cd <worktree> && REVUEY hunks --stat --session <id>`: the files the review shows (for a layer
+1. Run `cd <worktree> && REVUEY guide --session <id>`; if it prints a guide, read it (it is
+   cheap and says what the user is reading).
+
+   Then `cd <worktree> && REVUEY hunks --stat --session <id>`: the files the review shows (for a layer
    its own changes only; the header `# Files of <layer> vs <parent>` names its base) with +/-
    counts and hunk ids, and the `Diff:` hash. After a switch it waits for the review to show the
    new layer. Then read the diff: `REVUEY hunks --session <id>` for a small one, or, for a large

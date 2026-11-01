@@ -849,6 +849,10 @@ unmerged one). `wt list` shows them all.
 
 `pr` is always this subcommand: to review against a base branch named `pr`, use
 `:Revuey refs/heads/pr` (or `revuey refs/heads/pr`).
+The agent commands of `bin/revuey` (`sessions`, `watch`, `show`, `reply`, `comment`, `ack`,
+`inbox`, `comments`, `hunks`, `import-review`, `guide`, `import-guide`, `install-skill`) shadow
+base branches of the same names the same way: `revuey refs/heads/guide` reviews against a branch
+named `guide` (`:Revuey guide` in Neovim is not affected).
 
 From the shell, `bin/revuey pr 123` does the same, with `wt switch` running in your terminal
 (its output as it happens, its approval prompt, `^C` to stop), then starts Neovim with the review
@@ -1020,8 +1024,9 @@ it:
   as line notes ("Possible issue: …"), and you and the agent know the same guide. The placeholder
   and the panel show `waiting for claude…`, then `claude is writing the guide` once it starts;
   the guide appears as soon as the agent imports it. `:RevueyGuide cancel` withdraws the request
-  (the agent is told). If the agent has not started on it within a minute, the panel says so and
-  `gR` offers to withdraw it and run a fresh session instead.
+  (the agent is told). If no agent watch has picked it up within a minute, the panel says so
+  and `gR` offers to withdraw it and run a fresh session instead; once delivered it says
+  `claude has the request` and waits however long the agent takes.
 - **Fresh session**: the usual `claude -p` run below, with `ai.model`, which knows nothing of
   your conversation.
 - **Fresh session with another model…**: the same with `opus`, `sonnet`, `haiku` or a model you
@@ -1501,8 +1506,13 @@ revuey request 19a3f0c2d4e1a8b7f guide [stack/cart]: the user asked you to write
 guide"), and `import-guide --request <id>` saves the guide where the review keeps its guides
 and marks it done; the review reads the request file twice a second while it waits and loads
 the guide then. Withdrawing it prints `revuey request <id> cancelled [...]`, and `import-guide`
-then refuses it. `watch --name <name>` names the agent in the review ("Ask <name>
-(connected)"; default `agent`).
+then refuses it, as it refuses a request that is done already and a document without the
+`"diff"` hash. Only a `watch --messages` is asked (a plain `watch` only prints events).
+`watch --name <name>` names the agent in the review ("Ask <name> (connected)"; default
+`agent`; one plain line of at most 40 characters). An open request of a review that closed is
+picked up again when that review reopens; one nobody handles expires after 6 hours. A guide
+imported without a request (the agent asked in chat) shows in the running review within a few
+seconds too.
 
 The review takes a moment to load the new layer after a switch, and the line comes first. So
 `hunks`, `comment` and `import-review` run while the review's newest `switched` event names the

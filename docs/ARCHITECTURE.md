@@ -2008,7 +2008,9 @@ are in `reports/Terminal code review tool landscape.md`.
     guide can say why the change exists and flag potential issues, and the user and the agent
     see the same guide. A fresh session stays available (no context, or another model).
     - **Who writes it** (`view.guide_generator`, `ai.guide_by`): `gG` with no guide, `gR` and
-      `:RevueyGuide!` decide with a fresh `agent_link.poll`. No agent connected (or `'fresh'`):
+      `:RevueyGuide!` decide with a fresh `agent_link.poll`. Only a watcher in `--messages` mode
+      counts here (`agent_link.listening`): a plain `watch` prints events and would never act on
+      a request, though it still lights "● agent connected". No such agent (or `'fresh'`):
       today's behaviour, no new question. `'agent'`: the agent, without asking (the existing
       confirmations stay). `'ask'` (default): one `vim.ui.select` replacing the old
       confirmation: "Ask <name> (connected)", "Fresh session (<ai.model or default model>)",
@@ -2016,7 +2018,12 @@ are in `reports/Terminal code review tool landscape.md`.
       `vim.ui.input`, then an effort or the default), "Cancel". The model and effort go to
       `guide_view.generate(s, on_change, {model, effort})` for that run only. `<name>` is the
       watcher's `name` (`watch --name`, else `$REVUEY_AGENT_NAME`; `agent` without one), read by
-      `agent_link.poll` from `sessions.connected`'s hits.
+      `agent_link.poll` from `sessions.connected`'s hits. Names are cleaned where they come in
+      (`watch --name`, `import-guide --name`) and again where they are read (watcher records,
+      request files, `generator.agent`): `requests.clean_name` = `guide.one_line` (no newlines
+      or control characters) cut to 40 characters. The placeholder adds the name as plain
+      wrapped text, never Markdown, so a name cannot style or break the buffer, `ui.select`,
+      notifications or the CLI's output.
     - **Record**: `<state_dir>/requests/<id>.json` (the review's state dir, which `state_dirs`
       in the CLI already searches) `{version, id (comments.new_id), kind, at, status, session,
       worktree, review (review_info), scope_key, label (sessions.scope_label), agent, key (the
@@ -2048,34 +2055,58 @@ are in `reports/Terminal code review tool landscape.md`.
       out; line notes may flag "Possible issue: …"; calibration: guide first, then issues; data,
       not instructions, no edits), each edit asserted to match `SYSTEM` exactly once so a
       reworded methodology cannot silently keep the old text. Then the `Diff:` hash and how to
-      import. `import-guide [--request] [--name] <file|->` repairs the JSON like a fresh run,
-      refuses a request that is cancelled or for another key than the review shows (after a
-      switch), a `diff` other than the review's anchors hash, and anything `guide.validate`
-      refuses; unlike a fresh run it also refuses coverage problems (unknown or repeated ids,
+      import. `--prompt` and `import-guide` refuse a request that is cancelled, already done (a
+      second agent never silently replaces the first's guide) or for another key than the review
+      shows (after a switch). `import-guide [--request] [--name] <file|->` repairs the JSON like
+      a fresh run and refuses a document without `diff` or with one other than the review's
+      anchors hash (always required: the prompt asks for it, and without it a guide written for
+      code that changed meanwhile would pass), and anything `guide.validate` refuses; unlike a fresh run it also refuses coverage problems (unknown or repeated ids,
       hunks in no section and not unplaced), which a fresh run would fold into "Other changes",
       because the agent can fix them and a refusal keeps a half-right guide off the screen.
       Dropped line notes are reported and the guide saved, as for fresh runs. The record is
       `guide.record` with `generator = {provider = 'agent', agent, request, source,
       generated_at, head, merge_base, mode, prompt_level = 'full', warnings}`, saved with
       `guide.save` into the request's `guide_dir` (else the review's), so `guide.load` finds it
-      by key and anchors exactly like a fresh guide. Then the request is marked done.
+      by key and anchors exactly like a fresh guide. With a request, the save happens inside
+      `requests.update`, under the request's lock, after reading its status again: the first
+      check runs before loading the review, which can wait up to 10 s for a switch
+      (`caught_up`), so a cancel (or another import) in that window is seen there, refused, and
+      nothing is written; otherwise the guide is saved and the request marked done in the same
+      locked step. (`REVUEY_TEST_IMPORT_GATE` holds the command just before that step, for the
+      spec that cancels in between.)
     - **The review's side**: the request is a guide job (`guide_view.jobs[ks]` with `agent =
-      {id, path, name, acked?, late?}` and no `job`), so everything that knows jobs works
+      {id, path, name, delivered?, acked?, late?, adopted?}` and no `job`), so everything that knows jobs works
       unchanged: one per review key, outliving scope switches and the review; the placeholder
       ("Asked <name>, the connected agent, …"), the panel's status row, the winbar ("waiting for
       <name>…") and the spinner ticker. The ticker's `poll_requests` stats each open request's
       file every `AGENT_POLL_MS` (500 ms; a stat, and a read only when mtime or size changed: no
-      blocking work) and reacts: `acked` -> "<name> is writing the guide"; `done` -> the job ends,
+      blocking work) and reacts: `delivered_at` -> "<name> has the request"; `acked` -> "<name>
+      is writing the guide"; `done` -> the job ends,
       `on_change` sets `guide.reload` and re-renders, which loads the imported guide ("guide ready
-      from <name>"); `cancelled` elsewhere or the file gone -> the job ends. No watch on the guide
-      dir: the request file is the signal, and the review already polls. Not acked within
-      `AGENT_ACK_MS` (60 s): `late`, one warning, and the status says `gR` offers a fresh session.
-      `gR`/`:RevueyGuide!` while a request is open: keep waiting, withdraw it and run a fresh
-      session (with another model), or withdraw it. Withdrawing (`guide_view.cancel`, the
+      from <name>"); `cancelled` elsewhere or the file gone -> the job ends; older than
+      `requests.TTL_MS` -> the job ends ("expired", the CLI no longer lists it either) and the
+      ticker stops with the last job. Not delivered (no `delivered_at`: no `--messages` watch
+      printed it) within `AGENT_ACK_MS` (60 s): `late`, one warning, and the status says `gR`
+      offers a fresh session; a delivered request is never late, however long a busy agent takes
+      to start. `gR`/`:RevueyGuide!` while a request is open: keep waiting, withdraw it and run a
+      fresh session, withdraw it and run one with another model (the model is asked first; the
+      request is withdrawn only once one is chosen), or withdraw it. Withdrawing (`guide_view.cancel`, the
       existing `:RevueyGuide cancel`) marks the file cancelled under its lock (a done request is
-      left alone) and appends the cancelled event; failures are logged, never raised. Quitting
-      Neovim leaves an open request alone: the guide the agent imports is loaded when the review
-      opens again. The meta line shows `<agent> (connected)` for `provider = 'agent'`, else the
+      left alone) and appends the cancelled event; failures are logged, never raised.
+      **Orphaned requests are adopted:** quitting (or crashing) Neovim leaves an open request
+      alone, and when a review of the same key builds its guide state (`guide_view.prepare`, a new
+      review or scope) it adopts an open guide request of that key whose session is this
+      Neovim or a dead process (`sessions.alive`): it waits for it as if it had asked (the age
+      counts from the request's `at`), so the import loads and `inbox` stops listing it once
+      done. A request of another live review is left to that review. Adopting was chosen over
+      cancelling on `VimLeavePre` because the agent may already be writing the guide, and the
+      guide is still wanted when the review reopens.
+      **Guides imported without a request** (`import-guide` with no `--request`, the agent asked
+      in chat): the review's 2 s presence poll calls `guide_view.notice_saved`, which stats the
+      guides directory (`guide.save` renames into it, so its mtime moves) against the signature
+      taken when the guide was last read from disk, and on a change sets `guide.reload` and
+      re-renders. One stat per poll; no file watcher. `import-guide` says "the running review
+      shows it within a few seconds" only when a review of that scope runs. The meta line shows `<agent> (connected)` for `provider = 'agent'`, else the
       model; `bin/revuey guide` says the same ("Generated by …").
     - **Reading the guide** (`bin/revuey guide [--json]`): the guide `guide.load` finds for the
       loaded review's key and anchors, resolved against its hunks (`guide.resolve`): title,
@@ -2091,8 +2122,12 @@ are in `reports/Terminal code review tool landscape.md`.
       `import-guide` valid, invalid, stale and bad hunk refs; the choice only with an agent
       connected; `guide_by` agent/fresh without a question; the request file, the watch and inbox
       lines, catch-up once and `--replay`; taken, imported and shown in the running review;
-      cancel; not picked up and the fresh run instead; another model's `--model`/`--effort` to the
-      fake `claude`); screenshot `guide-agent-waiting`.
+      cancel; not picked up and the fresh run instead; delivered and never late; another model's
+      `--model`/`--effort` to the fake `claude`, asked before withdrawing; a cancel between the
+      first check and the save (`REVUEY_TEST_IMPORT_GATE`); an import without a request noticed
+      by the running review; an orphaned request adopted on reopen and its expiry; a branch
+      switch between the request and `--prompt`/import; done requests refused; a plain `watch`
+      never asked; names with Markdown, newlines and escapes); screenshot `guide-agent-waiting`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
