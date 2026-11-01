@@ -68,6 +68,8 @@ function M.read(path)
   local ok, rec = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
   if ok and type(rec) == 'table' and rec.id and M.KINDS[rec.kind] then
     rec._path = path
+    rec.agent = M.clean_name(rec.agent)
+    rec.label = type(rec.label) == 'string' and require('revuey.guide').one_line(rec.label) or nil
     return rec
   end
 end
@@ -106,14 +108,20 @@ function M.create(dir, rec)
 end
 
 ---Change the request at `path` under its lock: `fn(rec)` edits it in place (return false to
----leave the file alone). Returns the request as written, or nil and an error.
+---leave the file alone; false and a message to fail with that message, the file untouched). Work
+---done inside `fn` (saving a guide) happens under the lock too. Returns the request as written,
+---or nil and an error.
 function M.update(path, fn)
   local ok, res, err = pcall(require('revuey.lock').with, path, function()
     local rec = M.read(path)
     if not rec then
       return nil, 'no request at ' .. path
     end
-    if fn(rec) == false then
+    local keep, ferr = fn(rec)
+    if keep == false then
+      if ferr then
+        return nil, ferr
+      end
       return rec
     end
     local wok, werr = write_atomic(path, clean(rec))
@@ -126,6 +134,19 @@ function M.update(path, fn)
     return nil, tostring(type(res) == 'table' and res.msg or res)
   end
   return res, err
+end
+
+M.NAME_MAX = 40
+
+---An agent's name as shown and stored: one line, no control characters, at most NAME_MAX
+---characters; nil when nothing is left. Used where names come in (`watch --name`, `import-guide
+-----name`) and where they are read (watcher records, requests, guide generators).
+function M.clean_name(v)
+  local n = require('revuey.guide').one_line(v)
+  if vim.fn.strchars(n) > M.NAME_MAX then
+    n = vim.trim(vim.fn.strcharpart(n, 0, M.NAME_MAX))
+  end
+  return n ~= '' and n or nil
 end
 
 function M.is_open(rec, now)

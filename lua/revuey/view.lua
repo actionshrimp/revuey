@@ -3032,6 +3032,7 @@ local function on_guide_change()
     M.rerender(cur)
   end
 end
+guide_view.default_on_change = on_guide_change
 
 ---Who generates a guide: the connected agent, or a fresh `claude -p` session. `ai.guide_by`:
 ---'ask' (the default: ask when an agent is connected), 'agent' or 'fresh'. No agent connected:
@@ -3039,7 +3040,9 @@ end
 ---@return {by: 'agent'|'fresh'|'ask', name?: string}
 local function guide_generator(s)
   local by = (config.options.ai or {}).guide_by or 'ask'
-  if by == 'fresh' or not agent_link.poll(s) then
+  -- only an agent that acts on what it is sent (`watch --messages`) can be asked
+  agent_link.poll(s)
+  if by == 'fresh' or not agent_link.listening(s) then
     return { by = 'fresh' }
   end
   return { by = by == 'agent' and 'agent' or 'ask', name = agent_link.agent_name(s) }
@@ -3133,11 +3136,16 @@ local function agent_job_choice(s, j)
     if not choice or choice == wait then
       return
     end
+    if choice == other then
+      -- the model first: the request is withdrawn only once one is chosen
+      return pick_model(function(c)
+        guide_view.cancel(s)
+        M.generate_guide(c)
+      end)
+    end
     guide_view.cancel(s)
     if choice == fresh then
       M.generate_guide({ by = 'fresh' })
-    elseif choice == other then
-      pick_model(M.generate_guide)
     end
   end)
 end

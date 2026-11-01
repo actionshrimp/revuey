@@ -23,6 +23,7 @@ M.ns_notes = api.nvim_create_namespace('revuey.guide.notes')
 ---requests.lua: the agent writes the guide and imports it).
 ---@type table<string, {job?: revuey.AiJob, agent?: table, label: string, progress?: string}>
 M.jobs = {}
+local adopt -- (an open request of a review that is gone: below)
 ---A request no agent took (`guide --prompt --request`) within this long is shown as not picked
 ---up, with the fresh run offered.
 M.AGENT_ACK_MS = 60000
@@ -69,8 +70,11 @@ function M.prepare(s, force)
   if not force and g and g.ks == ks and g.anchors == anchors and not g.reload then
     rec = g.record
   else
+    -- what the guides directory looked like when it was read (notice_saved)
+    s.guide_dir_sig = M.dir_sig(s)
     rec = guide.load(guide.dir(state_dir(s)), key, anchors)
   end
+  local fresh = not (g and g.review == r and g.ks == ks)
   s.guide = {
     review = r,
     key = key,
@@ -80,6 +84,9 @@ function M.prepare(s, force)
     record = rec,
     resolved = rec and guide.resolve(rec, hunks) or nil,
   }
+  if fresh then
+    adopt(s, s.guide)
+  end
   if s.guide.resolved then
     -- section marks of the old format become unit marks
     local _, err = units.migrate_sections(r.state, review_mod.units(r), s.guide.resolved.sections)
@@ -155,6 +162,8 @@ function M.status_text(s)
   if a then
     if a.acked then
       return ('%s %s is writing the guide %ds'):format(frame, a.name, secs)
+    elseif a.delivered then
+      return ('%s %s has the request %ds'):format(frame, a.name, secs)
     elseif a.late then
       local k = config.options.keymaps.regenerate_guide
       return ('! %s has not picked it up (%ds): %s for a fresh session'):format(a.name, secs, type(k) == 'string' and k or ':RevueyGuide!')
@@ -201,7 +210,11 @@ local function placeholder(s, doc, width)
   end
   local job = M.jobs[g.ks]
   if job and job.agent then
-    add_prose(doc, ('Asked %s, the connected agent, to write a guide for %s. It shows here when %s imports it.'):format(job.agent.name, plural(#g.hunks, 'hunk'), job.agent.name), width, 'placeholder')
+    -- plain text, never markdown: the name is the agent's
+    local plain = ('Asked %s, the connected agent, to write a guide for %s. It shows here when %s imports it.'):format(job.agent.name, plural(#g.hunks, 'hunk'), job.agent.name)
+    for _, l in ipairs(prose.wrap(plain, {}, width)) do
+      doc[#doc + 1] = { kind = 'prose', text = l.text, hls = l.hls, role = 'placeholder', block = 'agent', para = 1, off = l.off, pre = l.pre }
+    end
     s.guide_status_line = #doc + 1
     line(doc, '', nil, 'status')
     line(doc, '', nil, 'blank')
@@ -238,7 +251,7 @@ function M.meta_rows(s, width)
   local done, total = M.progress(s)
   local meta = { plural(#res.sections, 'section'), ('%d/%d reviewed'):format(done, total) }
   if gen.provider == 'agent' then
-    meta[#meta + 1] = (gen.agent or 'agent') .. ' (connected)'
+    meta[#meta + 1] = (require('revuey.requests').clean_name(gen.agent) or 'agent') .. ' (connected)'
   elseif gen.model then
     meta[#meta + 1] = gen.model
   end
@@ -687,8 +700,10 @@ end
 -- The connected agent writes the guide (a request, requests.lua)
 -- ---------------------------------------------------------------------------
 
----Read the files of the agent jobs (every AGENT_POLL_MS): taken (acked), done (the guide was
----imported: reload it), cancelled elsewhere, or not taken within AGENT_ACK_MS (said once).
+---Read the files of the agent jobs (every AGENT_POLL_MS): delivered (a watch printed it),
+---taken (acked), done (the guide was imported: reload it), cancelled elsewhere or gone, or past
+---requests.TTL_MS (expired: the CLI no longer lists it). Not delivered within AGENT_ACK_MS: said
+---once (a delivered request is fine however long the agent takes to start).
 poll_requests = function()
   local requests = require('revuey.requests')
   local now = vim.uv.hrtime()
@@ -698,29 +713,99 @@ poll_requests = function()
       a.checked = now
       local st = vim.uv.fs_stat(a.path)
       local sig = st and (st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'gone'
-      if sig ~= a.sig then
+      local expired = now - j.started >= requests.TTL_MS * 1e6
+      if sig ~= a.sig or expired then
         a.sig = sig
         local rec = st and requests.read(a.path)
-        if not rec or rec.status == 'cancelled' or rec.status == 'done' then
+        if not rec or rec.status == 'cancelled' or rec.status == 'done' or expired then
           M.jobs[ks] = nil
           if rec and rec.status == 'done' then
             local secs = math.floor((now - j.started) / 1e9 + 0.5)
             vim.notify(('revuey: guide ready from %s (%s, %ds)'):format(a.name, plural(rec.result and rec.result.sections or 0, 'section'), secs), vim.log.levels.INFO)
+          elseif expired and rec then
+            vim.notify(('revuey: the guide request to %s expired; generate again for a fresh session'):format(a.name), vim.log.levels.WARN)
           else
             vim.notify(('revuey: the guide request to %s was %s'):format(a.name, rec and 'cancelled' or 'removed'), vim.log.levels.INFO)
           end
           j.on_change()
-        elseif rec.status == 'acked' and not a.acked then
-          a.acked = true
+        else
+          a.acked = rec.status == 'acked'
+          a.delivered = a.acked or rec.delivered_at ~= nil
         end
       end
-      if M.jobs[ks] == j and not a.acked and not a.late and now - j.started >= M.AGENT_ACK_MS * 1e6 then
+      if M.jobs[ks] == j and not a.delivered and not a.late and now - j.started >= M.AGENT_ACK_MS * 1e6 then
         a.late = true
         local k = config.options.keymaps.regenerate_guide
         vim.notify(('revuey: %s has not picked up the guide request yet; %s offers a fresh session instead (or keep waiting)'):format(
           a.name, type(k) == 'string' and k or ':RevueyGuide!'), vim.log.levels.WARN)
       end
     end
+  end
+end
+
+---How a review re-renders when a guide job (or an outside import) changes; view.lua sets it.
+M.default_on_change = function() end
+
+---An open guide request for this review made by a review that is gone (Neovim quit or crashed
+---while waiting): the reopened review waits for it again, as if it had asked. Requests of
+---another live review are left to it.
+adopt = function(s, g)
+  if M.jobs[g.ks] or not s.review then
+    return
+  end
+  local requests = require('revuey.requests')
+  local sessions = require('revuey.sessions')
+  local mine = tostring(vim.uv.os_getpid())
+  for _, rec in ipairs(requests.list({ state_dir(s) }, { open = true })) do
+    local k = rec.key or {}
+    local sid = rec.session and tostring(rec.session)
+    local owner_gone = not sid or sid == mine or not sessions.alive({ pid = tonumber(sid) })
+    if rec.kind == 'guide' and owner_gone and k.repo == g.key.repo and k.branch == g.key.branch and k.base == g.key.base then
+      local age_ns = math.max(0, requests.now_ms() - (tonumber(rec.at) or 0)) * 1e6
+      M.jobs[g.ks] = {
+        label = s.review.branch,
+        started = vim.uv.hrtime() - age_ns,
+        on_change = function()
+          M.default_on_change()
+        end,
+        agent = {
+          id = rec.id,
+          path = rec._path,
+          name = rec.agent or 'agent',
+          acked = rec.status == 'acked',
+          delivered = rec.status == 'acked' or rec.delivered_at ~= nil,
+          adopted = true,
+        },
+      }
+      ensure_ticker()
+      return
+    end
+  end
+end
+M._adopt = adopt
+
+---The guides directory's mtime (a stat).
+function M.dir_sig(s)
+  local st = vim.uv.fs_stat(guide.dir(state_dir(s)))
+  return st and (st.mtime.sec .. '.' .. st.mtime.nsec) or 'none'
+end
+
+---Every couple of seconds (agent_link's poll): a guide saved for this review from outside
+---(`bin/revuey import-guide` without a request) is loaded. The guides directory's mtime says
+---something was written there (guide.save renames into it); only then is the guide reloaded.
+function M.notice_saved(s)
+  if not s or s.cleaned or not s.guide then
+    return
+  end
+  local sig = M.dir_sig(s)
+  if s.guide_dir_sig == nil then
+    s.guide_dir_sig = sig
+    return
+  end
+  if sig ~= s.guide_dir_sig then
+    s.guide_dir_sig = sig
+    s.guide.reload = true
+    M.default_on_change()
   end
 end
 

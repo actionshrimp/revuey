@@ -148,11 +148,14 @@ function M.poll(s)
   end
   local ok, on, hits = pcall(sessions.connected, l.bases, { id = l.id, worktree = s.review.root })
   on = ok and on or false
-  -- the agent's name (`watch --name`), for "Ask <name> (connected)"
-  l.agent_name = nil
+  -- an agent that acts on what it is sent: a `watch --messages` (a plain `watch` only prints
+  -- events), and its name (`watch --name`), for "Ask <name> (connected)"
+  local clean_name = require('revuey.requests').clean_name
+  l.agent_name, l.agent_listens = nil, false
   for _, w in ipairs(ok and hits or {}) do
-    if type(w.name) == 'string' and w.name ~= '' then
-      l.agent_name = l.agent_name or w.name
+    if w.mode == 'messages' then
+      l.agent_listens = true
+      l.agent_name = l.agent_name or clean_name(w.name)
     end
   end
   -- keep the registry entry fresh (and write it again if it was removed)
@@ -169,10 +172,16 @@ function M.poll(s)
   return on
 end
 
----The connected agent's name (from its watcher, `watch --name`), else "agent".
+---The connected agent's name (from its watcher, `watch --name`, cleaned), else "agent".
 function M.agent_name(s)
   local n = s and s.link and s.link.agent_name
   return (type(n) == 'string' and n ~= '') and n or 'agent'
+end
+
+---Can the review ask the agent for something (a guide)? A `watch --messages` is attached (as of
+---the last poll).
+function M.listening(s)
+  return s and s.link and s.link.connected and s.link.agent_listens or false
 end
 
 ---Is an agent connected to this review (as of the last poll)?
@@ -216,6 +225,8 @@ function M.attach(s)
       return
     end
     M.poll(s)
+    -- a guide imported from outside (`bin/revuey import-guide`) shows without a request too
+    pcall(require('revuey.guide_view').notice_saved, s)
   end))
   M.poll(s)
 end

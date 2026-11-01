@@ -693,7 +693,7 @@ function M.watch(o)
     started_at = sessions.now_ms(),
     mode = o.messages and 'messages' or 'events',
     -- shown in the review ("Ask <name> (connected)") and recorded on what the agent makes
-    name = (agent_name and agent_name ~= '') and agent_name or nil,
+    name = require('revuey.requests').clean_name(agent_name),
   }
   local watcher_path
   local function heartbeat()
@@ -1525,7 +1525,7 @@ end
 function M.generator_label(gen)
   gen = gen or {}
   if gen.provider == 'agent' then
-    return (gen.agent or 'agent') .. ' (connected)'
+    return (require('revuey.requests').clean_name(gen.agent) or 'agent') .. ' (connected)'
   end
   return gen.model or gen.provider or '?'
 end
@@ -1571,6 +1571,9 @@ local function take_guide_request(o, ctx, what)
     die(('request %s asks for a %s, not a guide'):format(req.id, req.kind))
   elseif req.status == 'cancelled' then
     die(('request %s was cancelled by the user: %s'):format(req.id, what))
+  elseif req.status == 'done' then
+    die(('request %s is done already (the guide %s imported is shown): %s; ask the user before writing another'):format(
+      req.id, tostring(req.result and req.result.agent or 'an agent'), what))
   end
   if not o.session and req.session then
     for _, e in ipairs(live_sessions(o, ctx)) do
@@ -1795,7 +1798,10 @@ function M.import_guide(o, pos)
     end
   end
   local diff = guide.anchors_hash(hunks)
-  if doc.diff ~= nil and doc.diff ~= diff then
+  if type(doc.diff) ~= 'string' or doc.diff == '' then
+    die(('the guide has no "diff": give the Diff: hash `%s guide --prompt` printed (%s now), so a guide written for code that changed meanwhile is refused; nothing imported'):format(bin(), diff))
+  end
+  if doc.diff ~= diff then
     die(('the guide was made for another diff (%s; the review shows %s now): the code changed since `guide --prompt`. Run `%s guide --prompt%s` again and rewrite the parts that changed; nothing imported'):format(
       tostring(doc.diff), diff, bin(), req and (' --request ' .. req.id) or ''))
   end
@@ -1827,8 +1833,7 @@ function M.import_guide(o, pos)
     die(('the guide does not cover the diff: %s. Every id h1 to h%d must appear exactly once, in a section or in "unplaced"; fix it and import again (nothing imported)'):format(
       table.concat(problems, ', '), #hunks))
   end
-  local name = o.name or vim.env.REVUEY_AGENT_NAME
-  name = (name and name ~= '') and name or (req and req.agent) or 'agent'
+  local name = requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
   local rec = guide.record(valid, hunks, {
     key = guide.key(r.state),
     generator = {
@@ -1845,17 +1850,37 @@ function M.import_guide(o, pos)
     },
   })
   local dir = (req and req.guide_dir) or guide.dir(vim.fs.dirname(r.state._path))
-  local ok, serr = pcall(guide.save, dir, rec)
-  if not ok then
-    die(tostring(serr))
+  -- test hook: hold here (after the checks, before the request's lock) until the gate exists
+  local gate = vim.env.REVUEY_TEST_IMPORT_GATE
+  if gate and gate ~= '' then
+    vim.fn.writefile({}, gate .. '.waiting')
+    vim.wait(10000, function()
+      return vim.uv.fs_stat(gate) ~= nil
+    end, 20)
   end
   if req then
+    -- the status again, under the request's lock, and the guide saved under it: a cancel (or
+    -- another import) that came in since the first check wins, and nothing is written
     local _, uerr = requests.update(req._path, function(x)
+      if x.status == 'cancelled' then
+        return false, ('request %s was cancelled by the user meanwhile: nothing imported'):format(req.id)
+      elseif x.status == 'done' then
+        return false, ('request %s was done meanwhile (by %s): nothing imported'):format(req.id, tostring(x.result and x.result.agent or '?'))
+      end
+      local ok, serr = pcall(guide.save, dir, rec)
+      if not ok then
+        return false, tostring(serr)
+      end
       x.status, x.done_at = 'done', requests.now_ms()
       x.result = { sections = #rec.sections, agent = name }
     end)
     if uerr then
-      err('revuey: the guide is saved, but request ' .. req.id .. ' could not be marked done: ' .. tostring(uerr) .. '\n')
+      die(uerr)
+    end
+  else
+    local ok, serr = pcall(guide.save, dir, rec)
+    if not ok then
+      die(tostring(serr))
     end
   end
   local n_notes = 0
@@ -1866,7 +1891,7 @@ function M.import_guide(o, pos)
   end
   out(('imported the guide (%d section%s, %d line note%s) into %s%s\n'):format(
     #rec.sections, #rec.sections == 1 and '' or 's', n_notes, n_notes == 1 and '' or 's',
-    where_text(info, attached), attached and '; the review shows it' or ''))
+    where_text(info, attached), attached and '; the running review shows it within a few seconds' or ''))
   local dropped = guide.dropped_text(w.notes)
   if dropped then
     out(('line notes dropped: %s (fix them and import again to replace this guide)\n'):format(dropped))

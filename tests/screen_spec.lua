@@ -777,7 +777,7 @@ h.test('guide requested from the connected agent: waiting in the placeholder and
     local sessions = require('revuey.sessions')
     local gv = require('revuey.guide_view')
     sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
-      started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms(), name = 'claude' })
+      started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms(), name = 'claude', mode = 'messages' })
     assert(require('revuey.agent_link').poll(s), 'not connected')
     gv.status_text = function()
       return '⠋ waiting for claude 4s'
