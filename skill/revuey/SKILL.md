@@ -114,9 +114,9 @@ When the user asks for the notes ("drop them in", "add your notes"):
   full stack) the notes are for, give them in chat instead: the review shows something else.
 - Import them as findings (Reviewing the changes into revuey, below; step 1 is not needed) with
   the noted hunk ids and lines, the pass's `Diff:` hash and `--name "<your name> pass <layer,
-  branch or full stack>"`. If it says the code changed, run `hunks --path` for the noted files
-  and map each note's file:line to the new hunk ids, or give the notes in chat; never review
-  again for it. Asked for comments instead, leave each as a `comment` draft. Never post them to
+  branch or full stack>"`. If it says the code changed, run `hunks --path` for the noted files,
+  map each note's file:line to its new hunk ids and import again with that output's `Diff:`
+  hash, or give the notes in chat; never review again for it. Asked for comments instead, leave each as a `comment` draft. Never post them to
   GitHub.
 
 ## Leaving a new comment

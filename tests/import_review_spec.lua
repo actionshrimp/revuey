@@ -208,15 +208,18 @@ end
 
 ---Check `to` out the way gS does, without the refresh that follows: the branch, and the
 ---`switched` event revuey tells the agent with (agent_link.tell_switch).
-local function switch_untold(d, s, to)
+---`o.told`: the event names that branch instead; `o.at`: its time.
+local function switch_untold(d, s, to, o)
+  o = o or {}
   h.git(d, 'switch', '-q', to)
+  local told = o.told or to
   local ev = comments.switch_event(comments.review_info(s.review), {
     session = s.link.id,
     worktree = d,
     from = s.review.branch,
-    to = to,
-    layer = to,
-  })
+    to = told,
+    layer = told,
+  }, o.at)
   assert(comments.append_event(s.cm.events, ev))
 end
 
@@ -319,6 +322,29 @@ h.test('no wait: plain and full-stack reviews, and a branch checked out outside 
   h.open_review({ cwd = d, base = '' })
   h.git(d, 'switch', '-q', 'stack/ui')
   quick(d, '# Hunks of stack/cart vs stack/math')
+  require('revuey').close()
+end)
+
+h.test('no wait for a switched event older than the review\'s last change, to another branch, or too old', function()
+  local d = stack_fixture('import-review-no-wait-events')
+  local s = h.open_review({ cwd = d, base = '' })
+  local function quick(env)
+    local p = start(d, { 'hunks' }, { env = env })
+    local out = until_done(p)
+    h.ok(not p.stderr:find('waiting', 1, true), p.stderr)
+    -- the review has not refreshed: it still shows its layer
+    h.ok(out:find('# Hunks of stack/cart vs stack/math', 1, true), out)
+  end
+  -- (a) the entry changed after the event: the review already followed it
+  h.ok(s.link.changed_at, 'the entry records its last change')
+  switch_untold(d, s, 'stack/ui', { at = s.link.changed_at - 1000 })
+  quick()
+  -- (b) the newest event is to another branch than the one checked out
+  switch_untold(d, s, 'stack/ui', { told = 'stack/math' })
+  quick()
+  -- (c) to this branch, but older than the catch-up time
+  switch_untold(d, s, 'stack/ui')
+  quick(vim.tbl_extend('force', ENV, { REVUEY_CATCH_UP_MS = '1' }))
   require('revuey').close()
 end)
 
