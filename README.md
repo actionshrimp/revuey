@@ -1441,6 +1441,11 @@ in the feed; live only: neither a later watch nor `--since` prints it again):
 revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on
 ```
 
+The review takes a moment to load the new layer after a switch, so `hunks`, `comment` and
+`import-review` run just after the line wait (up to 10 s) until the review's registry entry
+shows the branch checked out in the worktree; if it never does (you switched outside revuey),
+they go on with what the review shows and say so on stderr.
+
 How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the
 comments and event feed paths, Neovim's PID and RPC socket); it falls back to revuey's state dir

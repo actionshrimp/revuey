@@ -191,6 +191,38 @@ h.test('hunks --prompt in the full-stack scope tags each hunk with its branch (n
   end
 end)
 
+h.test('hunks right after a switch wait for the running review to show the new layer', function()
+  local d = h.tmpdir('import-review-switch')
+  vim.fn.delete(d, 'rf')
+  assert(h.make_fixture('--stack', d).code == 0)
+  local s = h.open_review({ cwd = d, base = '' })
+  h.eq('stack/cart', s.review.branch)
+  -- the worktree has another layer checked out; the review has not refreshed yet (as when an
+  -- agent runs hunks on the `switched` line while revuey still loads the new layer)
+  h.git(d, 'switch', '-q', 'stack/ui')
+  local done
+  vim.system({ BIN, 'hunks' }, { cwd = d, env = ENV, text = true }, function(r)
+    done = r
+  end)
+  vim.wait(600)
+  h.eq(nil, done, 'hunks waits for the review')
+  require('revuey.view').refresh({ scope = { kind = 'layer', head = true, branch = 'stack/ui' }, force = true })
+  vim.wait(20000, function()
+    return done ~= nil
+  end, 20)
+  h.ok(done, 'hunks finished')
+  h.eq(0, done.code, done.stderr)
+  h.ok(done.stdout:find('# Hunks of stack/ui vs stack/cart', 1, true), done.stdout)
+  -- the review not following (the user switched outside revuey): it gives up and says so
+  h.git(d, 'switch', '-q', 'stack/math')
+  local env = vim.tbl_extend('force', ENV, { REVUEY_CATCH_UP_MS = '300' })
+  local r = vim.system({ BIN, 'hunks' }, { cwd = d, env = env, text = true }):wait(20000)
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stderr:find('the review still shows stack/ui, not stack/math', 1, true), r.stderr)
+  h.ok(r.stdout:find('# Hunks of stack/ui vs stack/cart', 1, true), r.stdout)
+  require('revuey').close()
+end)
+
 h.test('hunks follow the review\'s file order: folders (the default), or git\'s with panel_folders = false', function()
   local d = h.repo('import-review-order', {}, { ['a-b/x.txt'] = 'x\n', ['a/b/y.txt'] = 'y\n', ['a/z.txt'] = 'z\n' })
   local function order()

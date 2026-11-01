@@ -20,7 +20,9 @@
 --       file, in the review the session (or, with none running, the CLI's scope) shows
 --   hunks [--json] [--prompt] [--session <id>]
 --       the review's hunks with their ids and numbered lines (what an AI review sees), and the
---       diff hash; --prompt: the whole prompt revuey's own AI review sends
+--       diff hash; --prompt: the whole prompt revuey's own AI review sends. Right after a switch
+--       (`comment` and `import-review` too) it waits for the running review to show the layer
+--       checked out (caught_up)
 --   import-review [--name <n>] [--session <id>] <file|->   |   import-review --schema
 --       import an AI review document (ai_review_prompt.SCHEMA): its findings become AI comments
 --       to triage in the review, its summary and verdict the review's record
@@ -116,7 +118,9 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey hunks [--json] [--prompt] [--session <id>]
       the review's hunks, each under its id (`@@ h7 path @@`) with its lines numbered within
       the hunk (`3|+code`), and the diff hash; --prompt prints the whole prompt revuey's own
-      AI review uses (instructions, then the diff). Same review as comment.
+      AI review uses (instructions, then the diff). Same review as comment. Right after the
+      user checks out another layer, hunks, comment and import-review wait (up to 10 s) for the
+      running review to show it.
   revuey import-review [--name <reviewer>] [--session <id>] <file|->
       import a review (JSON: summary, verdict, findings anchored to a hunk id and line numbers
       of that hunk; `--schema` prints the JSON schema; an optional "diff" must match the hash
@@ -1004,6 +1008,35 @@ function M.repo_path(root, cwd, p)
   return (p:gsub('^%./', ''))
 end
 
+---The attached session once its review shows the branch checked out in the worktree: right after
+---a switch (`revuey switched ...`) the review is still loading the new layer and its registry
+---entry names the old one, so `hunks`, `comment` and `import-review` would use the old layer's
+---diff. Waits up to REVUEY_CATCH_UP_MS (default 10 s) for the entry to follow, then goes on with
+---what it shows and says so.
+local function caught_up(o, ctx, attached)
+  local want = attached and attached.checked_out and git.current_branch(ctx.root)
+  if not want or want == attached.checked_out then
+    return attached
+  end
+  local deadline = vim.uv.now() + (tonumber(os.getenv('REVUEY_CATCH_UP_MS')) or 10000)
+  while vim.uv.now() < deadline do
+    vim.wait(100)
+    for _, e in ipairs(live_sessions(o, ctx)) do
+      if e.id == attached.id then
+        attached = e
+      end
+    end
+    if attached.checked_out == want then
+      return attached
+    end
+  end
+  err(('revuey: the review still shows %s, not %s (checked out in the worktree); using what it shows\n'):format(
+    tostring(attached.checked_out),
+    want
+  ))
+  return attached
+end
+
 ---Load the review a new comment goes into, headlessly: the attached session's own review when
 ---it recorded how (`load` in its registry entry), else what `revuey` would open here: the stack
 ---layer of HEAD (a detached HEAD too), or the plain branch review against the default branch.
@@ -1110,7 +1143,7 @@ function M.comment(o, pos)
     die('empty comment')
   end
   local ctx = here(o)
-  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  local attached = caught_up(o, ctx, pick_session(o, ctx, live_sessions(o, ctx)))
   a.path = M.repo_path(ctx.root, vim.fn.getcwd(), a.path)
   local r, info, cpath, epath = comment_review(o, ctx, attached)
   local review_mod = require('revuey.review')
@@ -1169,7 +1202,7 @@ end
 ---the full-stack scope, the branch that introduced each one (as the UI tags them).
 local function review_hunks(o)
   local ctx = here(o)
-  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  local attached = caught_up(o, ctx, pick_session(o, ctx, live_sessions(o, ctx)))
   local r, info, cpath, epath = comment_review(o, ctx, attached)
   restore_stack(o, ctx, r, info, attached)
   local hunks = require('revuey.review').units(r).hunks
