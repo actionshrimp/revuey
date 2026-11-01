@@ -404,7 +404,7 @@ are in `reports/Terminal code review tool landscape.md`.
      `gN` collapses all of them to a `◆ guide` end-of-line marker and back (per session, kept
      across re-renders; one toggle for all, since notes are one-liners and per-note collapse
      would need a key nobody remembers); `]n`/`[n` move between them, a pair of their own
-     because `]c`/`[c` is the comment list's order and covers items with actions (`ce`, `ca`,
+     because `]c`/`[c` is the comments' order and covers items with actions (`ce`, `ca`,
      `cn`), which notes have none of. `]n`/`[n` are unused by Neovim and `gN` (select the
      previous match) means nothing in a read-only buffer; the keys are configurable
      (`keymaps.next_note`, `prev_note`, `toggle_notes`) and only mapped in the review buffer.
@@ -984,7 +984,7 @@ are in `reports/Terminal code review tool landscape.md`.
       on render (cached by mtime and size) and draws an "AI review" block after the guide's:
       the verdict right-aligned, a status row while a job runs, the last error, "N to triage"
       (untriaged AI findings in the store) with dropped and skipped counts, and the summary
-      wrapped. The comments list starts with the verdict and summary. Errors are kept per scope
+      wrapped. The comments view (decision 24) starts with the verdict and summary. Errors are kept per scope
       until the next run and never touch the record or the findings.
     - **From outside.** `bin/revuey hunks [--json|--prompt]` loads the review headlessly like
       `comment` and prints the user message (or the whole prompt, plus how to import), with the
@@ -1182,8 +1182,8 @@ are in `reports/Terminal code review tool landscape.md`.
       N` when moved. Resolved and outdated threads are collapsed to their first line like
       resolved comments (`cz` expands); at a shared row local comments come first, threads in
       creation order. `gH` (`keymaps.forge_threads`) cycles `all` / `open` / `none` per review,
-      starting from `forge.threads.show`. `]c`/`[c` and `cl` (a "GitHub threads" part) include
-      them; `keymaps.forge_open` (`gx`) in the diff on a thread opens its URL; elsewhere that key's
+      starting from `forge.threads.show`. `]c`/`[c` and the comments view (`cl`, decision 24)
+      include them; `keymaps.forge_open` (`gx`) in the diff on a thread opens its URL; elsewhere that key's
       global mapping runs (an expr mapping's returned keys are fed; else the built-in command). Grouped threads cover the file's last row
       (the only way to reach them with `cz`/`gx`), so actions that only work on local comments
       (`ce`, `cx`, `cd`, `cs`) leave threads out when a local comment covers the row too. The
@@ -1711,7 +1711,7 @@ are in `reports/Terminal code review tool landscape.md`.
       a folder before its subfolders, the root first, files by name within each (as `ls -R`).
       Groups are therefore contiguous by construction. Off, `r.files` keeps git's order.
       Lists sorted by path elsewhere use the same order (`comments.sort` with `folders.less`:
-      `cl`, the panel's AI findings, exports, the CLI), and the CLI loads with the option the
+      the panel's AI findings, exports, the CLI; the comments view sorts by file index), and the CLI loads with the option the
       review recorded (its `load` record and the last-review record), so `revuey hunks` numbers
       hunks as the UI does. Persisted state is keyed by content (hunk hashes, units, section
       ids, anchors), so the order change keeps marks and comments; what is keyed by hunk order
@@ -1914,6 +1914,69 @@ are in `reports/Terminal code review tool landscape.md`.
       `stack_tree_view_spec.lua` (a real clone, the fake `gh` with a `_tree`, `git fetch` to a
       local bare repository through `tests/bin/fake-ssh`), screenshots `stack-tree`,
       `stack-tree-closed` (after `l`: another branch lit), `stack-tree-panel`, `stack-tree-long` (a 19-PR path, a closed chain with a fork off it, scrolled); `helpers.tree_extend` grows the fixture.
+
+24. **The comments view** (`comments_list.lua` the entries, the thread lines and the view;
+    `comments_view.lua` the placement and the actions it calls; `key_help.comment_items` its
+    winbar hint). Every comment thread of the review in one list, the size of the diff window.
+    - **A float over the diff window,** like the stack tree (decision 23): `relative = 'win'` on
+      the diff window, below its winbar, the window's full width and height, re-placed on
+      `WinResized`. A third mode of the diff buffer (as diff and guide share it) was weighed and
+      left: the diff buffer's layout, side table, folds, statuscolumn, syntax, LSP proxy and key
+      hint all assume it shows the diff or guide, and a comments layout would leave `s.cm`
+      (rows, `forge_rows` for a local reply) without the diff rows it is made of. Another buffer
+      in the diff window was weighed too: the LSP proxy puts the review back when the diff
+      window shows another buffer (decision 3), and every refresh would restore folds and the
+      cursor into the wrong buffer. The float leaves the diff or guide rendered and refreshed
+      underneath, so going back needs no capture or restore: cursor, folds and scroll are as
+      they were. `WinEnter` of the diff window while the view is open (the panel's `gp`) goes
+      to the float; the panel's `<CR>` on a file or section closes it first. `q` and the toggle
+      key (`comment_list`, `cl`; `:RevueyComments` opens it) close it; it remembers the thread
+      the cursor was on for the next open.
+    - **No gatherer of its own.** The entries are what `comments_view.render` placed for the
+      view below: the store's comments (minus the ones `superseded` by their shown GitHub
+      thread) with `s.cm.place`, and `s.cm.forge_items` with `forge_place`, so the list follows
+      `gH` (all / open / none; `gH` in the view cycles it) and matches `]c` and the panel.
+      `comments_view.render` ends by drawing the view when it is open, which makes it live:
+      actions (`save_and_emit` -> `refresh`), `R` and scope switches (every render), the
+      comments file changing (another instance, `bin/revuey comment`, the agent: `reload`) and
+      threads arriving (`forge_view.update`) all redraw it, with the cursor on the same line of
+      the same thread (or the thread now at its place when it went).
+    - **Order.** Layer first in full-stack scope: a GitHub thread under the layer whose PR it
+      is on (`forge_view.pr` of each layer), a local comment under the layer the branch labels
+      (`review.layer_labels`, decision 9) give its placed hunk (the topmost, when several
+      touched it; a file-level comment the file's only layer), else "Not attributed to a
+      layer" last. Then the file's index in `r.files` (the diff order; files not in the review
+      last, by path), file-level threads first, the placed first line (deleted lines just before
+      the new-side line of the same number; `sort_line` when the anchor has one), creation time.
+    - **One thread** (`M.thread_lines(s, entry, {width, compact})`): a location line (lines
+      placed here, else the anchor's; `(old)` for the old side), a status (`M.status`: GitHub
+      pending / resolved / outdated / open; local resolved, dismissed, draft (also an AI finding
+      or agent comment not accepted), posted, pending (on GitHub), in review, outdated, open),
+      why it is not on its line (`not on a shown line`, `file not in this review`), and the code
+      line from the shown rows (`ctx.rows`, never a git call; an outdated comment's snippet);
+      then the thread box `comments_view.thread_lines` draws in the diff (author, chips from
+      `post_label` / `delivery_label` / `accepted_label`, the body wrapped to the width,
+      replies). `compact` is one line (location, status, author, first line, reply count): what
+      resolved, dismissed, posted and GitHub-outdated threads show until `cz` (shared
+      `s.cm.expanded`; the line marks `s.cm.cut` so the key hint offers `cz`). The width is a
+      parameter, so a narrower host (a sidebar) can reuse it with its own buffer and window.
+    - **Actions by id.** The comment actions (`edit`, `reply`, `reply_forge`, `resolve`,
+      `delete`, `toggle_include`, `accept`, `dismiss`, `send_existing`, `toggle_expand`) take an
+      optional `revuey.CommentTarget` `{id, win, row, col}`: `with_comment` (and
+      `with_finding`) then act on that comment instead of the ones covering the cursor row,
+      and the editor opens under `row` of `win` (the thread's last line in the view). Their
+      rules (`can`, the refusals for GitHub threads) are unchanged; `gx` opens a thread through
+      `forge_view.open_item`. `<CR>` closes the view and calls `comments_view.jump`; from the
+      guide it stays in the guide when the guide shows the comment, else `set_view('diff')`.
+    - **Panel and winbar.** While open, the panel draws a `Comments` section (counts) after the
+      guide's and the view's key lines (`comments_list.HELP`, `keys.line` templates); the diff
+      window's winbar is `Comments · <scope>` with the counts, or `<CR> show` and the keys
+      `key_help.comment_items` finds for the thread under the cursor while the view has focus.
+      The float `cl` list it replaces is gone (its `list_lines` with it).
+    - **Tests**: `comments_list_spec.lua` (the fake `gh`'s threads with your, an agent's and an
+      AI comment: statuses, authors, order, `]c`, `<CR>` into the diff and the guide, `cr` on a
+      GitHub thread, `cx`/`ci`/`cz`/`ca`/`gx` with the cursor kept, `q`, live redraws, `gH`,
+      layer and full-stack scope); screenshots `comments-view` and `comments-view-narrow`.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

@@ -105,6 +105,12 @@ sequence; later items build on earlier ones.
   Left: GitHub's native stacks (below); a quicker upward walk (one call per level today: GraphQL has no
   field for the PRs based on a ref, so a long chain above HEAD or a deep closed subtree takes one call
   per PR level); a chosen path is not remembered across sessions, on purpose (no locks, no stored choices); fork PRs are read-only (no local branch for them).
+- Comments view: `cl` (and `:RevueyComments`) shows every thread of the review in one list over the
+  diff window, replacing the float list: GitHub threads, your comments and replies, agent comments and AI
+  findings, grouped by file in diff order (by layer first in full-stack scope), each with its line, a
+  status, the code line and the thread; resolved ones on one line. `<CR>` shows one in the diff (or the
+  guide), and the comment keys act on the thread under the cursor. Left: a narrow sidebar built from the
+  same thread lines.
 
 ## Next
 1. **Remote PR review via worktrunk.** `:Revuey pr <N|url>` from inside an existing clone runs
