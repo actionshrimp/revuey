@@ -17,12 +17,12 @@ local TRIAGE = { { 'comment_accept', 'accept' }, { 'comment_dismiss', 'dismiss' 
   { 'comment_resolve', 'resolve', resolved = true }, { 'send_comment', 'send' }, { 'comment_expand', 'expand' } }
 local FORGE = { { 'comment_reply', 'reply' }, { 'forge_open', 'open' }, { 'comment_expand', 'expand' } }
 
----Hint items for the comments and GitHub threads covering `row`: {key, label} per key, the first
----item's label when several items on the row take the key.
-local function comment_items(s, row, out, seen)
+---Hint items for the comments and GitHub threads `ids` (those covering a row, or the thread under
+---the comments view's cursor): {key, label} per key, the first item's label when several items
+---take the key.
+local function comment_items(s, ids, out, seen)
   local c = s.cm
-  local ids = c and c.cover and c.cover[row]
-  if not ids then
+  if not (c and ids) then
     return
   end
   local comments = require('revuey.comments')
@@ -75,8 +75,16 @@ end
 ---@return {key:string, label:string}[]
 function M.items(s, row)
   local out, seen = {}, {}
-  comment_items(s, row, out, seen)
+  comment_items(s, s.cm and s.cm.cover and s.cm.cover[row], out, seen)
   note_items(s, row, out)
+  return out
+end
+
+---The keys that work on the comments or threads `ids` (the comments view's winbar).
+---@return {key:string, label:string}[]
+function M.comment_items(s, ids)
+  local out = {}
+  comment_items(s, ids, out, {})
   return out
 end
 

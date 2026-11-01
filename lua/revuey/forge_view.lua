@@ -888,14 +888,19 @@ function M.open_thread(s, row)
   for _, id in ipairs(c and c.cover and c.cover[row] or {}) do
     local it = c.forge_items and c.forge_items[id]
     if it then
-      local ok, err = pcall(vim.ui.open, it.forge.url)
-      if not ok then
-        log.write('forge', 'open failed: ' .. tostring(err))
-      end
+      M.open_item(it)
       return true
     end
   end
   return false
+end
+
+---Open a GitHub thread item (forge_threads.item) in the browser.
+function M.open_item(it)
+  local ok, err = pcall(vim.ui.open, it.forge.url)
+  if not ok then
+    log.write('forge', 'open failed: ' .. tostring(err))
+  end
 end
 
 return M

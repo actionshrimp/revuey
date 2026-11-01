@@ -1,8 +1,8 @@
 -- Comments in the review UI (diff and guide views): placement on every render, inline threads
 -- as virtual lines (buffer text and the side table never change, so LSP, marks and folds keep
 -- working), gutter signs through the statuscolumn, the editor float, actions on the comment
--- under the cursor, the comments list, export, the event feed and live reload when another
--- instance or `bin/revuey reply` changes the comments file.
+-- under the cursor (or one given by id), the comments list, export, the event feed and live
+-- reload when another instance or `bin/revuey reply` changes the comments file.
 local api = vim.api
 local comments = require('revuey.comments')
 local export = require('revuey.comments_export')
@@ -457,6 +457,9 @@ local function thread_lines(s, c, p, width)
   end
   return lines
 end
+M.thread_lines = thread_lines
+M.author_label = author_label
+M.author_hl = author_hl
 
 ---Marker of a comment's way to GitHub: added to the review, in the pending review, or posted.
 ---@return {text:string, hl:string}?
@@ -822,8 +825,16 @@ local function save_and_emit(s, kind, cmt, extra, store, sent)
   return true
 end
 
-local function editor_col(s)
+local function editor_col(s, at)
+  if at and at.col then
+    return at.col
+  end
   return 2 * (s.numw or 3) + 4
+end
+
+---The window an action's editor opens in: the target's, else the diff window.
+local function editor_win(s, at)
+  return at and at.win or s.diff_win
 end
 
 local function title(anchor, file_level)
@@ -946,11 +957,19 @@ end
 ---which when several cover the row. `local_first`: GitHub threads are left out when a local
 ---comment covers the row too (actions that only work on local comments; on a file's last row
 ---the "not shown here" group's threads would otherwise get in the way).
-function M.with_comment(s, fn, row, local_first)
+---`at` (revuey.CommentTarget): the comment is given by id instead (a list's row map).
+function M.with_comment(s, fn, row, local_first, at)
   if not s then
     return
   end
   local c = cm(s)
+  if at then
+    local cmt = M.by_id(s, at.id)
+    if not cmt then
+      return vim.notify('revuey: this comment is gone', vim.log.levels.INFO)
+    end
+    return fn(cmt)
+  end
   row = row or api.nvim_win_get_cursor(s.diff_win)[1]
   local ids = c.cover and c.cover[row] or {}
   local list = {}
@@ -983,6 +1002,18 @@ function M.with_comment(s, fn, row, local_first)
       fn(choice)
     end
   end)
+end
+
+---@class revuey.CommentTarget
+---@field id string comment or GitHub thread item id
+---@field win? integer window the editor opens in (default: the diff window)
+---@field row? integer row of that window's buffer the editor goes under
+---@field col? integer column of the editor
+
+---A comment of the store or a GitHub thread item shown in the scope, by id.
+function M.by_id(s, id)
+  local c = cm(s)
+  return (c.store and comments.get(c.store, id)) or (c.forge_items and c.forge_items[id]) or nil
 end
 
 ---Would `action` work on comment (or GitHub thread item) `cmt` as it is now? The rules the
@@ -1063,7 +1094,10 @@ local function forge_refused(cmt, what)
   return true
 end
 
-local function attach_row(s, cmt)
+local function attach_row(s, cmt, at)
+  if at and at.row then
+    return at.row
+  end
   local c = cm(s)
   local row = c.jump[cmt.id]
   for r, ids in pairs(c.cover or {}) do
@@ -1076,8 +1110,10 @@ local function attach_row(s, cmt)
   return row or api.nvim_win_get_cursor(s.diff_win)[1]
 end
 
----`ce`: edit a comment (a draft continues where it was left).
-function M.edit(s)
+---`ce`: edit a comment (a draft continues where it was left). `at`: the comment to edit
+---(by id), else the one on the cursor row.
+---@param at? revuey.CommentTarget
+function M.edit(s, at)
   M.with_comment(s, function(cmt)
     if forge_refused(cmt, 'edit') then
       return
@@ -1097,10 +1133,10 @@ function M.edit(s)
     editor.open({
       session = s,
       title = title(cmt.anchor, cmt.file_level),
-      win = s.diff_win,
-      return_win = s.diff_win,
-      row = attach_row(s, cmt),
-      col = editor_col(s),
+      win = editor_win(s, at),
+      return_win = editor_win(s, at),
+      row = attach_row(s, cmt, at),
+      col = editor_col(s, at),
       text = cmt.draft or cmt.body,
       on_save = function(text)
         local c2 = update(function(x)
@@ -1135,23 +1171,24 @@ function M.edit(s)
       end,
       on_send = send_hook(s, 'comment', cmt.anchor, cmt, store),
     })
-  end, nil, true)
+  end, nil, true, at)
 end
 
----`cr`: reply to a comment's thread.
-function M.reply(s)
+---`cr`: reply to a comment's thread (`at`: that comment, else the one on the cursor row).
+---@param at? revuey.CommentTarget
+function M.reply(s, at)
   M.with_comment(s, function(cmt)
     if cmt.forge then
-      return M.reply_forge(s, cmt)
+      return M.reply_forge(s, cmt, at)
     end
     local store = cm(s).store
     editor.open({
       session = s,
       title = 'Reply · ' .. title(cmt.anchor, cmt.file_level),
-      win = s.diff_win,
-      return_win = s.diff_win,
-      row = attach_row(s, cmt),
-      col = editor_col(s),
+      win = editor_win(s, at),
+      return_win = editor_win(s, at),
+      row = attach_row(s, cmt, at),
+      col = editor_col(s, at),
       text = cmt.reply_draft,
       startinsert = true,
       on_save = function(text)
@@ -1180,14 +1217,15 @@ function M.reply(s)
       end,
       on_send = send_hook(s, 'reply', cmt.anchor, cmt, store),
     })
-  end)
+  end, nil, nil, at)
 end
 
 ---`cr` on a GitHub thread: a reply that stays local. It is a new local comment on the thread's
 ---rows (anchored like a selection of them, so it re-anchors as any comment) carrying
 ---`forge_reply` (the thread, its PR and the last comment's ids), so a later "post review" can send
 ---it as a reply in that thread. Nothing goes to GitHub. Refused for a thread not on shown lines.
-function M.reply_forge(s, item)
+---@param at? revuey.CommentTarget where the editor opens (default: under the thread's rows)
+function M.reply_forge(s, item, at)
   local c = cm(s)
   local p = c.forge_place and c.forge_place[item.id]
   local rows = c.forge_rows and c.forge_rows[item.id]
@@ -1228,10 +1266,10 @@ function M.reply_forge(s, item)
   editor.open({
     session = s,
     title = ('Local reply · GitHub #%d · %s'):format(g.pr, title(anchor, file_level)),
-    win = s.diff_win,
-    return_win = s.diff_win,
-    row = rows.last,
-    col = editor_col(s),
+    win = editor_win(s, at),
+    return_win = editor_win(s, at),
+    row = at and at.row or rows.last,
+    col = editor_col(s, at),
     startinsert = true,
     on_save = function(text)
       local cmt = new(text, 'saved')
@@ -1245,7 +1283,8 @@ function M.reply_forge(s, item)
 end
 
 ---`cx`: resolve, or reopen a resolved comment.
-function M.resolve(s)
+---@param at? revuey.CommentTarget
+function M.resolve(s, at)
   M.with_comment(s, function(cmt)
     if forge_refused(cmt, 'resolve') then
       return
@@ -1264,15 +1303,22 @@ function M.resolve(s)
     copy.status = cur.status == 'resolved' and reopened or 'resolved'
     comments.put(cm(s).store, copy)
     save_and_emit(s, 'resolved', copy)
-  end, nil, true)
+  end, nil, true, at)
 end
 
 ---Comments covering the cursor row that are AI findings or a coding agent's comments
 ---(with_comment, but only those: a user comment on the same line never gets in the way).
-local function with_finding(s, fn)
+local function with_finding(s, fn, at)
   local c = cm(s)
-  local row = api.nvim_win_get_cursor(s.diff_win)[1]
   local origin = require('revuey.ai_review').origin
+  if at then
+    local cmt = M.by_id(s, at.id)
+    if not (cmt and not cmt.forge and origin(cmt)) then
+      return vim.notify('revuey: not an AI review finding or an agent comment', vim.log.levels.INFO)
+    end
+    return fn(cmt)
+  end
+  local row = api.nvim_win_get_cursor(s.diff_win)[1]
   local any = false
   for _, id in ipairs(c.cover and c.cover[row] or {}) do
     if origin(comments.get(c.store, id)) then
@@ -1295,7 +1341,8 @@ end
 
 ---`ca`: accept the AI finding or the agent's comment on this line: it becomes your own comment
 ---(edit it with `ce`, add it to the review with `ci`).
-function M.accept(s)
+---@param at? revuey.CommentTarget
+function M.accept(s, at)
   if not s then
     return
   end
@@ -1309,12 +1356,13 @@ function M.accept(s)
       return vim.notify('revuey: ' .. err, vim.log.levels.INFO)
     end
     save_and_emit(s, 'accepted', c)
-  end)
+  end, at)
 end
 
 ---`cn`: dismiss the AI finding or agent comment on this line (kept, collapsed), or restore a
 ---dismissed one.
-function M.dismiss(s)
+---@param at? revuey.CommentTarget
+function M.dismiss(s, at)
   if not s then
     return
   end
@@ -1328,13 +1376,14 @@ function M.dismiss(s)
       return vim.notify('revuey: ' .. err, vim.log.levels.INFO)
     end
     save_and_emit(s, 'dismissed', c)
-  end)
+  end, at)
 end
 
 ---`ci`: add the comment on this line to the review to post on GitHub, or take it out again
 ---(a local flag until the review is submitted: `:RevueySubmit`). Only your own saved comments
 ---(an AI finding or agent comment once accepted) and local replies to GitHub threads.
-function M.toggle_include(s)
+---@param at? revuey.CommentTarget
+function M.toggle_include(s, at)
   M.with_comment(s, function(cmt)
     local post = require('revuey.forge_post')
     if cmt.forge then
@@ -1365,7 +1414,7 @@ function M.toggle_include(s)
     local k = config.options.keymaps.forge_submit
     k = type(k) == 'table' and k[1] or k
     vim.notify(('revuey: %s (%d in review%s)'):format(msg, n, k and ('; ' .. k .. ' submits') or ''), vim.log.levels.INFO)
-  end, nil, true)
+  end, nil, true, at)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1447,7 +1496,8 @@ function M.send_to_agent(req)
 end
 
 ---`cs`: send the comment under the cursor to the agent session (again, when it was sent before).
-function M.send_existing(s)
+---@param at? revuey.CommentTarget
+function M.send_existing(s, at)
   M.with_comment(s, function(cmt)
     if forge_refused(cmt, 'answer') then
       return
@@ -1468,7 +1518,7 @@ function M.send_existing(s)
     if save_and_emit(s, kind, sent, nil, store, sent) then
       notify_sent(s, sent)
     end
-  end, nil, true)
+  end, nil, true, at)
 end
 
 ---`ga`: ask the agent about rows first..last (a line, a selection, a file header).
@@ -1482,7 +1532,8 @@ function M.confirm_delete(msg)
 end
 
 ---`cd`: delete a comment (asks first).
-function M.delete(s)
+---@param at? revuey.CommentTarget
+function M.delete(s, at)
   M.with_comment(s, function(cmt)
     if forge_refused(cmt, 'delete') then
       return
@@ -1492,16 +1543,17 @@ function M.delete(s)
     end
     comments.delete(cm(s).store, cmt.id)
     save_and_emit(s, 'deleted', cmt)
-  end, nil, true)
+  end, nil, true, at)
 end
 
 ---`cz`: expand or collapse a long (or resolved) comment.
-function M.toggle_expand(s)
+---@param at? revuey.CommentTarget
+function M.toggle_expand(s, at)
   M.with_comment(s, function(cmt)
     local c = cm(s)
     c.expanded[cmt.id] = not c.expanded[cmt.id] or nil
     M.render(s)
-  end)
+  end, nil, nil, at)
 end
 
 ---`gC`: show or hide the threads (signs stay).
@@ -1574,13 +1626,18 @@ function M.next(s, dir)
   end
 end
 
----Jump to a comment by id (from the list).
-function M.jump(s, id)
+---Jump to a comment by id (from the list). `quiet`: no message when it is not shown
+---(the caller tries another view). Returns true when the cursor moved there.
+function M.jump(s, id, quiet)
   local row = s.cm and s.cm.jump and s.cm.jump[id]
   if not row then
-    return vim.notify('revuey: this comment is not shown in this view', vim.log.levels.INFO)
+    if not quiet then
+      vim.notify('revuey: this comment is not shown in this view', vim.log.levels.INFO)
+    end
+    return false
   end
   goto_row(s, row)
+  return true
 end
 
 -- ---------------------------------------------------------------------------
