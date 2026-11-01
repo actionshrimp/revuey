@@ -207,6 +207,11 @@ M.defaults = {
     restricted = true,
     -- saved guides kept per review (branch/layer + base); older ones are deleted
     keep_guides = 5,
+    -- who writes a guide when you generate one (gG, gR, :RevueyGuide!) while a coding agent is
+    -- connected (bin/revuey watch): 'ask' (choose each time: the agent, a fresh session, or a
+    -- fresh session with another model), 'agent' or 'fresh'. With no agent connected it is
+    -- always a fresh `claude -p` session, without asking.
+    guide_by = 'ask',
   },
 }
 

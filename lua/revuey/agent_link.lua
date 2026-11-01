@@ -146,8 +146,15 @@ function M.poll(s)
   if not l or s.cleaned then
     return false
   end
-  local ok, on = pcall(sessions.connected, l.bases, { id = l.id, worktree = s.review.root })
+  local ok, on, hits = pcall(sessions.connected, l.bases, { id = l.id, worktree = s.review.root })
   on = ok and on or false
+  -- the agent's name (`watch --name`), for "Ask <name> (connected)"
+  l.agent_name = nil
+  for _, w in ipairs(ok and hits or {}) do
+    if type(w.name) == 'string' and w.name ~= '' then
+      l.agent_name = l.agent_name or w.name
+    end
+  end
   -- keep the registry entry fresh (and write it again if it was removed)
   M.update(s, true)
   if on ~= l.connected then
@@ -160,6 +167,12 @@ function M.poll(s)
     end
   end
   return on
+end
+
+---The connected agent's name (from its watcher, `watch --name`), else "agent".
+function M.agent_name(s)
+  local n = s and s.link and s.link.agent_name
+  return (type(n) == 'string' and n ~= '') and n or 'agent'
 end
 
 ---Is an agent connected to this review (as of the last poll)?

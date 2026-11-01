@@ -764,6 +764,33 @@ h.test('guide with an overview diagram', function()
   vim.env.REVUEY_FAKE_CLAUDE = nil
 end)
 
+-- The connected agent was asked for the guide: the placeholder says so and how to withdraw it,
+-- and the panel's guide block shows the wait (the status text is fixed: it holds a timer).
+h.test('guide requested from the connected agent: waiting in the placeholder and the panel', function()
+  local d = h.tmpdir('screen-guide-agent')
+  vim.fn.delete(d, 'rf')
+  assert(h.make_fixture(d).code == 0)
+  start(d, 'main', 30, 120)
+  child.lua([[
+    vim.notify = function() end
+    local s = require('revuey.view').session
+    local sessions = require('revuey.sessions')
+    local gv = require('revuey.guide_view')
+    sessions.write_watcher(s.link.bases, { pid = vim.fn.getpid(), session = s.link.id, worktree = s.review.root,
+      started_at = sessions.now_ms(), heartbeat_at = sessions.now_ms(), name = 'claude' })
+    assert(require('revuey.agent_link').poll(s), 'not connected')
+    gv.status_text = function()
+      return '⠋ waiting for claude 4s'
+    end
+    require('revuey.view').generate_guide({ by = 'agent' })
+    assert(gv.job(s) and gv.job(s).agent, 'no request')
+    gv.draw_status(s)
+    vim.cmd('redraw')
+  ]])
+  screenshot('guide-agent-waiting')
+  child.lua([[require('revuey.view').guide_command(false, 'cancel')]])
+end)
+
 -- Line notes from the guide: a violet band above the lines they point at (a range says how many
 -- lines), unlike comment boxes below their lines; `gN` collapses them to a marker.
 h.test('guide line notes above their lines, collapsed with gN', function()

@@ -595,7 +595,9 @@ function M.guide_winbar(s, win)
     parts[#parts + 1] = '%*%=' .. (si and ('§' .. si .. '/' .. #res.sections .. '  ') or '')
     parts[#parts + 1] = ((total > 0 and done == total) and '%#RevueyReviewed#' or '%#Comment#') .. '✓ ' .. done .. '/' .. total .. ' '
   else
-    parts[#parts + 1] = guide_view.job(s) and '%#RevueyGuideSpinner#generating…' or '%#Comment#no guide yet'
+    local j = guide_view.job(s)
+    local busy = j and (j.agent and ('waiting for ' .. esc(j.agent.name) .. '…') or 'generating…')
+    parts[#parts + 1] = busy and ('%#RevueyGuideSpinner#' .. busy) or '%#Comment#no guide yet'
   end
   return table.concat(parts)
 end
@@ -3031,16 +3033,113 @@ local function on_guide_change()
   end
 end
 
----Start a generation for the current review and show the guide view.
-function M.generate_guide()
+---Who generates a guide: the connected agent, or a fresh `claude -p` session. `ai.guide_by`:
+---'ask' (the default: ask when an agent is connected), 'agent' or 'fresh'. No agent connected:
+---a fresh session, without asking.
+---@return {by: 'agent'|'fresh'|'ask', name?: string}
+local function guide_generator(s)
+  local by = (config.options.ai or {}).guide_by or 'ask'
+  if by == 'fresh' or not agent_link.poll(s) then
+    return { by = 'fresh' }
+  end
+  return { by = by == 'agent' and 'agent' or 'ask', name = agent_link.agent_name(s) }
+end
+
+M.GUIDE_MODELS = { 'opus', 'sonnet', 'haiku' }
+M.GUIDE_EFFORTS = { 'low', 'medium', 'high', 'xhigh', 'max' }
+
+---The model (and effort) of a fresh session with another model: a short list or one typed in.
+local function pick_model(cb)
+  local items = vim.list_extend(vim.deepcopy(M.GUIDE_MODELS), { 'Other model…' })
+  vim.ui.select(items, { prompt = 'Model for the fresh session:' }, function(model)
+    if not model then
+      return
+    end
+    local function effort(m)
+      local default = (config.options.ai or {}).effort
+      local list = { 'Default effort' .. (default and (' (' .. default .. ')') or '') }
+      vim.list_extend(list, M.GUIDE_EFFORTS)
+      vim.ui.select(list, { prompt = 'Effort for ' .. m .. ':' }, function(e)
+        if not e then
+          return
+        end
+        cb({ by = 'fresh', model = m, effort = vim.tbl_contains(M.GUIDE_EFFORTS, e) and e or nil })
+      end)
+    end
+    if model == 'Other model…' then
+      vim.ui.input({ prompt = 'Model (an alias or a full model id): ' }, function(m)
+        m = m and vim.trim(m) or ''
+        if m ~= '' then
+          effort(m)
+        end
+      end)
+    else
+      effort(model)
+    end
+  end)
+end
+
+---Ask who writes the guide (an agent is connected): the agent, a fresh session, or a fresh
+---session with another model. `cb(choice)` gets {by = 'agent'|'fresh', model?, effort?}.
+local function ask_generator(name, prompt, cb)
+  local model = (config.options.ai or {}).model
+  local agent = ('Ask %s (connected)'):format(name)
+  local fresh = ('Fresh session (%s)'):format(model or 'default model')
+  local other = 'Fresh session with another model…'
+  vim.ui.select({ agent, fresh, other, 'Cancel' }, { prompt = prompt }, function(choice)
+    if choice == agent then
+      cb({ by = 'agent' })
+    elseif choice == fresh then
+      cb({ by = 'fresh' })
+    elseif choice == other then
+      pick_model(cb)
+    end
+  end)
+end
+
+---Start a generation for the current review and show the guide view: by `choice` ({by =
+---'agent'|'fresh', model?, effort?}), else as `ai.guide_by` says (asking when an agent is
+---connected and it is 'ask').
+function M.generate_guide(choice)
   local s = M.session
   if not s then
     return vim.notify('revuey: no review open', vim.log.levels.WARN)
   end
+  if not choice then
+    local d = guide_generator(s)
+    if d.by == 'ask' then
+      return ask_generator(d.name, 'Generate the AI guide with:', M.generate_guide)
+    end
+    choice = { by = d.by }
+  end
   if s.view_mode ~= 'guide' then
     M.set_view('guide')
   end
-  guide_view.generate(s, on_guide_change)
+  if choice.by == 'agent' then
+    guide_view.request_agent(s, on_guide_change)
+  else
+    guide_view.generate(s, on_guide_change, { model = choice.model, effort = choice.effort })
+  end
+end
+
+---A request to the agent is open: keep waiting, or withdraw it (and run a fresh session).
+local function agent_job_choice(s, j)
+  local wait = ('Keep waiting for %s'):format(j.agent.name)
+  local fresh = 'Cancel the request and run a fresh session'
+  local other = 'Cancel the request and run a fresh session with another model…'
+  vim.ui.select({ wait, fresh, other, 'Cancel the request' }, {
+    prompt = ('%s %s the guide.'):format(j.agent.name, j.agent.acked and 'is writing' or 'was asked for'),
+  }, function(choice)
+    if not choice or choice == wait then
+      return
+    end
+    guide_view.cancel(s)
+    if choice == fresh then
+      M.generate_guide({ by = 'fresh' })
+    elseif choice == other then
+      pick_model(M.generate_guide)
+    end
+  end)
 end
 
 ---Regenerate (asks first when a guide exists, since it runs the model again).
@@ -3050,21 +3149,30 @@ function M.regenerate_guide()
     return
   end
   local g = guide_view.prepare(s)
-  if guide_view.jobs[g.ks] then
+  local j = guide_view.jobs[g.ks]
+  if j and j.agent then
+    return agent_job_choice(s, j)
+  elseif j then
     return vim.notify('revuey: a guide is already being generated (:RevueyGuide cancel stops it)', vim.log.levels.INFO)
   end
   if not g.record then
     return M.generate_guide()
   end
-  vim.ui.select({ 'Generate a new guide', 'Cancel' }, { prompt = 'Regenerate the AI guide (runs claude)?' }, function(choice)
+  local d = guide_generator(s)
+  if d.by == 'ask' then
+    return ask_generator(d.name, 'Regenerate the AI guide with:', M.generate_guide)
+  end
+  local how = d.by == 'agent' and ('asks ' .. d.name .. ', the connected agent') or 'runs claude'
+  vim.ui.select({ 'Generate a new guide', 'Cancel' }, { prompt = ('Regenerate the AI guide (%s)?'):format(how) }, function(choice)
     if choice == 'Generate a new guide' then
-      M.generate_guide()
+      M.generate_guide({ by = d.by })
     end
   end)
 end
 
 ---`:RevueyGuide[!] [cancel]` and `gG`: toggle the guide view; with no guide (and no run), offer to
----generate one. `!` regenerates without asking. `cancel` stops a run.
+---generate one. `!` regenerates without asking (but asks who writes it when an agent is
+---connected). `cancel` stops a run or withdraws a request to the agent.
 function M.guide_command(bang, arg)
   local s = M.session
   if not s then
@@ -3079,6 +3187,10 @@ function M.guide_command(bang, arg)
     return vim.notify('revuey: unknown argument ' .. arg .. ' (use :RevueyGuide, :RevueyGuide! or :RevueyGuide cancel)', vim.log.levels.ERROR)
   end
   if bang then
+    local j = guide_view.job(s)
+    if j and j.agent then
+      return agent_job_choice(s, j)
+    end
     return M.generate_guide()
   end
   if s.view_mode == 'guide' then
@@ -3088,11 +3200,16 @@ function M.guide_command(bang, arg)
   if g.record or guide_view.jobs[g.ks] or #g.hunks == 0 then
     return M.set_view('guide')
   end
+  local d = guide_generator(s)
+  if d.by == 'ask' then
+    return ask_generator(d.name, 'No AI guide for this review yet. Generate one with:', M.generate_guide)
+  end
   vim.ui.select({ 'Generate a guide', 'Cancel' }, {
-    prompt = 'No AI guide for this review yet. Generate one with claude?',
+    prompt = d.by == 'agent' and ('No AI guide for this review yet. Ask %s (connected) to write one?'):format(d.name)
+      or 'No AI guide for this review yet. Generate one with claude?',
   }, function(choice)
     if choice == 'Generate a guide' then
-      M.generate_guide()
+      M.generate_guide({ by = d.by })
     end
   end)
 end

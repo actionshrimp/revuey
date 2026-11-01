@@ -18,9 +18,16 @@ local M = {}
 M.ns_status = api.nvim_create_namespace('revuey.guide.status')
 M.ns_notes = api.nvim_create_namespace('revuey.guide.notes')
 
----Jobs by review key string; they outlive scope switches (each scope has its own guide).
----@type table<string, {job: revuey.AiJob, label: string, progress?: string}>
+---Jobs by review key string; they outlive scope switches (each scope has its own guide). A job
+---for the connected agent has `agent` {id, path, name, acked?, late?} instead of `job` (a request,
+---requests.lua: the agent writes the guide and imports it).
+---@type table<string, {job?: revuey.AiJob, agent?: table, label: string, progress?: string}>
 M.jobs = {}
+---A request no agent took (`guide --prompt --request`) within this long is shown as not picked
+---up, with the fresh run offered.
+M.AGENT_ACK_MS = 60000
+---How often the review reads an open request's file while it waits.
+M.AGENT_POLL_MS = 500
 ---Last error per review key (shown in the guide view until the next attempt).
 M.errors = {}
 
@@ -135,7 +142,8 @@ local function ago(t)
   return os.date('%Y-%m-%d', t)
 end
 
----Status line for a running job: spinner, elapsed time, latest progress.
+---Status line for a running job: spinner, elapsed time, latest progress (for the connected
+---agent: waiting for it, it is writing, or it has not picked the request up).
 function M.status_text(s)
   local j = M.job(s)
   if not j then
@@ -143,6 +151,16 @@ function M.status_text(s)
   end
   local secs = math.floor((vim.uv.hrtime() - j.started) / 1e9)
   local frame = SPINNER[(math.floor(vim.uv.hrtime() / 1e8) % #SPINNER) + 1]
+  local a = j.agent
+  if a then
+    if a.acked then
+      return ('%s %s is writing the guide %ds'):format(frame, a.name, secs)
+    elseif a.late then
+      local k = config.options.keymaps.regenerate_guide
+      return ('! %s has not picked it up (%ds): %s for a fresh session'):format(a.name, secs, type(k) == 'string' and k or ':RevueyGuide!')
+    end
+    return ('%s waiting for %s %ds'):format(frame, a.name, secs)
+  end
   return ('%s generating %ds%s'):format(frame, secs, j.progress and ('  ' .. j.progress) or '')
 end
 
@@ -181,7 +199,16 @@ local function placeholder(s, doc, width)
     line(doc, 'Nothing to guide: this review has no changes.', 'RevueyGuideMeta', 'placeholder')
     return
   end
-  if M.jobs[g.ks] then
+  local job = M.jobs[g.ks]
+  if job and job.agent then
+    add_prose(doc, ('Asked %s, the connected agent, to write a guide for %s. It shows here when %s imports it.'):format(job.agent.name, plural(#g.hunks, 'hunk'), job.agent.name), width, 'placeholder')
+    s.guide_status_line = #doc + 1
+    line(doc, '', nil, 'status')
+    line(doc, '', nil, 'blank')
+    add_prose(doc, ('Keep reviewing meanwhile: `%s` shows the diff. `:RevueyGuide cancel` withdraws the request, `%s` offers a fresh session instead.'):format(back, regen), width, 'placeholder', nil, 'RevueyGuideMeta')
+    return
+  end
+  if job then
     line(doc, 'Generating a guide for ' .. plural(#g.hunks, 'hunk') .. ' with ' .. (config.options.ai.provider or 'claude') .. '.', nil, 'placeholder')
     s.guide_status_line = #doc + 1
     line(doc, '', nil, 'status')
@@ -210,7 +237,9 @@ function M.meta_rows(s, width)
   local gen = res.generator or {}
   local done, total = M.progress(s)
   local meta = { plural(#res.sections, 'section'), ('%d/%d reviewed'):format(done, total) }
-  if gen.model then
+  if gen.provider == 'agent' then
+    meta[#meta + 1] = (gen.agent or 'agent') .. ' (connected)'
+  elseif gen.model then
     meta[#meta + 1] = gen.model
   end
   if gen.generated_at then
@@ -606,10 +635,12 @@ function M.prompt_context(r)
 end
 
 local ticker
+local poll_requests
 
 local function tick()
   local view = require('revuey.view')
   local s = view.session
+  poll_requests()
   if next(M.jobs) == nil then
     if ticker then
       ticker:stop()
@@ -652,10 +683,132 @@ local function ensure_ticker()
   ticker:start(0, 100, vim.schedule_wrap(tick))
 end
 
+-- ---------------------------------------------------------------------------
+-- The connected agent writes the guide (a request, requests.lua)
+-- ---------------------------------------------------------------------------
+
+---Read the files of the agent jobs (every AGENT_POLL_MS): taken (acked), done (the guide was
+---imported: reload it), cancelled elsewhere, or not taken within AGENT_ACK_MS (said once).
+poll_requests = function()
+  local requests = require('revuey.requests')
+  local now = vim.uv.hrtime()
+  for ks, j in pairs(M.jobs) do
+    local a = j.agent
+    if a and now - (a.checked or 0) >= M.AGENT_POLL_MS * 1e6 then
+      a.checked = now
+      local st = vim.uv.fs_stat(a.path)
+      local sig = st and (st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'gone'
+      if sig ~= a.sig then
+        a.sig = sig
+        local rec = st and requests.read(a.path)
+        if not rec or rec.status == 'cancelled' or rec.status == 'done' then
+          M.jobs[ks] = nil
+          if rec and rec.status == 'done' then
+            local secs = math.floor((now - j.started) / 1e9 + 0.5)
+            vim.notify(('revuey: guide ready from %s (%s, %ds)'):format(a.name, plural(rec.result and rec.result.sections or 0, 'section'), secs), vim.log.levels.INFO)
+          else
+            vim.notify(('revuey: the guide request to %s was %s'):format(a.name, rec and 'cancelled' or 'removed'), vim.log.levels.INFO)
+          end
+          j.on_change()
+        elseif rec.status == 'acked' and not a.acked then
+          a.acked = true
+        end
+      end
+      if M.jobs[ks] == j and not a.acked and not a.late and now - j.started >= M.AGENT_ACK_MS * 1e6 then
+        a.late = true
+        local k = config.options.keymaps.regenerate_guide
+        vim.notify(('revuey: %s has not picked up the guide request yet; %s offers a fresh session instead (or keep waiting)'):format(
+          a.name, type(k) == 'string' and k or ':RevueyGuide!'), vim.log.levels.WARN)
+      end
+    end
+  end
+end
+
+---Ask the connected agent to write the guide of the session's current review: a request file
+---and a `request` event in the review's feed (`watch --messages` prints it). The job waits for
+---the agent to import the guide (poll_requests), with the spinner of a fresh run.
+---@return boolean asked
+function M.request_agent(s, on_change)
+  local g = M.prepare(s)
+  local ks = g.ks
+  if M.jobs[ks] then
+    vim.notify('revuey: a guide is already being generated for this review', vim.log.levels.INFO)
+    return false
+  end
+  if #g.hunks == 0 then
+    vim.notify('revuey: nothing to guide (no changes)', vim.log.levels.INFO)
+    return false
+  end
+  local requests = require('revuey.requests')
+  local comments = require('revuey.comments')
+  local link = require('revuey.agent_link')
+  local r = s.review
+  local info = comments.review_info(r)
+  local name = link.agent_name(s)
+  local rec = requests.new('guide', {
+    session = s.link and s.link.id or nil,
+    worktree = r.root,
+    review = info,
+    scope_key = r.state._path and vim.fs.basename(r.state._path):gsub('%.json$', '') or nil,
+    label = require('revuey.sessions').scope_label(info),
+    agent = name,
+    key = g.key,
+    anchors = g.anchors,
+    guide_dir = guide.dir(state_dir(s)),
+  })
+  local path, werr = requests.create(requests.dir(state_dir(s)), rec)
+  if not path then
+    vim.notify('revuey: could not ask ' .. name .. ': ' .. tostring(werr), vim.log.levels.ERROR)
+    return false
+  end
+  local events = (s.cm and s.cm.events) or comments.events_path_for(r.state._path)
+  local ok, res, aerr = pcall(comments.append_event, events, requests.event(rec))
+  if not ok or res == false then
+    os.remove(path)
+    vim.notify('revuey: could not ask ' .. name .. ': ' .. tostring(ok and aerr or res), vim.log.levels.ERROR)
+    return false
+  end
+  M.errors[ks] = nil
+  M.jobs[ks] = {
+    label = r.branch,
+    started = vim.uv.hrtime(),
+    on_change = on_change,
+    agent = { id = rec.id, path = path, name = name, checked = vim.uv.hrtime() },
+  }
+  ensure_ticker()
+  on_change()
+  vim.notify(('revuey: asked %s to write the guide (request %s)'):format(name, rec.id), vim.log.levels.INFO)
+  return true
+end
+
+---Withdraw a request to the agent: the file says cancelled (import-guide refuses it) and the feed
+---tells the agent.
+local function cancel_request(s, ks, j)
+  local requests = require('revuey.requests')
+  local comments = require('revuey.comments')
+  M.jobs[ks] = nil
+  local rec, uerr = requests.update(j.agent.path, function(x)
+    if x.status == 'done' or x.status == 'cancelled' then
+      return false
+    end
+    x.status, x.cancelled_at = 'cancelled', requests.now_ms()
+  end)
+  if rec and rec.status == 'cancelled' then
+    local events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path)
+    pcall(comments.append_event, events, requests.event(rec))
+  elseif uerr then
+    require('revuey.log').write('agent', 'could not cancel request ' .. j.agent.id .. ': ' .. tostring(uerr))
+  end
+  vim.notify(('revuey: guide request to %s cancelled'):format(j.agent.name), vim.log.levels.INFO)
+  j.on_change()
+end
+
 ---Start generating a guide for the session's current review (no-op if one is running for it).
+---`opts`: model and effort for this run (default: ai.model, ai.effort).
 ---@param s revuey.Session
 ---@param on_change fun() called (on the main loop) when the guide or the job state changed
-function M.generate(s, on_change)
+---@param opts? {model?: string, effort?: string}
+function M.generate(s, on_change, opts)
   local g = M.prepare(s)
   local ks = g.ks
   if M.jobs[ks] then
@@ -691,8 +844,8 @@ function M.generate(s, on_change)
       prompt = text,
       schema = prompt.schema_json(),
       cwd = r.root,
-      model = cfg.model,
-      effort = cfg.effort,
+      model = opts and opts.model or cfg.model,
+      effort = opts and opts.effort or cfg.effort,
       name = 'revuey guide: ' .. r.branch,
       on_event = function(ev)
         if ev.type == 'progress' then
@@ -714,7 +867,7 @@ function M.generate(s, on_change)
               key = key,
               generator = {
                 provider = cfg.provider or 'claude',
-                model = result.model or cfg.model,
+                model = result.model or (opts and opts.model) or cfg.model,
                 session_id = result.session_id,
                 generated_at = os.time(),
                 head = r.head,
@@ -764,7 +917,9 @@ function M.cancel(s)
   if not j then
     return false
   end
-  if j.job and j.job.proc then
+  if j.agent then
+    cancel_request(s, g.ks, j)
+  elseif j.job and j.job.proc then
     j.job:cancel()
   else
     -- still gathering commits: forget it; the coroutine checks before spawning
