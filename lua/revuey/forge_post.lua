@@ -257,7 +257,9 @@ end
 ---@field verdict string
 ---@field targets revuey.PostTarget[]   in scope order
 ---@field items table<revuey.PostTarget, {c:revuey.Comment, item:table}[]>
----@field refused {c:revuey.Comment, why:string}[]
+---@field refused {c:revuey.Comment, why:string, lines?:boolean}[]  `lines`: refused for where it
+---                                     is (not in this review, outdated, not in a PR's diff as
+---                                     shown here), not for anything that may change on GitHub
 ---@field full boolean
 
 local function body_of(c)
@@ -304,8 +306,8 @@ function M.plan(o)
     end
   end
   local parsed = {}
-  local function refuse(c, why)
-    plan.refused[#plan.refused + 1] = { c = c, why = why }
+  local function refuse(c, why, lines)
+    plan.refused[#plan.refused + 1] = { c = c, why = why, lines = lines or nil }
   end
   local function add(t, c, item)
     if t.refused then
@@ -344,9 +346,9 @@ function M.plan(o)
       local path = p.path or a.path
       local file = o.review.file(path)
       if p.how == 'missing' or not file then
-        refuse(c, ('%s is not in this review'):format(path))
+        refuse(c, ('%s is not in this review'):format(path), true)
       elseif p.outdated then
-        refuse(c, 'outdated: the lines it was written on changed since')
+        refuse(c, 'outdated: the lines it was written on changed since', true)
       else
         local want = {
           full = o.full,
@@ -375,7 +377,7 @@ function M.plan(o)
             if item then
               add(t, c, item)
             else
-              refuse(c, w)
+              refuse(c, w, true)
             end
           end
         else
@@ -400,12 +402,13 @@ function M.plan(o)
               return '#' .. x.t.pr.number
             end, hits)
             refuse(c, ('%s fits several PRs of the stack (%s): post it from a layer\'s scope'):format(path, table.concat(ns, ', ')))
-          elseif best then
-            refuse(c, best)
           elseif unread then
+            -- (before the lines' reason from another PR: the one not read may be its PR)
             refuse(c, ('could not read PR #%d\'s files from GitHub: %s'):format(unread.pr.number, unread.files_err or 'failed'))
+          elseif best then
+            refuse(c, best, true)
           else
-            refuse(c, ('no open PR of the stack has %s as shown here (changed by uncommitted or unpushed work or a later layer, or its layer has no open PR)'):format(path))
+            refuse(c, ('no open PR of the stack has %s as shown here (changed by uncommitted or unpushed work or a later layer, or its layer has no open PR)'):format(path), true)
           end
         end
       end
@@ -660,7 +663,8 @@ local MODE_TEXT = {
 ---PR, how its review is made and what it will publish: the comments and replies revuey will add
 ---(`+`), revuey's comments already in the pending review (`=`), the pending review's comments
 ---from elsewhere (submitted too), the commit it is bound to; a PR that is blocked and why; in a
----full stack, every PR of the stack. Then what is left out and why.
+---full stack, every PR of the stack. Then what is left out and why, and the local comments not in
+---the review that the user chose to leave out.
 ---@param r table forge_post_view.result
 ---@return string[] lines
 function M.summary(r)
@@ -721,6 +725,22 @@ function M.summary(r)
     L[#L + 1] = ('Not posted (%d):'):format(#r.left_out)
     for _, e in ipairs(r.left_out) do
       L[#L + 1] = ('  - %s: %s'):format(location(e.c), e.why)
+    end
+  end
+  if #(r.not_postable or {}) > 0 then
+    -- local comments not in the review that cannot be posted now, and why
+    L[#L + 1] = ''
+    L[#L + 1] = ('Not in the review, could not be posted (%d):'):format(#r.not_postable)
+    for _, e in ipairs(r.not_postable) do
+      L[#L + 1] = ('  - %s: %s'):format(location(e.c), e.why)
+    end
+  end
+  if #(r.not_included or {}) > 0 then
+    -- local comments not in the review, left out when asked before the confirmation
+    L[#L + 1] = ''
+    L[#L + 1] = ('Not in the review, not posted (%d; %s adds one):'):format(#r.not_included, M.key('comment_include', 'ci'))
+    for _, c in ipairs(r.not_included) do
+      L[#L + 1] = ('  - %s%s  %s'):format(location(c), c.forge_reply and ' (reply in a GitHub thread)' or '', require('revuey.comments').first_line(c.body))
     end
   end
   for _, w in ipairs(r.warnings or {}) do

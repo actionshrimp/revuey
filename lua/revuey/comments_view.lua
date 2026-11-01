@@ -1352,6 +1352,9 @@ function M.toggle_include(s)
     end
     local copy = vim.deepcopy(cur)
     copy.in_review = not cur.in_review
+    if copy.in_review then
+      copy.forge_removed = nil -- offered by a submit again (forge_post_view.not_included)
+    end
     comments.put(store, copy)
     save_and_emit(s, nil, copy, nil, store)
     local n = require('revuey.forge_post_view').count(store)

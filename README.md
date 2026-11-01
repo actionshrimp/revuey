@@ -681,7 +681,20 @@ require('revuey').setup({
 Your comments stay local until you post them. `ci` on a comment adds it to the review ("add to
 review", marked `in review`; again takes it out); `gP` or `:RevueySubmit [approve|comment|request-changes]`
 posts every comment added in the scope you are viewing as **one GitHub review** with a verdict,
-through your `gh`. Nothing is added unless you pick it. Only your own saved comments can be
+through your `gh`. Nothing is added unless you pick it. When local comments of the scope that
+could be posted are not added to the review (a `cr` reply you forgot to `ci`, say), `gP` lists
+them first and asks: `Include them` (added to the review as `ci` does, and posted with this
+submit; they stay in the review even if you then cancel the confirmation), `Submit without them`
+(`Add without them` for the pending review; they stay local, and the confirmation and the final
+message say how many were not posted; not offered for a submit that would send nothing else)
+or `Cancel` (nothing sent, nothing changed). Comments not in the review that cannot be posted now (GitHub did not return the PR's files, the PR's head
+moved, several PRs of the stack fit, a pending review bound to another commit, too long, edited
+while GitHub was read) are counted in that question, listed with the reason in the confirmation
+(`Not in the review, could not be posted`) and counted in the final message; those that are not
+in this review or that GitHub would refuse for their lines (outdated, outside the PR's diff) are
+not offered, and neither is one you deleted from your pending review on GitHub until you `ci` it
+again. Line and file comments not in the review make `gP` read the PR's files to check them
+(replies need no files). Only your own saved comments can be
 added: an AI review finding or an [agent's comment](#connect-an-agent) once you accept it
 (`ca`), and the local replies `cr` makes on GitHub threads (posted as replies in their threads);
 not untriaged agent comments or findings, drafts or resolved comments. The panel shows
@@ -712,7 +725,9 @@ What happens, in order:
 1. **Reading (nothing is sent).** revuey reads the PR's files as GitHub has them, the PR itself
    (its head commit, your pending review, its latest reviews) and every review it sent comments
    to before, and settles what became of those (below). Each comment is checked against GitHub's
-   diff (below); what can't be posted is left out with the reason.
+   diff (below); what can't be posted is left out with the reason. The comments not added to
+   the review are checked the same way, and those that could be posted are asked about before
+   the confirmation (above); the others are not offered.
 2. **Confirmation.** The verdict (or "Add to your pending review"), and per PR exactly what will happen: the comments and replies
    revuey will add (`+`), those already in your pending review (`=`, with GitHub's text when you
    edited one since, here or on GitHub), the comments your pending review has from elsewhere (submitted too), the
@@ -721,7 +736,8 @@ What happens, in order:
    (`PR #13: nothing to post, no review`). `Write body` adds a review body (a Comment review
    with nothing in it needs one). `Add to pending review` adds the `+` comments without
    submitting (not offered when a PR is refused only for the verdict, such as approving your
-   own PR: use `:RevueySubmit pending`). Cancel leaves GitHub untouched.
+   own PR: use `:RevueySubmit pending`). Cancel leaves GitHub untouched (comments you chose to
+   include just before stay in the review, as after `ci`).
 3. **Sending.** On a PR where you have no pending review and everything is a line comment, one
    request creates and submits the review with all its comments: it exists whole, or not at all.
    Otherwise (your pending review there, started in GitHub's UI or another tool such as
@@ -1473,7 +1489,7 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 |---|---|
 | `mr` | Toggle reviewed. On a hunk header or any line of a hunk: that hunk (it collapses, and the cursor moves to the next unreviewed hunk you can see, skipping collapsed files). On a file header: the whole file (marks every hunk when any is unreviewed, else unmarks them all; collapses the file and moves to the next unreviewed one). When a hunk or file mark completes a file, the cursor goes to the first unreviewed hunk of the next file that is not reviewed, with its header kept in view (a collapsed file, one whose unreviewed hunks you collapsed, or one without hunks gets its header). In visual mode: every hunk the selection touches (a collapsed file in the selection counts whole). A file whose hunks are all reviewed collapses; its header shows `✓ reviewed`, or `◐ 2/5` while partly reviewed. Unmarking a file re-expands the hunks that were collapsed because they were reviewed, not the ones you collapsed with `<Tab>` |
 | `ci` | Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out |
-| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation |
+| `gP` | Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation (first asking about local comments not in the review) |
 
 **Navigation**
 

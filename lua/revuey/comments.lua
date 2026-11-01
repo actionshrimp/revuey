@@ -86,6 +86,9 @@ M.SWITCHED = 'switched'
 ---                                 'posted', pr, repo, review_id? | ledger?, payload (what was
 ---                                 sent), before?, sent_at, thread_id?, comment_id?, database_id?,
 ---                                 url?, posted_at?}
+---@field forge_removed? integer    when a submit found it removed from the pending review on
+---                                 GitHub (taken out of the review); a submit does not offer it
+---                                 again until `ci` adds it (which clears this)
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
 ---                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
 ---                                 accepted_at?, dismissed_at?}

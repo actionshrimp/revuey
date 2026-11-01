@@ -133,7 +133,8 @@ M.defaults = {
     forge_threads = 'gH',
     -- submit the review to GitHub (:RevueySubmit): pick a verdict (or "add to my pending
     -- review": nothing submitted), then a confirmation of exactly what the comments added with
-    -- comment_include do before anything is sent. `gP` (put before) means nothing in a
+    -- comment_include do before anything is sent (local comments not added are asked about
+    -- first: include them, go without, or cancel). `gP` (put before) means nothing in a
     -- read-only review buffer.
     forge_submit = 'gP',
     -- edit the real file at this line in a float (working-tree mode, checked-out layer only).

@@ -1216,6 +1216,32 @@ are in `reports/Terminal code review tool landscape.md`.
       panel's key help shows `gP submit review` whenever the scope has an open PR
       (`scope_targets`; a verdict alone needs no comment), with `(N in review)` when N > 0. The submit takes the store of the
       scope shown (comments of other scopes stay where they are).
+    - **Not in the review.** `forge_post_view.not_included`: the comments `includable` accepts
+      that are not `in_review`, were never sent, are not empty, and are not `forge_removed` (set
+      when a reconcile finds one removed from the pending review on GitHub; `ci` clears it).
+      Prepare plans them with the rest (so line and file comments among them make it read the
+      PRs' files; replies alone do not) and keeps those the plan accepts apart (`r.extra`, each
+      PR's full items in `r.all_items`, `before` computed for all). Refused for where they are
+      (`lines` in the plan: not in this review, outdated, not in a PR's diff as shown here): not
+      offered. Refused for anything else (a PR refused or not read, which full-stack routing
+      reports before another PR's lines reason; several PRs fit; a pending review bound
+      elsewhere; too long; a thread or PR it answers that is not here): `r.extra_failed`,
+      counted in the prompt, listed in the confirmation (`Not in the review, could not be
+      posted`), counted in the final message, and in the "nothing to add" message when nothing
+      else would go. At every confirmation the lists left out are checked again against the
+      reloaded store (`recheck_left_out`: gone, resolved, sent by another submit: dropped;
+      `ci`'d meanwhile: listed as left out of this submit). Before the first confirmation the
+      offered ones are checked again (deleted, resolved, a draft, or with a record now (sent by
+      another Neovim): dropped, never sent twice; edited: not offered, listed as could not be
+      posted; `ci`'d meanwhile: taken as included), then the user picks: include them (set
+      `in_review` as `ci` does; put back in the plan, `set_modes` again: a reply makes the PR's
+      review a pending one), go without them (`r.not_included`: listed as `Not in the review,
+      not posted` and counted in the final message; offered only when the submit would send
+      something without them, `sends_without`), or cancel (nothing sent, nothing changed).
+      Included ones stay in the review when the confirmation is cancelled, as after `ci`.
+      `revalidate` also drops a planned comment that has a record by then (another submit sent
+      it). Every entry point (the verdict prompt, `:RevueySubmit [verdict|pending]`) goes
+      through it.
     - **Where a comment goes** (`forge_post.locate`, against the PR's files from REST `GET
       repos/o/n/pulls/N/files`, paged by 100 up to GitHub's 3,000: `filename`, `status`,
       `sha` = the blob at the PR head, checked against a real PR, and `patch` = GitHub's own
@@ -1317,7 +1343,8 @@ are in `reports/Terminal code review tool landscape.md`.
       NOT_FOUND): forgotten, and planned again only while `in_review`; except a `pending`
       record (it was there, so the user deleted it on GitHub or discarded the review, most
       likely on purpose): forgotten, taken out of the review and listed as left out with the
-      reason, never re-added unasked (`ci` adds it again).
+      reason, never re-added unasked (`ci` adds it again); marked `forge_removed`, so a submit
+      does not offer it among the comments not in the review either.
       Anything else (a partial or failed read, several candidates, a candidate claimed or there
       before, one another record matches too): `unknown`, and its PR is blocked (listed with
       `?`, no Submit for it). GitHub's review comments do not say their side, so a LEFT and a

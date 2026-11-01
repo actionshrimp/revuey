@@ -37,7 +37,7 @@ M.GROUPS = {
     { names = { 'comment_include' }, desc = 'add the comment on this line to the GitHub review / take it out',
       readme = 'Add the comment on this line to the [review to post on GitHub](#posting-a-review-to-github) / take it out' },
     { names = { 'forge_submit' }, desc = 'submit the review to GitHub: a verdict, then a confirmation',
-      readme = 'Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation' },
+      readme = 'Submit the review to GitHub (`:RevueySubmit`): pick a verdict (or add to your pending review, not submitted), then a confirmation (first asking about local comments not in the review)' },
   },
   {
     name = 'Navigation',

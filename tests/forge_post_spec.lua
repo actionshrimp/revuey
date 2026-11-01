@@ -277,6 +277,48 @@ h.test('plan: full stack routes each line to the PR whose diff adds it, never to
   h.ok(p3.refused[1].why:find('fits several PRs of the stack (#13, #14)', 1, true), p3.refused[1].why)
 end)
 
+h.test('plan: refusals for where a comment is are marked `lines`; the others (GitHub, the stack, the comment) are not', function()
+  local kinds = { new2 = 'add' }
+  local function flags(p)
+    local out = {}
+    for _, x in ipairs(p.refused) do
+      out[x.c.id] = { x.lines or false, x.why }
+    end
+    return out
+  end
+  local t = target(12, { files = { PF } })
+  local long = string.rep('x', post.MAX_BODY + 1)
+  local f = flags(post.plan(plan_input({
+    cmt('c', 10), cmt('i', 19), cmt('long', 2, 2, { extra = { body = long } }),
+    cmt('nothread', 2, 2, { extra = { forge_reply = { pr = 12, repo = 'github.com/acme/shop' } } }),
+    cmt('otherpr', 2, 2, { extra = { forge_reply = { thread_id = 'T9', pr = 99, repo = 'github.com/acme/shop' } } }),
+    cmt('gone', 2, 2, { path = 'src/gone.ts' }),
+  }, { t }, { place = { i = { outdated = true } } })))
+  h.eq(true, f.c[1], f.c[2])
+  h.eq(true, f.i[1], f.i[2])
+  h.eq(true, f.gone[1], f.gone[2])
+  h.eq(false, f.long[1], f.long[2])
+  h.eq({ false, 'the GitHub thread it answers is unknown' }, f.nothread)
+  h.eq(false, f.otherpr[1], f.otherpr[2])
+  -- a whole PR refused, files not read
+  h.eq(false, flags(post.plan(plan_input({ cmt('a', 2) }, { target(12, { files = { PF }, tip = 'a1', head = 'b2' }) }))).a[1])
+  h.eq(false, flags(post.plan(plan_input({ cmt('a', 2) }, { target(12) }))).a[1])
+  -- full stack: several PRs fit
+  local p3 = post.plan(plan_input({ cmt('a', 2) }, { target(13, { files = { PF } }), target(14, { files = { PF } }) }, { full = true, kinds = kinds }))
+  h.eq(false, flags(p3).a[1], flags(p3).a[2])
+  -- full stack: one PR's files not read and another PR's lines do not fit: the read failure is
+  -- the reason (its PR may be the one), never the lines'
+  -- (#12 has the reviewed file, B1, so its lines' reason is real: line 18 is not in its diff)
+  local pf12 = { path = 'src/cart.ts', status = 'added', sha = 'B1', patch = '@@ -0,0 +1,2 @@\n+import { multiply, sum } from "./math";\n+x' }
+  local only12 = post.plan(plan_input({ cmt('b', 18) }, { target(12, { files = { pf12 } }) }, { full = true, kinds = { new18 = 'add' } }))
+  h.eq(true, flags(only12).b[1], flags(only12).b[2])
+  local unread = target(13)
+  unread.files_err = 'HTTP 502'
+  local p4 = post.plan(plan_input({ cmt('b', 18) }, { target(12, { files = { pf12 } }), unread }, { full = true, kinds = { new18 = 'add' } }))
+  h.eq(false, flags(p4).b[1])
+  h.ok(flags(p4).b[2]:find("could not read PR #13's files from GitHub: HTTP 502", 1, true), flags(p4).b[2])
+end)
+
 h.test('queries and mutations: preflight, pending review, threads, replies, submit; answers and alias errors', function()
   local q, aliases = forge.build_preflight_query({ { owner = 'acme', name = 'shop', number = 12 } }, { 'PRR_1' })
   h.ok(q:find('viewer { login }', 1, true), q)
@@ -646,20 +688,22 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   local skipped = add_comment(s, 'src/cart.ts', 'add', 3, 3, 'Not included.')
   -- the change check had seen news on the PR's threads: the refetch after the submit clears them
   forge.changed['github.com/acme/shop#12'] = { comments = true }
-  local asked = answer({ 1 })
+  local asked = answer({ 'Submit without them', 1 })
   local msgs, restore = h.capture_notify()
   view.submit('comment')
   wait_job()
   restore()
+  -- first the comment not in the review, left out
+  h.eq(2, #asked)
+  h.ok(asked[1].msg:find('1 local comment is not in the review (ci adds one):\n  src/cart.ts:3  Not included.', 1, true), asked[1].msg)
   -- the confirmation: verdict, the PR, counts and each comment
-  h.eq(1, #asked)
-  local text = asked[1].msg
+  local text = asked[2].msg
   h.ok(text:find('Submit a "Comment" review to GitHub', 1, true), text)
   h.ok(text:find('PR #12 (acme/shop): 4 comments, 1 reply from revuey', 1, true), text)
   h.ok(text:find('+ src/cart.ts:17-19  Name this subtotal.', 1, true), text)
   h.ok(text:find('+ src/index.ts  Needs a test.', 1, true), text)
-  h.ok(not text:find('Not included', 1, true) and not text:find('Not posted', 1, true), text)
-  h.eq('&Submit\n&Write body\n&Add to pending review\n&Cancel', asked[1].choices)
+  h.ok(not text:find('Not posted', 1, true) and text:find('Not in the review, not posted (1; ci adds one):\n  - src/cart.ts:3  Not included.', 1, true), text)
+  h.eq('&Submit\n&Write body\n&Add to pending review\n&Cancel', asked[2].choices)
   -- what went to GitHub, in order
   local m = mutations(calls)
   -- (in the order of the comments list: by file, then line)
@@ -678,7 +722,7 @@ h.test('submit: comments, a range, a file comment and a thread reply go into a n
   h.eq({ path = 'src/index.ts', line = 8, side = 'LEFT', body = 'Why does this go?', pullRequestReviewId = 'PRR_1' }, by_body['Why does this go?'])
   h.eq({ pullRequestReviewThreadId = 'T_round', body = 'No, see formatCurrency.', pullRequestReviewId = 'PRR_1' }, by_body['No, see formatCurrency.'])
   h.eq({ pullRequestReviewId = 'PRR_1', event = 'COMMENT' }, m[#m].input)
-  h.ok(msgs[#msgs].msg:find('Comment review submitted to #12', 1, true), vim.inspect(msgs))
+  h.ok(msgs[#msgs].msg:find('Comment review submitted to #12; 1 local comment not in the review, not posted (ci adds one)', 1, true), vim.inspect(msgs))
   -- posted: kept with their GitHub ids, out of the review
   for _, c in ipairs({ a, b, f, d, r }) do
     local x = get(s, c.id)
@@ -1928,6 +1972,43 @@ h.test('the ledger: an unreadable file stops the submit (its entries are never d
   view.close()
 end)
 
+h.test('back from the body editor: comments left out are checked again (deleted, resolved, added with ci meanwhile)', function()
+  local s, calls = setup_review('recheck')
+  local keep = add_comment(s, 'src/cart.ts', 'add', 17, 17, 'Subtotal?', { in_review = true })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.')
+  local c = add_comment(s, 'src/cart.ts', 'add', 18, 18, 'Round it?')
+  local asked = answer({ 'Submit without them', 'Write body' })
+  view.submit('comment')
+  assert(vim.wait(10000, function()
+    return require('revuey.comment_editor').current ~= nil
+  end, 10), 'editor opened')
+  h.ok(asked[2].msg:find('Not in the review, not posted (3; ci adds one)', 1, true), asked[2].msg)
+  comments.delete(s.cm.store, a.id)
+  local cur = vim.deepcopy(get(s, b.id))
+  cur.status = 'resolved'
+  comments.put(s.cm.store, cur)
+  cur = vim.deepcopy(get(s, c.id))
+  cur.in_review = true
+  comments.put(s.cm.store, cur)
+  comments.save(s.cm.store)
+  local ed = require('revuey.comment_editor').current
+  vim.api.nvim_buf_set_lines(ed.buf, 0, -1, false, { 'Overall fine.' })
+  answer({ 'Cancel' })
+  asked = answer({ 'Cancel' })
+  require('revuey.comment_editor').save()
+  wait_job()
+  h.eq(1, #asked)
+  local text = asked[1].msg
+  -- deleted and resolved: no longer listed; added with ci: in the review now, not in this submit
+  h.ok(not text:find('Not in the review', 1, true), text)
+  h.ok(text:find('Not posted (1):\n  - src/cart.ts:18: added to the review after it was planned: submit again to send it', 1, true), text)
+  h.ok(text:find('+ src/cart.ts:17  Subtotal?', 1, true), text)
+  h.eq({}, ops(calls))
+  h.eq(true, get(s, keep.id).in_review)
+  view.close()
+end)
+
 h.test('back from the body editor: a comment taken out, edited or deleted meanwhile is not sent', function()
   local s, calls = setup_review('revalidate')
   local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
@@ -2350,11 +2431,20 @@ h.test('add to pending, then deleted on GitHub (or the review discarded): taken 
   view.submit('pending')
   wait_job()
   restore()
+  -- the one taken out before is remembered as removed on GitHub: not offered again
   h.eq(0, #asked)
-  h.ok(msgs[#msgs].msg:find('nothing to add to your pending review.', 1, true) and msgs[#msgs].msg:find('src/cart.ts:13: removed from your pending review', 1, true), vim.inspect(msgs))
+  h.ok(get(s, a.id).forge_removed ~= nil, vim.inspect(get(s, a.id)))
+  h.ok(msgs[#msgs].msg:find('nothing to add to your pending review.', 1, true) and msgs[#msgs].msg:find('src/cart.ts:13: removed from your pending review', 1, true)
+    and not msgs[#msgs].msg:find('Not in the review', 1, true), vim.inspect(msgs))
   h.eq({ nil, false }, { get(s, b.id).forge_post, get(s, b.id).in_review })
   h.eq(2, #ops(calls), 'nothing added again (the first two adds only)')
-  -- added to the review again on purpose (ci): a new add
+  -- nor by a verdict's submit
+  asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(not asked[1].msg:find('not in the review', 1, true), asked[1].msg)
+  -- added to the review again on purpose: a new add; the other one is still not offered
   local cur = vim.deepcopy(get(s, a.id))
   cur.in_review = true
   comments.put(s.cm.store, cur)
@@ -2362,6 +2452,7 @@ h.test('add to pending, then deleted on GitHub (or the review discarded): taken 
   asked = answer({ 'Add to pending review' })
   view.submit('pending')
   wait_job()
+  h.eq(1, #asked)
   h.ok(asked[1].msg:find('+ src/cart.ts:12  Return a copy?', 1, true), asked[1].msg)
   h.eq('pending', get(s, a.id).forge_post.state)
   view.close()
@@ -2385,6 +2476,477 @@ h.test('add to pending is offered in a full stack where another PR has two pendi
   h.eq('&Submit\n&Write body\n&Add to pending review\n&Cancel', asked[1].choices)
   h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread' }, ops(calls))
   h.eq('PR_12', mutations(calls)[1].input.pullRequestId)
+  view.close()
+end)
+
+---A local reply in GitHub thread T_round (src/cart.ts:18), made with `cr` as a user does.
+local function cr_reply(s, text)
+  local row = row_of(s, 'src/cart.ts', 'add', 18)
+  keys(s, 'cr', row)
+  local ed = require('revuey.comment_editor').current
+  assert(ed and not ed.done, 'cr opened no editor')
+  vim.api.nvim_buf_set_lines(ed.buf, 0, -1, false, { text })
+  vim.cmd('stopinsert')
+  require('revuey.comment_editor').save()
+  for _, c in ipairs(comments.list(s.cm.store)) do
+    if c.forge_reply and c.body == text then
+      return c, row
+    end
+  end
+  error('no local reply ' .. text)
+end
+
+local ROUND = { ['acme/shop#12'] = { gh_thread('T_round', 18, { gh_comment('PRRC_x', 'Rounded?') }) } }
+
+---How many REST reads of a PR's files the fake `gh` answered.
+local function files_reads(calls)
+  local n = 0
+  for _, x in ipairs(h.read_calls(calls)) do
+    for _, a in ipairs(x.argv) do
+      if a:find('/pulls/%d+/files') then
+        n = n + 1
+        break
+      end
+    end
+  end
+  return n
+end
+
+h.test('a cr reply not in the review: asked before the confirmation; Include posts it in its thread with the Approve', function()
+  local s, calls = setup_review('notincl', { threads = vim.deepcopy(ROUND) })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  h.eq(false, get(s, c.id).in_review)
+  -- not candidates: an AI finding or an agent's comment not accepted, a draft, a resolved one
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, '**Chain**', { author = { kind = 'ai', name = 'claude' }, ai = { title = 'Chain', severity = 'minor' } })
+  add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Agent: done.', { author = { kind = 'agent', name = 'claude' } })
+  add_comment(s, 'src/cart.ts', 'add', 5, 5, 'wip', { status = 'draft' })
+  add_comment(s, 'src/cart.ts', 'add', 17, 17, 'Old note.', { status = 'resolved' })
+  local asked = answer({ 'Include them', 'Submit' })
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq(2, #asked)
+  h.eq('1 local comment is not in the review (ci adds one):\n  src/cart.ts:18 (reply in a GitHub thread)  No, see formatCurrency.\n\n'
+    .. 'Post them with this review? Nothing has been sent yet.', asked[1].msg)
+  h.eq({ '&Include them\nSubmit &without them\n&Cancel', 1 }, { asked[1].choices, asked[1].default })
+  local text = asked[2].msg
+  h.ok(text:find('PR #12 (acme/shop): 1 reply from revuey', 1, true), text)
+  h.ok(text:find('a new pending review, filled, then submitted', 1, true), text)
+  h.ok(text:find('+ src/cart.ts:18 (reply in a GitHub thread)  No, see formatCurrency.', 1, true), text)
+  h.ok(not text:find('Not in the review', 1, true), text)
+  h.eq(0, files_reads(calls), 'only a reply is offered: no PR files read')
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThreadReply', 'submitPullRequestReview' }, ops(calls))
+  local m = mutations(calls)
+  h.eq({ pullRequestReviewThreadId = 'T_round', body = 'No, see formatCurrency.', pullRequestReviewId = 'PRR_1' }, m[2].input)
+  h.eq({ pullRequestReviewId = 'PRR_1', event = 'APPROVE' }, m[3].input)
+  h.eq({ 'posted', false }, { get(s, c.id).forge_post.state, get(s, c.id).in_review })
+  h.ok(msgs[#msgs].msg:find('Approve review submitted to #12', 1, true) and not msgs[#msgs].msg:find('not posted', 1, true), vim.inspect(msgs))
+  view.close()
+end)
+
+h.test('comments not in the review, submitted without them: not posted, listed in the confirmation and the message', function()
+  local s, calls = setup_review('notinclwo', { threads = vim.deepcopy(ROUND) })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local asked = answer({ 'Submit without them', 'Submit' })
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq(2, #asked)
+  h.ok(asked[1].msg:find('2 local comments are not in the review (ci adds one):\n  src/cart.ts:12  Return a copy?\n  src/cart.ts:18 (reply in a GitHub thread)', 1, true), asked[1].msg)
+  local text = asked[2].msg
+  h.ok(text:find('Not in the review, not posted (2; ci adds one):\n  - src/cart.ts:12  Return a copy?\n  - src/cart.ts:18 (reply in a GitHub thread)  No, see formatCurrency.', 1, true), text)
+  h.ok(text:find('a new review, created and submitted in one step', 1, true), text)
+  -- the verdict alone
+  h.eq({ 'addPullRequestReview' }, ops(calls))
+  h.eq({ 'APPROVE', nil }, { mutations(calls)[1].input.event, mutations(calls)[1].input.threads })
+  for _, x in ipairs({ a, c }) do
+    h.eq({ nil, false }, { get(s, x.id).forge_post, get(s, x.id).in_review })
+  end
+  h.ok(msgs[#msgs].msg:find('Approve review submitted to #12; 2 local comments not in the review, not posted (ci adds one)', 1, true), vim.inspect(msgs))
+  view.close()
+end)
+
+h.test('comments not in the review: Cancel sends nothing and leaves them as they were', function()
+  local s, calls = setup_review('notinclcancel', { threads = vim.deepcopy(ROUND) })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  local asked = answer({ 'Cancel' })
+  local msgs, restore = h.capture_notify()
+  view.submit('comment')
+  wait_job()
+  restore()
+  h.eq(1, #asked)
+  h.eq({}, ops(calls))
+  h.eq({ nil, false }, { get(s, c.id).forge_post, get(s, c.id).in_review })
+  h.ok(msgs[#msgs].msg:find('nothing sent', 1, true), vim.inspect(msgs))
+  view.close()
+end)
+
+h.test('gP add to pending: a cr reply not in the review is offered; included, it goes into a new pending review, unsubmitted', function()
+  local s, calls = setup_review('notinclpending', { threads = vim.deepcopy(ROUND) })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  local orig = vim.ui.select
+  vim.ui.select = function(_, _, cb)
+    cb('pending')
+  end
+  local asked = answer({ 'Include them', 'Add to pending review' })
+  local msgs, restore = h.capture_notify()
+  keys(s, 'gP')
+  wait_job()
+  restore()
+  vim.ui.select = orig
+  h.eq(2, #asked)
+  -- nothing else is in the review: "without" would add nothing, so it is not offered
+  h.ok(asked[1].msg:find('Add them to your pending review? Nothing has been sent yet.', 1, true), asked[1].msg)
+  h.eq('&Include them\n&Cancel', asked[1].choices)
+  h.ok(asked[2].msg:find('+ src/cart.ts:18 (reply in a GitHub thread)  No, see formatCurrency.', 1, true), asked[2].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThreadReply' }, ops(calls))
+  h.eq({ pullRequestReviewThreadId = 'T_round', body = 'No, see formatCurrency.', pullRequestReviewId = 'PRR_1' }, mutations(calls)[2].input)
+  h.eq({ 'pending', true }, { get(s, c.id).forge_post.state, get(s, c.id).in_review })
+  h.ok(msgs[#msgs].msg:find('added 1 comment to your pending review on #12; not submitted', 1, true), vim.inspect(msgs))
+  -- a later Approve: in the review already, so not asked about; only the submit is sent
+  asked = answer({ 'Submit' })
+  view.submit('approve')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('= src/cart.ts:18 (reply in a GitHub thread)', 1, true), asked[1].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThreadReply', 'submitPullRequestReview' }, ops(calls))
+  h.eq('posted', get(s, c.id).forge_post.state)
+  view.close()
+end)
+
+h.test('comments not in the review the plan refuses: for their lines, not offered; when GitHub failed, said', function()
+  -- full stack: a line an earlier layer added is refused for its lines, silently
+  local s, calls = setup_review('notinclrefused')
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  add_comment(s, 'src/index.ts', 'add', 8, 8, 'One item only?', { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Return a copy?')
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('+ src/index.ts:8', 1, true) and not asked[1].msg:find('Return a copy', 1, true), asked[1].msg)
+  view.close()
+  -- the PR's files could not be read: the line comment cannot be checked, said everywhere;
+  -- the reply needs no files and is offered
+  s, calls = setup_review('notinclfail', { threads = vim.deepcopy(ROUND), fail = { files = true } })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  asked = answer({ 'Include them', 'Submit' })
+  local msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.eq(2, #asked)
+  h.ok(asked[1].msg:find('1 local comment is not in the review (ci adds one):\n  src/cart.ts:18 (reply in a GitHub thread)', 1, true)
+    and asked[1].msg:find('1 more could not be posted (listed in the confirmation).', 1, true)
+    and not asked[1].msg:find('Return a copy', 1, true), asked[1].msg)
+  h.ok(asked[2].msg:find("Not in the review, could not be posted (1):\n  - src/cart.ts:12: could not read PR #12's files from GitHub", 1, true), asked[2].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThreadReply', 'submitPullRequestReview' }, ops(calls))
+  h.eq({ 'posted', nil, false }, { get(s, c.id).forge_post.state, get(s, a.id).forge_post, get(s, a.id).in_review })
+  h.ok(msgs[#msgs].msg:find('Approve review submitted to #12; 1 local comment not in the review could not be posted', 1, true), vim.inspect(msgs))
+  view.close()
+  -- nothing in the review and nothing that can be checked: the reason, not a bare "nothing"
+  s, calls = setup_review('notinclfail2', { fail = { files = true } })
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  add_comment(s, 'src/index.ts', 'add', 8, 8, 'One item only?')
+  asked = answer({})
+  msgs, restore = h.capture_notify()
+  view.submit('pending')
+  wait_job()
+  restore()
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find('nothing to add to your pending review', 1, true)
+    and msgs[#msgs].msg:find("1 local comment not in the review could not be posted: src/index.ts:8: could not read PR #", 1, true), vim.inspect(msgs))
+  h.eq({}, ops(calls))
+  view.close()
+end)
+
+h.test('Include in a full stack with nothing else in the review: each comment goes to its PR; no "without"', function()
+  local s, calls = setup_review('notinclfull')
+  view.set_scope({ kind = 'full' })
+  idle(s)
+  local ui = add_comment(s, 'src/cart.ts', 'add', 23, 23, 'Join with a comma?')
+  local cart = add_comment(s, 'src/index.ts', 'add', 8, 8, 'One item only?')
+  local asked = answer({ 'Include them', 'Submit' })
+  view.submit('comment')
+  wait_job()
+  h.eq(2, #asked)
+  h.ok(asked[1].msg:find('2 local comments are not in the review', 1, true) and asked[1].msg:find('Post them with this review? Nothing', 1, true), asked[1].msg)
+  h.eq('&Include them\n&Cancel', asked[1].choices)
+  local reviews = {}
+  for _, x in ipairs(mutations(calls)) do
+    reviews[x.input.pullRequestId] = x.input.threads[1].body
+  end
+  h.eq({ PR_12 = 'One item only?', PR_13 = 'Join with a comma?' }, reviews)
+  h.eq({ 12, 13 }, { get(s, cart.id).forge_post.pr, get(s, ui.id).forge_post.pr })
+  view.close()
+end)
+
+h.test('Include with your pending review on GitHub: it is filled, then submitted; the same text there is not this comment', function()
+  local s, calls = setup_review('notinclexisting', { edit = graphite() })
+  -- the same text as the pending comment from Graphite, on another line
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'From Graphite.')
+  local asked = answer({ 'Include them', 'Submit' })
+  view.submit('comment')
+  wait_job()
+  h.eq(2, #asked)
+  -- without it, the PR's mode would be "submit" (nothing to add)
+  h.ok(asked[2].msg:find('added to your pending review on GitHub, then submitted', 1, true) and asked[2].msg:find('+ src/cart.ts:12  From Graphite.', 1, true), asked[2].msg)
+  h.eq({ 'addPullRequestReviewThread', 'submitPullRequestReview' }, ops(calls))
+  h.eq('PRR_g', mutations(calls)[1].input.pullRequestReviewId)
+  local fp = get(s, a.id).forge_post
+  h.eq({ 'posted', { 'G1' } }, { fp.state, fp.before })
+  view.close()
+end)
+
+h.test('comments not in the review changed while GitHub was read: edited, added with ci, resolved', function()
+  local s, calls = setup_review('notinclrace')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.')
+  local c = add_comment(s, 'src/cart.ts', 'add', 17, 17, 'Old note.')
+  -- just before the first confirmation (the reads are done): as another Neovim or the CLI would
+  local orig = fpv.confirm
+  fpv.confirm = function(r)
+    fpv.confirm = orig
+    local function change(id, f)
+      local cur = vim.deepcopy(comments.get(s.cm.store, id))
+      f(cur)
+      comments.put(s.cm.store, cur)
+    end
+    change(a.id, function(x)
+      x.body = 'Return a frozen copy?'
+    end)
+    change(b.id, function(x)
+      x.in_review = true
+    end)
+    change(c.id, function(x)
+      x.status = 'resolved'
+    end)
+    comments.save(s.cm.store)
+    return orig(r)
+  end
+  local asked = answer({ 'Submit' })
+  view.submit('comment')
+  wait_job()
+  fpv.confirm = orig
+  -- nothing is asked: the edited one is not offered (its text was not checked), the ci'd one is
+  -- in, the resolved one gone
+  h.eq(1, #asked)
+  local text = asked[1].msg
+  h.ok(text:find('+ src/cart.ts:13  Name it.', 1, true) and not text:find('Old note', 1, true), text)
+  h.ok(text:find('Not in the review, could not be posted (1):\n  - src/cart.ts:12: edited while GitHub was read: submit again to send the new text', 1, true), text)
+  h.eq({ 'addPullRequestReview' }, ops(calls))
+  h.eq({ 'Name it.' }, vim.tbl_map(function(t)
+    return t.body
+  end, mutations(calls)[1].input.threads))
+  h.eq({ 'posted', nil, false }, { get(s, b.id).forge_post.state, get(s, a.id).forge_post, get(s, a.id).in_review })
+  h.eq({ nil, false }, { get(s, c.id).forge_post, get(s, c.id).in_review })
+  view.close()
+end)
+
+h.test('Include, then Cancel at the confirmation: nothing sent; the comments stay in the review (as after ci)', function()
+  local s, calls = setup_review('notinclcancel2', { threads = vim.deepcopy(ROUND) })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  local asked = answer({ 'Include them', 'Cancel' })
+  view.submit('approve')
+  wait_job()
+  h.eq(2, #asked)
+  h.eq({}, ops(calls))
+  h.eq({ nil, true }, { get(s, c.id).forge_post, get(s, c.id).in_review })
+  -- on disk, as `ci` saves it
+  local disk = comments.load(s.cm.path)
+  h.eq(true, comments.get(disk, c.id).in_review)
+  -- the next submit has it in the review: not asked about
+  asked = answer({ 'Cancel' })
+  view.submit('approve')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('+ src/cart.ts:18 (reply in a GitHub thread)', 1, true), asked[1].msg)
+  view.close()
+end)
+
+h.test('ci on a comment removed from the pending review on GitHub: in the review again, and offered again once taken out', function()
+  local s, calls = setup_review('removedci')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { forge_removed = 1 })
+  local asked = answer({})
+  local msgs, restore = h.capture_notify()
+  view.submit('pending')
+  wait_job()
+  restore()
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find('nothing to add to your pending review', 1, true), vim.inspect(msgs))
+  local row = row_of(s, 'src/cart.ts', 'add', 12)
+  keys(s, 'ci', row)
+  h.eq({ true, nil }, { get(s, a.id).in_review, get(s, a.id).forge_removed })
+  keys(s, 'ci', row)
+  asked = answer({ 'Cancel' })
+  view.submit('pending')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('1 local comment is not in the review', 1, true), asked[1].msg)
+  h.eq({}, ops(calls))
+  view.close()
+end)
+
+h.test('comments not in the review that cannot be posted are said: a pending review bound elsewhere, a PR whose head moved', function()
+  local s, calls = setup_review('notinclbound', { edit = function(p, d)
+    p.prs['acme/shop#12'].pending = { id = 'PRR_old', commit = rev(d, 'stack/math'), comments = {
+      { id = 'PRRC_o1', databaseId = 911, path = 'src/index.ts', line = 2, body = 'Old note.' } } }
+    p.reviews.PRR_old = 'PENDING'
+  end })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('Not in the review, could not be posted (1):\n  - src/cart.ts:12: your pending review on PR #12 is bound to commit', 1, true), asked[1].msg)
+  view.close()
+  s, calls = setup_review('notinclmoved', { head12 = string.rep('a', 40) })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local msgs, restore = h.capture_notify()
+  asked = answer({ 'Cancel' })
+  view.submit('pending')
+  wait_job()
+  restore()
+  h.eq(0, #asked)
+  h.ok(msgs[#msgs].msg:find("1 local comment not in the review could not be posted: src/cart.ts:12: PR #12's head on GitHub is aaaaaaa", 1, true), vim.inspect(msgs))
+  h.eq({}, ops(calls))
+  view.close()
+end)
+
+h.test('a comment removed on GitHub is not offered: no files read for it, nothing said about it', function()
+  local s, calls = setup_review('removedquiet', { fail = { files = true } })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { forge_removed = 1 })
+  local asked = answer({ 'Cancel' })
+  view.submit('approve')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(not asked[1].msg:find('Not in the review', 1, true), asked[1].msg)
+  h.eq(0, files_reads(calls))
+  view.close()
+end)
+
+h.test('a pending comment taken out of the review, then deleted on GitHub: remembered as removed, not offered', function()
+  local s, calls = setup_review('ciremoved', { edit = graphite() })
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  answer({ 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  h.eq('pending', get(s, a.id).forge_post.state)
+  -- taken out (as `ci` does; the GitHub thread drawn for it covers its line here)
+  local cur = vim.deepcopy(get(s, a.id))
+  cur.in_review = false
+  comments.put(s.cm.store, cur)
+  comments.save(s.cm.store)
+  h.eq({ false, 'pending' }, { get(s, a.id).in_review, get(s, a.id).forge_post.state })
+  local P = fake_state(calls)
+  P.prs['acme/shop#12'].pending.comments = vim.tbl_filter(function(c)
+    return c.body ~= 'Return a copy?'
+  end, P.prs['acme/shop#12'].pending.comments)
+  write_state(calls, P)
+  local asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(asked[1].msg:find('src/cart.ts:12: removed from your pending review on PR #12', 1, true), asked[1].msg)
+  h.ok(get(s, a.id).forge_removed ~= nil and get(s, a.id).forge_post == nil, vim.inspect(get(s, a.id)))
+  asked = answer({ 'Cancel' })
+  view.submit('comment')
+  wait_job()
+  h.eq(1, #asked)
+  h.ok(not asked[1].msg:find('not in the review', 1, true), asked[1].msg)
+  view.close()
+end)
+
+h.test('the note on comments left out: on the pending path and when the submit fails', function()
+  local s = setup_review('notenote', { threads = vim.deepcopy(ROUND) })
+  add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?', { in_review = true })
+  add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.')
+  answer({ 'Add without them', 'Add to pending review' })
+  local msgs, restore = h.capture_notify()
+  view.submit('pending')
+  wait_job()
+  restore()
+  h.ok(msgs[#msgs].msg:find('added 1 comment to your pending review on #12; not submitted: submit it on GitHub, in Graphite or with gP; 1 local comment not in the review, not posted (ci adds one)', 1, true), vim.inspect(msgs))
+  view.close()
+  local calls
+  s, calls = setup_review('notefail', { threads = vim.deepcopy(ROUND), fail = { submit = { 'acme/shop#12' } } })
+  local c = cr_reply(s, 'No, see formatCurrency.')
+  keys(s, 'ci', row_of(s, 'src/cart.ts', 'add', 18))
+  add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.')
+  answer({ 'Submit without them', 'Submit' })
+  msgs, restore = h.capture_notify()
+  view.submit('approve')
+  wait_job()
+  restore()
+  h.ok(msgs[#msgs].msg:find('not submitted: PR #12: ', 1, true) and msgs[#msgs].msg:find('; 1 local comment not in the review, not posted (ci adds one)', 1, true), vim.inspect(msgs))
+  h.eq('pending', get(s, c.id).forge_post.state)
+  h.eq('submitPullRequestReview', ops(calls)[#ops(calls)])
+  view.close()
+end)
+
+h.test('two Neovims: one sent by another submit while GitHub was read is never sent twice (offered or planned)', function()
+  local s, calls = setup_review('twice')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.', { in_review = true })
+  local d = add_comment(s, 'src/cart.ts', 'add', 17, 17, 'Subtotal?', { in_review = true })
+  local orig = fpv.confirm
+  fpv.confirm = function(r)
+    fpv.confirm = orig
+    -- the other Neovim added a (ci, then its submit) and b to its pending review
+    for _, id in ipairs({ a.id, b.id }) do
+      local cur = vim.deepcopy(comments.get(s.cm.store, id))
+      cur.in_review = true
+      cur.forge_post = { state = 'pending', pr = 12, repo = 'github.com/acme/shop', review_id = 'PRR_other', comment_id = 'X' .. id }
+      comments.put(s.cm.store, cur)
+    end
+    comments.save(s.cm.store)
+    return orig(r)
+  end
+  local asked = answer({ 'Submit' })
+  view.submit('comment')
+  wait_job()
+  fpv.confirm = orig
+  h.eq(1, #asked, 'a is not offered')
+  local text = asked[1].msg
+  h.ok(text:find('src/cart.ts:12: sent to GitHub by another submit meanwhile', 1, true), text)
+  h.ok(text:find('src/cart.ts:13: sent to GitHub by another submit while the confirmation was open', 1, true), text)
+  h.ok(text:find('+ src/cart.ts:17  Subtotal?', 1, true) and not text:find('+ src/cart.ts:12', 1, true) and not text:find('+ src/cart.ts:13', 1, true), text)
+  h.eq({ 'Subtotal?' }, vim.tbl_map(function(t)
+    return t.body
+  end, mutations(calls)[1].input.threads))
+  h.eq('posted', get(s, d.id).forge_post.state)
+  view.close()
+end)
+
+h.test('one added with ci while GitHub was read counts as something to send: "without" is offered and sends it', function()
+  local s, calls = setup_review('racewithout')
+  local a = add_comment(s, 'src/cart.ts', 'add', 12, 12, 'Return a copy?')
+  local b = add_comment(s, 'src/cart.ts', 'add', 13, 13, 'Name it.')
+  local orig = fpv.confirm
+  fpv.confirm = function(r)
+    fpv.confirm = orig
+    local cur = vim.deepcopy(comments.get(s.cm.store, b.id))
+    cur.in_review = true
+    comments.put(s.cm.store, cur)
+    comments.save(s.cm.store)
+    return orig(r)
+  end
+  local asked = answer({ 'Add without them', 'Add to pending review' })
+  view.submit('pending')
+  wait_job()
+  fpv.confirm = orig
+  h.eq(2, #asked)
+  h.ok(asked[1].msg:find('  src/cart.ts:12  Return a copy?\n', 1, true) and asked[1].msg:find('Add them to your pending review too?', 1, true), asked[1].msg)
+  h.eq('&Include them\nAdd &without them\n&Cancel', asked[1].choices)
+  h.ok(asked[2].msg:find('+ src/cart.ts:13  Name it.', 1, true), asked[2].msg)
+  h.eq({ 'addPullRequestReview', 'addPullRequestReviewThread' }, ops(calls))
+  h.eq({ 'pending', nil, false }, { get(s, b.id).forge_post.state, get(s, a.id).forge_post, get(s, a.id).in_review })
   view.close()
 end)
 

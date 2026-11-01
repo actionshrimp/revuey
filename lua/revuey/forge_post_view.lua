@@ -5,7 +5,9 @@
 --      PR's latest reviews and every review revuey sent comments to, all read whole);
 --      reconcile: what became of every comment revuey sent before (its write-ahead record
 --      against those reads); then forge_post.plan routes and checks what is to be added.
---   2. confirm: exactly what each PR's review will publish, what is already pending, what is
+--   2. confirm: first, when local comments of the scope that could go are not added to the
+--      review (`ci`), whether to include them, go without them (listed as not posted) or cancel;
+--      then exactly what each PR's review will publish, what is already pending, what is
 --      left out and why, PRs that are blocked; nothing has been sent yet. Cancel: GitHub is
 --      untouched. "Add to pending review" (`:RevueySubmit pending`, the verdict prompt's last
 --      choice, or the confirmation's button) adds the same comments without submitting.
@@ -74,6 +76,21 @@ function M.included(store)
   for _, c in ipairs(comments.list(store, { include_resolved = true, include_drafts = true })) do
     local st = post.state(c)
     if st ~= 'posted' and (c.in_review or SENT[st]) then
+      out[#out + 1] = c
+    end
+  end
+  return out
+end
+
+---Local comments not added to the review that a submit could post (forge_post.includable: your
+---own saved comments, an AI finding or an agent's comment once accepted, local replies in
+---GitHub threads; not drafts, resolved or dismissed ones), never sent, not empty, and not taken
+---out because they were removed from the pending review on GitHub (`forge_removed`, until `ci`).
+---A submit asks about those it can route.
+function M.not_included(store)
+  local out = {}
+  for _, c in ipairs(comments.list(store)) do
+    if not c.in_review and post.state(c) == nil and not c.forge_removed and post.includable(c) and vim.trim(c.body or '') ~= '' then
       out[#out + 1] = c
     end
   end
@@ -192,6 +209,10 @@ end
 local function split(t)
   local _, owner, name = (t.pr.repo or ''):match('^(.-)/([^/]+)/([^/]+)$')
   return owner, name
+end
+
+local function plural(n, one, many)
+  return ('%d %s'):format(n, n == 1 and one or many)
 end
 
 ---One line about a comment for the confirmation.
@@ -510,9 +531,11 @@ function M.reconcile(r, included)
       -- it was in the pending review and is not any more: deleted there, or the review was
       -- discarded, most likely on purpose; taken out of the review rather than added again
       local cur = set_record(store, c.id, nil)
-      if cur and cur.in_review then
+      if cur then
+        -- remembered: not offered again by a submit (not_included) until `ci` adds it
         cur = vim.deepcopy(cur)
         cur.in_review = false
+        cur.forge_removed = comments.now_ms()
         comments.put(store, cur)
       end
       dirty = true
@@ -549,6 +572,24 @@ function M.reconcile(r, included)
   return todo, left
 end
 
+---How each PR's review is made, from what is planned for it: the user's pending review (filled,
+---then submitted), else one created and submitted at once unless a reply or a file comment needs
+---a pending review first.
+local function set_modes(r)
+  for _, t in ipairs(r.targets) do
+    local items = r.plan.items[t] or {}
+    if t.pf and t.pf.pending then
+      t.mode = #items > 0 and 'existing' or 'submit'
+    else
+      local needs_pending = false
+      for _, x in ipairs(items) do
+        needs_pending = needs_pending or x.item.kind == 'reply' or x.item.subject == 'FILE'
+      end
+      t.mode = needs_pending and 'new_pending' or 'atomic'
+    end
+  end
+end
+
 ---Read GitHub (files, preflight), reconcile and plan. Sends nothing. Call inside git.async.
 ---`pending`: "add to pending review" (no verdict: `verdict` is nil). Returns the prepared run,
 ---or nil and a message.
@@ -564,10 +605,14 @@ function M.prepare(s, verdict, pending)
   end
   local full = s.review.stack ~= nil and require('revuey.forge_view').current_key(s) == nil
   local included = M.included(store)
+  local extra = M.not_included(store)
   local r = { s = s, store = store, verdict = verdict, pending = pending or nil, targets = targets, full = full, warnings = {} }
   -- every PR's files (only when a line or file comment may go to it), concurrently
   local need_files = false
   for _, c in ipairs(included) do
+    need_files = need_files or not c.forge_reply
+  end
+  for _, c in ipairs(extra) do
     need_files = need_files or not c.forge_reply
   end
   if need_files then
@@ -608,22 +653,32 @@ function M.prepare(s, verdict, pending)
     return nil, 'could not read the pull requests from GitHub: ' .. tostring(err)
   end
   local todo, left = M.reconcile(r, included)
-  if (full or pending) and #todo == 0 then
-    -- (comments left out, such as one removed from the pending review on GitHub, are said)
-    local any = #left > 0
-    for _, t in ipairs(targets) do
-      any = any or #t.already > 0 or #t.unknown > 0
+  -- (comments left out, such as one removed from the pending review on GitHub, are said)
+  local any = #todo > 0 or #left > 0
+  for _, t in ipairs(targets) do
+    any = any or #t.already > 0 or #t.unknown > 0
+  end
+  local function nothing(failed)
+    local more = ''
+    if failed and #failed > 0 then
+      local parts = vim.tbl_map(function(x)
+        return comments.location(x.c) .. ': ' .. x.why
+      end, failed)
+      more = ('; %s not in the review could not be posted: %s'):format(plural(#failed, 'local comment', 'local comments'), table.concat(parts, '; '))
     end
-    if not any and pending then
-      return nil, ('nothing to add to your pending review: no comment is added to the review (%s adds one)'):format(post.key('comment_include', 'ci'))
-    elseif not any then
-      return nil, 'nothing added to the review in the full stack (ci adds a comment); submit a verdict alone from a layer\'s scope'
+    if pending then
+      return nil, ('nothing to add to your pending review: no comment is added to the review (%s adds one)%s'):format(post.key('comment_include', 'ci'), more)
     end
+    return nil, 'nothing added to the review in the full stack (ci adds a comment); submit a verdict alone from a layer\'s scope' .. more
+  end
+  if (full or pending) and not any and #extra == 0 then
+    return nothing()
   end
   local access, ctx = review_access(s)
   local cm = s.cm or {}
   r.plan = post.plan({
-    comments = todo,
+    -- the comments not in the review are planned too, so only those that can go are offered
+    comments = comments.sort(vim.list_extend(vim.list_slice(todo), extra)),
     place = function(c)
       return (cm.place and cm.place[c.id]) or comments.place(c, ctx)
     end,
@@ -633,12 +688,44 @@ function M.prepare(s, verdict, pending)
     verdict = verdict,
     viewer = r.viewer,
   })
+  M.check_binding(r, access)
+  -- those not in the review that can go are kept apart until the confirmation asks about them
+  -- (`r.extra`; `r.all_items`: each PR's items with them); the others are not offered
+  local is_extra = {}
+  for _, c in ipairs(extra) do
+    is_extra[c.id] = true
+  end
+  r.extra, r.all_items = {}, {}
+  for _, t in ipairs(targets) do
+    local keep = {}
+    r.all_items[t] = r.plan.items[t] or {}
+    for _, x in ipairs(r.all_items[t]) do
+      if is_extra[x.c.id] then
+        r.extra[#r.extra + 1] = x.c
+      else
+        keep[#keep + 1] = x
+      end
+    end
+    r.plan.items[t] = keep
+  end
+  comments.sort(r.extra)
+  -- refused for where they are (not in this review, outdated, outside the PR's diff): not
+  -- offered; refused for anything else (a PR refused or not read, several PRs fit, too long, a
+  -- thread or PR it answers that is not here): said with the reason (`r.extra_failed`)
+  r.extra_failed = {}
+  r.plan.refused = vim.tbl_filter(function(x)
+    if is_extra[x.c.id] and not x.lines then
+      table.insert(r.extra_failed, x)
+    end
+    return not is_extra[x.c.id]
+  end, r.plan.refused)
+  if (full or pending) and not any and #r.extra == 0 then
+    return nothing(r.extra_failed)
+  end
   for _, x in ipairs(left) do
     table.insert(r.plan.refused, x)
   end
-  M.check_binding(r, access)
   for _, t in ipairs(targets) do
-    local items = r.plan.items[t] or {}
     local p = t.pf and t.pf.pending
     -- "add to pending review" (from the verdict's confirmation too) is always the pending flow
     t.add_mode = p and 'add_existing' or 'add_new'
@@ -646,18 +733,9 @@ function M.prepare(s, verdict, pending)
     if verdict and t.refused and post.target_refusal(t, r.viewer, verdict) and not post.target_refusal(t, r.viewer, nil) then
       r.verdict_refused = true
     end
-    if p then
-      t.mode = #items > 0 and 'existing' or 'submit'
-    else
-      local needs_pending = false
-      for _, x in ipairs(items) do
-        needs_pending = needs_pending or x.item.kind == 'reply' or x.item.subject == 'FILE'
-      end
-      t.mode = needs_pending and 'new_pending' or 'atomic'
-    end
     -- the pending review's comments with the same text as an item, or at its place: never that
     -- item (and, when its answer is lost, no reason to doubt it is absent)
-    for _, x in ipairs(items) do
+    for _, x in ipairs(r.all_items[t]) do
       local before = {}
       local place = x.item.kind == 'reply' and thread_comments(t, x.c) or nil
       for _, pc in ipairs(p and p.comments or {}) do
@@ -668,6 +746,7 @@ function M.prepare(s, verdict, pending)
       x.before = before
     end
   end
+  set_modes(r)
   if s.review.mode == 'worktree' and s.review.dirty then
     table.insert(r.warnings, 'This review shows uncommitted changes: they are not part of the pull request, and comments on them were left out.')
   end
@@ -747,7 +826,8 @@ end
 ---What each PR's review will publish, and what is left out (for forge_post.summary). Each PR
 ---entry has `go` when it will be submitted.
 function M.result(r)
-  local out = { verdict = r.verdict, pending = r.pending, body = r.body, prs = {}, left_out = {}, warnings = vim.deepcopy(r.warnings or {}) }
+  local out = { verdict = r.verdict, pending = r.pending, body = r.body, prs = {}, left_out = {}, not_included = r.not_included or {},
+    not_postable = r.extra_failed or {}, warnings = vim.deepcopy(r.warnings or {}) }
   for _, x in ipairs(r.plan.refused) do
     out.left_out[#out.left_out + 1] = x
   end
@@ -880,6 +960,9 @@ local function revalidate(r)
         why = 'deleted while the confirmation was open'
       elseif not cur.in_review then
         why = 'taken out of the review while the confirmation was open'
+      elseif post.state(cur) ~= nil then
+        -- (planned ones had no record): another Neovim sent it meanwhile
+        why = 'sent to GitHub by another submit while the confirmation was open'
       elseif post.norm_body(cur.body) ~= post.norm_body(x.item.body) then
         why = 'edited while the confirmation was open: submit again to send the new text'
       end
@@ -946,6 +1029,161 @@ local function pending_offer(r)
     n == 1 and '' or 's', table.concat(parts, ', '), n == 1 and 'es' or '', (r.body and r.body ~= '') and ' and the body is not sent' or '')
 end
 
+---The comments not in the review that were left out (`r.not_included`) or could not be posted
+---(`r.extra_failed`), checked again against the reloaded store at every confirmation: one deleted,
+---resolved, a draft or sent by another submit now is no longer listed; one added with `ci`
+---meanwhile is in the review now, so it is listed as left out of this submit instead.
+local function recheck_left_out(r)
+  local function fresh(c, why)
+    local cur = comments.get(r.store, c.id)
+    if not cur or post.state(cur) ~= nil or not post.includable(cur) then
+      return nil
+    end
+    if cur.in_review then
+      table.insert(r.plan.refused, { c = cur, why = why or 'added to the review after it was planned: submit again to send it' })
+      return nil
+    end
+    return cur
+  end
+  local keep = {}
+  for _, c in ipairs(r.not_included or {}) do
+    keep[#keep + 1] = fresh(c)
+  end
+  r.not_included = r.not_included and keep or nil
+  keep = {}
+  for _, x in ipairs(r.extra_failed or {}) do
+    local cur = fresh(x.c, x.why)
+    if cur then
+      keep[#keep + 1] = { c = cur, why = x.why }
+    end
+  end
+  r.extra_failed = keep
+end
+
+---Would this submit send anything without the comments not in the review (a verdict, comments,
+---a blocked PR to settle)? Else "without" is not offered: it would end in "nothing to send".
+local function sends_without(r)
+  local res = M.result(r)
+  for _, x in ipairs(res.prs) do
+    if x.go or x.blocked then
+      return true
+    end
+  end
+  return false
+end
+
+---Put comments not in the review that are now in it (`list`) into the plan, each checked as
+---revalidate checks the planned ones (its text was, by the caller): each PR's items in the plan's
+---order, those planned already (as revalidate left them) and these.
+local function take_into_plan(r, list)
+  local added = {}
+  for _, c in ipairs(list) do
+    local ok, why = post.includable(c)
+    if not ok then
+      table.insert(r.plan.refused, { c = c, why = why })
+    else
+      added[c.id] = true
+    end
+  end
+  for _, t in ipairs(r.targets) do
+    local kept, items = {}, {}
+    for _, x in ipairs(r.plan.items[t] or {}) do
+      kept[x] = true
+    end
+    for _, x in ipairs(r.all_items[t] or {}) do
+      if kept[x] or added[x.c.id] then
+        items[#items + 1] = x
+      end
+    end
+    r.plan.items[t] = items
+  end
+  set_modes(r)
+end
+
+---Before the first confirmation: the local comments of the scope that are not in the review and
+---could go (`r.extra`). What changed while GitHub was read is checked first (revalidate reloaded
+---the store): deleted, resolved, a draft, sent by another submit now: not offered; edited: not
+---offered (its text was not checked), listed as could not be posted; added with `ci` meanwhile:
+---taken as included. Include: added to the review as `ci` does and sent with this submit (they
+---stay in the review whatever comes next, as after `ci`); without: listed as not posted, and
+---said again when it is done (not offered when nothing else would be sent). Returns false on
+---Cancel.
+local function ask_not_included(r)
+  local item_of = {}
+  for _, t in ipairs(r.targets) do
+    for _, x in ipairs(r.all_items[t] or {}) do
+      item_of[x.c.id] = x
+    end
+  end
+  local offer, take = {}, {}
+  for _, c in ipairs(r.extra) do
+    local cur = comments.get(r.store, c.id)
+    if not cur or post.state(cur) ~= nil then
+      -- deleted, or sent by another submit (another Neovim): never sent twice
+      if cur and cur.in_review then
+        table.insert(r.plan.refused, { c = cur, why = 'sent to GitHub by another submit meanwhile' })
+      end
+    elseif post.norm_body(cur.body) ~= post.norm_body(item_of[c.id].item.body) then
+      local why = 'edited while GitHub was read: submit again to send the new text'
+      if cur.in_review then
+        table.insert(r.plan.refused, { c = cur, why = why })
+      elseif post.includable(cur) then
+        table.insert(r.extra_failed, { c = cur, why = why })
+      end
+    elseif cur.in_review then
+      take[#take + 1] = cur
+    elseif post.includable(cur) and not cur.forge_removed then
+      offer[#offer + 1] = cur
+    end
+  end
+  r.extra = offer
+  -- those `ci`'d meanwhile first: they count in what would be sent without the others
+  take_into_plan(r, take)
+  if #offer > 0 then
+    local without = sends_without(r)
+    local ci = post.key('comment_include', 'ci')
+    local L = { ('%s not in the review (%s adds one):'):format(plural(#offer, 'local comment is', 'local comments are'), ci) }
+    for _, c in ipairs(offer) do
+      L[#L + 1] = '  ' .. entry(c)
+    end
+    if #r.extra_failed > 0 then
+      L[#L + 1] = ('%d more could not be posted (listed in the confirmation).'):format(#r.extra_failed)
+    end
+    L[#L + 1] = ''
+    local q = r.pending and ('Add them to your pending review' .. (without and ' too?' or '?')) or 'Post them with this review?'
+    L[#L + 1] = q .. ' Nothing has been sent yet.'
+    local actions = { 'include' }
+    local labels = { '&Include them' }
+    if without then
+      actions[#actions + 1] = 'without'
+      labels[#labels + 1] = (r.pending and 'Add' or 'Submit') .. ' &without them'
+    end
+    actions[#actions + 1] = 'cancel'
+    labels[#labels + 1] = '&Cancel'
+    local action = actions[M.ask(table.concat(L, '\n'), table.concat(labels, '\n'), 1)] or 'cancel'
+    if action == 'cancel' then
+      return false
+    elseif action == 'without' then
+      r.not_included = offer
+    else
+      local list = {}
+      for _, c in ipairs(offer) do
+        local cur = vim.deepcopy(c)
+        cur.in_review = true
+        comments.put(r.store, cur)
+        list[#list + 1] = cur
+        take[#take + 1] = cur
+      end
+      save(r.store)
+      take_into_plan(r, list)
+    end
+  end
+  if #take > 0 and not r.s.cleaned then
+    require('revuey.comments_view').refresh(r.s)
+  end
+  return true
+end
+
 local function confirm(r)
   local s = r.s
   if s.cleaned then
@@ -953,6 +1191,14 @@ local function confirm(r)
     return notify('the review closed before the confirmation: nothing was sent', vim.log.levels.WARN)
   end
   revalidate(r)
+  recheck_left_out(r)
+  if r.extra and #r.extra > 0 and not r.extra_asked then
+    r.extra_asked = true
+    if not ask_not_included(r) then
+      release(r)
+      return notify('nothing sent')
+    end
+  end
   local res = M.result(r)
   local go, blocked = 0, false
   for _, x in ipairs(res.prs) do
@@ -1397,14 +1643,24 @@ function M.execute(r, res)
     end
   end
   release(r)
+  -- the comments not in the review that were left out (asked before the confirmation), or could
+  -- not be posted
+  local n_out, n_failed = #(r.not_included or {}), #(r.extra_failed or {})
+  local note = n_out > 0 and ('; %s not in the review, not posted (%s adds one)'):format(
+    plural(n_out, 'local comment', 'local comments'), post.key('comment_include', 'ci')) or ''
+  if n_failed > 0 then
+    note = note .. ('; %s not in the review could not be posted'):format(plural(n_failed, 'local comment', 'local comments'))
+  end
   if #done > 0 and r.pending then
-    notify(('added %d comment%s to your pending review on %s; not submitted: submit it on GitHub, in Graphite or with %s'):format(
-      added, added == 1 and '' or 's', table.concat(done, ', '), post.key('forge_submit', 'gP')))
+    notify(('added %d comment%s to your pending review on %s; not submitted: submit it on GitHub, in Graphite or with %s%s'):format(
+      added, added == 1 and '' or 's', table.concat(done, ', '), post.key('forge_submit', 'gP'), note))
+    note = ''
   elseif #done > 0 then
-    notify(('%s review submitted to %s'):format(post.VERDICT_TEXT[r.verdict], table.concat(done, ', ')))
+    notify(('%s review submitted to %s%s'):format(post.VERDICT_TEXT[r.verdict], table.concat(done, ', '), note))
+    note = ''
   end
   if #bad > 0 then
-    notify((r.pending and 'not all added to your pending review: ' or 'not submitted: ') .. table.concat(bad, '; '), vim.log.levels.ERROR)
+    notify((r.pending and 'not all added to your pending review: ' or 'not submitted: ') .. table.concat(bad, '; ') .. note, vim.log.levels.ERROR)
   end
   local s = r.s
   if not s.cleaned then
