@@ -218,7 +218,8 @@ post anything for a review. Use what you know from the conversation, but report 
 diff bears out. If you have pass notes for that layer, build on them, but still review the
 whole diff. Never edit files for a review. If `--request` is refused (cancelled, done by
 another agent, the review now shows another layer, or the skill changed since the user asked),
-tell the user in chat instead. Import with exactly the `--name` step 1 prints.
+tell the user in chat instead (when step 1 refuses it because the skill changed, its error gives
+the sentence to tell them). Import with exactly the `--name` step 1 prints.
 
 1. `cd <worktree> && REVUEY hunks --prompt --session <id>`: the instructions, then the diff
    with each hunk under an id (`@@ h7 path @@`) and its lines numbered within the hunk

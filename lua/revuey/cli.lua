@@ -1415,6 +1415,8 @@ local function take_request(o, ctx, kind, what, reimport)
     die(('request %s asks for a %s, not a %s'):format(req.id, req.kind, kind))
   elseif req.status == 'cancelled' then
     die(('request %s was cancelled by the user: %s'):format(req.id, what))
+  elseif req.status == 'refused' then
+    die(('request %s was refused (%s): %s; the user was told to ask again'):format(req.id, tostring(req.reason or '?'), what))
   elseif req.status == 'done' and not (reimport and may_reimport(req, writer_name(o, req))) then
     die(('request %s is done already (the %s %s imported is shown): %s; ask the user before writing another%s'):format(
       req.id, kind, tostring(req.result and req.result.agent or 'an agent'), what,
@@ -1485,34 +1487,46 @@ local function request_skill(req, r, hunks)
   end
   local ai_review = require('revuey.ai_review')
   local k = req.skill
-  local function refuse(why)
-    die(('request %s asks you to follow the skill %s, but %s; review nothing and tell the user'):format(req.id, k.name, why))
+  -- refused: the request says why (the review shows it and stops waiting), and the agent tells
+  -- the user the same
+  local function refuse(why, short)
+    local requests = require('revuey.requests')
+    local reason = short or why
+    requests.update(req._path, function(x)
+      if x.status ~= 'pending' and x.status ~= 'acked' then
+        return false
+      end
+      x.status, x.refused_at, x.reason = 'refused', requests.now_ms(), reason
+    end)
+    die(('request %s asks you to follow the skill %s, but %s. Review nothing; tell the user: "%s could not take the request: %s; run :RevueyAIReview %s again"'):format(
+      req.id, k.name, why, req.agent or 'the agent', reason, k.arg or k.name))
   end
   if k.bad then
-    refuse('its record is not valid (' .. k.bad .. ')')
+    refuse('its record is not valid (' .. k.bad .. ')', 'the request\'s skill record is not valid')
   end
   local real = function(p)
     return vim.uv.fs_realpath(p) or p
   end
-  local want
-  if k.origin == 'path' then
-    want = ai_review.find_skill(k.arg, r.root)
-  else
-    want = ai_review.find_skill(k.name, r.root)
-  end
+  -- what the user typed resolves the same way again: a path as that path (whatever origin it
+  -- was classified as), a name by name
+  local want = ai_review.find_skill(k.arg, r.root)
+  local moved = ('the skill %s is no longer the file you picked'):format(k.name)
   if not want or real(want) ~= real(k.path) then
-    refuse(('%s is not where a skill named so is found (%s)'):format(k.path, tostring(want or 'none')))
+    refuse(('%s is not where %s is found now (%s)'):format(k.path, k.arg, tostring(want or 'none')), moved)
   end
   local origin, in_repo = ai_review.skill_origin(k.path, r.root)
-  if origin ~= k.origin and not (origin == 'repo' and k.origin == 'path') then
-    refuse(('it was a %s skill when asked and is a %s one now'):format(k.origin, origin))
+  if origin ~= k.origin then
+    refuse(('it was a %s skill when asked and is a %s one now'):format(k.origin, origin), moved)
   end
   local skill, serr = ai_review.read_skill(k.path)
   if not skill then
-    refuse('it cannot be read (' .. tostring(serr) .. ')')
+    refuse('it cannot be read (' .. tostring(serr) .. ')', ('the skill %s cannot be read'):format(k.name))
   end
   if skill.hash ~= k.hash then
-    refuse('its text changed since the user asked (' .. k.path .. ')')
+    refuse('its text changed since the user asked (' .. k.path .. ')', 'the skill changed since you asked')
+  end
+  if not require('revuey.ai_review_prompt').agent_skill(vim.tbl_extend('force', skill, { origin = k.origin })) then
+    refuse('its text contains the delimiter revuey puts around it', ('the skill %s cannot be passed safely'):format(k.name))
   end
   local paths = {}
   for _, h in ipairs(hunks) do

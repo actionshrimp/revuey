@@ -11,7 +11,8 @@
 --     changed under the file's lock (`update`), so the review cancelling and the CLI taking it
 --     never lose each other's change.
 --   * Status: `pending` (asked) -> `acked` (the agent printed its prompt: `guide --prompt` or
---     `hunks --prompt`) -> `done` (imported: `import-guide` or `import-review`);
+--     `hunks --prompt`) -> `done` (imported: `import-guide` or `import-review`); `refused`
+--     (`reason`) when the agent could not take it (a review's skill changed since);
 --     `cancelled` (by the user) at any point before `done`. Open: pending or acked, and younger
 --     than TTL_MS.
 --   * The review appends a `request` event to its feed (`comments.REQUEST`) when it asks and when
@@ -209,8 +210,8 @@ function M.clean_skill(v)
     out.bad = 'unknown origin'
   elseif not out.hash then
     out.bad = 'no hash of its text'
-  elseif out.origin == 'path' and not out.arg then
-    out.bad = 'no path given by the user'
+  elseif not out.arg then
+    out.bad = 'no name or path given by the user'
   end
   return out
 end

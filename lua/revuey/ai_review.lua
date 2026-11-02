@@ -651,6 +651,12 @@ function M.skill_dirs(root, home)
   return out
 end
 
+---Does `arg` name a skill by path (find_skill takes it literally) rather than by name?
+function M.is_skill_path(arg)
+  arg = vim.trim(arg or '')
+  return arg:find('/', 1, true) ~= nil or arg:match('%.md$') ~= nil or arg:sub(1, 1) == '~'
+end
+
 ---The SKILL.md for `arg`: a skill name (looked up in skill_dirs), or a path to a skill
 ---directory or a Markdown file (relative to `root`).
 ---@return string? path, string? err
@@ -659,7 +665,7 @@ function M.find_skill(arg, root, home)
   if arg == '' then
     return nil, 'no skill given'
   end
-  if arg:find('/', 1, true) or arg:match('%.md$') or arg:sub(1, 1) == '~' then
+  if M.is_skill_path(arg) then
     -- taken literally: only a leading ~ means the home directory (no %, # or wildcards)
     local p = arg
     if arg == '~' or arg:sub(1, 2) == '~/' then

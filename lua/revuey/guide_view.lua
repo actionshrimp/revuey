@@ -36,6 +36,9 @@ M.req = {
   imported = 'the guide',
   cancel_cmd = ':RevueyGuide cancel',
   expired_hint = 'generate again for a fresh session',
+  refused = function(a, rec)
+    return ('revuey: %s could not take the guide request: %s'):format(a.name, require('revuey.guide').one_line(rec.reason or '?'))
+  end,
   fresh_hint = function()
     local k = config.options.keymaps.regenerate_guide
     return type(k) == 'string' and k or ':RevueyGuide!'

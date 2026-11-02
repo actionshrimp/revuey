@@ -38,6 +38,11 @@ M.req = {
   imported = 'the review',
   cancel_cmd = ':RevueyAIReview cancel',
   expired_hint = 'run :RevueyAIReview again for a fresh session',
+  refused = function(a, rec)
+    local sk = rec.skill and (rec.skill.arg or rec.skill.name)
+    return ('revuey: %s could not take the request: %s; run :RevueyAIReview%s again'):format(
+      a.name, require('revuey.guide').one_line(rec.reason or '?'), sk and (' ' .. require('revuey.guide').one_line(sk)) or '')
+  end,
   fresh_hint = function()
     return ':RevueyAIReview'
   end,

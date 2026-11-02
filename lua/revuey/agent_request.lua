@@ -108,9 +108,11 @@ function M.poll(host)
       if sig ~= a.sig or expired then
         a.sig = sig
         local rec = st and requests.read(a.path)
-        if not rec or rec.status == 'cancelled' or rec.status == 'done' or expired then
+        if not rec or rec.status == 'cancelled' or rec.status == 'done' or rec.status == 'refused' or expired then
           host.jobs[ks] = nil
-          if rec and rec.status == 'done' then
+          if rec and rec.status == 'refused' then
+            vim.notify(q.refused(a, rec), vim.log.levels.WARN)
+          elseif rec and rec.status == 'done' then
             local secs = math.floor((now - j.started) / 1e9 + 0.5)
             vim.notify(q.ready(a, rec, secs), vim.log.levels.INFO)
           elseif expired and rec then
@@ -160,7 +162,7 @@ function M.cancel(s, host, ks, j, after)
   end
   local function attempt()
     local rec, uerr = requests.update(a.path, function(x)
-      if x.status == 'done' or x.status == 'cancelled' then
+      if x.status == 'done' or x.status == 'cancelled' or x.status == 'refused' then
         return false
       end
       x.status, x.cancelled_at = 'cancelled', requests.now_ms()
@@ -176,6 +178,8 @@ function M.cancel(s, host, ks, j, after)
         q.noun, a.name, tostring(uerr), q.cancel_cmd), vim.log.levels.ERROR, false)
     elseif rec.status == 'done' then
       return finish(true, ('revuey: %s had already imported %s; it is shown'):format(a.name, q.imported), vim.log.levels.INFO, true)
+    elseif rec.status == 'refused' then
+      return finish(true, q.refused(a, rec), vim.log.levels.WARN, true)
     end
     local events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path)
     pcall(comments.append_event, events, requests.event(rec))
