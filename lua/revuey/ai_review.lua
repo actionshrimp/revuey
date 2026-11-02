@@ -254,10 +254,43 @@ function M.untriaged(c)
   return c ~= nil and not c.deleted and c.ai ~= nil and c.author and c.author.kind == 'ai' and c.status == 'saved'
 end
 
+---Which run made something, as the finding keeps it (`ai.run`): {name?, provider?, model?,
+---agent?, skill?, request?}, from the reviewer (`author`) and the import's generator.
+function M.run_of(author, generator)
+  local gen = generator or {}
+  return {
+    name = author and author.name or nil,
+    provider = gen.provider,
+    model = gen.model,
+    agent = gen.agent,
+    skill = gen.skill,
+    request = gen.request,
+  }
+end
+
+---The reviewer identity of a run, for replacing: the connected agent by its name (provider
+---`agent`), any other reviewer (a fresh run, an import without a request) by its name. So the
+---agent and a fresh run never replace each other's findings, whatever the agent is called.
+function M.run_key(run)
+  run = run or {}
+  if run.provider == 'agent' then
+    return 'agent\0' .. tostring(run.agent or run.name or '')
+  end
+  return 'name\0' .. tostring(run.name or '')
+end
+
+---The run of finding `c` (findings imported before `ai.run` existed: their author's name).
+local function finding_run(c)
+  if type(c.ai) == 'table' and type(c.ai.run) == 'table' then
+    return c.ai.run
+  end
+  return { name = c.author and c.author.name or nil }
+end
+
 ---Untouched by the user: untriaged, no reply, never sent to an agent, no unsaved edit. A new
----review by the same author replaces these.
-function M.untouched(c, author)
-  if not M.untriaged(c) or (c.author.name or '') ~= ((author and author.name) or '') then
+---review by the same reviewer (`who`: a run, M.run_of; compared with M.run_key) replaces these.
+function M.untouched(c, who)
+  if not M.untriaged(c) or M.run_key(finding_run(c)) ~= M.run_key(who) then
     return false
   end
   if c.sent_at or c.draft or c.reply_draft then
@@ -341,9 +374,12 @@ function M.import(raw, o)
   -- have accepted, dismissed or answered a finding since this store was loaded
   pcall(comments.reload, store)
   local id = comments.new_id(now)
+  -- which run makes these findings (kept on each: the record holds only the scope's latest
+  -- review), and whose untouched findings it replaces
+  local run = M.run_of(o.author, o.generator)
   local replaced, triaged = {}, {}
   for cid, c in pairs(store.comments) do
-    if M.untouched(c, o.author) then
+    if M.untouched(c, run) then
       replaced[#replaced + 1] = cid
     elseif c.ai and not c.deleted then
       triaged[finding_key(c.anchor, c.ai.title)] = true
@@ -353,16 +389,6 @@ function M.import(raw, o)
     end
   end
   table.sort(replaced)
-  -- which run made each finding (the record holds only the scope's latest review)
-  local gen = o.generator or {}
-  local run = {
-    name = o.author and o.author.name or nil,
-    provider = gen.provider,
-    model = gen.model,
-    agent = gen.agent,
-    skill = gen.skill,
-    request = gen.request,
-  }
   local created, skipped = {}, 0
   for _, f in ipairs(doc.findings) do
     local h = by_id[f.hunk]
@@ -427,7 +453,11 @@ function M.import(raw, o)
     review = o.info,
     generator = vim.tbl_extend('keep', o.generator or {}, { generated_at = math.floor(now / 1000) }),
   }
-  M.save_record(o.record_path, rec)
+  -- the findings are saved: a record that cannot be written is reported, never undoes them
+  local ok, serr = pcall(M.save_record, o.record_path, rec)
+  if not ok then
+    rec.record_error = tostring(serr)
+  end
   return rec
 end
 
@@ -659,6 +689,54 @@ function M.find_skill(arg, root, home)
   return nil, ('no skill %s (looked for %s/SKILL.md in %s)'):format(arg, arg, table.concat(looked, ', '))
 end
 
+local function real(p)
+  return p and (vim.uv.fs_realpath(p) or vim.fs.normalize(p)) or nil
+end
+
+local function under(p, dir)
+  return p ~= nil and dir ~= nil and (p == dir or p:sub(1, #dir + 1) == dir .. '/')
+end
+
+---Where a skill file comes from: 'user' (`~/.claude/skills/<name>/SKILL.md`), 'repo' (the
+---repo's `.claude/skills/<name>/SKILL.md`: content of the code under review) or 'path' (a path
+---the user gave); and whether the file is inside the worktree `root` (repo content either way).
+---@return 'user'|'repo'|'path' origin, boolean in_repo
+function M.skill_origin(path, root, home)
+  local p = real(path)
+  local dirs = M.skill_dirs(root, home)
+  home = home or vim.env.HOME
+  local in_repo = root ~= nil and under(p, real(root))
+  for _, d in ipairs(dirs) do
+    local rd = real(d)
+    if under(p, rd) and vim.fs.basename(p) == 'SKILL.md' and real(vim.fs.dirname(vim.fs.dirname(p))) == rd then
+      local is_user = home and home ~= '' and rd == real(vim.fs.joinpath(home, '.claude', 'skills'))
+      return is_user and not in_repo and 'user' or 'repo', in_repo
+    end
+  end
+  return 'path', in_repo
+end
+
+---The changed files (repo-relative `paths`) that are the skill itself: its directory for a
+---SKILL.md (it may read files next to it), else the file. Empty when it is outside `root`.
+function M.skill_touched(skill_path, root, paths)
+  local p, r = real(skill_path), real(root)
+  local out = {}
+  if not (p and r and under(p, r)) then
+    return out
+  end
+  local rel = p:sub(#r + 2)
+  local dir = vim.fs.basename(rel) == 'SKILL.md' and vim.fs.dirname(rel) or nil
+  local seen = {}
+  for _, q in ipairs(paths) do
+    if not seen[q] and (q == rel or (dir and dir ~= '.' and under(q, dir))) then
+      seen[q] = true
+      out[#out + 1] = q
+    end
+  end
+  table.sort(out)
+  return out
+end
+
 ---Skill names in skill_dirs (for completion), sorted and unique.
 function M.skill_names(root, home)
   local names, seen = {}, {}
@@ -702,7 +780,7 @@ function M.read_skill(path)
   end
   local base = vim.fs.basename(path)
   local name = base == 'SKILL.md' and vim.fs.basename(vim.fs.dirname(path)) or base:gsub('%.md$', '')
-  return { name = name, text = text, path = path }
+  return { name = name, text = text, path = path, hash = vim.fn.sha256(text) }
 end
 
 return M

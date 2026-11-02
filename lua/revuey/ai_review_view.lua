@@ -175,21 +175,32 @@ ensure_ticker = function()
   end
 end
 
----Untouched findings of the last review revuey ran here (what a new run replaces); `author`:
----the reviewer of the new run (default M.author(); the connected agent imports under its name).
-function M.replaceable(s, author)
+---The run identity (ai_review.run_of) a new review imports under: a fresh run's, or with
+---`agent` (a name) the connected agent's, as `import-review --request` records it when the
+---agent imports with the `--name` its prompt gives (the request's agent).
+function M.run_for(agent)
+  if agent then
+    return ai_review.run_of({ kind = 'ai', name = agent }, { provider = 'agent', agent = agent })
+  end
+  return ai_review.run_of(M.author(), { provider = (config.options.ai or {}).provider or 'claude' })
+end
+
+---Untouched findings the new run would replace (the import's own predicate, ai_review.untouched):
+---`who` is its run (M.run_for; default a fresh run).
+function M.replaceable(s, who)
   local store = require('revuey.comments_view').sync_store(s)
   local n = 0
   for _, c in pairs(store.comments) do
-    if ai_review.untouched(c, author or M.author()) then
+    if ai_review.untouched(c, who or M.run_for()) then
       n = n + 1
     end
   end
   return n
 end
 
----The skill `skill_arg` names (a name or a path), read: {name, text, path}; nil without one;
----false and an error when it cannot be found or read.
+---The skill `skill_arg` names (a name or a path), read: {name, text, path, hash, origin,
+---in_repo, arg} (ai_review.skill_origin); nil without one; false and an error when it cannot be
+---found or read.
 function M.resolve_skill(s, skill_arg)
   if not skill_arg or skill_arg == '' then
     return nil
@@ -202,7 +213,21 @@ function M.resolve_skill(s, skill_arg)
   if not skill then
     return false, err
   end
+  skill.origin, skill.in_repo = ai_review.skill_origin(path, s.review.root)
+  skill.arg = skill_arg
   return skill
+end
+
+---The review's changed files that are the skill itself (ai_review.skill_touched).
+function M.skill_touched(s, skill)
+  local paths = {}
+  for _, f in ipairs(s.review.files) do
+    paths[#paths + 1] = f.path
+    if f.old_path then
+      paths[#paths + 1] = f.old_path
+    end
+  end
+  return ai_review.skill_touched(skill.path, s.review.root, paths)
 end
 
 ---The scope's hunks when a review can start (none running, some changes), else nil (said).
@@ -241,7 +266,8 @@ function M.request_agent(s, skill_arg, on_change)
     key = require('revuey.guide').key(s.review.state),
     anchors = g.anchors,
     comments = key,
-    skill = skill and { name = skill.name, path = skill.path } or nil,
+    -- where it comes from and a hash of its text: the CLI reads it again and checks both
+    skill = skill and { name = skill.name, path = skill.path, origin = skill.origin, in_repo = skill.in_repo or nil, arg = skill.arg, hash = skill.hash } or nil,
   })
   if not rec then
     vim.notify('revuey: ' .. name, vim.log.levels.ERROR)
@@ -255,6 +281,10 @@ function M.request_agent(s, skill_arg, on_change)
   ensure_ticker()
   on_change()
   vim.notify(('revuey: asked %s to review this%s (request %s)'):format(name, skill and (' with the skill ' .. skill.name) or '', rec.id), vim.log.levels.INFO)
+  local touched = skill and M.skill_touched(s, skill) or {}
+  if #touched > 0 then
+    vim.notify(('revuey: this change modifies the skill %s itself (%s): its guidance comes from the code under review'):format(skill.name, table.concat(touched, ', ')), vim.log.levels.WARN)
+  end
   return true
 end
 
@@ -359,6 +389,9 @@ function M.generate(s, skill_arg, on_change, opts)
         end
         if rec.skipped > 0 then
           extra[#extra + 1] = rec.skipped .. ' already triaged'
+        end
+        if rec.record_error then
+          extra[#extra + 1] = 'the review record was not saved: ' .. rec.record_error
         end
         vim.notify(('revuey: AI review ready (%s, %d finding%s%s, %ds)'):format(
           ai_review.VERDICT_LABEL[rec.verdict],

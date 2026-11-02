@@ -1392,10 +1392,11 @@ local function open_request(o, ctx, r, kind)
   end
 end
 
----Who writes with `--name` / $REVUEY_AGENT_NAME, else the agent the request was made for.
+---Who writes: `--name`, else the agent the request was made for (the name the review counts
+---replaced findings with), else $REVUEY_AGENT_NAME.
 local function writer_name(o, req)
   local requests = require('revuey.requests')
-  return requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
+  return requests.clean_name(o.name) or (req and req.agent) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or 'agent'
 end
 
 ---May `writer` import (again) into request `x`? An open request: yes. A done one: only its own
@@ -1474,21 +1475,54 @@ local function review_hunks(o)
   return r, hunks, info, cpath, epath, attached
 end
 
----The skill a review request names, read again ({name, text, path}), or exit 1.
-local function request_skill(req)
+---The skill a review request names, read again and checked, or exit 1: its path must be a
+---Markdown file where its origin says (`<skill dir>/<name>/SKILL.md` for a user or repo skill,
+---what the user's own path resolves to for `path`), and its text the one hashed when the user
+---asked. Returns {name, text, path, origin, in_repo, touched}.
+local function request_skill(req, r, hunks)
   if not req or not req.skill then
     return nil
   end
   local ai_review = require('revuey.ai_review')
-  local skill, serr
-  if req.skill.path then
-    skill, serr = ai_review.read_skill(req.skill.path)
+  local k = req.skill
+  local function refuse(why)
+    die(('request %s asks you to follow the skill %s, but %s; review nothing and tell the user'):format(req.id, k.name, why))
+  end
+  if k.bad then
+    refuse('its record is not valid (' .. k.bad .. ')')
+  end
+  local real = function(p)
+    return vim.uv.fs_realpath(p) or p
+  end
+  local want
+  if k.origin == 'path' then
+    want = ai_review.find_skill(k.arg, r.root)
   else
-    serr = 'no path'
+    want = ai_review.find_skill(k.name, r.root)
   end
+  if not want or real(want) ~= real(k.path) then
+    refuse(('%s is not where a skill named so is found (%s)'):format(k.path, tostring(want or 'none')))
+  end
+  local origin, in_repo = ai_review.skill_origin(k.path, r.root)
+  if origin ~= k.origin and not (origin == 'repo' and k.origin == 'path') then
+    refuse(('it was a %s skill when asked and is a %s one now'):format(k.origin, origin))
+  end
+  local skill, serr = ai_review.read_skill(k.path)
   if not skill then
-    die(('request %s asks you to follow the skill %s, which cannot be read (%s); tell the user'):format(req.id, req.skill.name, tostring(serr)))
+    refuse('it cannot be read (' .. tostring(serr) .. ')')
   end
+  if skill.hash ~= k.hash then
+    refuse('its text changed since the user asked (' .. k.path .. ')')
+  end
+  local paths = {}
+  for _, h in ipairs(hunks) do
+    paths[#paths + 1] = h.path
+    if h.old_path then
+      paths[#paths + 1] = h.old_path
+    end
+  end
+  skill.origin, skill.in_repo = k.origin, in_repo or k.origin == 'repo'
+  skill.touched = ai_review.skill_touched(k.path, r.root, paths)
   return skill
 end
 
@@ -1507,7 +1541,7 @@ function M.hunks(o)
       die(mm .. '; tell the user, and review nothing')
     end
   end
-  local skill = request_skill(req)
+  local skill = request_skill(req, r, hunks)
   -- the hash of the whole diff, whatever is shown (import-review checks against it)
   local diff = require('revuey.guide').anchors_hash(hunks)
   local total = #hunks
@@ -1595,9 +1629,10 @@ function M.hunks(o)
   out(('Diff: %s (give it as "diff" in the review, so import-review can tell when the code changed)\n\n'):format(diff))
   out(text)
   if req then
-    out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review --request %s --name <your name> -` (the JSON on stdin). '
-      .. 'Findings with bad anchors are dropped and reported: fix them and import again with the same --request and --name, which replaces your findings the user has not touched.\n'):format(
-      bin(), diff, bin(), req.id))
+    local name = req.agent or 'agent'
+    out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review --request %s --name %s -` (the JSON on stdin; keep that name: the review replaces the untouched findings of your earlier review under it). '
+      .. 'Findings with bad anchors are dropped and reported: fix them and import again with the same --request and --name.\n'):format(
+      bin(), diff, bin(), req.id, name:match('^[%w._-]+$') and name or vim.fn.shellescape(name)))
   elseif o.prompt then
     out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review <file>`.\n'):format(bin(), diff, bin()))
   end
@@ -1712,6 +1747,9 @@ function M.import_review(o, pos)
   end
   if rec.replaced > 0 then
     out(('%d untriaged finding%s of the previous review replaced\n'):format(rec.replaced, rec.replaced == 1 and '' or 's'))
+  end
+  if rec.record_error then
+    err(('revuey: the findings were imported, but the review record (summary, verdict) was not saved: %s\n'):format(rec.record_error))
   end
 end
 

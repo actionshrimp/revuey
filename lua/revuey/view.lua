@@ -3277,7 +3277,7 @@ local function start_ai_review(s, bang, skill_arg, choice)
       arv.generate(s, skill_arg, on_ai_review_change, { model = choice.model, effort = choice.effort })
     end
   end
-  local n = (not bang and not arv.job(s)) and arv.replaceable(s, agent and { kind = 'ai', name = name } or nil) or 0
+  local n = (not bang and not arv.job(s)) and arv.replaceable(s, arv.run_for(name)) or 0
   if n == 0 then
     return run()
   end
@@ -3324,7 +3324,14 @@ function M.ai_review_command(bang, arg)
   end
   local d = generator(s, 'review_by')
   if d.by == 'ask' then
-    return ask_generator(d.name, arg and ('Run the AI review (skill %s) with:'):format(arg) or 'Run the AI review with:', function(c)
+    local q = arg and ('Run the AI review (skill %s) with:'):format(arg) or 'Run the AI review with:'
+    -- a skill the change itself modifies: its guidance is the code under review
+    local skill = arg and ai_review_view.resolve_skill(s, arg)
+    local touched = skill and ai_review_view.skill_touched(s, skill) or {}
+    if #touched > 0 then
+      q = ('! This change modifies the skill %s itself (%s). %s'):format(skill.name, table.concat(touched, ', '), q)
+    end
+    return ask_generator(d.name, q, function(c)
       start_ai_review(s, bang, arg, c)
     end)
   end

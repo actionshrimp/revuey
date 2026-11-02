@@ -180,16 +180,39 @@ function M.clean_name(v)
   return n ~= '' and n or nil
 end
 
----A review request's skill as stored ({name, path}), its name one line; nil when there is none.
+---A review request's skill as stored: {name, path, origin ('user'|'repo'|'path'), arg (what the
+---user typed), hash (sha256 of its text when asked), in_repo?}, the name one line; nil when there
+---is none. A record that is not one of these (no .md path, an unknown origin, no hash) keeps
+---`bad` (why): `hunks --prompt --request` refuses it, never reviewing without the skill.
+local ORIGINS = { user = true, repo = true, path = true }
 function M.clean_skill(v)
-  if type(v) ~= 'table' or type(v.name) ~= 'string' then
+  if v == nil then
     return nil
   end
-  local name = require('revuey.guide').one_line(v.name)
+  if type(v) ~= 'table' then
+    return { name = '?', bad = 'not a skill record' }
+  end
+  local name = type(v.name) == 'string' and require('revuey.guide').one_line(v.name) or ''
+  local out = {
+    name = name ~= '' and name or '?',
+    path = type(v.path) == 'string' and v.path or nil,
+    origin = ORIGINS[v.origin] and v.origin or nil,
+    arg = type(v.arg) == 'string' and v.arg or nil,
+    hash = type(v.hash) == 'string' and v.hash:match('^%x+$') and v.hash or nil,
+    in_repo = v.in_repo == true or nil,
+  }
   if name == '' then
-    return nil
+    out.bad = 'no name'
+  elseif not (out.path and out.path:match('%.md$')) then
+    out.bad = 'its path is not a Markdown file'
+  elseif not out.origin then
+    out.bad = 'unknown origin'
+  elseif not out.hash then
+    out.bad = 'no hash of its text'
+  elseif out.origin == 'path' and not out.arg then
+    out.bad = 'no path given by the user'
   end
-  return { name = name, path = type(v.path) == 'string' and v.path or nil }
+  return out
 end
 
 function M.is_open(rec, now)
