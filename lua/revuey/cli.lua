@@ -1417,7 +1417,9 @@ function M.tag(o, pos)
     die(changed)
   end
   if changed then
-    comments.put(e.store, updated, now)
+    -- tags only: no bump of updated_at (comments.put_tags), so an accept or dismiss saved
+    -- meanwhile by the UI still wins the comment, and the tag merges in per tag
+    comments.put_tags(e.store, updated)
     save(e.store)
     local cur = comments.get(e.store, c.id) or updated
     comments.append_event(events_path(e.path), comments.event('tagged', cur, e.store.review, { tags = tags.of(cur) }))

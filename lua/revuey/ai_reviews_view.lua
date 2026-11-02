@@ -655,8 +655,32 @@ function M.triage_run(s, what)
   cv().refresh(s)
 end
 
----`cD`: delete the run under the cursor: its record and its findings (accepted ones are your
----comments: they stay). Asks first. A later run may find the deleted findings again.
+---What `cD` does to each finding of a run, by where it stands now: untriaged ones are
+---forgotten (deleted; a later run may find them again), dismissed and resolved ones are deleted
+---and remembered (`comments.delete`: a later run does not add them again, as after `cd`),
+---accepted ones are the user's comments: they stay, taken out of the run (`detached`).
+local function delete_plan(list)
+  local plan = { forget = {}, remember = {}, keep = {} }
+  for _, c in ipairs(list) do
+    local st = ai_review.triage_status(c)
+    if st == 'accepted' then
+      table.insert(plan.keep, c.id)
+    elseif st == 'untriaged' then
+      table.insert(plan.forget, c.id)
+    else
+      table.insert(plan.remember, c.id)
+    end
+  end
+  return plan
+end
+
+local function plural(n, word)
+  return n .. ' ' .. word .. (n == 1 and '' or 's')
+end
+
+---`cD`: delete the run under the cursor (asks first, saying what happens to each finding:
+---delete_plan). Decided again on the comments as they are once the file was read again, so a
+---finding accepted elsewhere meanwhile is kept.
 function M.delete_run(s)
   local gid = at(s)
   if not gid then
@@ -666,31 +690,54 @@ function M.delete_run(s)
   if not g then
     return
   end
-  local gone, kept = {}, 0
-  for _, c in ipairs(list) do
-    if ai_review.triage_status(c) == 'accepted' then
-      kept = kept + 1
-    else
-      gone[#gone + 1] = c.id
-    end
+  local plan = delete_plan(list)
+  local parts = {}
+  if #plan.forget > 0 then
+    parts[#parts + 1] = plural(#plan.forget, 'untriaged finding') .. ' deleted (a later run may find them again)'
   end
-  local msg = ('revuey: delete %s and its %d finding%s?'):format(M.run_title(g), #gone, #gone == 1 and '' or 's')
-  if kept > 0 then
-    msg = msg .. (' (%d accepted stay as your comments)'):format(kept)
+  if #plan.remember > 0 then
+    parts[#parts + 1] = plural(#plan.remember, 'dismissed finding') .. ' deleted and not added again'
   end
+  if #plan.keep > 0 then
+    parts[#parts + 1] = plural(#plan.keep, 'accepted finding') .. ' kept as your comments, under no run'
+  end
+  local msg = ('revuey: delete %s%s?'):format(M.run_title(g), #parts > 0 and (': ' .. table.concat(parts, '; ')) or ' (no findings)')
   if not M.confirm(msg, 'Delete') then
     return
   end
   local store = cv().sync_store(s)
   pcall(comments.reload, store)
   local now = comments.now_ms()
-  local deleted = {}
-  for _, id in ipairs(gone) do
+  local cur = {}
+  for _, c in ipairs(list) do
+    cur[#cur + 1] = comments.get(store, c.id)
+  end
+  plan = delete_plan(cur)
+  local deleted, kept = {}, 0
+  for _, id in ipairs(plan.forget) do
     local c = comments.delete(store, id, now)
     if c then
       -- forgotten, not triaged: a later run may find it again
       store.comments[id].ai = nil
       deleted[#deleted + 1] = c
+    end
+  end
+  for _, id in ipairs(plan.remember) do
+    local c = comments.delete(store, id, now)
+    if c then
+      deleted[#deleted + 1] = c
+    end
+  end
+  for _, id in ipairs(plan.keep) do
+    local c = vim.deepcopy(comments.get(store, id))
+    local rec = type(c.ai) == 'table' and c.ai or (type(c.agent) == 'table' and c.agent) or nil
+    if rec then
+      rec.detached = true
+      if c.ai then
+        c.ai.review = nil
+      end
+      comments.put(store, c, now)
+      kept = kept + 1
     end
   end
   local info = cv().review_info(s)
@@ -711,7 +758,8 @@ function M.delete_run(s)
   if M.filter(s).run == gid then
     M.filter(s).run = nil
   end
-  vim.notify(('revuey: deleted %s (%d finding%s)'):format(M.run_title(g), #deleted, #deleted == 1 and '' or 's'), vim.log.levels.INFO)
+  vim.notify(('revuey: deleted %s (%s%s)'):format(M.run_title(g), plural(#deleted, 'finding'),
+    kept > 0 and (', ' .. kept .. ' accepted kept as your comments') or ''), vim.log.levels.INFO)
   cv().refresh(s)
 end
 

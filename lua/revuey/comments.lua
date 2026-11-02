@@ -786,6 +786,11 @@ function M.merge(a, b, prefer_a)
     win, lose = b, a
   end
   if win.deleted then
+    -- a re-run's replacement of an untouched finding (ai_review.import) that lost a race with a
+    -- tag set meanwhile (tags do not bump updated_at): the import never saw it, the finding stays
+    if win.replaced and not lose.deleted and require('revuey.tags').touched(lose) then
+      return lose
+    end
     return win
   end
   local out = vim.deepcopy(win)
@@ -1098,6 +1103,17 @@ end
 ---Add or replace a comment (bumps updated_at). In memory until `save`.
 function M.put(store, c, now)
   return touch(store, c, now)
+end
+
+---Store a change to a comment's tags only (tags.lua), without bumping `updated_at`: a tag
+---must never win the whole-comment merge over an accept, a dismiss or an edit saved elsewhere
+---meanwhile; the tags themselves merge per tag (M.merge), so the tag survives too.
+function M.put_tags(store, c)
+  local prev = store.comments[c.id]
+  c.updated_at = prev and prev.updated_at or c.updated_at
+  store.comments[c.id] = c
+  store._dirty[c.id] = true
+  return c
 end
 
 ---Get a live (not deleted) comment.

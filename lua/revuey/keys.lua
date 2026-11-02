@@ -51,8 +51,8 @@ M.GROUPS = {
       readme = 'In the agent reviews view: filter the findings by tag, run, status (untriaged, accepted, dismissed) or severity' },
     { names = { 'reviews_tag_filter' }, desc = 'agent reviews and comments view: only one tag',
       readme = 'In the agent reviews view and the comments view: only the findings (comments) with a tag, picked from the tags in use' },
-    { names = { 'reviews_clear_filter' }, desc = 'agent reviews and comments view: clear the filters',
-      readme = 'In the agent reviews view and the comments view: clear the filters' },
+    { names = { 'reviews_clear_filter' }, desc = 'agent reviews: clear the filters (comments view: the tag filter)',
+      readme = 'In the agent reviews view: clear every filter. In the comments view, where only the tag filter applies (`f` is not mapped there): clear it' },
   },
   {
     name = 'Review and posting',

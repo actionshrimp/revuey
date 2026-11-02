@@ -283,6 +283,99 @@ h.test('migration: a version 1 record is read as one run; findings from before r
   end, ai_review.read_runs(rpath)))
 end)
 
+h.test('a tag never wins the comment: CLI loads, the UI accepts and saves, the CLI saves a tag; both stay', function()
+  local dir = h.tmpdir('agent-reviews-race')
+  local path = dir .. '/x.comments.json'
+  local st = comments.load(path)
+  local c = comments.new(comments.file_anchor('m.txt'), '**T**', { author = { kind = 'ai', name = 'claude' }, now = 100 })
+  c.ai = { title = 'T', severity = 'nit', run = { name = 'claude' }, review = 'r1' }
+  comments.put(st, c, 100)
+  comments.save(st)
+  local cli = comments.load(path) -- the CLI loads
+  local ui = comments.load(path)
+  h.ok(ai_review.accept(ui, c.id, 300))
+  comments.save(ui) -- the UI accepts and saves
+  -- the CLI tags what it loaded (as `bin/revuey tag` does) and saves, later
+  comments.put_tags(cli, tags.apply(comments.get(cli, c.id), { 'x' }, true, 400))
+  comments.save(cli)
+  local d = comments.read(path).comments[c.id]
+  h.eq({ 'accepted', { 'claude', 'x' } }, { d.status, tags.of(d) })
+  -- and the other way round: a dismiss after the tag was saved
+  local ui2 = comments.load(path)
+  local cli2 = comments.load(path)
+  comments.put_tags(cli2, tags.apply(comments.get(cli2, c.id), { 'y' }, true, 500))
+  comments.save(cli2)
+  local cur = vim.deepcopy(comments.get(ui2, c.id))
+  cur.body = 'edited'
+  comments.put(ui2, cur, 600)
+  comments.save(ui2)
+  d = comments.read(path).comments[c.id]
+  h.eq({ 'edited', { 'claude', 'x', 'y' } }, { d.body, tags.of(d) })
+end)
+
+h.test('a re-run\'s replacement never deletes a finding tagged meanwhile (the import did not see the tag)', function()
+  local f = { id = 'f1', created_at = 100, updated_at = 100, status = 'saved', author = { kind = 'ai', name = 'claude' }, ai = { run = { name = 'claude' } } }
+  local tomb = { id = 'f1', deleted = true, deleted_at = 200, updated_at = 101, replaced = true }
+  local tagged = tags.apply(f, { 'keep' }, true, 150)
+  h.eq(tagged, comments.merge(tomb, tagged))
+  h.eq(tagged, comments.merge(tagged, tomb))
+  h.eq(tomb, comments.merge(tomb, f), 'untagged: replaced')
+  local plain = { id = 'f1', deleted = true, deleted_at = 200, updated_at = 101 }
+  h.eq(plain, comments.merge(plain, tagged), 'a user\'s delete still wins')
+end)
+
+h.test('migration survives the rewrite: findings from before runs stay with the old record after other runs', function()
+  local dir = h.tmpdir('agent-reviews-migrate2')
+  local rpath = dir .. '/x.ai-review.json'
+  ai_review.save_record(rpath, { kind = 'revuey-ai-review', version = 1, id = 'old1', author = { kind = 'ai', name = 'claude' },
+    summary = 'S', verdict = 'approve', generator = { provider = 'claude', generated_at = 1 } })
+  local old = { id = 'f1', created_at = 5, status = 'saved', author = { kind = 'ai', name = 'claude' }, ai = { review = 'older0', title = 'x' } }
+  local live = ai_review.live_runs({ comments = { f1 = old } })
+  -- another reviewer's run: the file is rewritten as version 2
+  ai_review.add_run(rpath, { id = 'a1', run = { name = 'claude', provider = 'agent', agent = 'claude' }, finished_at = 2000, generator = {} }, live)
+  h.eq(true, vim.json.decode(table.concat(vim.fn.readfile(rpath), '\n')).runs[1].legacy)
+  local g = ai_review.groups(ai_review.read_runs(rpath), { old })
+  local by = {}
+  for _, x in ipairs(g) do
+    by[x.id] = x
+  end
+  h.ok(by.old1 and by.old1.record and #by.old1.findings == 1, vim.inspect(g))
+  -- a later run of the old record's identity: it stays while its finding lives
+  ai_review.add_run(rpath, { id = 'n2', run = { name = 'claude', provider = 'claude' }, finished_at = 3000, generator = {} }, live)
+  h.eq({ 'old1', 'a1', 'n2' }, vim.tbl_map(function(r)
+    return r.id
+  end, ai_review.read_runs(rpath)))
+  g = ai_review.groups(ai_review.read_runs(rpath), { old })
+  h.ok(vim.iter(g):any(function(x)
+    return x.id == 'old1' and #x.findings == 1
+  end), vim.inspect(g))
+  -- its finding gone: the next such run drops it
+  ai_review.add_run(rpath, { id = 'n3', run = { name = 'claude', provider = 'claude' }, finished_at = 4000, generator = {} }, {})
+  h.eq({ 'a1', 'n3' }, vim.tbl_map(function(r)
+    return r.id
+  end, ai_review.read_runs(rpath)))
+end)
+
+h.test('the cap drops the oldest runs nothing points at, never one with live findings', function()
+  local list = {}
+  for i = 1, 35 do
+    list[i] = { id = 'r' .. i, run = { name = 'n' .. i }, finished_at = i }
+  end
+  local out = ai_review.prune_runs(list, { r1 = true, r2 = true })
+  local ids = vim.tbl_map(function(r)
+    return r.id
+  end, out)
+  h.eq(ai_review.MAX_RUNS, #out)
+  h.eq({ 'r1', 'r2', 'r8' }, { ids[1], ids[2], ids[3] }, 'r3..r7 went first')
+  local all = {}
+  for i = 1, 35 do
+    all['r' .. i] = true
+  end
+  h.eq(35, #ai_review.prune_runs(list, all), 'every run has live findings: over the cap')
+  local none = ai_review.prune_runs(list, {})
+  h.eq({ ai_review.MAX_RUNS, 'r35' }, { #none, none[#none].id }, 'the newest stays')
+end)
+
 h.test('two runs side by side: a fresh session and the connected agent with a skill; default tags; --tag on import', function()
   open()
   answer()
@@ -618,7 +711,7 @@ h.test('the view: cA / cN accept or dismiss a run\'s untriaged findings, asking 
   say = false
   vim.api.nvim_win_set_cursor(s.arlist.win, { vrow('claude · claude-fake-1'), 0 })
   feed('cD')
-  h.ok(asked[#asked].msg:find('delete claude · claude-fake-1 and its 1 finding?', 1, true), asked[#asked].msg)
+  h.eq('revuey: delete claude · claude-fake-1: 1 dismissed finding deleted and not added again?', asked[#asked].msg)
   h.eq(n_runs, #arv.runs(s), 'said no')
   say = true
   feed('cD')
@@ -629,8 +722,19 @@ h.test('the view: cA / cN accept or dismiss a run\'s untriaged findings, asking 
   -- the agent's run: its accepted findings stay as your comments
   vim.api.nvim_win_set_cursor(s.arlist.win, { vrow('claude (connected)'), 0 })
   feed('cD')
-  h.ok(asked[#asked].msg:find('and its 0 findings? (2 accepted stay as your comments)', 1, true), asked[#asked].msg)
-  h.ok(by_title('Twenty is a word') and by_title('Thirty is a word'), 'accepted: kept')
+  h.eq('revuey: delete claude (connected) · skill fixture-sec: 2 accepted findings kept as your comments, under no run?', asked[#asked].msg)
+  local tw, th = by_title('Twenty is a word'), by_title('Thirty is a word')
+  h.ok(tw and th, 'accepted: kept')
+  h.eq({ true, nil, 'accepted' }, { tw.ai.detached, tw.ai.review, tw.status })
+  -- under no run: no group of a gone record that nothing could clear
+  h.ok(not vtext():find('run record gone', 1, true) and not vtext():find('Twenty is a word', 1, true), vtext())
+  local ct = table.concat(require('revuey.comments_list').texts(s, 160), '\n')
+  h.ok(ct:find('Twenty is a word', 1, true), 'still in the comments view\n' .. ct)
+  -- the dismissed finding of the deleted fresh run is not added again by the next fresh run
+  answer()
+  view.ai_review_command(true)
+  wait_jobs()
+  h.eq(nil, by_title('File-level nit'), 'a dismissal survives cD')
   rv.confirm = orig
 end)
 
@@ -650,6 +754,95 @@ h.test('live: an import and a tag from the CLI redraw the open view', function()
     return vtext():find('#codex #hot #pass-2', 1, true) ~= nil
   end, 20), vtext())
   feed('q')
+end)
+
+h.test('cD on an untriaged finding forgets it: a later run finds it again; one accepted elsewhere meanwhile is kept', function()
+  local asked = {}
+  local orig = rv.confirm
+  if not s.arlist then
+    feed('gA')
+  end
+  local r = run({ 'import-review', '--name', 'gemma', '-' }, { stdin = vim.json.encode(review_doc({
+    summary = 'Two notes.', findings = {
+      { hunk = 'h2', line = 5, severity = 'nit', title = 'Thirty once more', body = 'Hm.' },
+      { hunk = 'h1', line = 5, severity = 'nit', title = 'Twenty once more', body = 'Hm.' },
+    } })) })
+  h.eq(0, r.code, r.stderr)
+  h.ok(vim.wait(5000, function()
+    return table.concat(vim.api.nvim_buf_get_lines(s.arlist.buf, 0, -1, false), '\n'):find(' ▍gemma', 1, true) ~= nil
+  end, 20), vtext())
+  local other = by_title('Twenty once more')
+  rv.confirm = function(msg)
+    asked[#asked + 1] = msg
+    -- meanwhile, another instance accepts one
+    local st = comments.load(cv.sync_store(s).path)
+    assert(ai_review.accept(st, other.id))
+    comments.save(st)
+    return true
+  end
+  vim.api.nvim_win_set_cursor(s.arlist.win, { vrow('gemma'), 0 })
+  feed('cD')
+  rv.confirm = orig
+  h.eq('revuey: delete gemma: 2 untriaged findings deleted (a later run may find them again)?', asked[1])
+  h.eq(nil, by_title('Thirty once more'))
+  local kept = by_title('Twenty once more')
+  h.ok(kept and kept.status == 'accepted' and kept.ai.detached, 'accepted meanwhile: kept\n' .. vim.inspect(kept))
+  r = run({ 'import-review', '--name', 'gemma', '-' }, { stdin = vim.json.encode(review_doc({
+    summary = 'Again.', findings = { { hunk = 'h2', line = 5, severity = 'nit', title = 'Thirty once more', body = 'Hm.' } } })) })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('imported 1 finding', 1, true), r.stdout)
+  h.ok(vim.wait(5000, function()
+    return by_title('Thirty once more') ~= nil
+  end, 20), 'forgotten: found again')
+  feed('q')
+end)
+
+h.test('a finding tagged after the import is touched: the same reviewer\'s re-run leaves it', function()
+  local doc = review_doc({ summary = 'Tagging.', findings = {
+    { hunk = 'h1', line = 6, severity = 'nit', title = 'Tagged one', body = 'a' },
+    { hunk = 'h1', line = 7, severity = 'nit', title = 'Untagged one', body = 'b' },
+  } })
+  h.eq(0, run({ 'import-review', '--name', 'tagger', '-' }, { stdin = vim.json.encode(doc) }).code)
+  h.ok(vim.wait(5000, function()
+    return by_title('Tagged one') ~= nil
+  end, 20))
+  local t, u = by_title('Tagged one'), by_title('Untagged one')
+  h.eq(1, cv.set_tags(s, { t.id }, { add = { 'keep' } }))
+  h.eq(true, tags.touched(comments.get(cv.sync_store(s), t.id)))
+  local r = run({ 'import-review', '--name', 'tagger', '-' }, { stdin = vim.json.encode(doc) })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('1 untriaged finding of the previous review replaced', 1, true), r.stdout)
+  h.ok(vim.wait(5000, function()
+    return comments.get(cv.sync_store(s), u.id) == nil
+  end, 20), 'the untagged one was replaced')
+  local after = comments.get(cv.sync_store(s), t.id)
+  h.ok(after and tags.has(after, 'keep'), 'tagged: not replaced')
+  h.eq(1, #vim.tbl_filter(function(c)
+    return c.ai.title == 'Tagged one'
+  end, findings()), 'not added twice')
+end)
+
+h.test('the UI tag input changes only what was edited: a tag added elsewhere meanwhile stays; bad words are refused', function()
+  local t = by_title('Thirty once more')
+  local real_input = vim.ui.input
+  vim.ui.input = function(o, cb)
+    h.eq('gemma', o.default, 'the tags it shows')
+    -- the CLI tags it while the input is open
+    assert(run({ 'tag', t.id, 'cli-side' }).code == 0)
+    cb(o.default .. ' mine')
+  end
+  cv.ask_tags(s, { t.id })
+  local now = comments.get(cv.sync_store(s), t.id)
+  h.ok(tags.has(now, 'mine') and tags.has(now, 'cli-side'), vim.inspect(tags.of(now)))
+  local before = tags.of(now)
+  vim.ui.input = function(o, cb)
+    cb(o.default .. ' !!')
+  end
+  msgs = {}
+  cv.ask_tags(s, { t.id })
+  h.eq(before, tags.of(comments.get(cv.sync_store(s), t.id)))
+  h.ok(msgs[#msgs].msg:find('not a tag: !!', 1, true), vim.inspect(msgs))
+  vim.ui.input = real_input
 end)
 
 h.run()

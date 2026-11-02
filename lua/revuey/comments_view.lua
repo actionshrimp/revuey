@@ -1628,7 +1628,7 @@ function M.set_tags(s, ids, o)
       if not c then
         vim.notify('revuey: ' .. tostring(ch), vim.log.levels.WARN)
       elseif ch then
-        comments.put(store, c, now)
+        comments.put_tags(store, c) -- tags only: never wins the comment over a change elsewhere
         changed[#changed + 1] = c
       end
     end
@@ -1651,7 +1651,10 @@ function M.set_tags(s, ids, o)
 end
 
 ---Ask for the tags of comments `ids` (one input with the tags shown now, edited in place:
----space separated; a leading `+` adds to each, `-tag` removes), then set them.
+---space separated; a leading `+` adds to each, `-tag` removes), then set them. With one
+---comment, what changes is what the user changed in the input (words added, words taken out of
+---the tags it showed): a tag added elsewhere meanwhile stays. A word that is not a tag is said,
+---and nothing changes.
 function M.ask_tags(s, ids)
   local tags = require('revuey.tags')
   local store = cm(s).store
@@ -1666,33 +1669,50 @@ function M.ask_tags(s, ids)
     return
   end
   local one = #list == 1
+  local shown = one and tags.of(list[1]) or {}
   vim.ui.input({
     prompt = one and 'Tags (space separated): ' or ('Tags for %d comments (+tag adds, -tag removes): '):format(#list),
-    default = one and table.concat(tags.of(list[1]), ' ') or '',
+    default = table.concat(shown, ' '),
   }, function(text)
     if text == nil or M.session_gone(s) then
       return
     end
-    local add, remove, plain = {}, {}, {}
+    local add, remove, plain, bad = {}, {}, {}, {}
+    local signed = false
     for _, w in ipairs(vim.split(text, '[%s,]+', { trimempty = true })) do
       local sign, rest = w:match('^([+-])(.*)$')
       local t = tags.clean(rest or w)
-      if t then
-        if sign == '-' then
-          remove[#remove + 1] = t
-        elseif sign == '+' or not one then
-          add[#add + 1] = t
-        else
-          plain[#plain + 1] = t
-        end
+      if not t then
+        bad[#bad + 1] = w
+      elseif sign == '-' then
+        remove[#remove + 1], signed = t, true
+      elseif sign == '+' then
+        add[#add + 1], signed = t, true
+      else
+        plain[#plain + 1] = t
       end
     end
-    if one and (#add == 0 and #remove == 0) then
-      M.set_tags(s, ids, { list = plain })
+    if #bad > 0 then
+      return vim.notify('revuey: not a tag: ' .. table.concat(bad, ' ') .. ' (letters, digits, . _ -)', vim.log.levels.WARN)
+    end
+    if one and not signed then
+      -- against what the input showed: added words are added, words taken out removed
+      local want = {}
+      for _, t in ipairs(plain) do
+        want[t] = true
+        if not vim.tbl_contains(shown, t) then
+          add[#add + 1] = t
+        end
+      end
+      for _, t in ipairs(shown) do
+        if not want[t] then
+          remove[#remove + 1] = t
+        end
+      end
     else
       vim.list_extend(add, plain)
-      M.set_tags(s, ids, { add = add, remove = remove })
     end
+    M.set_tags(s, ids, { add = add, remove = remove })
   end)
 end
 

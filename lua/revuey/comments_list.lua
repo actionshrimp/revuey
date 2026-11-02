@@ -421,7 +421,7 @@ function M.build(s, o)
   if tf then
     local kt, kc = key('reviews_tag_filter'), key('reviews_clear_filter')
     line({ { ' Only #' .. tf .. ' (' .. #entries .. ')', 'RevueyCommentTag' },
-      { (kt and ('  ' .. kt .. ' another tag') or '') .. (kc and ('  ' .. kc .. ' all') or ''), 'RevueyCommentMeta' } })
+      { (kt and ('  ' .. kt .. ' another tag') or '') .. (kc and ('  ' .. kc .. ' clears it') or ''), 'RevueyCommentMeta' } })
   end
   local fv = require('revuey.forge_view')
   if fv.has_threads(s) then
@@ -655,9 +655,11 @@ function M.keymaps(s, v)
   map(k.reviews_tag_filter, function()
     arv.pick_filter(s, 'tag', M.render)
   end, 'only the comments with a tag')
+  -- only the tag filter applies here (the others are the agent reviews view's), so `F` clears it
+  -- alone and `f` is not mapped
   map(k.reviews_clear_filter, function()
-    arv.clear_filter(s)
-  end, 'every comment again (no tag filter)')
+    arv.set_filter(s, 'tag', nil)
+  end, 'every comment again (clears the tag filter)')
   F.common_keys(s, map)
 end
 

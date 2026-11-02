@@ -28,7 +28,7 @@
 27|~                  │   cD       agent reviews, on a run: delete it and its findings (asks first)      │                 
 28|~                  │   f        agent reviews: filter by tag, run, status or severity                 │                 
 29|~                  │   t        agent reviews and comments view: only one tag                         │──────────────── 
-30|~                  │   F        agent reviews and comments view: clear the filters                    │                 
+30|~                  │   F        agent reviews: clear the filters (comments view: the tag filter)      │                 
 31|~                  │                                                                                  │                 
 32|~                  ╰──────────────────────────────────────────────────────────────── q <Esc> g? close ╯                 
 33|revuey://files [-]    9,1            All revuey://feature/cart..main [-]                              10,1            8%

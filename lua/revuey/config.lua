@@ -120,8 +120,8 @@ M.defaults = {
     -- run already): an input with its tags. Also :RevueyTag.
     comment_tag = 'ct',
     -- the agent reviews view over the diff: AI findings and agent comments grouped by run, with
-    -- filters (<CR> shows one in the diff; again or q: back). Also :RevueyAIReviews. `gA` (the
-    -- character code in hex) means nothing in a review buffer.
+    -- filters (<CR> shows one in the diff; again or q: back). Also :RevueyAIReviews. `gA` has no
+    -- built-in meaning in Neovim (`ga`, the character code, is ask_agent here).
     ai_reviews = 'gA',
     -- in the agent reviews view, on a run (its heading or any of its findings): accept / dismiss
     -- every untriaged finding of it, or delete the run and its findings (asks first)

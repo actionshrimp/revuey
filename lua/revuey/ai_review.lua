@@ -429,7 +429,7 @@ function M.import(raw, o)
     -- a tombstone just newer than the version seen: any change made meanwhile elsewhere (an
     -- accept, a dismiss, a reply) is newer still and wins the merge, and the finding stays
     local prev = store.comments[cid]
-    store.comments[cid] = { id = cid, deleted = true, deleted_at = now, updated_at = (prev.updated_at or 0) + 1 }
+    store.comments[cid] = { id = cid, deleted = true, deleted_at = now, updated_at = (prev.updated_at or 0) + 1, replaced = true }
     store._dirty[cid] = true
     gone[#gone + 1] = prev
   end
@@ -657,7 +657,8 @@ local function clean_run(rec)
 end
 
 ---The runs stored at `path`, oldest first ({} without any). A version 1 file is one run, marked
----`migrated` (findings without `ai.run` belong to it).
+---`migrated` (findings without `ai.run` belong to it); written back, it keeps `legacy = true`,
+---read as `migrated` again.
 ---@return table[] runs
 function M.read_runs(path)
   local fd = io.open(path, 'r')
@@ -681,6 +682,8 @@ function M.read_runs(path)
     for _, r in ipairs(data.runs) do
       local rec = clean_run(r)
       if rec then
+        rec.migrated = rec.legacy == true or nil
+        rec.legacy = nil
         list[#list + 1] = rec
       end
     end
@@ -706,7 +709,7 @@ end
 function M.live_runs(store)
   local ids = {}
   for _, c in pairs(store.comments) do
-    if not c.deleted and type(c.ai) == 'table' then
+    if not c.deleted and type(c.ai) == 'table' and not c.ai.detached then
       if c.ai.review then
         ids[c.ai.review] = true
       end
@@ -719,22 +722,30 @@ function M.live_runs(store)
 end
 
 ---Keep what is worth keeping: a run is dropped when a later run of the same identity (run_key)
----exists and no live finding points at it any more (its findings were all replaced or deleted);
----then the oldest past MAX_RUNS.
+---exists and no live finding points at it any more (its findings were all replaced or deleted).
+---Past MAX_RUNS the oldest runs no live finding points at go (never the newest run); runs with
+---live findings are never dropped, even when that leaves more than MAX_RUNS.
 function M.prune_runs(list, live)
   local latest = {}
   for i, r in ipairs(list) do
     latest[M.run_key(r.run)] = i
   end
+  local function used(r)
+    return live[r.id] or (r.migrated and live['\0legacy'])
+  end
   local out = {}
   for i, r in ipairs(list) do
-    local used = live[r.id] or (r.migrated and live['\0legacy'])
-    if used or latest[M.run_key(r.run)] == i then
+    if used(r) or latest[M.run_key(r.run)] == i then
       out[#out + 1] = r
     end
   end
-  while #out > M.MAX_RUNS do
-    table.remove(out, 1)
+  local i = 1
+  while #out > M.MAX_RUNS and i < #out do
+    if used(out[i]) then
+      i = i + 1
+    else
+      table.remove(out, i)
+    end
   end
   return out
 end
@@ -756,6 +767,8 @@ local function change_runs(path, fn)
         list = f(list)
       end
       for _, r in ipairs(list) do
+        -- the version 1 record: still the run findings without `ai.run` belong to
+        r.legacy = r.migrated or nil
         r.migrated = nil
       end
       M.save_record(path, { kind = M.RUNS_KIND, version = M.RUNS_VERSION, runs = list })
@@ -839,6 +852,9 @@ function M.groups(runs, list)
   for _, c in ipairs(list) do
     local origin = M.origin(c)
     local g
+    if origin == 'ai' and c.ai.detached then
+      origin = nil -- accepted from a run that was deleted: the user's comment, under no run
+    end
     if origin == 'ai' then
       local rid = c.ai.review
       g = rid and by_id[rid]
@@ -853,7 +869,7 @@ function M.groups(runs, list)
           by_id[key] = g
         end
       end
-    elseif origin == 'agent' then
+    elseif origin == 'agent' and not (type(c.agent) == 'table' and c.agent.detached) then
       local a = (type(c.agent) == 'table' and c.agent.author) or c.author or {}
       local key = 'agent:' .. tostring(a.name or 'agent')
       g = by_id[key]
