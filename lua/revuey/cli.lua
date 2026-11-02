@@ -4,6 +4,9 @@
 --   sessions [--json] [--all]
 --       live reviews of this worktree (--all: of every worktree of the repo), from the session
 --       registry (sessions.lua), with whether an agent is watching each
+--   stack [--json] [--session <id>]
+--       the review's stack, bottom first (agent_link.stack_info in the registry entry, else the
+--       local stack detected here): layers with parents, own +/-, PRs, and their diff revs
 --   watch [--messages] [--json] [--session <id>] [--since <event id>|all] [--all] [--scope ...]
 --       attach to the worktree's review session and follow the comment event feed: first the
 --       sent messages not yet acknowledged (catch-up), then new events as they happen, one line
@@ -103,6 +106,12 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey sessions [--json] [--all]
       live reviews of this worktree (--all: every worktree of the repo) and whether an agent
       is connected to each
+  revuey stack [--json] [--session <id>]
+      the stack the review is of, bottom first: each layer's branch, parent, +/- of its own
+      commits, PR (number, state, title, url, as the review last looked it up) and the
+      `git diff <parent rev>...<tip>` that shows its changes without switching; > marks the
+      layer the review shows, * the branch checked out. "not a stack" for a plain review.
+      With no review running, the local stack `revuey` would open here (no PRs).
   revuey watch --messages [--session <id>] [--name <your name>] [--json] [--replay]
       attach to the review and print each message the user sends you, one line each:
         revuey message <id> <path>:<lines> (<side>) [<branch>]: <first line>  (revuey show <id> ...)
@@ -1582,6 +1591,131 @@ local function restore_stack(o, ctx, r, info, attached)
 end
 
 -- ---------------------------------------------------------------------------
+-- The stack overview
+-- ---------------------------------------------------------------------------
+
+---A layer's own +/- (`git diff --shortstat parent_rev...tip`: committed changes only), or nil
+---when a rev is not here (an unfetched GitHub layer).
+local function layer_stats(root, l)
+  if not (l.parent_rev and l.tip) then
+    return nil
+  end
+  local res = git.git({ 'diff', '--shortstat', l.parent_rev .. '...' .. l.tip }, root)
+  if not res then
+    return nil
+  end
+  return {
+    files = tonumber(res:match('(%d+) files? changed')) or 0,
+    added = tonumber(res:match('(%d+) insertions?')) or 0,
+    removed = tonumber(res:match('(%d+) deletions?')) or 0,
+  }
+end
+
+---The stack: what the attached review published (agent_link.stack_info, with its PRs), else
+---the local stack detected as `revuey` would open it here (no PRs). Nil: not a stack review.
+local function stack_overview(o, ctx, attached)
+  if attached and type(attached.stack) == 'table' then
+    return vim.deepcopy(attached.stack), 'review'
+  end
+  if attached and type(attached.scope) == 'table' and attached.scope.kind == 'branch' then
+    return nil
+  end
+  local dir = (attached and attached.state_dir) or state_dir(o)
+  if o.state_dir and o.state_dir ~= '' then
+    dir = o.state_dir
+  end
+  local last = sessions.read_last(sessions.bases(ctx.root, dir), ctx.root) or {}
+  if not attached and last.stack == false then
+    return nil
+  end
+  local trunk = (type(last.trunk) == 'string' and last.trunk ~= '' and git.rev_parse(last.trunk, ctx.root) and last.trunk)
+    or git.default_branch(ctx.root)
+  if not trunk then
+    return nil
+  end
+  local ok, st = pcall(require('revuey.stack').detect, ctx.root, trunk, nil, { state_dir = dir })
+  if not (ok and st) then
+    return nil
+  end
+  local res = { kind = st.kind, trunk = st.trunk, layers = {} }
+  for i, l in ipairs(st.layers) do
+    res.layers[i] = {
+      name = l.name,
+      parent = l.parent,
+      parent_rev = l.parent_rev,
+      tip = l.tip,
+      is_head = l.is_head or nil,
+      title = l.title,
+      landed = l.landed or nil,
+      remote = l.remote or nil,
+    }
+    if attached and attached.scope and attached.scope.kind == 'layer' and l.name == attached.branch then
+      res.viewed = i
+    end
+  end
+  if not attached then
+    res.viewed = last.scope ~= 'full' and st.current or nil
+  end
+  return res, 'local'
+end
+
+function M.stack(o)
+  local ctx = here(o)
+  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  local st, source = stack_overview(o, ctx, attached)
+  local checked_out = attached and attached.checked_out or git.current_branch(ctx.root)
+  if not st then
+    local branch = attached and attached.branch or ctx.branch
+    local base = attached and attached.base or git.default_branch(ctx.root)
+    if o.json then
+      out(vim.json.encode({ branch = branch, base = base, checked_out = checked_out, layers = {} }) .. '\n')
+    else
+      out(('not a stack: the review is of %s%s alone, no layers\n'):format(branch, base and (' vs ' .. base) or ''))
+    end
+    return
+  end
+  for _, l in ipairs(st.layers) do
+    l.stats = layer_stats(ctx.root, l)
+  end
+  st.checked_out, st.source = checked_out, source
+  st.review = attached and attached.id or nil
+  if o.json then
+    out(vim.json.encode(st) .. '\n')
+    return
+  end
+  out(('Stack on %s, %d layers, bottom first. > the review shows %s; * checked out: %s%s\n'):format(
+    st.trunk or '?',
+    #st.layers,
+    st.viewed and ('layer ' .. st.viewed) or 'the full stack',
+    checked_out or 'detached HEAD',
+    attached and '' or ' (no review running: as `revuey` would open here; PRs unknown)'
+  ))
+  local short = function(rev)
+    return rev and rev:sub(1, 10) or '?'
+  end
+  for i, l in ipairs(st.layers) do
+    local parts = {
+      ('%s%s%2d  %s on %s'):format(i == st.viewed and '>' or ' ', l.name == checked_out and '*' or ' ', i, l.name, l.parent or '?'),
+    }
+    if l.stats then
+      parts[#parts + 1] = ('+%d -%d in %d file%s'):format(l.stats.added, l.stats.removed, l.stats.files, l.stats.files == 1 and '' or 's')
+    end
+    if l.pr then
+      local state = l.pr.state and l.pr.state ~= 'OPEN' and (' ' .. l.pr.state:lower()) or (l.pr.draft and ' draft' or '')
+      parts[#parts + 1] = ('PR #%s%s "%s" %s'):format(l.pr.number, state, l.pr.title or '', l.pr.url or '')
+    elseif l.title then
+      parts[#parts + 1] = '"' .. l.title .. '"'
+    end
+    if l.landed then
+      parts[#parts + 1] = '(landed)'
+    end
+    parts[#parts + 1] = ('git diff %s...%s'):format(short(l.parent_rev), short(l.tip))
+    out(table.concat(parts, '  ') .. '\n')
+  end
+  out("Each line's `git diff` (add --stat, or -- <path>) is that layer's own committed changes, without switching.\n")
+end
+
+-- ---------------------------------------------------------------------------
 -- Requests to the agent (requests.lua): taking one, checking it, finishing it
 -- ---------------------------------------------------------------------------
 
@@ -2443,6 +2577,7 @@ local COMMANDS = {
   findings = M.findings,
   watch = M.watch,
   sessions = M.sessions,
+  stack = M.stack,
   show = M.show,
   ack = M.ack,
   inbox = M.inbox,

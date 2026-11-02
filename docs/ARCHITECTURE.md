@@ -661,7 +661,10 @@ are in `reports/Terminal code review tool landscape.md`.
      writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, checked_out, base, mode,
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
      server (v:servername), common_dir, started_at, updated_at, load {base, from (the merge
-     base), target, mode, context_lines, max_file_bytes}, review (review_info)}`) atomically after its first
+     base), target, mode, context_lines, max_file_bytes}, review (review_info), stack? {kind, trunk,
+     viewed, layers [{name, parent, parent_rev, tip, is_head, title, landed, remote, pr {number,
+     title, url, state, draft} as last looked up}]} (agent_link.stack_info, for `bin/revuey
+     stack`)}`) atomically after its first
      render, rewrites it at the end of any render that changed it (scope, layer, branch) and on
      every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is dead
      when its pid is dead or its `server` (a path) is gone. Staleness alone does not kill it (a

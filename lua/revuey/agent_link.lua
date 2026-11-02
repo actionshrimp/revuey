@@ -39,6 +39,40 @@ local function checked_out(r)
   return r.branch ~= 'HEAD' and not r.target and r.branch or nil
 end
 
+---The stack of the review, for `bin/revuey stack`: its layers bottom first, each with its parent,
+---the revs its own diff runs between (merge-base(parent_rev, tip)..tip, as review targets do)
+---and its PR as the review last looked it up (forge_view.pr: cached only, never fetched), and
+---the layer the review shows (nil in full-stack scope). Nil for a review that is not a stack's.
+function M.stack_info(s)
+  local r = s.review
+  local st = r.stack
+  if not (st and st.layers and r.scope) then
+    return nil
+  end
+  local layers = {}
+  for i, l in ipairs(st.layers) do
+    local ok, pr = pcall(require('revuey.forge_view').pr, s, l.name)
+    pr = ok and type(pr) == 'table' and pr or nil
+    layers[i] = {
+      name = l.name,
+      parent = l.parent,
+      parent_rev = l.parent_rev,
+      tip = l.tip,
+      is_head = l.is_head or nil,
+      title = l.title,
+      landed = l.landed or nil,
+      remote = (l.remote or l.unfetched) or nil,
+      pr = pr and { number = pr.number, title = pr.title, url = pr.url, state = pr.state, draft = pr.draft or nil } or nil,
+    }
+  end
+  return {
+    kind = st.kind,
+    trunk = st.trunk,
+    viewed = r.scope.kind == 'layer' and r.scope.index or nil,
+    layers = layers,
+  }
+end
+
 ---Registry entry for the session's current review scope.
 local function entry(s)
   local r = s.review
@@ -75,6 +109,7 @@ local function entry(s)
       panel_folders = config.options.panel_folders, -- the file order (review.load)
     },
     review = info,
+    stack = M.stack_info(s),
   }
 end
 

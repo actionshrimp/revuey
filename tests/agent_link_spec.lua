@@ -3,7 +3,8 @@
 -- close), sending (`<C-a>` in the editor, `cs` on a comment, `ga` on a selection), `bin/revuey
 -- watch --messages` (catch-up when started after a send, live lines when started before, --json,
 -- clean exit on SIGTERM), presence in the panel header, `reply` marking a message answered in
--- the running review, `ack` stopping re-delivery, `show`, `inbox`, and `install-skill` into a
+-- the running review, `ack` stopping re-delivery, `show`, `inbox`, `stack` (the layers, their PRs and
+-- own diffs, from the registry entry or detected locally), and `install-skill` into a
 -- temporary HOME.
 local h = dofile(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/helpers.lua')
 vim.cmd('runtime plugin/revuey.lua')
@@ -663,6 +664,47 @@ h.test('switching stack layers updates the registry; closing the review removes 
   local e1 = entry()
   h.eq('stack/cart', e1.branch)
   h.eq('layer', e1.scope.kind)
+  -- `bin/revuey stack`: the layers the review shows, bottom first, with their PRs (as the review
+  -- looked them up: stubbed here) and each layer's own diff, never switching
+  local fv = require('revuey.forge_view')
+  local real_pr = fv.pr
+  fv.pr = function(_, name)
+    if name == 'stack/math' then
+      return { number = 12, title = 'Add math', url = 'https://github.com/o/r/pull/12', state = 'OPEN' }
+    end
+  end
+  link.update(s)
+  local function stack_json()
+    local r = run({ 'stack', '--json' }, { cwd = stack })
+    h.eq(0, r.code, r.stderr)
+    return vim.json.decode(r.stdout)
+  end
+  local st = stack_json()
+  h.eq('review', st.source)
+  h.eq(ME, st.review)
+  h.eq('main', st.trunk)
+  h.eq({ 'stack/math', 'stack/cart', 'stack/ui' }, vim.tbl_map(function(l)
+    return l.name
+  end, st.layers))
+  h.eq({ 'main', 'stack/math', 'stack/cart' }, vim.tbl_map(function(l)
+    return l.parent
+  end, st.layers))
+  h.eq(2, st.viewed)
+  h.eq('stack/cart', st.checked_out)
+  h.eq(true, st.layers[2].is_head)
+  h.eq(12, st.layers[1].pr.number)
+  h.eq(nil, st.layers[2].pr)
+  h.eq(st.layers[1].tip, st.layers[2].parent_rev)
+  local want = vim.trim(vim.fn.system({ 'git', '-C', stack, 'diff', '--shortstat', 'stack/math...stack/cart' }))
+  h.eq(tonumber(want:match('(%d+) files? changed')), st.layers[2].stats.files)
+  h.eq(tonumber(want:match('(%d+) insertions?')), st.layers[2].stats.added)
+  local txt = run({ 'stack' }, { cwd = stack })
+  h.eq(0, txt.code, txt.stderr)
+  h.ok(txt.stdout:find('Stack on main, 3 layers, bottom first. > the review shows layer 2; * checked out: stack/cart\n', 1, true), txt.stdout)
+  h.ok(txt.stdout:find('PR #12 "Add math" https://github.com/o/r/pull/12', 1, true), txt.stdout)
+  h.ok(txt.stdout:find('\n>* 2  stack/cart on stack/math  +', 1, true), txt.stdout)
+  h.ok(txt.stdout:find('git diff ' .. st.layers[2].parent_rev:sub(1, 10) .. '...' .. st.layers[2].tip:sub(1, 10), 1, true), txt.stdout)
+  fv.pr = real_pr -- (kept until here: a poll rewrites the entry every couple of seconds)
   keys(']s')
   h.ok(vim.wait(10000, function()
     local e = entry()
@@ -671,12 +713,32 @@ h.test('switching stack layers updates the registry; closing the review removes 
   local e2 = entry()
   h.ok(e2.scope_key ~= e1.scope_key, 'scope key changed')
   h.eq(s.cm.events, e2.events)
+  st = stack_json()
+  h.eq(3, st.viewed)
   keys('gs')
   h.ok(vim.wait(10000, function()
     return entry().scope.kind == 'full'
   end, 50), vim.inspect(entry()))
+  st = stack_json()
+  h.eq(nil, st.viewed)
+  h.eq(3, #st.layers)
   view.close({ keep_nvim = true })
   h.eq('[]', vim.trim(run({ 'sessions', '--json' }, { cwd = stack }).stdout))
+  -- no review running: the local stack as `revuey` would open it, without PRs
+  st = stack_json()
+  h.eq('local', st.source)
+  h.eq(3, #st.layers)
+  h.eq(nil, st.layers[1].pr)
+  h.eq('stack/cart', st.checked_out)
+end)
+
+h.test('stack: a plain branch review is not a stack', function()
+  local r = run({ 'stack' }, { cwd = lonely })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('^not a stack: the review is of %S+ vs main alone'), r.stdout)
+  r = run({ 'stack', '--json' }, { cwd = lonely })
+  h.eq(0, r.code, r.stderr)
+  h.eq(0, #vim.json.decode(r.stdout).layers)
 end)
 
 -- whatever failed above, leave no watcher behind
