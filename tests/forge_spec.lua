@@ -940,4 +940,16 @@ h.test('a late lookup that adds the PR section keeps the panel cursor on the sam
   end
 end)
 
+h.test('read_calls: a calls log whose last line is still being written decodes the complete lines only', function()
+  local log = h.tmpdir('read-calls') .. '/calls.ndjson'
+  local fd = assert(io.open(log, 'wb'))
+  fd:write('{"argv":["gh","a"]}\n\n{"argv":["gh","b"]}\n{"argv":["gh","api","graph')
+  fd:close()
+  local calls = h.read_calls(log)
+  h.eq({ { 'gh', 'a' }, { 'gh', 'b' } }, vim.tbl_map(function(c)
+    return c.argv
+  end, calls))
+  h.eq({}, h.read_calls(log .. '.missing'))
+end)
+
 h.run()

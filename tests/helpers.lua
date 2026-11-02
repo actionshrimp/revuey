@@ -154,10 +154,18 @@ function M.use_fake_wt(log, scenario, branch)
   vim.env.REVUEY_FAKE_WT_HOOK = nil
 end
 
----Calls recorded by a fake CLI's log (one JSON object per line).
+---Calls recorded by a fake CLI's log (one JSON object per line; the fake `gh` mutations log
+---too). A fake appends while specs poll the log, so a last line without its newline is still
+---being written: only complete lines are decoded.
 function M.read_calls(log)
   local calls = {}
-  for _, line in ipairs(vim.uv.fs_stat(log) and vim.fn.readfile(log) or {}) do
+  local fd = io.open(log, 'rb')
+  if not fd then
+    return calls
+  end
+  local text = fd:read('*a') or ''
+  fd:close()
+  for line in text:gmatch('([^\n]*)\n') do
     if line ~= '' then
       calls[#calls + 1] = vim.json.decode(line)
     end
