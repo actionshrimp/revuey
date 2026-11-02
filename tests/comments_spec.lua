@@ -514,6 +514,36 @@ h.test('storage: two instances editing different comments, and edit versus delet
   h.eq(1, #vim.fn.glob(path .. '.corrupt-*', false, true))
 end)
 
+h.test('storage: a save takes in another writer\'s change and says so (take_incoming); its own do not count', function()
+  local path = comments.path_for(h.tmpdir('comments-incoming') .. '/repo-feat-main-abc.json')
+  local A = comments.load(path)
+  local mine = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 1 }, 'mine')
+  comments.put(A, mine)
+  comments.save(A)
+  h.eq({}, comments.take_incoming(A), 'its own save brings in nothing')
+  -- the CLI answers in the same instant as A saves another change of its own
+  local B = comments.load(path)
+  local before = vim.deepcopy(comments.get(A, mine.id))
+  comments.reply(B, mine.id, 'agent reply', { kind = 'agent', name = 'claude' })
+  local fresh = comments.new({ path = 'b', side = 'new', start_line = 2, end_line = 2 }, 'agent new', { author = { kind = 'agent' } })
+  comments.put(B, fresh)
+  comments.save(B)
+  local other = comments.new({ path = 'a', side = 'new', start_line = 3, end_line = 3 }, 'other')
+  comments.put(A, other)
+  comments.save(A)
+  -- the save merged the reply in: a reload now finds nothing new, but the change is noted
+  h.eq('agent reply', comments.get(A, mine.id).thread[1].body)
+  h.eq(false, comments.reload(A))
+  local got = comments.take_incoming(A)
+  h.eq({ [mine.id] = before, [fresh.id] = false }, got, 'the versions shown before, false for a new one')
+  h.eq({}, comments.take_incoming(A), 'taken once')
+  -- a reload notes what it merges too
+  comments.reply(B, mine.id, 'second', { kind = 'agent' })
+  comments.save(B)
+  h.eq(true, comments.reload(A))
+  h.eq({ mine.id }, vim.tbl_keys(comments.take_incoming(A)))
+end)
+
 h.test('find: full id, unique prefix or substring', function()
   local S = { comments = {}, _dirty = {} }
   local c1 = comments.new({ path = 'a', side = 'new', start_line = 1, end_line = 1 }, 'x', { id = '0000000000aabbb1' })

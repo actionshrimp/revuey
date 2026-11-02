@@ -924,6 +924,7 @@ end
 ---@field review table              review info (repo, branch, base, scope...) as last saved
 ---@field comments table<string, revuey.Comment>  includes tombstones
 ---@field _dirty table<string, boolean>
+---@field _incoming? table<string, revuey.Comment|false>  what merges with the file changed (take_incoming)
 
 ---@return revuey.CommentStore
 ---@param opts? {readonly?:boolean}
@@ -1001,6 +1002,36 @@ function M.save(store, review)
   end)
 end
 
+---Note what a merge with the file brings in (another instance or the CLI changed it): for each
+---comment it changes, the version this store had before (false: it had none), kept until the
+---view takes them (`take_incoming`). A save merges the file too, and so do the direct reloads
+---before an action: without this, the view's own reload after a file change would find nothing
+---new and never draw (nor announce) what the save or reload took in. Returns true when the
+---merge changed anything.
+local function note_incoming(store, merged)
+  store._incoming = store._incoming or {}
+  local any = false
+  for id, m in pairs(merged) do
+    local prev = store.comments[id]
+    if not vim.deep_equal(m, prev) then
+      any = true
+      if store._incoming[id] == nil then
+        store._incoming[id] = prev or false
+      end
+    end
+  end
+  return any
+end
+
+---The comments merges have changed since the last call, each with the version it had before
+---(false: it was new), and forget them.
+---@return table<string, revuey.Comment|false>
+function M.take_incoming(store)
+  local t = store._incoming or {}
+  store._incoming = {}
+  return t
+end
+
 function M._save_locked(store, review)
   local disk = M.read(store.path) or {}
   local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
@@ -1026,6 +1057,8 @@ function M._save_locked(store, review)
     os.remove(tmp)
     error('revuey: cannot write comments: ' .. tostring(rerr))
   end
+  -- this store's own changes come back unchanged; anything else is the file's
+  note_incoming(store, merged)
   store.comments = merged
   store.review = out.review
   store._dirty = {}
@@ -1040,7 +1073,7 @@ function M.reload(store)
     return false
   end
   local merged = M.merge_all(store.comments, disk.comments or {}, store._dirty)
-  local changed = not vim.deep_equal(merged, store.comments)
+  local changed = note_incoming(store, merged)
   store.comments = merged
   if disk.review and next(disk.review) then
     store.review = store.review and next(store.review) and store.review or disk.review

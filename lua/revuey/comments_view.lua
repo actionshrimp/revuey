@@ -122,6 +122,8 @@ end
 ---Re-read the comments file (another instance or the CLI changed it) and redraw when anything
 ---changed. Placement changes found while redrawing are not saved here (only on renders), so two
 ---instances showing different modes can never keep rewriting the file for each other.
+---What a save or a direct reload took in from the file since the last redraw counts too: it is in
+---memory already, so this read alone would find nothing new.
 function M.reload(s)
   local c = cm(s)
   if not c.store then
@@ -132,8 +134,14 @@ function M.reload(s)
     before[id] = comments.delivery(x)
     known[id] = true
   end
-  local ok, changed = pcall(comments.reload, c.store)
-  if ok and changed then
+  pcall(comments.reload, c.store)
+  local incoming = comments.take_incoming(c.store)
+  for id, prev in pairs(incoming) do
+    -- as it was before the file changed it
+    before[id] = prev and comments.delivery(prev) or nil
+    known[id] = prev and true or nil
+  end
+  if next(incoming) then
     M.refresh(s)
     for id, x in pairs(c.store.comments) do
       if before[id] ~= 'answered' and comments.delivery(x) == 'answered' then
@@ -631,6 +639,15 @@ function M.render(s, o)
   end
   if changed then
     pcall(comments.save, store, M.review_info(s))
+    if store._incoming and next(store._incoming) then
+      -- the save took in a change to the file (the CLI's reply, say) after the comments drawn
+      -- here were listed: draw again with it
+      vim.schedule(function()
+        if s.cm == c and not s.cleaned then
+          M.reload(s)
+        end
+      end)
+    end
   end
   M.place_forge(s, ctx, idx, attach)
   local width = thread_width(s)

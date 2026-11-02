@@ -304,7 +304,28 @@ local function stop(w)
   return w.proc:wait(5000)
 end
 
-h.test('live: a comment appears in the running review at once; re-anchoring stores its unit', function()
+---h.test for a test that starts watchers: when it fails, the watchers it started are stopped, so
+---the failure does not leave them running into the later tests (and "no watcher is left running",
+---which checks the tests that pass stop theirs).
+local function test(name, fn)
+  h.test(name, function()
+    local first = #watchers + 1
+    local ok, err = xpcall(fn, function(e)
+      return type(e) == 'table' and e or debug.traceback(tostring(e), 2)
+    end)
+    if not ok then
+      for i = first, #watchers do
+        local w = watchers[i]
+        if w.proc and not w.proc:is_closing() then
+          pcall(stop, w)
+        end
+      end
+      error(err, 0)
+    end
+  end)
+end
+
+test('live: a comment appears in the running review at once; re-anchoring stores its unit', function()
   local w_msgs = watch({ '--messages' })
   local w_events = watch()
   local w_all = watch({ '--all' })
@@ -343,7 +364,7 @@ h.test('live: a comment appears in the running review at once; re-anchoring stor
   end
 end)
 
-h.test('ca/cn on an agent comment: accepted it is yours (ci, export, events); dismissed it stays local; replies are not', function()
+test('ca/cn on an agent comment: accepted it is yours (ci, export, events); dismissed it stays local; replies are not', function()
   local w_events = watch()
   local function key(k, row)
     vim.api.nvim_set_current_win(s.diff_win)
@@ -430,6 +451,49 @@ h.test('ca/cn on an agent comment: accepted it is yours (ci, export, events); di
   h.ok(said('no AI review finding or agent comment on this line'), vim.inspect(msgs))
   h.eq({ 'user', 'saved' }, { comments.get(s.cm.store, mine.id).author.kind, comments.get(s.cm.store, mine.id).status })
   h.eq(0, stop(w_events).code, w_events.err)
+end)
+
+h.test('a change to the file is drawn when a save of the review takes it in first', function()
+  local function at(line, text)
+    return comments.new(comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+      { path = 'm.txt', side = 'new', start_line = line }, cv.context(s).get_line), text)
+  end
+  local function shows(line, text)
+    return vim.wait(5000, function()
+      return vlines(row_of('ctx', line)):find(text, 1, true) ~= nil
+    end, 20)
+  end
+  local target = at(18, 'Asked here.')
+  comments.put(s.cm.store, target)
+  comments.save(s.cm.store)
+  cv.refresh(s)
+  h.ok(vlines(row_of('ctx', 18)):find('Asked here.', 1, true), vlines(row_of('ctx', 18)))
+  -- another writer (the CLI) answers, and before the review's watch has read the file, the review
+  -- saves a change of its own: the save merges the answer in. Nothing runs the event loop in
+  -- between, so this is the race every time.
+  local function answer(id, text)
+    local other = comments.load(s.cm.store.path)
+    h.ok(comments.reply(other, id, text, { kind = 'agent', name = 'claude' }))
+    comments.save(other)
+  end
+  answer(target.id, 'Answer one.')
+  comments.put(s.cm.store, at(21, 'Saved meanwhile.'))
+  comments.save(s.cm.store)
+  h.eq('Answer one.', comments.get(s.cm.store, target.id).thread[1].body, 'the save took it in')
+  h.ok(shows(18, 'Answer one.'), vlines(row_of('ctx', 18)))
+  -- a redraw that stores a new comment's placement saves too, after it listed what it draws
+  answer(target.id, 'Answer two.')
+  comments.put(s.cm.store, at(17, 'Placed by the redraw.'))
+  cv.render(s)
+  h.eq(2, #comments.get(s.cm.store, target.id).thread, 'the redraw saved and took it in')
+  h.ok(shows(18, 'Answer two.'), vlines(row_of('ctx', 18)))
+  for _, id in ipairs(vim.tbl_keys(s.cm.store.comments)) do
+    local x = comments.get(s.cm.store, id)
+    if x and (x.body == 'Asked here.' or x.body == 'Saved meanwhile.' or x.body == 'Placed by the redraw.') then
+      comments.delete(s.cm.store, id)
+    end
+  end
+  comments.save(s.cm.store)
 end)
 
 h.test('two reviews running: --session picks one; without it the command asks', function()
