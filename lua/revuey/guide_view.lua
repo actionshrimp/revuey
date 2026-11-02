@@ -12,6 +12,7 @@ local git = require('revuey.git')
 local state_mod = require('revuey.state')
 local units = require('revuey.units')
 local review_mod = require('revuey.review')
+local agent_request = require('revuey.agent_request')
 
 local M = {}
 
@@ -29,6 +30,21 @@ local adopt -- (an open request of a review that is gone: below)
 M.AGENT_ACK_MS = 60000
 ---How often the review reads an open request's file while it waits.
 M.AGENT_POLL_MS = 500
+---What the shared request code (agent_request.lua) says about a guide request.
+M.req = {
+  noun = 'guide',
+  imported = 'the guide',
+  cancel_cmd = ':RevueyGuide cancel',
+  expired_hint = 'generate again for a fresh session',
+  fresh_hint = function()
+    local k = config.options.keymaps.regenerate_guide
+    return type(k) == 'string' and k or ':RevueyGuide!'
+  end,
+  ready = function(a, rec, secs)
+    local n = rec.result and rec.result.sections or 0
+    return ('revuey: guide ready from %s (%d section%s, %ds)'):format(a.name, n, n == 1 and '' or 's', secs)
+  end,
+}
 ---Last error per review key (shown in the guide view until the next attempt).
 M.errors = {}
 
@@ -159,17 +175,8 @@ function M.status_text(s)
   end
   local secs = math.floor((vim.uv.hrtime() - j.started) / 1e9)
   local frame = SPINNER[(math.floor(vim.uv.hrtime() / 1e8) % #SPINNER) + 1]
-  local a = j.agent
-  if a then
-    if a.acked then
-      return ('%s %s is writing the guide %ds'):format(frame, a.name, secs)
-    elseif a.delivered then
-      return ('%s %s has the request %ds'):format(frame, a.name, secs)
-    elseif a.late then
-      local k = config.options.keymaps.regenerate_guide
-      return ('! %s has not picked it up (%ds): %s for a fresh session'):format(a.name, secs, type(k) == 'string' and k or ':RevueyGuide!')
-    end
-    return ('%s waiting for %s %ds'):format(frame, a.name, secs)
+  if j.agent then
+    return agent_request.status_text(j, frame, 'is writing the guide', M.req.fresh_hint())
   end
   return ('%s generating %ds%s'):format(frame, secs, j.progress and ('  ' .. j.progress) or '')
 end
@@ -701,47 +708,8 @@ end
 -- The connected agent writes the guide (a request, requests.lua)
 -- ---------------------------------------------------------------------------
 
----Read the files of the agent jobs (every AGENT_POLL_MS): delivered (a watch printed it),
----taken (acked), done (the guide was imported: reload it), cancelled elsewhere or gone, or past
----requests.TTL_MS (expired: the CLI no longer lists it). Not delivered within AGENT_ACK_MS: said
----once (a delivered request is fine however long the agent takes to start).
 poll_requests = function()
-  local requests = require('revuey.requests')
-  local now = vim.uv.hrtime()
-  for ks, j in pairs(M.jobs) do
-    local a = j.agent
-    if a and now - (a.checked or 0) >= M.AGENT_POLL_MS * 1e6 then
-      a.checked = now
-      local st = vim.uv.fs_stat(a.path)
-      local sig = st and (st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'gone'
-      local expired = now - j.started >= requests.TTL_MS * 1e6
-      if sig ~= a.sig or expired then
-        a.sig = sig
-        local rec = st and requests.read(a.path)
-        if not rec or rec.status == 'cancelled' or rec.status == 'done' or expired then
-          M.jobs[ks] = nil
-          if rec and rec.status == 'done' then
-            local secs = math.floor((now - j.started) / 1e9 + 0.5)
-            vim.notify(('revuey: guide ready from %s (%s, %ds)'):format(a.name, plural(rec.result and rec.result.sections or 0, 'section'), secs), vim.log.levels.INFO)
-          elseif expired and rec then
-            vim.notify(('revuey: the guide request to %s expired; generate again for a fresh session'):format(a.name), vim.log.levels.WARN)
-          else
-            vim.notify(('revuey: the guide request to %s was %s'):format(a.name, rec and 'cancelled' or 'removed'), vim.log.levels.INFO)
-          end
-          j.on_change()
-        else
-          a.acked = rec.status == 'acked'
-          a.delivered = a.acked or rec.delivered_at ~= nil
-        end
-      end
-      if M.jobs[ks] == j and not a.delivered and not a.late and now - j.started >= M.AGENT_ACK_MS * 1e6 then
-        a.late = true
-        local k = config.options.keymaps.regenerate_guide
-        vim.notify(('revuey: %s has not picked up the guide request yet; %s offers a fresh session instead (or keep waiting)'):format(
-          a.name, type(k) == 'string' and k or ':RevueyGuide!'), vim.log.levels.WARN)
-      end
-    end
-  end
+  agent_request.poll(M)
 end
 
 ---How a review re-renders when a guide job (or an outside import) changes; view.lua sets it.
@@ -749,40 +717,20 @@ M.default_on_change = function() end
 
 ---An open guide request for this review made by a review that is gone (Neovim quit or crashed
 ---while waiting): the reopened review waits for it again, as if it had asked. Requests of
----another live review are left to it.
+---another live review are left to it (agent_request.adopt).
 adopt = function(s, g)
   if M.jobs[g.ks] or not s.review then
     return
   end
-  local requests = require('revuey.requests')
-  local sessions = require('revuey.sessions')
-  local mine = tostring(vim.uv.os_getpid())
-  for _, rec in ipairs(requests.list({ state_dir(s) }, { open = true })) do
+  local j = agent_request.adopt(s, 'guide', function(rec)
     local k = rec.key or {}
-    local sid = rec.session and tostring(rec.session)
-    -- the requesting Neovim is this one (the job was lost) or has exited; one this Neovim
-    -- tried to withdraw is never taken back
-    local owner_gone = not sid or sid == mine or not sessions.alive({ pid = tonumber(sid) })
-    if rec.kind == 'guide' and owner_gone and not M.cancel_tried[rec.id] and k.repo == g.key.repo and k.branch == g.key.branch and k.base == g.key.base then
-      local age_ns = math.max(0, requests.now_ms() - (tonumber(rec.at) or 0)) * 1e6
-      M.jobs[g.ks] = {
-        label = s.review.branch,
-        started = vim.uv.hrtime() - age_ns,
-        on_change = function()
-          M.default_on_change()
-        end,
-        agent = {
-          id = rec.id,
-          path = rec._path,
-          name = rec.agent or 'agent',
-          acked = rec.status == 'acked',
-          delivered = rec.status == 'acked' or rec.delivered_at ~= nil,
-          adopted = true,
-        },
-      }
-      ensure_ticker()
-      return
-    end
+    return k.repo == g.key.repo and k.branch == g.key.branch and k.base == g.key.base
+  end, s.review.branch, function()
+    M.default_on_change()
+  end)
+  if j then
+    M.jobs[g.ks] = j
+    ensure_ticker()
   end
 end
 M._adopt = adopt
@@ -844,102 +792,30 @@ function M.request_agent(s, on_change)
     vim.notify('revuey: nothing to guide (no changes)', vim.log.levels.INFO)
     return false
   end
-  local requests = require('revuey.requests')
-  local comments = require('revuey.comments')
-  local link = require('revuey.agent_link')
-  local r = s.review
-  local info = comments.review_info(r)
-  local name = link.agent_name(s)
-  local rec = requests.new('guide', {
-    session = s.link and s.link.id or nil,
-    worktree = r.root,
-    review = info,
-    scope_key = r.state._path and vim.fs.basename(r.state._path):gsub('%.json$', '') or nil,
-    label = require('revuey.sessions').scope_label(info),
-    agent = name,
+  local rec, name, path = agent_request.create(s, 'guide', {
     key = g.key,
     anchors = g.anchors,
     guide_dir = guide.dir(state_dir(s)),
   })
-  local path, werr = requests.create(requests.dir(state_dir(s)), rec)
-  if not path then
-    vim.notify('revuey: could not ask ' .. name .. ': ' .. tostring(werr), vim.log.levels.ERROR)
-    return false
-  end
-  local events = (s.cm and s.cm.events) or comments.events_path_for(r.state._path)
-  local ok, res, aerr = pcall(comments.append_event, events, requests.event(rec))
-  if not ok or res == false then
-    os.remove(path)
-    vim.notify('revuey: could not ask ' .. name .. ': ' .. tostring(ok and aerr or res), vim.log.levels.ERROR)
+  if not rec then
+    vim.notify('revuey: ' .. name, vim.log.levels.ERROR)
     return false
   end
   M.errors[ks] = nil
-  M.jobs[ks] = {
-    label = r.branch,
-    started = vim.uv.hrtime(),
-    on_change = on_change,
-    agent = { id = rec.id, path = path, name = name, checked = vim.uv.hrtime() },
-  }
+  M.jobs[ks] = agent_request.job(rec, path, name, s.review.branch, on_change)
   ensure_ticker()
   on_change()
   vim.notify(('revuey: asked %s to write the guide (request %s)'):format(name, rec.id), vim.log.levels.INFO)
   return true
 end
 
----Withdraw a request to the agent: the file says cancelled (import-guide refuses it) and the feed
----tells the agent.
----How long a withdrawal keeps trying while the request's lock is busy (an import holds it
----only for the moment it saves), in steps of CANCEL_STEP_MS, never blocking the main loop.
+---Withdrawing a request to the agent (agent_request.cancel): how long it keeps trying while
+---the request's lock is busy (an import holds it only for the moment it saves), in steps of
+---CANCEL_STEP_MS, never blocking the main loop.
 M.CANCEL_RETRY_MS = 3000
 M.CANCEL_STEP_MS = 50
----Requests this Neovim tried to withdraw: never adopted again, whatever their file says.
-M.cancel_tried = {}
-
-local function cancel_request(s, ks, j, after)
-  local requests = require('revuey.requests')
-  local comments = require('revuey.comments')
-  local a = j.agent
-  M.cancel_tried[a.id] = true
-  a.cancelling = true
-  local deadline = vim.uv.now() + M.CANCEL_RETRY_MS
-  local function finish(drop, msg, level, ok)
-    a.cancelling = nil
-    if drop and M.jobs[ks] == j then
-      M.jobs[ks] = nil
-    end
-    vim.notify(msg, level)
-    if drop then
-      j.on_change()
-    end
-    if after then
-      after(ok)
-    end
-  end
-  local function attempt()
-    local rec, uerr = requests.update(a.path, function(x)
-      if x.status == 'done' or x.status == 'cancelled' then
-        return false
-      end
-      x.status, x.cancelled_at = 'cancelled', requests.now_ms()
-    end)
-    if not rec and not vim.uv.fs_stat(a.path) then
-      return finish(true, ('revuey: the guide request to %s is gone'):format(a.name), vim.log.levels.INFO, true)
-    elseif not rec then
-      if vim.uv.now() < deadline then
-        return vim.defer_fn(attempt, M.CANCEL_STEP_MS)
-      end
-      require('revuey.log').write('agent', 'could not cancel request ' .. a.id .. ': ' .. tostring(uerr))
-      return finish(false, ('revuey: could not withdraw the guide request to %s (%s); still waiting: try :RevueyGuide cancel again'):format(
-        a.name, tostring(uerr)), vim.log.levels.ERROR, false)
-    elseif rec.status == 'done' then
-      return finish(true, ('revuey: %s had already imported the guide; it is shown'):format(a.name), vim.log.levels.INFO, true)
-    end
-    local events = (s.cm and s.cm.events) or comments.events_path_for(s.review.state._path)
-    pcall(comments.append_event, events, requests.event(rec))
-    finish(true, ('revuey: guide request to %s cancelled'):format(a.name), vim.log.levels.INFO, true)
-  end
-  attempt()
-end
+---Requests this Neovim tried to withdraw (shared with AI reviews): never adopted again.
+M.cancel_tried = agent_request.cancel_tried
 
 ---Start generating a guide for the session's current review (no-op if one is running for it).
 ---`opts`: model and effort for this run (default: ai.model, ai.effort).
@@ -1060,7 +936,7 @@ function M.cancel(s, after)
     if j.agent.cancelling then
       return true
     end
-    cancel_request(s, g.ks, j, after)
+    agent_request.cancel(s, M, g.ks, j, after)
   elseif j.job and j.job.proc then
     j.job:cancel()
   else

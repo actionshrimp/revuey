@@ -3034,18 +3034,23 @@ local function on_guide_change()
 end
 guide_view.default_on_change = on_guide_change
 
----Who generates a guide: the connected agent, or a fresh `claude -p` session. `ai.guide_by`:
----'ask' (the default: ask when an agent is connected), 'agent' or 'fresh'. No agent connected:
----a fresh session, without asking.
+---Who generates a guide (`ai.guide_by`) or an AI review (`ai.review_by`): the connected agent,
+---or a fresh `claude -p` session. 'ask' (the default: ask when an agent is connected), 'agent'
+---or 'fresh'. No agent connected: a fresh session, without asking.
+---@param opt 'guide_by'|'review_by'
 ---@return {by: 'agent'|'fresh'|'ask', name?: string}
-local function guide_generator(s)
-  local by = (config.options.ai or {}).guide_by or 'ask'
+local function generator(s, opt)
+  local by = (config.options.ai or {})[opt] or 'ask'
   -- only an agent that acts on what it is sent (`watch --messages`) can be asked
   agent_link.poll(s)
   if by == 'fresh' or not agent_link.listening(s) then
     return { by = 'fresh' }
   end
   return { by = by == 'agent' and 'agent' or 'ask', name = agent_link.agent_name(s) }
+end
+
+local function guide_generator(s)
+  return generator(s, 'guide_by')
 end
 
 M.GUIDE_MODELS = { 'opus', 'sonnet', 'haiku' }
@@ -3082,8 +3087,8 @@ local function pick_model(cb)
   end)
 end
 
----Ask who writes the guide (an agent is connected): the agent, a fresh session, or a fresh
----session with another model. `cb(choice)` gets {by = 'agent'|'fresh', model?, effort?}.
+---Ask who writes the guide or the review (an agent is connected): the agent, a fresh session,
+---or a fresh session with another model. `cb(choice)` gets {by = 'agent'|'fresh', model?, effort?}.
 local function ask_generator(name, prompt, cb)
   local model = (config.options.ai or {}).model
   local agent = ('Ask %s (connected)'):format(name)
@@ -3126,34 +3131,44 @@ function M.generate_guide(choice)
 end
 
 ---A request to the agent is open: keep waiting, or withdraw it (and run a fresh session).
-local function agent_job_choice(s, j)
+---`o`: {prompt (the question), cancel(after) (withdraws it; after(ok)), fresh(choice) (the run
+---once withdrawn)}. Shared by the guide and AI reviews.
+local function agent_job_choice(s, j, o)
   local wait = ('Keep waiting for %s'):format(j.agent.name)
   local fresh = 'Cancel the request and run a fresh session'
   local other = 'Cancel the request and run a fresh session with another model…'
-  vim.ui.select({ wait, fresh, other, 'Cancel the request' }, {
-    prompt = ('%s %s the guide.'):format(j.agent.name, j.agent.acked and 'is writing' or 'was asked for'),
-  }, function(choice)
+  vim.ui.select({ wait, fresh, other, 'Cancel the request' }, { prompt = o.prompt }, function(choice)
     if not choice or choice == wait then
       return
     end
     if choice == other then
       -- the model first: the request is withdrawn only once one is chosen
       return pick_model(function(c)
-        guide_view.cancel(s, function(ok)
+        o.cancel(function(ok)
           -- (up to CANCEL_RETRY_MS later: only for the review it was asked in)
           if ok and M.session == s and not s.cleaned then
-            M.generate_guide(c)
+            o.fresh(c)
           end
         end)
       end)
     end
     -- the fresh run starts once the request is withdrawn (a failed withdrawal keeps waiting)
-    guide_view.cancel(s, function(ok)
+    o.cancel(function(ok)
       if ok and choice == fresh and M.session == s and not s.cleaned then
-        M.generate_guide({ by = 'fresh' })
+        o.fresh({ by = 'fresh' })
       end
     end)
   end)
+end
+
+local function guide_job_choice(s, j)
+  return agent_job_choice(s, j, {
+    prompt = ('%s %s the guide.'):format(j.agent.name, j.agent.acked and 'is writing' or 'was asked for'),
+    cancel = function(after)
+      guide_view.cancel(s, after)
+    end,
+    fresh = M.generate_guide,
+  })
 end
 
 ---Regenerate (asks first when a guide exists, since it runs the model again).
@@ -3165,7 +3180,7 @@ function M.regenerate_guide()
   local g = guide_view.prepare(s)
   local j = guide_view.jobs[g.ks]
   if j and j.agent then
-    return agent_job_choice(s, j)
+    return guide_job_choice(s, j)
   elseif j then
     return vim.notify('revuey: a guide is already being generated (:RevueyGuide cancel stops it)', vim.log.levels.INFO)
   end
@@ -3203,7 +3218,7 @@ function M.guide_command(bang, arg)
   if bang then
     local j = guide_view.job(s)
     if j and j.agent then
-      return agent_job_choice(s, j)
+      return guide_job_choice(s, j)
     end
     return M.generate_guide()
   end
@@ -3233,17 +3248,54 @@ end
 -- ---------------------------------------------------------------------------
 
 ---Redraw the comments and the panel of whichever review is open when an AI review job changes
----(like guide jobs, review jobs are keyed by scope and outlive the session).
+---(like guide jobs, review jobs are keyed by scope and outlive the session). The comments file is
+---read again first: the connected agent's `import-review` wrote it from outside.
 local function on_ai_review_change()
   local cur = M.session
   if cur and not cur.cleaned and cur.layout then
-    comments_view.refresh(cur)
+    if not comments_view.reload(cur) then
+      comments_view.refresh(cur)
+    end
   end
+end
+require('revuey.ai_review_view').default_on_change = on_ai_review_change
+
+---Start an AI review of the current scope as `choice` says ({by = 'agent'|'fresh', model?,
+---effort?}), asking first when untouched findings of the last review by the same reviewer would
+---be replaced (`bang` does not).
+local function start_ai_review(s, bang, skill_arg, choice)
+  if M.session ~= s or s.cleaned then
+    return
+  end
+  local arv = require('revuey.ai_review_view')
+  local agent = choice.by == 'agent'
+  local name = agent and agent_link.agent_name(s) or nil
+  local function run()
+    if agent then
+      arv.request_agent(s, skill_arg, on_ai_review_change)
+    else
+      arv.generate(s, skill_arg, on_ai_review_change, { model = choice.model, effort = choice.effort })
+    end
+  end
+  local n = (not bang and not arv.job(s)) and arv.replaceable(s, agent and { kind = 'ai', name = name } or nil) or 0
+  if n == 0 then
+    return run()
+  end
+  vim.ui.select({ 'Run a new AI review', 'Cancel' }, {
+    prompt = ('Run a new AI review (%s)? %d untriaged finding%s of the last one will be replaced'):format(
+      agent and ('ask ' .. name .. ', the connected agent') or 'claude', n, n == 1 and '' or 's'),
+  }, function(c)
+    if c == 'Run a new AI review' and M.session == s then
+      run()
+    end
+  end)
 end
 
 ---`:RevueyAIReview[!] [skill|cancel]`: run an AI review of the current scope; its findings become
----AI comments to triage. When untouched findings of the last review would be replaced, asks first
----(`!` does not). `cancel` stops a run.
+---AI comments to triage. With an agent connected (`watch --messages`), `ai.review_by` says who
+---reviews ('ask': the agent, a fresh session or one with another model). When untouched findings
+---of the last review would be replaced, asks first (`!` does not). `cancel` stops a run or
+---withdraws the request; while a request is open, offers to keep waiting or withdraw it.
 function M.ai_review_command(bang, arg)
   local s = M.session
   if not s then
@@ -3256,20 +3308,27 @@ function M.ai_review_command(bang, arg)
     end
     return
   end
-  local function run()
-    ai_review_view.generate(s, arg, on_ai_review_change)
+  local j = ai_review_view.job(s)
+  if j and j.agent then
+    return agent_job_choice(s, j, {
+      prompt = j.agent.acked and ('%s is reviewing.'):format(j.agent.name) or ('%s was asked for the review.'):format(j.agent.name),
+      cancel = function(after)
+        ai_review_view.cancel(s, after)
+      end,
+      fresh = function(c)
+        start_ai_review(s, bang, arg or j.skill_arg, c)
+      end,
+    })
+  elseif j then
+    return ai_review_view.generate(s, arg, on_ai_review_change) -- (says one is running)
   end
-  local n = (not bang and not ai_review_view.job(s)) and ai_review_view.replaceable(s) or 0
-  if n == 0 then
-    return run()
+  local d = generator(s, 'review_by')
+  if d.by == 'ask' then
+    return ask_generator(d.name, arg and ('Run the AI review (skill %s) with:'):format(arg) or 'Run the AI review with:', function(c)
+      start_ai_review(s, bang, arg, c)
+    end)
   end
-  vim.ui.select({ 'Run a new AI review', 'Cancel' }, {
-    prompt = ('Run a new AI review (claude)? %d untriaged finding%s of the last one will be replaced'):format(n, n == 1 and '' or 's'),
-  }, function(choice)
-    if choice == 'Run a new AI review' and M.session == s then
-      run()
-    end
-  end)
+  start_ai_review(s, bang, arg, { by = d.by })
 end
 
 -- ---------------------------------------------------------------------------

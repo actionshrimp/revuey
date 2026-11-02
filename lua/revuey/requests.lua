@@ -1,15 +1,17 @@
 -- Requests from a running review to the connected coding agent (pure data: JSON files and event
 -- shapes, no window or buffer UI), shared by the review (guide_view.lua) and `bin/revuey`
 -- (cli.lua). A request asks the agent to produce something revuey would otherwise make with a
--- fresh `claude -p` run: `guide` (the guide of the review shown) today; `review` (an AI review)
--- can use the same records, events and lines later.
+-- fresh `claude -p` run: `guide` (the guide of the review shown) or `review` (an AI review of
+-- it, into its comments).
 --
 --   * One file per request: `<state_dir>/requests/<id>.json` {version, id, kind, at, status,
 --     session, worktree, review (comments.review_info), scope_key, label, agent, key, anchors,
---     guide_dir, delivered_at?, acked_at?, done_at?, cancelled_at?, result?}. Written atomically;
+--     delivered_at?, acked_at?, done_at?, cancelled_at?, result?}, and per kind: guide_dir
+--     (guide); comments (the comments file) and skill? {name, path} (review). Written atomically;
 --     changed under the file's lock (`update`), so the review cancelling and the CLI taking it
 --     never lose each other's change.
---   * Status: `pending` (asked) -> `acked` (the agent printed its prompt) -> `done` (imported);
+--   * Status: `pending` (asked) -> `acked` (the agent printed its prompt: `guide --prompt` or
+--     `hunks --prompt`) -> `done` (imported: `import-guide` or `import-review`);
 --     `cancelled` (by the user) at any point before `done`. Open: pending or acked, and younger
 --     than TTL_MS.
 --   * The review appends a `request` event to its feed (`comments.REQUEST`) when it asks and when
@@ -18,7 +20,7 @@
 local M = {}
 
 M.VERSION = 1
-M.KINDS = { guide = true }
+M.KINDS = { guide = true, review = true }
 M.TTL_MS = 6 * 3600 * 1000 -- an open request older than this is forgotten
 M.EVENT = 'request'
 
@@ -70,6 +72,7 @@ function M.read(path)
     rec._path = path
     rec.agent = M.clean_name(rec.agent)
     rec.label = type(rec.label) == 'string' and require('revuey.guide').one_line(rec.label) or nil
+    rec.skill = M.clean_skill(rec.skill)
     return rec
   end
 end
@@ -177,6 +180,18 @@ function M.clean_name(v)
   return n ~= '' and n or nil
 end
 
+---A review request's skill as stored ({name, path}), its name one line; nil when there is none.
+function M.clean_skill(v)
+  if type(v) ~= 'table' or type(v.name) ~= 'string' then
+    return nil
+  end
+  local name = require('revuey.guide').one_line(v.name)
+  if name == '' then
+    return nil
+  end
+  return { name = name, path = type(v.path) == 'string' and v.path or nil }
+end
+
 function M.is_open(rec, now)
   return rec and (rec.status == 'pending' or rec.status == 'acked') and (now or now_ms()) - (tonumber(rec.at) or 0) < M.TTL_MS
 end
@@ -250,6 +265,7 @@ function M.event(rec, now)
     worktree = rec.worktree,
     review = rec.review or {},
     label = rec.label,
+    skill = rec.skill and rec.skill.name or nil,
     path = rec._path,
   }
 end
@@ -262,10 +278,13 @@ end
 -- What each kind asks for, and the command that starts the agent on it.
 M.TEXTS = {
   guide = { ask = 'the user asked you to write the guide for this review', cmd = 'guide --prompt --request %s' },
+  review = { ask = 'the user asked you to review this into revuey', cmd = 'hunks --prompt --request %s' },
 }
 
 ---One line for agents: `revuey request <id> guide [stack/math]: the user asked you to write the
----guide for this review (<bin> guide --prompt --request <id>)`; a cancelled one says so.
+---guide for this review (<bin> guide --prompt --request <id>)`, or `revuey request <id> review
+---[stack/math] (skill: <name>): the user asked you to review this into revuey (<bin> hunks
+-----prompt --request <id>)`; a cancelled one says so.
 function M.line(ev, bin)
   bin = bin or 'revuey'
   local scope = ev.label or (ev.review and (ev.review.scope == 'full' and 'full stack' or ev.review.branch)) or '?'
@@ -274,7 +293,8 @@ function M.line(ev, bin)
     return ('revuey request %s cancelled [%s]: the user withdrew the %s request; stop working on it and import nothing'):format(id, scope, kind)
   end
   local t = M.TEXTS[kind] or { ask = 'the user asked you for a ' .. kind, cmd = kind .. ' --request %s' }
-  return ('revuey request %s %s [%s]: %s (%s %s)'):format(id, kind, scope, t.ask, bin, t.cmd:format(id))
+  local skill = type(ev.skill) == 'string' and require('revuey.guide').one_line(ev.skill) or ''
+  return ('revuey request %s %s [%s]%s: %s (%s %s)'):format(id, kind, scope, skill ~= '' and (' (skill: ' .. skill .. ')') or '', t.ask, bin, t.cmd:format(id))
 end
 
 return M

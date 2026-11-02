@@ -93,8 +93,9 @@ M.REQUEST = 'request'
 ---                                 GitHub (taken out of the review); a submit does not offer it
 ---                                 again until `ci` adds it (which clears this)
 ---@field ai? table                 an AI review finding (ai_review.lua): {review, severity, title,
----                                 suggestion?, hunk, line?, end_line?, author? (once accepted),
----                                 accepted_at?, dismissed_at?}
+---                                 suggestion?, hunk, line?, end_line?, run? (the run that made
+---                                 it: {name?, provider?, model?, agent?, skill?, request?}),
+---                                 author? (once accepted), accepted_at?, dismissed_at?}
 ---@field agent? table              a coding agent's comment the user triaged (`ca`/`cn`):
 ---                                 {author (the agent), accepted_at?, dismissed_at?}; accepted,
 ---                                 `author` is the user's

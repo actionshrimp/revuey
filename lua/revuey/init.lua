@@ -113,8 +113,10 @@ end
 
 ---`:RevueyAIReview[!] [skill|cancel]`: run an AI review of the open review's scope with your
 ---`claude` CLI (read-only); its findings become AI comments to accept (`ca`) or dismiss (`cn`).
----`skill`: a skill name or path whose SKILL.md guides the review. `bang` replaces the last
----review's untriaged findings without asking; `cancel` stops a run.
+---`skill`: a skill name or path whose SKILL.md guides the review. With a coding agent connected
+---(`bin/revuey watch --messages`), `ai.review_by` says who reviews (asked by default: the agent,
+---a fresh session, or one with another model). `bang` replaces the last review's untriaged
+---findings without asking; `cancel` stops a run or withdraws the request to the agent.
 ---@param bang? boolean
 ---@param arg? string
 function M.ai_review(bang, arg)

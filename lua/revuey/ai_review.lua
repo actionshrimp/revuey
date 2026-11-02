@@ -301,7 +301,7 @@ end
 ---@field events string           events file
 ---@field info table              review info (comments.review_info)
 ---@field author {kind:'ai', name?:string}
----@field generator? table        provider, model, session_id, skill, duration_ms...
+---@field generator? table        provider, model, session_id, skill, agent, request, duration_ms...
 ---@field record_path string
 ---@field shown? {level?: string, abridged?: table<string, boolean>} what the prompt showed (validate)
 ---@field now? integer
@@ -353,6 +353,16 @@ function M.import(raw, o)
     end
   end
   table.sort(replaced)
+  -- which run made each finding (the record holds only the scope's latest review)
+  local gen = o.generator or {}
+  local run = {
+    name = o.author and o.author.name or nil,
+    provider = gen.provider,
+    model = gen.model,
+    agent = gen.agent,
+    skill = gen.skill,
+    request = gen.request,
+  }
   local created, skipped = {}, 0
   for _, f in ipairs(doc.findings) do
     local h = by_id[f.hunk]
@@ -371,6 +381,7 @@ function M.import(raw, o)
         hunk = f.hunk,
         line = f.line,
         end_line = f.end_line,
+        run = vim.deepcopy(run),
       }
       comments.put(store, c, now)
       created[#created + 1] = c

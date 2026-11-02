@@ -212,6 +212,9 @@ M.defaults = {
     -- fresh session with another model), 'agent' or 'fresh'. With no agent connected it is
     -- always a fresh `claude -p` session, without asking.
     guide_by = 'ask',
+    -- who runs an AI review (:RevueyAIReview [skill]) while a coding agent is connected: the
+    -- same choices as guide_by. The agent is sent the skill's text with its instructions.
+    review_by = 'ask',
   },
 }
 

@@ -18,15 +18,17 @@
 --   comment --path <path> (--line N [--end M] [--side new|old] | --file) [--session <id>] <text|->
 --       leave a new comment (author agent) on lines of the review's diff or on a whole changed
 --       file, in the review the session (or, with none running, the CLI's scope) shows
---   hunks [--json] [--prompt | --stat | --path <p>...] [--session <id>]
+--   hunks [--json] [--prompt [--request <id>] | --stat | --path <p>...] [--session <id>]
 --       the review's hunks with their ids and numbered lines (what an AI review sees), and the
---       diff hash; --prompt: the whole prompt revuey's own AI review sends; --stat: the changed
+--       diff hash; --prompt: the whole prompt revuey's own AI review sends (--request: taking
+--       review request <id>, adapted for the connected agent, with its skill); --stat: the changed
 --       files with +/- counts and hunk ids; --path (repeatable): those files' hunks only. Right
 --       after a `switched` event (`comment` and `import-review` too) it waits for the running
 --       review to show the new layer (caught_up)
---   import-review [--name <n>] [--session <id>] <file|->   |   import-review --schema
+--   import-review [--request <id>] [--name <n>] [--session <id>] <file|->   |   --schema
 --       import an AI review document (ai_review_prompt.SCHEMA): its findings become AI comments
---       to triage in the review, its summary and verdict the review's record
+--       to triage in the review, its summary and verdict the review's record; --request marks
+--       the request done
 --   guide [--json] [--session <id>]   |   guide --prompt [--request <id>]
 --       the guide the review shows (title, summary, sections with their hunk ids, prose and
 --       line notes, whether it is stale); --prompt: the instructions, diff and schema for the
@@ -110,7 +112,9 @@ For coding agents (no UI; run inside the reviewed worktree):
       one) are left to it; a review that ended is replaced by the next one of its scope.
       When the user asks you to write the guide of the review (instead of a fresh claude run):
         revuey request <id> guide [<branch>]: the user asked you to write the guide ... (revuey guide --prompt --request <id>)
-      and when they withdraw it: revuey request <id> cancelled [<branch>]: ...
+      When the user asks you to review the changes into revuey (instead of a fresh claude run):
+        revuey request <id> review [<branch>] (skill: <name>): the user asked you to review this into revuey (revuey hunks --prompt --request <id>)
+      and when they withdraw either: revuey request <id> cancelled [<branch>]: ...
       --name <your name> is shown in the review ("Ask <name> (connected)").
       When the user checks out another stack layer in the review, a line says so:
         revuey switched <from> -> <to> (layer <i> of <n>, PR #<N> <url>): ...
@@ -135,12 +139,16 @@ For coding agents (no UI; run inside the reviewed worktree):
       hash. Same review as comment. When the user just checked out another layer in revuey
       (a `revuey switched` line under 10 s old), hunks, comment and import-review first wait
       for the review to show it; a branch checked out outside revuey is not waited for.
-  revuey import-review [--name <reviewer>] [--session <id>] <file|->
+  revuey hunks --prompt --request <id> [--session <id>]
+      take the user's review request: the instructions (adapted for you, with the text of the
+      skill the request names), the diff and its hash; the review shows that you started
+  revuey import-review [--request <id>] [--name <reviewer>] [--session <id>] <file|->
       import a review (JSON: summary, verdict, findings anchored to a hunk id and line numbers
       of that hunk; `--schema` prints the JSON schema; an optional "diff" must match the hash
-      `hunks` printed). Each finding becomes an AI comment for the user to accept or dismiss
-      (local only, never posted). Findings with bad anchors are dropped and counted; untouched
-      findings of the reviewer's previous import are replaced.
+      `hunks` printed, and is required with --request). Each finding becomes an AI comment for
+      the user to accept or dismiss (local only, never posted). Findings with bad anchors are
+      dropped and counted; untouched findings of the reviewer's previous import are replaced.
+      --request marks the request done and the running review shows the findings.
   revuey guide [--json] [--session <id>]
       the guide the review shows now, in Markdown: title, summary, each section's prose, hunk ids
       (as `hunks` prints them), hunk and line notes, who generated it and whether the diff changed
@@ -1347,6 +1355,108 @@ local function restore_stack(o, ctx, r, info, attached)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Requests to the agent (requests.lua): taking one, checking it, finishing it
+-- ---------------------------------------------------------------------------
+
+---The request `id` of this repo (any unique part), or exit 1.
+local function find_request(o, ctx, id)
+  local requests = require('revuey.requests')
+  local rec, ferr = requests.find(state_dirs(o, ctx), id, { repo = { ctx.root, ctx.real } })
+  if not rec then
+    die(ferr)
+  end
+  return rec
+end
+
+---A request that names another review than the one loaded: what it was for, or nil when it fits.
+local function request_mismatch(req, r)
+  local key = require('revuey.guide').key(r.state)
+  local k = req.key or {}
+  if k.repo == key.repo and k.branch == key.branch and k.base == key.base then
+    return nil
+  end
+  return ('request %s was for %s (vs %s), but the review shows %s vs %s now'):format(req.id, req.label or k.branch or '?', k.base or '?', key.branch, key.base)
+end
+
+---The open request of `kind` for this review (key), newest first, or nil.
+local function open_request(o, ctx, r, kind)
+  local requests = require('revuey.requests')
+  local key = require('revuey.guide').key(r.state)
+  local list = requests.list(state_dirs(o, ctx), { open = true, repo = { ctx.root, ctx.real } })
+  for i = #list, 1, -1 do
+    local k = list[i].key or {}
+    if list[i].kind == kind and k.repo == key.repo and k.branch == key.branch and k.base == key.base then
+      return list[i]
+    end
+  end
+end
+
+---Who writes with `--name` / $REVUEY_AGENT_NAME, else the agent the request was made for.
+local function writer_name(o, req)
+  local requests = require('revuey.requests')
+  return requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
+end
+
+---May `writer` import (again) into request `x`? An open request: yes. A done one: only its own
+---writer, replacing the guide (or review) it imported (after fixing dropped notes, say); anyone
+---else would silently replace another agent's work.
+local function may_reimport(x, writer)
+  return x.status ~= 'done' or (x.result ~= nil and x.result.agent == writer)
+end
+
+---The request of `kind` (guide, review) `--request` names, checked (exit 1 when it is of another
+---kind or was cancelled, or done: with `reimport`, a done request is open to its own writer's
+---import). Its review is the one to load when no --session is given and it still runs.
+local function take_request(o, ctx, kind, what, reimport)
+  local req = find_request(o, ctx, o.request)
+  if req.kind ~= kind then
+    die(('request %s asks for a %s, not a %s'):format(req.id, req.kind, kind))
+  elseif req.status == 'cancelled' then
+    die(('request %s was cancelled by the user: %s'):format(req.id, what))
+  elseif req.status == 'done' and not (reimport and may_reimport(req, writer_name(o, req))) then
+    die(('request %s is done already (the %s %s imported is shown): %s; ask the user before writing another%s'):format(
+      req.id, kind, tostring(req.result and req.result.agent or 'an agent'), what,
+      reimport and ' (its writer may import again with the same --request and --name to replace it)' or ''))
+  end
+  if not o.session and req.session then
+    for _, e in ipairs(live_sessions(o, ctx)) do
+      if e.id == tostring(req.session) then
+        o.session = e.id
+      end
+    end
+  end
+  return req
+end
+
+---Record that the agent took request `req` (its prompt was printed): the review says so.
+local function mark_acked(req)
+  local requests = require('revuey.requests')
+  if req and req.status == 'pending' then
+    local _, uerr = requests.update(req._path, function(x)
+      if x.status ~= 'pending' then
+        return false
+      end
+      x.status, x.acked_at = 'acked', requests.now_ms()
+    end)
+    if uerr then
+      err('revuey: could not record that you took request ' .. req.id .. ': ' .. tostring(uerr) .. '\n')
+    end
+  end
+end
+
+---Test hook: hold an import here (after its checks, before the request's lock) until the gate
+---file exists.
+local function test_gate()
+  local gate = vim.env.REVUEY_TEST_IMPORT_GATE
+  if gate and gate ~= '' then
+    vim.fn.writefile({}, gate .. '.waiting')
+    vim.wait(10000, function()
+      return vim.uv.fs_stat(gate) ~= nil
+    end, 20)
+  end
+end
+
 ---The hunks of the review `comment` would use, with the AI review's ids (guide.hunks) and, in
 ---the full-stack scope, the branch that introduced each one (as the UI tags them).
 local function review_hunks(o)
@@ -1364,11 +1474,40 @@ local function review_hunks(o)
   return r, hunks, info, cpath, epath, attached
 end
 
+---The skill a review request names, read again ({name, text, path}), or exit 1.
+local function request_skill(req)
+  if not req or not req.skill then
+    return nil
+  end
+  local ai_review = require('revuey.ai_review')
+  local skill, serr
+  if req.skill.path then
+    skill, serr = ai_review.read_skill(req.skill.path)
+  else
+    serr = 'no path'
+  end
+  if not skill then
+    die(('request %s asks you to follow the skill %s, which cannot be read (%s); tell the user'):format(req.id, req.skill.name, tostring(serr)))
+  end
+  return skill
+end
+
 function M.hunks(o)
   if o.prompt and (o.stat or o.paths) then
     die('--prompt is the whole review; it takes neither --stat nor --path', 2)
   end
+  if o.request and not o.prompt then
+    die('--request goes with --prompt (`hunks --prompt --request <id>`)', 2)
+  end
+  local req = o.request and take_request(o, here(o), 'review', 'nothing to do') or nil
   local r, hunks, info = review_hunks(o)
+  if req then
+    local mm = request_mismatch(req, r)
+    if mm then
+      die(mm .. '; tell the user, and review nothing')
+    end
+  end
+  local skill = request_skill(req)
   -- the hash of the whole diff, whatever is shown (import-review checks against it)
   local diff = require('revuey.guide').anchors_hash(hunks)
   local total = #hunks
@@ -1438,7 +1577,8 @@ function M.hunks(o)
   local pctx = require('revuey.guide_view').prompt_context(r)
   local text, perr
   if o.prompt then
-    text, perr = prompt.build(pctx, hunks, { budget = math.huge })
+    -- for a request: the connected agent's methodology, and the skill the user asked for
+    text, perr = prompt.build(pctx, hunks, { budget = math.huge, agent = req ~= nil, skill = skill })
   else
     text, perr = prompt.user_message(pctx, hunks, {
       budget = math.huge,
@@ -1449,10 +1589,16 @@ function M.hunks(o)
   if not text then
     die(perr)
   end
-  out(('# Hunks of %s vs %s (%s): %s\n'):format(sessions.scope_label(info), info.base or '?', mode, count))
+  mark_acked(req)
+  out(('# Hunks of %s vs %s (%s): %s%s%s\n'):format(sessions.scope_label(info), info.base or '?', mode, count,
+    req and (', request ' .. req.id) or '', skill and (', skill ' .. skill.name) or ''))
   out(('Diff: %s (give it as "diff" in the review, so import-review can tell when the code changed)\n\n'):format(diff))
   out(text)
-  if o.prompt then
+  if req then
+    out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review --request %s --name <your name> -` (the JSON on stdin). '
+      .. 'Findings with bad anchors are dropped and reported: fix them and import again with the same --request and --name, which replaces your findings the user has not touched.\n'):format(
+      bin(), diff, bin(), req.id))
+  elseif o.prompt then
     out(('\n---\nWrite the review as one JSON document (schema: `%s import-review --schema`) with "diff": "%s", and import it with `%s import-review <file>`.\n'):format(bin(), diff, bin()))
   end
 end
@@ -1463,7 +1609,7 @@ function M.import_review(o, pos)
     out(prompt.schema_json() .. '\n')
     return
   end
-  local usage = 'usage: revuey import-review [--name <reviewer>] [--session <id>] <file|->  (--schema prints the schema)'
+  local usage = 'usage: revuey import-review [--request <id>] [--name <reviewer>] [--session <id>] <file|->  (--schema prints the schema)'
   if #pos ~= 1 then
     die((#pos == 0 and 'import-review needs a file (or - for stdin)\n' or 'import-review takes one file\n') .. usage, 2)
   end
@@ -1482,32 +1628,84 @@ function M.import_review(o, pos)
     die('empty review')
   end
   local ai_review = require('revuey.ai_review')
+  local requests = require('revuey.requests')
+  local guide = require('revuey.guide')
+  local req = o.request and take_request(o, here(o), 'review', 'nothing imported', true) or nil
   local r, hunks, info, cpath, epath, attached = review_hunks(o)
-  local name = o.name or vim.env.REVUEY_AGENT_NAME
-  local ok, rec, ierr = pcall(ai_review.import, text, {
-    review = r,
-    hunks = hunks,
-    store = comments.load(cpath),
-    events = epath,
-    info = info,
-    author = { kind = 'ai', name = (name and name ~= '') and name or nil },
-    record_path = ai_review.record_path(cpath),
-    generator = { provider = 'import', source = pos[1] == '-' and 'stdin' or pos[1], head = r.head, merge_base = r.merge_base, mode = r.mode },
-  })
+  local source = pos[1] == '-' and 'stdin' or pos[1]
+  local name, generator
+  if req then
+    local mm = request_mismatch(req, r)
+    if mm then
+      die(mm .. '; nothing imported')
+    end
+    -- the diff hash is required for a request: findings for code that changed since would pass
+    local doc = guide.repair_json(text)
+    local diff = guide.anchors_hash(hunks)
+    if type(doc) == 'table' and (type(doc.diff) ~= 'string' or doc.diff == '') then
+      die(('the review has no "diff": give the Diff: hash `%s hunks --prompt` printed (%s now), so a review of code that changed meanwhile is refused; nothing imported'):format(bin(), diff))
+    end
+    name = writer_name(o, req)
+    generator = {
+      provider = 'agent', agent = name, request = req.id, skill = req.skill and req.skill.name or nil, source = source,
+      head = r.head, merge_base = r.merge_base, mode = r.mode, prompt_level = 'full',
+    }
+  else
+    name = o.name or vim.env.REVUEY_AGENT_NAME
+    name = (name and name ~= '') and name or nil
+    generator = { provider = 'import', source = source, head = r.head, merge_base = r.merge_base, mode = r.mode }
+  end
+  local function import()
+    return pcall(ai_review.import, text, {
+      review = r,
+      hunks = hunks,
+      store = comments.load(cpath),
+      events = epath,
+      info = info,
+      author = { kind = 'ai', name = name },
+      record_path = ai_review.record_path(cpath),
+      generator = generator,
+    })
+  end
+  local ok, rec, ierr
+  if req then
+    test_gate()
+    -- the status again, under the request's lock, and the findings imported under it: a cancel
+    -- (or another writer's import) that came in since the first check wins, nothing is written
+    local _, uerr = requests.update(req._path, function(x)
+      if x.status == 'cancelled' then
+        return false, ('request %s was cancelled by the user meanwhile: nothing imported'):format(req.id)
+      elseif not may_reimport(x, name) then
+        return false, ('request %s was done meanwhile (by %s): nothing imported'):format(req.id, tostring(x.result and x.result.agent or '?'))
+      end
+      ok, rec, ierr = import()
+      if not ok or not rec then
+        return false, tostring(ok and ierr or rec)
+      end
+      x.status, x.done_at = 'done', requests.now_ms()
+      x.result = { agent = name, verdict = rec.verdict, findings = rec.imported, review = rec.id }
+    end)
+    if uerr then
+      die(uerr)
+    end
+  else
+    ok, rec, ierr = import()
+  end
   if not ok then
     die(tostring(rec))
   elseif not rec then
     die(ierr)
   end
-  out(('imported %d finding%s (verdict: %s) into %s\n'):format(
+  out(('imported %d finding%s (verdict: %s) into %s%s\n'):format(
     rec.imported,
     rec.imported == 1 and '' or 's',
     ai_review.VERDICT_LABEL[rec.verdict],
-    where_text(info, attached)
+    where_text(info, attached),
+    req and attached and '; the running review shows them within a few seconds' or ''
   ))
   local dropped = ai_review.dropped_text(rec.warnings)
   if dropped then
-    out(dropped .. '\n')
+    out(dropped .. (req and (' (fix them and import again with the same --request ' .. req.id .. ' and --name ' .. name .. ')') or '') .. '\n')
   end
   if rec.skipped > 0 then
     out(('%d skipped: the user already triaged them\n'):format(rec.skipped))
@@ -1530,76 +1728,6 @@ function M.generator_label(gen)
   return gen.model or gen.provider or '?'
 end
 
----The request `id` of this repo (any unique part), or exit 1.
-local function find_request(o, ctx, id)
-  local requests = require('revuey.requests')
-  local rec, ferr = requests.find(state_dirs(o, ctx), id, { repo = { ctx.root, ctx.real } })
-  if not rec then
-    die(ferr)
-  end
-  return rec
-end
-
----A request that names another review than the one loaded: what it was for, or nil when it fits.
-local function request_mismatch(req, r)
-  local key = require('revuey.guide').key(r.state)
-  local k = req.key or {}
-  if k.repo == key.repo and k.branch == key.branch and k.base == key.base then
-    return nil
-  end
-  return ('request %s was for %s (vs %s), but the review shows %s vs %s now'):format(req.id, req.label or k.branch or '?', k.base or '?', key.branch, key.base)
-end
-
----The open guide request of this review (key), newest first, or nil.
-local function open_guide_request(o, ctx, r)
-  local requests = require('revuey.requests')
-  local key = require('revuey.guide').key(r.state)
-  local list = requests.list(state_dirs(o, ctx), { open = true, repo = { ctx.root, ctx.real } })
-  for i = #list, 1, -1 do
-    local k = list[i].key or {}
-    if list[i].kind == 'guide' and k.repo == key.repo and k.branch == key.branch and k.base == key.base then
-      return list[i]
-    end
-  end
-end
-
----Who writes with `--name` / $REVUEY_AGENT_NAME, else the agent the request was made for.
-local function writer_name(o, req)
-  local requests = require('revuey.requests')
-  return requests.clean_name(o.name) or requests.clean_name(vim.env.REVUEY_AGENT_NAME) or (req and req.agent) or 'agent'
-end
-
----May `writer` import (again) into request `x`? An open request: yes. A done one: only its own
----writer, replacing the guide it imported (after fixing dropped notes, say); anyone else would
----silently replace another agent's guide.
-local function may_reimport(x, writer)
-  return x.status ~= 'done' or (x.result ~= nil and x.result.agent == writer)
-end
-
----The guide request `--request` names, checked (exit 1 when it is no guide request or was
----cancelled, or done: with `reimport`, a done request is open to its own writer's import).
----Its review is the one to load when no --session is given and it still runs.
-local function take_guide_request(o, ctx, what, reimport)
-  local req = find_request(o, ctx, o.request)
-  if req.kind ~= 'guide' then
-    die(('request %s asks for a %s, not a guide'):format(req.id, req.kind))
-  elseif req.status == 'cancelled' then
-    die(('request %s was cancelled by the user: %s'):format(req.id, what))
-  elseif req.status == 'done' and not (reimport and may_reimport(req, writer_name(o, req))) then
-    die(('request %s is done already (the guide %s imported is shown): %s; ask the user before writing another%s'):format(
-      req.id, tostring(req.result and req.result.agent or 'an agent'), what,
-      reimport and ' (its writer may import again with the same --request and --name to replace it)' or ''))
-  end
-  if not o.session and req.session then
-    for _, e in ipairs(live_sessions(o, ctx)) do
-      if e.id == tostring(req.session) then
-        o.session = e.id
-      end
-    end
-  end
-  return req
-end
-
 local function guide_prompt_out(o, req, r, hunks, info, attached)
   local requests = require('revuey.requests')
   local guide = require('revuey.guide')
@@ -1614,17 +1742,7 @@ local function guide_prompt_out(o, req, r, hunks, info, attached)
   if not text then
     die(perr)
   end
-  if req and req.status == 'pending' then
-    local _, uerr = requests.update(req._path, function(x)
-      if x.status ~= 'pending' then
-        return false
-      end
-      x.status, x.acked_at = 'acked', requests.now_ms()
-    end)
-    if uerr then
-      err('revuey: could not record that you took request ' .. req.id .. ': ' .. tostring(uerr) .. '\n')
-    end
-  end
+  mark_acked(req)
   local mode = info.mode == 'committed' and 'committed' or 'working tree'
   out(('# Guide prompt for %s vs %s (%s): %d hunks%s\n'):format(sessions.scope_label(info), info.base or '?', mode, #hunks, req and (', request ' .. req.id) or ''))
   out(('Diff: %s\n\n'):format(diff))
@@ -1644,7 +1762,7 @@ function M.guide(o)
   if o.request and not o.prompt then
     die('--request goes with --prompt (`guide --prompt --request <id>`)', 2)
   end
-  local req = o.request and take_guide_request(o, ctx, 'nothing to do') or nil
+  local req = o.request and take_request(o, ctx, 'guide', 'nothing to do') or nil
   local r, hunks, info, _, _, attached = review_hunks(o)
   if o.prompt then
     return guide_prompt_out(o, req, r, hunks, info, attached)
@@ -1654,7 +1772,7 @@ function M.guide(o)
   local rec = guide.load(guide.dir(vim.fs.dirname(r.state._path)), guide.key(r.state), diff)
   local mode = info.mode == 'committed' and 'committed' or 'working tree'
   local where = ('%s vs %s (%s)%s'):format(sessions.scope_label(info), info.base or '?', mode, attached and (', session ' .. attached.id) or ', no review running')
-  req = open_guide_request(o, ctx, r)
+  req = open_request(o, ctx, r, 'guide')
   if not rec then
     if o.json then
       out(vim.json.encode({ diff = diff, review = info, guide = vim.NIL, request = req and req.id or nil }) .. '\n')
@@ -1804,7 +1922,7 @@ function M.import_guide(o, pos)
     die(('not a guide: expected one JSON object with "title", "summary" and "sections" (`%s import-guide --schema`)'):format(bin()))
   end
   local ctx = here(o)
-  local req = o.request and take_guide_request(o, ctx, 'nothing imported', true) or nil
+  local req = o.request and take_request(o, ctx, 'guide', 'nothing imported', true) or nil
   local r, hunks, info, _, _, attached = review_hunks(o)
   if req then
     local mm = request_mismatch(req, r)
@@ -1865,14 +1983,7 @@ function M.import_guide(o, pos)
     },
   })
   local dir = (req and req.guide_dir) or guide.dir(vim.fs.dirname(r.state._path))
-  -- test hook: hold here (after the checks, before the request's lock) until the gate exists
-  local gate = vim.env.REVUEY_TEST_IMPORT_GATE
-  if gate and gate ~= '' then
-    vim.fn.writefile({}, gate .. '.waiting')
-    vim.wait(10000, function()
-      return vim.uv.fs_stat(gate) ~= nil
-    end, 20)
-  end
+  test_gate()
   if req then
     -- the status again, under the request's lock, and the guide saved under it: a cancel (or
     -- another import) that came in since the first check wins, and nothing is written

@@ -1,7 +1,9 @@
 -- AI review glue: runs `:RevueyAIReview [skill]` in the background (one job per review scope, like
 -- the guide's), imports the result as AI-authored comments (ai_review.lua), and draws the review's
 -- block in the file panel (verdict, findings left to triage, summary). The findings themselves are
--- ordinary comments, drawn and triaged by comments_view.lua.
+-- ordinary comments, drawn and triaged by comments_view.lua. The review can also be asked of the
+-- connected agent (a `review` request, agent_request.lua): the job then waits for its
+-- `import-review --request`.
 local api = vim.api
 local config = require('revuey.config')
 local ai = require('revuey.ai')
@@ -9,14 +11,43 @@ local ai_review = require('revuey.ai_review')
 local prompt = require('revuey.ai_review_prompt')
 local comments = require('revuey.comments')
 local git = require('revuey.git')
+local agent_request = require('revuey.agent_request')
 
 local M = {}
 
 M.ns_status = api.nvim_create_namespace('revuey.ai_review.status')
 
----Jobs by comments file (one per review scope); they outlive scope switches and the review.
----@type table<string, {job?: revuey.AiJob, label: string, started: integer, progress?: string, skill?: string}>
+---Jobs by comments file (one per review scope); they outlive scope switches and the review. A
+---request to the connected agent has `agent` {id, path, name, delivered?, acked?, late?,
+---adopted?} instead of `job`.
+---@type table<string, {job?: revuey.AiJob, agent?: table, label: string, started: integer, progress?: string, skill?: string}>
 M.jobs = {}
+---A request no watch printed within this long is shown as not picked up (a fresh run offered).
+M.AGENT_ACK_MS = 60000
+---How often the review reads an open request's file while it waits.
+M.AGENT_POLL_MS = 500
+---Withdrawing a request: retried on a busy lock for this long, in these steps.
+M.CANCEL_RETRY_MS = 3000
+M.CANCEL_STEP_MS = 50
+---How a review redraws when a request ends that no command of this Neovim started (adopted);
+---view.lua sets it.
+M.default_on_change = function() end
+---What the shared request code (agent_request.lua) says about a review request.
+M.req = {
+  noun = 'review',
+  imported = 'the review',
+  cancel_cmd = ':RevueyAIReview cancel',
+  expired_hint = 'run :RevueyAIReview again for a fresh session',
+  fresh_hint = function()
+    return ':RevueyAIReview'
+  end,
+  ready = function(a, rec, secs)
+    local res = rec.result or {}
+    local n = tonumber(res.findings) or 0
+    return ('revuey: AI review ready from %s (%s, %d finding%s, %ds)'):format(a.name,
+      ai_review.VERDICT_LABEL[res.verdict] or tostring(res.verdict or '?'), n, n == 1 and '' or 's', secs)
+  end,
+}
 ---Last error per comments file (shown in the panel until the next run).
 M.errors = {}
 
@@ -49,14 +80,47 @@ function M.record(s)
   return c.rec
 end
 
+---Who wrote a review record: "claude (connected)" for the connected agent, else its author.
+function M.who(rec)
+  local gen = rec.generator or {}
+  if gen.provider == 'agent' then
+    return (require('revuey.requests').clean_name(gen.agent) or 'agent') .. ' (connected)'
+  end
+  return rec.author and rec.author.name or 'AI'
+end
+
 ---"✗ request changes · claude" for a record.
 function M.verdict_line(rec)
-  local who = rec.author and rec.author.name or 'AI'
-  return ('AI review: %s %s · %s'):format(ai_review.VERDICT_GLYPH[rec.verdict] or '●', ai_review.VERDICT_LABEL[rec.verdict] or rec.verdict, who)
+  return ('AI review: %s %s · %s'):format(ai_review.VERDICT_GLYPH[rec.verdict] or '●', ai_review.VERDICT_LABEL[rec.verdict] or rec.verdict, M.who(rec))
+end
+
+local ensure_ticker
+
+---An open review request for this scope whose review is gone (Neovim quit or crashed while
+---waiting) is waited for again, once per review and scope (agent_request.adopt).
+local function adopt(s, key)
+  if s.ai_review_adopt_checked == key then
+    return
+  end
+  s.ai_review_adopt_checked = key
+  if M.jobs[key] then
+    return
+  end
+  local j = agent_request.adopt(s, 'review', function(rec)
+    return rec.comments == key
+  end, s.review.branch, function()
+    M.default_on_change()
+  end)
+  if j then
+    M.jobs[key] = j
+    ensure_ticker()
+  end
 end
 
 function M.job(s)
-  return M.jobs[M.key(s)]
+  local key = M.key(s)
+  adopt(s, key)
+  return M.jobs[key]
 end
 
 ---Status line for a running review: spinner, elapsed time, latest progress.
@@ -67,6 +131,9 @@ function M.status_text(s)
   end
   local secs = math.floor((vim.uv.hrtime() - j.started) / 1e9)
   local frame = SPINNER[(math.floor(vim.uv.hrtime() / 1e8) % #SPINNER) + 1]
+  if j.agent then
+    return agent_request.status_text(j, frame, 'is reviewing', M.req.fresh_hint())
+  end
   return ('%s reviewing %ds%s'):format(frame, secs, j.progress and ('  ' .. j.progress) or '')
 end
 
@@ -74,6 +141,7 @@ local ticker
 
 local function tick()
   local s = require('revuey.view').session
+  agent_request.poll(M)
   if next(M.jobs) == nil then
     if ticker then
       ticker:stop()
@@ -100,51 +168,116 @@ function M.draw_status(s)
   end
 end
 
-local function ensure_ticker()
+ensure_ticker = function()
   if not ticker then
     ticker = vim.uv.new_timer()
     ticker:start(0, 100, vim.schedule_wrap(tick))
   end
 end
 
----Untouched findings of the last review revuey ran here (what a new run replaces).
-function M.replaceable(s)
+---Untouched findings of the last review revuey ran here (what a new run replaces); `author`:
+---the reviewer of the new run (default M.author(); the connected agent imports under its name).
+function M.replaceable(s, author)
   local store = require('revuey.comments_view').sync_store(s)
   local n = 0
   for _, c in pairs(store.comments) do
-    if ai_review.untouched(c, M.author()) then
+    if ai_review.untouched(c, author or M.author()) then
       n = n + 1
     end
   end
   return n
 end
 
+---The skill `skill_arg` names (a name or a path), read: {name, text, path}; nil without one;
+---false and an error when it cannot be found or read.
+function M.resolve_skill(s, skill_arg)
+  if not skill_arg or skill_arg == '' then
+    return nil
+  end
+  local path, err = ai_review.find_skill(skill_arg, s.review.root)
+  local skill
+  if path then
+    skill, err = ai_review.read_skill(path)
+  end
+  if not skill then
+    return false, err
+  end
+  return skill
+end
+
+---The scope's hunks when a review can start (none running, some changes), else nil (said).
+local function startable(s, key)
+  if M.jobs[key] then
+    local j = M.jobs[key]
+    vim.notify(j.agent and ('revuey: %s was asked for this review already (:RevueyAIReview cancel withdraws it)'):format(j.agent.name)
+      or 'revuey: an AI review is already running for this review (:RevueyAIReview cancel stops it)', vim.log.levels.INFO)
+    return nil
+  end
+  -- the guide's hunks: the same ids, and in full-stack scope the branch labels for the prompt
+  local g = require('revuey.guide_view').prepare(s)
+  if #g.hunks == 0 then
+    vim.notify('revuey: nothing to review (no changes)', vim.log.levels.INFO)
+    return nil
+  end
+  return g
+end
+
+---Ask the connected agent to review the session's current scope into revuey: a `review` request
+---(with the skill's name and path, when given) and its event in the feed (`watch --messages`
+---prints it). The job waits for `import-review --request` (agent_request.poll).
+---@return boolean asked
+function M.request_agent(s, skill_arg, on_change)
+  local key = M.key(s)
+  local g = startable(s, key)
+  if not g then
+    return false
+  end
+  local skill, serr = M.resolve_skill(s, skill_arg)
+  if skill == false then
+    vim.notify('revuey: ' .. serr, vim.log.levels.ERROR)
+    return false
+  end
+  local rec, name, path = agent_request.create(s, 'review', {
+    key = require('revuey.guide').key(s.review.state),
+    anchors = g.anchors,
+    comments = key,
+    skill = skill and { name = skill.name, path = skill.path } or nil,
+  })
+  if not rec then
+    vim.notify('revuey: ' .. name, vim.log.levels.ERROR)
+    return false
+  end
+  M.errors[key] = nil
+  local j = agent_request.job(rec, path, name, s.review.branch, on_change)
+  j.skill = skill and skill.name
+  j.skill_arg = skill and skill.path
+  M.jobs[key] = j
+  ensure_ticker()
+  on_change()
+  vim.notify(('revuey: asked %s to review this%s (request %s)'):format(name, skill and (' with the skill ' .. skill.name) or '', rec.id), vim.log.levels.INFO)
+  return true
+end
+
 ---Run an AI review of the session's current review scope (no-op when one runs for it). `skill`:
----a skill name or path whose SKILL.md is passed as guidance.
+---a skill name or path whose SKILL.md is passed as guidance. `opts`: model and effort for this
+---run (default: ai.model, ai.effort).
 ---@param s revuey.Session
 ---@param skill_arg? string
 ---@param on_change fun() called (on the main loop) when the job state or the findings changed
-function M.generate(s, skill_arg, on_change)
+---@param opts? {model?: string, effort?: string}
+function M.generate(s, skill_arg, on_change, opts)
   local r = s.review
   local key = M.key(s)
-  if M.jobs[key] then
-    return vim.notify('revuey: an AI review is already running for this review (:RevueyAIReview cancel stops it)', vim.log.levels.INFO)
+  local g = startable(s, key)
+  if not g then
+    return
   end
-  -- the guide's hunks: the same ids, and in full-stack scope the branch labels for the prompt
-  local hunks = require('revuey.guide_view').prepare(s).hunks
-  if #hunks == 0 then
-    return vim.notify('revuey: nothing to review (no changes)', vim.log.levels.INFO)
+  local hunks = g.hunks
+  local skill, serr = M.resolve_skill(s, skill_arg)
+  if skill == false then
+    return vim.notify('revuey: ' .. serr, vim.log.levels.ERROR)
   end
-  local skill
-  if skill_arg and skill_arg ~= '' then
-    local path, err = ai_review.find_skill(skill_arg, r.root)
-    if path then
-      skill, err = ai_review.read_skill(path)
-    end
-    if not skill then
-      return vim.notify('revuey: ' .. err, vim.log.levels.ERROR)
-    end
-  end
+  opts = opts or {}
   local cfg = config.options.ai or {}
   local author = M.author()
   M.errors[key] = nil
@@ -173,8 +306,8 @@ function M.generate(s, skill_arg, on_change)
       prompt = text,
       schema = prompt.schema_json(),
       cwd = r.root,
-      model = cfg.model,
-      effort = cfg.effort,
+      model = opts.model or cfg.model,
+      effort = opts.effort or cfg.effort,
       name = 'revuey review: ' .. r.branch,
       on_event = function(ev)
         if ev.type == 'progress' then
@@ -204,7 +337,7 @@ function M.generate(s, skill_arg, on_change)
           shown = entry.shown,
           generator = {
             provider = cfg.provider or 'claude',
-            model = result.model or cfg.model,
+            model = result.model or opts.model or cfg.model,
             session_id = result.session_id,
             head = r.head,
             merge_base = r.merge_base,
@@ -245,14 +378,19 @@ function M.generate(s, skill_arg, on_change)
   end)
 end
 
----Cancel the run for the session's review scope.
-function M.cancel(s)
+---Cancel the run for the session's review scope, or withdraw the request to the agent
+---(`after(ok)`: called once the withdrawal is done or failed).
+function M.cancel(s, after)
   local key = M.key(s)
-  local j = M.jobs[key]
+  local j = M.job(s)
   if not j then
     return false
   end
-  if j.job and j.job.proc then
+  if j.agent then
+    if not j.agent.cancelling then
+      agent_request.cancel(s, M, key, j, after)
+    end
+  elseif j.job and j.job.proc then
     j.job:cancel()
   else
     -- still gathering commits: forget it; the coroutine checks before spawning
@@ -276,7 +414,7 @@ local VERDICT_HL = { approve = 'RevueyAiApprove', comment = 'RevueyAiComment', r
 function M.panel(s, add, add_virt, width)
   s.panel_ai_status_row = nil
   local key = M.key(s)
-  local job, err, rec = M.jobs[key], M.errors[key], M.record(s)
+  local job, err, rec = M.job(s), M.errors[key], M.record(s)
   if not (job or err or rec) then
     return
   end
@@ -304,6 +442,10 @@ function M.panel(s, add, add_virt, width)
     end
     local t = ' ' .. table.concat(parts, ' · ')
     add(t, { { 0, #t, pending > 0 and 'Normal' or 'Comment' } })
+    if (rec.generator or {}).provider == 'agent' then
+      local by = require('revuey.panel').truncate(' by ' .. M.who(rec) .. (type(rec.generator.skill) == 'string' and (' · skill ' .. require('revuey.guide').one_line(rec.generator.skill)) or ''), width)
+      add(by, { { 0, #by, 'Comment' } })
+    end
     if rec.summary ~= '' then
       for _, l in ipairs(require('revuey.panel').wrap(rec.summary:gsub('%s+', ' '), width, ' ')) do
         add(l, { { 0, #l, 'Comment' } })
