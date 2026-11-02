@@ -56,8 +56,8 @@ Requirements:
 | `:RevueyGuide!` | Generate a new guide (in the background) and show the guide view. |
 | `:RevueyGuide cancel` | Stop a running generation. |
 | `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
-| `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
-| `:RevueyAIReview cancel` | Stop a running AI review. |
+| `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. With an agent connected, asks whether it or a fresh session reviews (`ai.review_by`). Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
+| `:RevueyAIReview cancel` | Stop a running AI review, or withdraw the request to the connected agent. |
 | `:RevueyComments` | The [comments view](#the-comments-view): every thread of the review in one list; `<CR>` shows one in the diff. |
 | `:RevueySubmit [approve\|comment\|request-changes\|pending]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `pending` adds them to your pending review on GitHub without submitting it. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
@@ -1081,6 +1081,7 @@ require('revuey').setup({
     cmd = nil,          -- path to the claude executable (default: `claude` on PATH)
     keep_guides = 5,    -- saved guides kept per review
     guide_by = 'ask',   -- with an agent connected: 'ask' who writes a guide, 'agent' or 'fresh'
+    review_by = 'ask',  -- the same for :RevueyAIReview
     restricted = true,  -- see below before turning this off
   },
 })
@@ -1154,8 +1155,25 @@ how strict to be. revuey reads the file itself (front matter dropped, at most 40
 characters), because the restricted run loads no skills, settings or plugins. Tab completes skill
 names. The output format stays the same.
 
+**By your connected agent.** When a coding agent is [connected](#connect-an-agent) (a `watch
+--messages`), `:RevueyAIReview [skill]` first asks who reviews, as for the [guide](#ai-guide):
+**Ask claude (connected)**, **Fresh session** (`ai.model`), **Fresh session with another
+model…** (then an effort), or Cancel. The agent knows the conversation, so it can tell code that
+does what you meant from code that does not, and can build on the notes of a
+[review pass](#connect-an-agent) of that layer (it still reviews the whole diff). It gets the
+same instructions, worded for an agent with context, and the skill's text when you named one
+(revuey reads the `SKILL.md`, as above). The panel shows `waiting for claude…`, then `claude is
+reviewing`; the findings appear when the agent imports them, and the panel says `by claude
+(connected)`. `:RevueyAIReview cancel` withdraws the request (the agent is told). Not picked up
+within a minute: the panel says so, and `:RevueyAIReview` offers to keep waiting, or withdraw it
+and run a fresh session (or one with another model). With no agent connected nothing changes.
+`ai.review_by` sets the default: `'ask'`, `'agent'` or `'fresh'`. The agent's findings go
+through the same checks (`bin/revuey import-review --request`, below), plus the diff hash,
+which a request requires.
+
 Reviews are stored per scope next to its comments (`*.ai-review.json`: summary, verdict, counts,
-model, cost, the skill used). Failures (no `claude`, not logged in, invalid output) are reported
+model, cost, the skill used, who wrote it). Each finding also keeps which run made it (`ai.run`
+in the comments file: reviewer name, provider, model or agent, skill, request id). Failures (no `claude`, not logged in, invalid output) are reported
 and shown in the panel, and leave the last review and its findings alone.
 
 ### AI reviews from another agent or tool
@@ -1171,6 +1189,8 @@ bin/revuey hunks --stat          # the changed files: +/- counts and hunk ids (-
 bin/revuey hunks --path src/cart.ts --path src/index.ts   # those files' hunks only (same ids)
 bin/revuey import-review --schema            # the JSON schema
 bin/revuey import-review review.json         # import (- reads stdin); --name names the reviewer
+bin/revuey hunks --prompt --request <id>     # take the review's request (the connected agent)
+bin/revuey import-review --request <id> -    # import for it: marks it done
 ```
 
 ```json
@@ -1447,6 +1467,8 @@ bin/revuey guide                 # the guide the review shows: sections, hunk id
                                  # who wrote it, stale or not (--json)
 bin/revuey guide --prompt [--request <id>]   # revuey's guide prompt, for the agent to write one
 bin/revuey import-guide [--request <id>] [--name claude] -   # validate and save it (--schema)
+bin/revuey hunks --prompt --request <id>    # the review's prompt (and skill) for a review request
+bin/revuey import-review --request <id> --name claude -   # import its findings (--schema)
 ```
 
 `comment` leaves a new comment (author `agent`, saved, not added to any forge review) and
@@ -1494,13 +1516,18 @@ in the feed; live only: neither a later watch nor `--since` prints it again):
 revuey switched stack/cart -> stack/math (layer 1 of 3, PR #12 https://github.com/me/shop/pull/12): the worktree has stack/math checked out now and the review shows that layer; files on disk changed, so re-read them, and focus on this layer from now on
 ```
 
-When you ask the connected agent for a guide, the watch prints a request (a `request` event in
-the feed, and a file under `state_dir/requests/`; `inbox` lists it until it is done, a later
-watch catches it up once like a message):
+When you ask the connected agent for a guide or an AI review, the watch prints a request (a
+`request` event in the feed, and a file under `state_dir/requests/`; `inbox` lists it until it
+is done, a later watch catches it up once like a message):
 
 ```
 revuey request 19a3f0c2d4e1a8b7f guide [stack/cart]: the user asked you to write the guide for this review (/home/me/dev/revuey/main/bin/revuey guide --prompt --request 19a3f0c2d4e1a8b7f)
+revuey request 19a3f0c2d4e2b1c4a review [stack/cart] (skill: strict): the user asked you to review this into revuey (/home/me/dev/revuey/main/bin/revuey hunks --prompt --request 19a3f0c2d4e2b1c4a)
 ```
+
+A review request works the same way as the guide's below: `hunks --prompt --request <id>` takes
+it (with the skill's text, when one was named), `import-review --request <id>` imports the
+findings and marks it done, with the same refusals.
 
 `guide --prompt --request <id>` marks it taken (the review shows "claude is writing the
 guide"), and `import-guide --request <id>` saves the guide where the review keeps its guides

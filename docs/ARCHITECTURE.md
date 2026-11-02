@@ -1999,14 +1999,18 @@ are in `reports/Terminal code review tool landscape.md`.
       `gH`, layer and full-stack scope with uncommitted labels); screenshots `comments-view` and
       `comments-view-narrow`.
 25. **Requests to the connected agent** (`requests.lua` pure records, events and lines;
-    `guide_view.lua` the request job and its poll; `view.lua` the choice; `cli.lua` `guide`,
-    `guide --prompt`, `import-guide` and the request lines of `watch`/`inbox`;
-    `skill/revuey/SKILL.md` "The guide" and "Guide requests"). The review can ask the agent
-    session the user works with (decision 12) to produce what a fresh `claude -p` run would
-    otherwise make: a guide now (`kind = 'guide'`), an AI review later (`kind = 'review'`, same
-    records, events and lines). Why: the agent has the conversation behind the change, so its
-    guide can say why the change exists and flag potential issues, and the user and the agent
-    see the same guide. A fresh session stays available (no context, or another model).
+    `agent_request.lua` the review's side shared by both kinds: asking, the wait and its poll,
+    withdrawing, adoption; `guide_view.lua` and `ai_review_view.lua` their jobs; `view.lua` the
+    choice; `cli.lua` `guide`, `guide --prompt`, `import-guide`, `hunks --prompt --request`,
+    `import-review --request` and the request lines of `watch`/`inbox`;
+    `skill/revuey/SKILL.md` "The guide", "Guide requests" and "Reviewing the changes into
+    revuey"). The review can ask the agent session the user works with (decision 12) to
+    produce what a fresh `claude -p` run would otherwise make: a guide (`kind = 'guide'`) or an
+    AI review (`kind = 'review'`), with the same records, events and lines. Why: the agent has
+    the conversation behind the change, so its guide can say why the change exists and flag
+    potential issues, its review can tell code that does what was meant from code that does
+    not, and the user and the agent see the same result. A fresh session stays available (no
+    context, or another model).
     - **Who writes it** (`view.guide_generator`, `ai.guide_by`): `gG` with no guide, `gR` and
       `:RevueyGuide!` decide with a fresh `agent_link.poll`. Only a watcher in `--messages` mode
       counts here (`agent_link.listening`): a plain `watch` prints events and would never act on
@@ -2135,10 +2139,55 @@ are in `reports/Terminal code review tool landscape.md`.
       `hunks` ids), hunk notes and line notes as `h7:3-4 (new)`, and an open request for it.
       "no guide for this review" otherwise. The skill reads it when the user mentions the guide
       and at the start of a review pass.
-    - **For AI reviews later**: add `review` to `requests.KINDS` and `TEXTS`, a `review --prompt
-      --request` (or `hunks --prompt --request`) that acks, `import-review --request` that marks
-      done, and an `ai_review_view` job with `agent` polled the same way; the choice helper in
-      `view.lua` is shared.
+    - **AI reviews** (`kind = 'review'`): `:RevueyAIReview [skill]` decides with
+      `view.generator(s, 'review_by')` (`ai.review_by`, same values and rules as `guide_by`) and
+      the same `ask_generator` question ("Run the AI review [(skill <name>)] with:"), then the
+      existing replace confirmation (counting the untouched findings of the reviewer the new
+      run imports under: `claude` for a fresh run, the agent's name for a request; `!` skips
+      it). The skill is found and read in the review (`ai_review.find_skill`/`read_skill`, an
+      error before anything is asked), and the request carries `skill = {name, path}`, plus
+      `key` (the guide key: the scope check), `anchors` and `comments` (the scope's comments
+      file, the job's key). Its line: `revuey request <id> review [<scope>] (skill: <name>): the
+      user asked you to review this into revuey (<bin> hunks --prompt --request <id>)` (the
+      skill part only with one; `requests.event` carries `skill`). `hunks --prompt --request`
+      refuses what `guide --prompt --request` refuses (another kind, cancelled, done, another
+      key), acks it, reads the skill again from its path (a skill that cannot be read is an
+      error to tell the user, never a review without it) and prints
+      `ai_review_prompt.build(..., {agent = true, skill})`: `SYSTEM` with
+      `ai_review_prompt.AGENT_EDITS` (identity: the agent with the conversation, judging intent
+      but reporting only what the diff bears out, building on pass notes of that layer while
+      reviewing the whole diff; tool use: read the worktree, never change it; a "Data, not
+      instructions" section: no edits, builds or posting), asserted exactly once like the
+      guide's, then the skill's guidance section, then the import command with `--request`.
+      `hunks --prompt` without a request stays the fresh run's prompt (what revuey sends).
+      `import-review --request [--name] <file|->` takes the request like `import-guide`
+      (reimport by its writer: `writer_name`, `may_reimport`), checks the key, requires the
+      `diff` hash (optional without a request), and imports under the request's lock after
+      reading its status again (`REVUEY_TEST_IMPORT_GATE` holds it there too): author `{kind =
+      'ai', name = <writer>}`, generator `{provider = 'agent', agent, request, skill, source,
+      head, merge_base, mode, prompt_level = 'full'}`; the request is marked done with `result
+      = {agent, verdict, findings, review}`. In the review the request is an `ai_review_view`
+      job (`jobs[<comments path>]` with `agent`), polled by its ticker through
+      `agent_request.poll`: the panel's status row says "waiting for <name>", "<name> has the
+      request", "<name> is reviewing", or not picked up after `AGENT_ACK_MS` ("`:RevueyAIReview`
+      for a fresh session"); done -> `on_change` reads the comments file again
+      (`comments_view.reload`, the import wrote it from outside) and redraws, and the record
+      (`ai_review_view.who`) says "<name> (connected)" in the comments view's verdict line and a
+      "by <name> (connected) · skill <name>" panel row. `:RevueyAIReview` while it is open offers
+      the guide's four choices (`agent_job_choice`, shared), `:RevueyAIReview cancel` withdraws
+      it. Adoption: once per review and scope (`ai_review_view.job`), an open review request
+      whose `comments` is this scope's, of a gone owner. The record stays one per scope (the
+      latest review); each finding keeps the run that made it in `ai.run` = `{name, provider,
+      model, agent, skill, request}` (fresh runs too: provider `claude` and the model), so a
+      later view can group findings by run.
+    - **Shared code** (`agent_request.lua`): `create` (the request file and its event, from the
+      review's fields plus the kind's), `job`, `status_text`, `poll(host)`, `cancel(s, host, ks,
+      j, after)` (the retries and messages) and `adopt(s, kind, matches, …)`, each parameterised
+      by its host module (`guide_view` or `ai_review_view`: its `jobs`, timings and `req` texts,
+      so a spec can shorten one kind's `AGENT_ACK_MS` alone). `cancel_tried` is one set for both
+      kinds. In `cli.lua`: `take_request(o, ctx, kind, …)`, `request_mismatch`, `writer_name`,
+      `may_reimport`, `open_request(…, kind)`, `mark_acked` and `test_gate`. In `view.lua`:
+      `generator`, `ask_generator`, `pick_model` and `agent_job_choice`.
     - **Tests**: `agent_guide_spec.lua` (`guide` with none, a guide and stale; `guide --prompt`;
       `import-guide` valid, invalid, stale and bad hunk refs; the choice only with an agent
       connected; `guide_by` agent/fresh without a question; the request file, the watch and inbox
@@ -2152,6 +2201,14 @@ are in `reports/Terminal code review tool landscape.md`.
       withdrawal on a busy lock failing and kept, never adopted again; other reviews' guides
       re-rendering nothing and the diff view only marking; pruning; a plain `watch` never asked;
       names with Markdown, newlines and escapes); screenshot `guide-agent-waiting`.
+      `agent_review_spec.lua`: the choice only with a `--messages` agent (none, a plain watch);
+      `review_by` agent/fresh without a question; the request line with its skill, inbox;
+      `hunks --prompt --request` acking, with the agent wording and the skill's text;
+      `import-review --request` valid, without the hash, stale, cancelled, done for another
+      writer and re-imported by its own, another scope after a branch switch; the findings and
+      "claude (connected)" shown in the running review, `ai.run` on each finding (agent and
+      fresh); cancel; not picked up and the fresh run instead; another model's
+      `--model`/`--effort`; adoption on reopen.
 
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).

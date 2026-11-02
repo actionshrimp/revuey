@@ -1,6 +1,6 @@
 ---
 name: revuey
-description: Open revuey (a Neovim code review UI) next to you in a tmux or herdr pane, or connect to a review the user already has open, then receive the comments and questions the user sends you from it (anchored to file:line) and answer them in the review's threads, take a quiet review pass over each stack layer the user switches to, and read or write the review's AI guide. Use when the user wants to review your changes in revuey, says they sent you something from revuey, or asks you to review changes into revuey as findings to triage, or to leave comments on a PR or branch for them to post (as drafts in revuey; never post to GitHub yourself).
+description: Open revuey (a Neovim code review UI) next to you in a tmux or herdr pane, or connect to a review the user already has open, then receive the comments and questions the user sends you from it (anchored to file:line) and answer them in the review's threads, take a quiet review pass over each stack layer the user switches to, read or write the review's AI guide, and run the AI reviews the user asks you for from it. Use when the user wants to review your changes in revuey, says they sent you something from revuey, or asks you to review changes into revuey as findings to triage, or to leave comments on a PR or branch for them to post (as drafts in revuey; never post to GitHub yourself).
 ---
 
 # revuey: review messages from the user
@@ -70,15 +70,16 @@ recover. Several quick switches arrive as one line (from where you last heard to
 stopped). `inbox` does not list these, and a watch started later does not print earlier ones
 (`REVUEY sessions` shows what is checked out).
 
-When the user asks you, from the review, to write its guide, a third kind of line arrives (see
-Guide requests below):
+When the user asks you, from the review, to write its guide or to review it, a third kind of
+line arrives (see Guide requests and Reviewing the changes into revuey below):
 
 ```
 revuey request <request id> guide [stack/cart]: the user asked you to write the guide for this review (REVUEY guide --prompt --request <request id>)
+revuey request <request id> review [stack/cart] (skill: strict): the user asked you to review this into revuey (REVUEY hunks --prompt --request <request id>)
 ```
 
-and `revuey request <request id> cancelled [...]` when they withdraw it: stop that work and import
-nothing. `inbox` lists open requests too.
+(`(skill: ...)` only when the user named one), and `revuey request <request id> cancelled [...]`
+when they withdraw it: stop that work and import nothing. `inbox` lists open requests too.
 
 No Monitor tool (another harness): run `REVUEY inbox --session <id>` when the user says they sent something,
 or poll it every 30 seconds while they review.
@@ -203,9 +204,18 @@ cd <worktree> && REVUEY comment --path <path> --file --session <id> "<text>"
 
 ## Reviewing the changes into revuey
 
-Only when the user asks you to review the changes (or a branch) *into revuey*, or to add a
-pass's notes: write the review as one JSON document and import it; each finding shows in their
-review as an AI comment they accept or dismiss. Nothing is posted anywhere.
+Only when the user asks you to review the changes (or a branch) *into revuey*, a `revuey request
+<request id> review` line arrives, or you add a pass's notes: write the review as one JSON
+document and import it; each finding shows in their review as an AI comment they accept or
+dismiss. Nothing is posted anywhere.
+
+For a request line (user messages first, as for guide requests), add `--request <request id>`
+to steps 1 and 3: the review shows the user that you started, then your findings. Step 1 then
+prints the instructions worded for you, and the text of the skill the user named, if any:
+follow that skill's guidance. Use what you know from the conversation, but report only what the
+diff bears out. If you have pass notes for that layer, build on them, but still review the
+whole diff. Never edit files for a review. If `--request` is refused (cancelled, done by
+another agent, or the review now shows another layer), tell the user in chat instead.
 
 1. `cd <worktree> && REVUEY hunks --prompt --session <id>`: the instructions, then the diff
    with each hunk under an id (`@@ h7 path @@`) and its lines numbered within the hunk
@@ -216,9 +226,9 @@ review as an AI comment they accept or dismiss. Nothing is posted anywhere.
    leave both out for a finding about the whole file.
 3. `cd <worktree> && REVUEY import-review --name <your name> --session <id> -` with the JSON on
    stdin. It prints how many were imported and dropped (bad anchors): fix and re-import if
-   findings were dropped. Re-importing under the same name replaces your findings the user has
-   not touched. If it says the code changed, start again at step 1 (for a pass's notes, see
-   Review passes instead).
+   findings were dropped. Re-importing under the same name (and `--request`) replaces your
+   findings the user has not touched. If it says the code changed, start again at step 1 (for
+   a pass's notes, see Review passes instead). With `--request` the `diff` hash is required.
 
 ## Rules
 
