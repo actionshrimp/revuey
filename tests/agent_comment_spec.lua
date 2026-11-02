@@ -454,46 +454,61 @@ test('ca/cn on an agent comment: accepted it is yours (ci, export, events); dism
 end)
 
 h.test('a change to the file is drawn when a save of the review takes it in first', function()
+  local c = s.cm
+  local timer = c.timer
+  local added = {}
   local function at(line, text)
-    return comments.new(comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
+    local x = comments.new(comments.anchor_for_lines(s.review.files, require('revuey.review').units(s.review),
       { path = 'm.txt', side = 'new', start_line = line }, cv.context(s).get_line), text)
+    added[#added + 1] = x.id
+    return x
   end
   local function shows(line, text)
     return vim.wait(5000, function()
       return vlines(row_of('ctx', line)):find(text, 1, true) ~= nil
     end, 20)
   end
-  local target = at(18, 'Asked here.')
-  comments.put(s.cm.store, target)
-  comments.save(s.cm.store)
-  cv.refresh(s)
-  h.ok(vlines(row_of('ctx', 18)):find('Asked here.', 1, true), vlines(row_of('ctx', 18)))
-  -- another writer (the CLI) answers, and before the review's watch has read the file, the review
-  -- saves a change of its own: the save merges the answer in. Nothing runs the event loop in
-  -- between, so this is the race every time.
-  local function answer(id, text)
-    local other = comments.load(s.cm.store.path)
-    h.ok(comments.reply(other, id, text, { kind = 'agent', name = 'claude' }))
-    comments.save(other)
-  end
-  answer(target.id, 'Answer one.')
-  comments.put(s.cm.store, at(21, 'Saved meanwhile.'))
-  comments.save(s.cm.store)
-  h.eq('Answer one.', comments.get(s.cm.store, target.id).thread[1].body, 'the save took it in')
-  h.ok(shows(18, 'Answer one.'), vlines(row_of('ctx', 18)))
-  -- a redraw that stores a new comment's placement saves too, after it listed what it draws
-  answer(target.id, 'Answer two.')
-  comments.put(s.cm.store, at(17, 'Placed by the redraw.'))
-  cv.render(s)
-  h.eq(2, #comments.get(s.cm.store, target.id).thread, 'the redraw saved and took it in')
-  h.ok(shows(18, 'Answer two.'), vlines(row_of('ctx', 18)))
-  for _, id in ipairs(vim.tbl_keys(s.cm.store.comments)) do
-    local x = comments.get(s.cm.store, id)
-    if x and (x.body == 'Asked here.' or x.body == 'Saved meanwhile.' or x.body == 'Placed by the redraw.') then
-      comments.delete(s.cm.store, id)
+  local ok, err = xpcall(function()
+    local target = at(18, 'Asked here.')
+    comments.put(s.cm.store, target)
+    comments.save(s.cm.store)
+    cv.refresh(s)
+    h.ok(vlines(row_of('ctx', 18)):find('Asked here.', 1, true), vlines(row_of('ctx', 18)))
+    -- another writer (the CLI) answers, and before the review's watch has read the file, the
+    -- review saves a change of its own: the save merges the answer in. Nothing runs the event loop
+    -- in between, so this is the race every time.
+    local function answer(id, text)
+      local other = comments.load(s.cm.store.path)
+      h.ok(comments.reply(other, id, text, { kind = 'agent', name = 'claude' }))
+      comments.save(other)
     end
+    answer(target.id, 'Answer one.')
+    comments.put(s.cm.store, at(21, 'Saved meanwhile.'))
+    comments.save(s.cm.store)
+    h.eq('Answer one.', comments.get(s.cm.store, target.id).thread[1].body, 'the save took it in')
+    h.ok(shows(18, 'Answer one.'), vlines(row_of('ctx', 18)))
+    -- a redraw that stores a new comment's placement saves too, after it listed what it draws. It
+    -- draws again itself: the watch is muted here (no debounced reload), and a reload it had
+    -- already queued is let run first
+    timer:stop()
+    c.timer = nil
+    vim.wait(200)
+    answer(target.id, 'Answer two.')
+    comments.put(s.cm.store, at(17, 'Placed by the redraw.'))
+    cv.render(s)
+    h.eq(2, #comments.get(s.cm.store, target.id).thread, 'the redraw saved and took it in')
+    h.ok(shows(18, 'Answer two.'), vlines(row_of('ctx', 18)))
+  end, function(e)
+    return type(e) == 'table' and e or debug.traceback(tostring(e), 2)
+  end)
+  c.timer = timer
+  for _, id in ipairs(added) do
+    comments.delete(s.cm.store, id)
   end
   comments.save(s.cm.store)
+  if not ok then
+    error(err, 0)
+  end
 end)
 
 h.test('two reviews running: --session picks one; without it the command asks', function()
