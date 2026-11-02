@@ -173,7 +173,8 @@ When the user asks for the notes ("drop them in", "add your notes"):
   the noted hunk ids and lines, the pass's `Diff:` hash and `--name "<your name> pass <layer,
   branch or full stack>"`. If it says the code changed, run `hunks --path` for the noted files,
   map each note's file:line to its new hunk ids and import again with that output's `Diff:`
-  hash, or give the notes in chat; never review again for it. Asked for comments instead, leave each as a `comment` draft. Never post them to
+  hash, or give the notes in chat; never review again for it. Add `--tag pass` (and
+  `--tag <layer>` when it helps tell passes apart) so the user can filter them. Asked for comments instead, leave each as a `comment` draft. Never post them to
   GitHub.
 
 ## Leaving a new comment
@@ -233,6 +234,24 @@ the sentence to tell them). Import with exactly the `--name` step 1 prints.
    findings were dropped. Re-importing under the same name (and `--request`) replaces your
    findings the user has not touched. If it says the code changed, start again at step 1 (for
    a pass's notes, see Review passes instead). With `--request` the `diff` hash is required.
+
+## Findings and tags
+
+Each import is a run; findings and agent comments carry tags (the run's skill, else its
+reviewer, by default), which the user filters on in revuey's agent reviews view (`gA`).
+
+```
+cd <worktree> && REVUEY findings --session <id> [--run <run id>] [--tag <tag>] [--status untriaged|accepted|dismissed] [--json]
+cd <worktree> && REVUEY tag <comment id> <tag>... [--remove] --session <id>
+```
+
+`findings` lists the runs (who, skill, verdict, counts) and each finding's id, status,
+severity, location, title and tags. Tag (with `tag`, or `--tag` on `import-review` and
+`comment`) when the user asks to group or label findings ("tag the naming ones", "mark these
+as pass 2"), or when you import a review pass (`pass`). Tags are short: lower case letters,
+digits, `.`, `_`, `-`. You may tag, but never accept, dismiss, resolve or delete findings or
+comments for the user unless they ask you to (revuey has no command for it: tell them the keys,
+`ca` / `cn`, or `cA` / `cN` on a run in `gA`).
 
 ## Rules
 

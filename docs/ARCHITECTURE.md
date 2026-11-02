@@ -1989,6 +1989,12 @@ are in `reports/Terminal code review tool landscape.md`.
       opened from while that is still valid (the panel, the tree), else the diff window.
       Resizing (`WinResized`, `VimResized`: re-placed, re-wrapped when the width changed) is not
       covered by a test: headless specs cannot resize the screen (docs/TESTING.md).
+    - **Shared with the agent reviews view** (`list_float.lua`): the float (geometry, the
+      `WinEnter` redirect, resize, close and focus back, the remembered item), drawing lines
+      `{chunks, id?, start?, kind?}` into its buffer with the cursor kept on the same item, and
+      `]c`-style moves over items or group headings (`kind = 'group'`). A host gives a spec
+      (`field` in the session, `build`, `keymaps`); one list is open at a time (opening one
+      closes the other, keeping where focus goes back to).
     - **Tests**: `comments_list_spec.lua` (the fake `gh`'s threads with your, an agent's and an
       AI comment: statuses, authors, order, `]c`, `<CR>` into the diff and the guide, `cr` on a
       GitHub thread, `ce`/`cd`/`cs`/`cn`/`cx`/`ci`/`cz`/`ca`/`gx` by id with the cursor kept, a
@@ -2208,10 +2214,9 @@ are in `reports/Terminal code review tool landscape.md`.
       it. Adoption: once per session and scope (`ai_review_view.job` remembers the scope it
       checked in `s.ai_review_adopt_checked`, so a request orphaned later in the same session is
       not picked up until the scope changes or the review reopens), an open review request
-      whose `comments` is this scope's, of a gone owner. The record stays one per scope (the
-      latest review); each finding keeps the run that made it in `ai.run` = `{name, provider,
-      model, agent, skill, request}` (fresh runs too: provider `claude` and the model), so a
-      later view can group findings by run.
+      whose `comments` is this scope's, of a gone owner. Each finding keeps the run that made it
+      in `ai.run` = `{name, provider, model, agent, skill, request}` (fresh runs too: provider
+      `claude` and the model); the scope keeps every run (decision 26).
     - **Shared code** (`agent_request.lua`): `create` (the request file and its event, from the
       review's fields plus the kind's), `job`, `status_text`, `poll(host)`, `cancel(s, host, ks,
       j, after)` (the retries and messages) and `adopt(s, kind, matches, …)`, each parameterised
@@ -2248,9 +2253,107 @@ are in `reports/Terminal code review tool landscape.md`.
       fresh); cancel; not picked up and the fresh run instead; another model's
       `--model`/`--effort`; adoption on reopen.
 
+26. **Review runs, tags and the agent reviews view** (`ai_review.lua` runs: `read_runs`,
+    `add_run`, `prune_runs`, `remove_run`, `groups`, `triage_status`, `run_who`; `tags.lua` pure
+    tags; `ai_reviews_view.lua` the view; `list_float.lua` the float it shares with the comments
+    view; `cli.lua` `findings`, `tag`, `import-review --tag`, `comment --tag`;
+    `skill/revuey/SKILL.md` "Findings and tags"). Several reviews of one scope (a fresh session,
+    the connected agent, other skills, imported passes) are kept side by side and compared, as
+    plannotator's review-agents tab does, and findings are labelled by run, skill or the user's
+    and agent's own tags.
+    - **Runs.** `<state>.ai-review.json` is `{kind = 'revuey-ai-reviews', version = 2, runs}`,
+      oldest first; each run is the record an import made (`id` = the findings' `ai.review`,
+      `run` = `run_of`, `started_at`, `finished_at`, summary, verdict, counts, warnings, anchors,
+      generator, the import's `tags`). A version 1 file (one record, `kind = 'revuey-ai-review'`)
+      is read as a list of that one run, marked `migrated`: findings without `ai.run` belong to it
+      (`groups`), whatever their `ai.review`, and its run comes from its author and generator.
+      The next write turns the file into version 2. `read_record` (the latest run) keeps the
+      panel and the comments view's verdict line as they were. Changes go through `change_runs`:
+      read, apply, write under the file's lock (`lock.with`); in the UI a busy lock queues the
+      change and `lock.save` retries it (every queued change is applied, so two deferred
+      additions never lose one).
+    - **Identity and retention.** `run_key` is the reviewer (the agent by name with provider
+      `agent`, anyone else by name) and now the skill: a re-run by the same reviewer with the same
+      skill replaces that run's untouched findings (decision 25's rule); another skill is another
+      run, so `:RevueyAIReview security` and `:RevueyAIReview perf` stay side by side. The replace
+      confirmation passes the skill to `run_for`. Untouched now also means no tag set or removed
+      after the finding was made (`tags.touched`: an entry newer than `created_at`; tags given on
+      import have `at = created_at`). Retention: on every import `prune_runs` drops a run when a
+      later run of the same identity exists and no live comment points at it (all its findings
+      were replaced or deleted), then the oldest past `MAX_RUNS` (30). Dropping was chosen over
+      marking runs superseded: a run with nothing left to triage only repeats what its successor
+      says, and the file stays small; a run with an accepted or dismissed finding stays, so its
+      summary is there while its findings are.
+    - **Tags** (`tags.lua`). Stored on the comment as `tags = {[tag] = {at, off?}}`: one entry
+      per tag ever set, last set or removed at `at`. `comments.merge` merges them per tag (newest
+      entry wins, ties the winner's), after the winner is chosen by `updated_at` as before, so a
+      tag the CLI adds survives an accept or dismiss the UI saves at the same time, and a removal
+      survives an older add. Defaults are computed (`tags.defaults`): the run's skill, else its
+      name (`ai.run`, else the author before runs), never stored, so they stay right when a skill
+      is renamed or a run re-attributed; removing one stores an `off` entry. Agent comments have
+      no default. Cleaning (`tags.clean`): lower case, `[a-z0-9._-]`, other runs of characters
+      `-`, trimmed, at most 24 characters, 16 per comment; the CLI refuses a tag that cleans to
+      nothing (exit 2), the UI says so. Shown as `#tag`: on the comments view's location line,
+      as a chip on the thread box (without the default equal to the author's name, which the
+      header already says) and in the agent reviews view. `tagged` events (`tags` the list
+      after) go to the feed. Any local comment can be tagged in the UI and the CLI.
+    - **The view** (`gA` = `keymaps.ai_reviews`, free in Neovim's normal mode for a read-only
+      buffer (`ga` is `ask_agent`); `:RevueyAIReviews`; `<CR>` on the panel's AI review block,
+      `s.panel_ai_rows`). The comments view's float and machinery (`list_float.lua`), so it
+      behaves the same: live through `comments_view.render` (and `runs_changed`, from the comments
+      directory's watcher when the run file is renamed into place, so an import from outside
+      shows its run even when only the run file changed), the cursor kept on the same finding,
+      focus back where it was opened. The entries are the comments view's (`comments_list.entries`,
+      what `comments_view` placed: diff order), restricted to AI findings and agent comments,
+      grouped by `ai_review.groups`: by `ai.review` into the run records, findings whose record is
+      gone (deleted with `cD`, accepted ones stay) into a group made from their `ai.run`, agent
+      comments into a group per agent, after the runs; runs newest first. A run's heading (3
+      lines, `kind = 'group'` in the line list): who (`run_who`: `<agent> (connected)`, a fresh
+      session's name and model, an import's reviewer), skill, `ago` of `finished_at`, verdict;
+      the summary's first line; untriaged / accepted / dismissed (`triage_status`; resolved
+      before triage counted apart). A finding: one line in columns shared by every shown finding
+      (severity, title, location as placed, status, tags; at a narrow width the tags give way,
+      then the location, so the title keeps 20 cells); `cz` (the shared `s.cm.expanded`) adds the
+      thread box from `comments_list.thread_lines`.
+    - **Keys.** The comment keys act on the finding under the cursor through the by-id actions
+      (decision 24). On a run (its heading or one of its findings): `cA` / `cN`
+      (`run_accept`/`run_dismiss`) accept or dismiss every untriaged finding of the run that the
+      filter shows, one save and an event each; `cD` (`run_delete`) deletes the run's findings
+      that are not accepted (bare tombstones: `ai` cleared, so a later run may find them again,
+      unlike `cd`, which remembers a deleted finding) and its record. All three ask first
+      (`ai_reviews_view.confirm`, `vim.fn.confirm`; specs replace it): accepting is not undone,
+      and an accidental `cA` on twenty findings would be. `ct` on a heading tags every finding of
+      the run. `]]` / `[[` (`next_section`) move between headings, `]c` / `[c` between findings.
+    - **Filters** (`s.ar_filter = {tag, run, status, severity}`): `f` picks one with
+      `vim.ui.select`, `t` the tag (from the tags in use), `F` clears; `<CR>` on a heading toggles
+      the run filter. Runs with nothing left are hidden. The header line shows the active
+      filter. The tag filter applies to the comments view too (one session field; `t` and `F`
+      there), filtering its entries in `build`, so its counts stay the scope's.
+    - **Panel.** The AI review block adds `N runs · gA by run` (or `gA findings` with one run);
+      while the view is open the panel shows an `AI reviews` section and the view's key lines
+      (`ai_reviews_view.HELP`); the winbar shows the keys of the finding or run under the cursor.
+    - **The CLI.** `findings [--run <id>] [--tag <t>]... [--status ...] [--json]` reads the
+      review's comments file (the attached session's `comments`, else the review `comment` would
+      load) read-only and prints the groups with ids; `--run` takes any unique part of a run id.
+      `tag <id> <tag>... [--remove]` uses `find_comment` (with `--session`, that session's file
+      only), applies `tags.apply`, saves under the lock and appends `tagged`. `import-review` and
+      `comment` take `--tag` (repeatable, `LIST_FLAGS` in `parse`), and `import-review` prints the
+      run id with how to list its findings. The skill tags passes and asked-for groups, and never
+      triages for the user.
+    - **Tests**: `agent_reviews_spec.lua` (tags cleaned, defaults, set and removed, merged; a tag
+      surviving a concurrent accept, pure and through the CLI and the UI's store; a version 1
+      record migrated and pruned; a fresh run and a connected agent's run with a skill side by
+      side, `--tag` on import, re-runs replacing only their own and dropping a run left empty;
+      `findings` with `--run`, `--tag`, `--status`, `--json`; `tag` add, remove, bad tags;
+      `comment --tag`; the view's grouping, counts, order, `]]`/`[[`, `]c`, `cz`, the filters
+      with the comments view honouring the tag, `<CR>` into the diff and from the panel, `ct` and
+      `:RevueyTag` on a finding and a run, `cn`, `cA`/`cN`/`cD` with their confirmations, live
+      redraws from a CLI import and tag; the panel line); screenshots `agent-reviews-view` and
+      `agent-reviews-view-narrow`.
+
 ## Code layout conventions
 - `lua/revuey/` modules; `plugin/revuey.lua` defines user commands only (lazy-require modules).
-- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_tree.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`,
+- Keep git/data logic (`git.lua`, `diff.lua`, `state.lua`, `units.lua`, `stack.lua`, `stack_tree.lua`, `stack_notes.lua`, `stack_ignore.lua`, `switch.lua`, `edit.lua`, `forge.lua`, `forge_threads.lua`, `forge_post.lua`, `forge_description.lua`, `pr.lua`, `log.lua`, `folders.lua`, `guide.lua`, `guide_prompt.lua`, `ai_review.lua`, `ai_review_prompt.lua`, `tags.lua`,
   `prose.lua`, `diagram.lua`, `attribution.lua`, `comments.lua`, `comments_export.lua`, `sessions.lua`, `requests.lua`, `cli.lua`) free of window/buffer UI so it is testable with
   `nvim --headless -l`.
 - Tests in `tests/`, run with `make test`. Testing strategy and rules are in `docs/TESTING.md`.

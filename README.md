@@ -58,6 +58,8 @@ Requirements:
 | `:RevueyGuideDiagram mermaid [reg]` | Copy the guide's [overview diagram](#ai-guide) as Mermaid flowchart text to a register (default `+` when Neovim has a clipboard, else `"`). |
 | `:RevueyAIReview [skill]` | Run an [AI review](#ai-review) of the review (in the background): its findings become AI comments to accept or dismiss. `skill`: a skill name or path whose `SKILL.md` guides it. With an agent connected, asks whether it or a fresh session reviews (`ai.review_by`). Asks first when untriaged findings of the last one would be replaced; `:RevueyAIReview!` does not. |
 | `:RevueyAIReview cancel` | Stop a running AI review, or withdraw the request to the connected agent. |
+| `:RevueyAIReviews` | The [agent reviews view](#the-agent-reviews-view): AI findings and agent comments grouped by the run that made them, with filters by tag, run, status and severity. |
+| `:RevueyTag [tag\|-tag ...]` | [Tag](#tags) the comment under the cursor (in the agent reviews view on a run's heading: all its findings): `tag` adds, `-tag` removes (`:RevueyTag!` removes every tag given). No tags: an input with its tags, like `ct`. |
 | `:RevueyComments` | The [comments view](#the-comments-view): every thread of the review in one list; `<CR>` shows one in the diff. |
 | `:RevueySubmit [approve\|comment\|request-changes\|pending]` | [Post the review to GitHub](#posting-a-review-to-github): the comments added with `ci`, as one review with that verdict (asked when left out), after a confirmation. `pending` adds them to your pending review on GitHub without submitting it. `:RevueySubmit forget` drops revuey's record of an unconfirmed comment on this line. |
 | `:RevueyCommentsExport [markdown\|json] [--all] [reg\|file]` | Export the comments (default: Markdown to the `+` register when Neovim has a clipboard, else `"`). A one-character argument is a register, anything else a file. `--all` includes resolved comments and drafts. |
@@ -67,6 +69,7 @@ Requirements:
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
 | `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
 | `bin/revuey hunks\|import-review` | [AI reviews from outside](#ai-reviews-from-another-agent-or-tool): the hunks with their ids, and importing a review in revuey's format. |
+| `bin/revuey findings\|tag` | The review's [runs and findings](#ai-reviews-from-another-agent-or-tool) with their ids, and [tags](#tags) on them. |
 
 **Uncommitted work is included by default** (working-tree mode): committed, staged and unstaged
 changes to tracked files, files deleted on disk, and untracked (non-ignored) files as additions.
@@ -849,8 +852,9 @@ unmerged one). `wt list` shows them all.
 
 `pr` is always this subcommand: to review against a base branch named `pr`, use
 `:Revuey refs/heads/pr` (or `revuey refs/heads/pr`).
-The agent commands of `bin/revuey` (`sessions`, `watch`, `show`, `reply`, `comment`, `ack`,
-`inbox`, `comments`, `hunks`, `import-review`, `guide`, `import-guide`, `install-skill`) shadow
+The agent commands of `bin/revuey` (`sessions`, `watch`, `show`, `reply`, `comment`, `tag`,
+`findings`, `ack`, `inbox`, `comments`, `hunks`, `import-review`, `guide`, `import-guide`,
+`install-skill`) shadow
 base branches of the same names the same way: `revuey refs/heads/guide` reviews against a branch
 named `guide` (`:Revuey guide` in Neovim is not affected).
 
@@ -1128,7 +1132,8 @@ and optionally a suggested change.
 
 The panel shows the latest review of the scope under the stack and guide blocks: the verdict
 (`✓ approve`, `● comment`, `✗ request changes`), how many findings are left to triage, how many
-were dropped, and the summary. The [comments view](#the-comments-view) (`cl`) shows the verdict and
+were dropped, the summary, and how many runs the scope has (`3 runs · gA by run`; `<CR>` there
+opens the [agent reviews view](#the-agent-reviews-view)). The [comments view](#the-comments-view) (`cl`) shows the verdict and
 summary above the threads; findings there are `draft` until you accept them, with their severity. A spinner with the elapsed time and what
 Claude is doing ("reading src/cart.ts") shows while it runs, and you keep reviewing.
 
@@ -1140,10 +1145,14 @@ was started on: findings on unknown hunks or lines a hunk does not have are drop
 selection of the same rows would be, so it follows the code like any comment when you edit
 (and becomes outdated when its lines change).
 
-**Running it again** replaces the previous review's findings you have not touched (no triage,
-reply, send or unsaved edit), after asking (`!` skips the question). Accepted, dismissed,
-answered and sent findings stay, and a finding you already accepted, dismissed or deleted is
-not added again. Output that is not a review (no summary, verdict or findings list) is an
+**Running it again** replaces the findings of the same reviewer's previous run with the same
+skill that you have not touched (no triage, reply, send, tag or unsaved edit), after asking (`!`
+skips the question). Accepted, dismissed, answered, tagged and sent findings stay, and a finding
+you already accepted, dismissed or deleted is not added again. Runs by another reviewer (the
+connected agent, a fresh session, an import under another name) or with another skill are kept
+side by side: each run is listed with its own summary and verdict, and its findings are tagged
+with its skill (else its reviewer), so you can compare them in the
+[agent reviews view](#the-agent-reviews-view). Output that is not a review (no summary, verdict or findings list) is an
 error and changes nothing. Each scope (branch, stack layer, full stack) has its own review,
 like the guide: a layer's review covers only that branch's changes on top of its parent, the full stack all of them, with
 the same branch tags in the prompt.
@@ -1175,9 +1184,12 @@ and run a fresh session (or one with another model). With no agent connected not
 through the same checks (`bin/revuey import-review --request`, below), plus the diff hash,
 which a request requires.
 
-Reviews are stored per scope next to its comments (`*.ai-review.json`: summary, verdict, counts,
-model, cost, the skill used, who wrote it). Each finding also keeps which run made it (`ai.run`
-in the comments file: reviewer name, provider, model or agent, skill, request id). Failures (no `claude`, not logged in, invalid output) are reported
+Runs are stored per scope next to its comments (`*.ai-review.json`: each run's summary, verdict,
+counts, model, cost, the skill used, who ran it, when). Each finding keeps which run made it
+(`ai.review`, the run's id, and `ai.run` in the comments file: reviewer name, provider, model or
+agent, skill, request id). A run is dropped once a later run by the same reviewer and skill
+replaced (or you deleted) all of its findings, and at most 30 are kept; a file from before runs
+is read as one run, which findings older than `ai.run` belong to. Failures (no `claude`, not logged in, invalid output) are reported
 and shown in the panel, and leave the last review and its findings alone.
 
 ### AI reviews from another agent or tool
@@ -1195,6 +1207,10 @@ bin/revuey import-review --schema            # the JSON schema
 bin/revuey import-review review.json         # import (- reads stdin); --name names the reviewer
 bin/revuey hunks --prompt --request <id>     # take the review's request (the connected agent)
 bin/revuey import-review --request <id> -    # import for it: marks it done
+bin/revuey import-review --tag pass-2 -       # tag every finding of this run (repeatable)
+bin/revuey findings                          # the runs (newest first) and their findings, with ids
+bin/revuey findings --run <id> --tag pass-2 --status untriaged --json
+bin/revuey tag <finding id> security naming  # add tags; --remove takes them off
 ```
 
 ```json
@@ -1214,7 +1230,66 @@ when several, else the review `revuey` would open there) and prints what it impo
 dropped. The optional `diff` is the hash `hunks` printed: when the code has changed since, the
 ids may mean other hunks, so the import is refused. The reviewer is `--name` (else
 `$REVUEY_AGENT_NAME`); importing again under the same name replaces that reviewer's untouched
-findings, as above. A running review shows the findings at once.
+findings, as above. Each import is a run: `import-review` prints its id, and `findings` lists
+the runs with their findings (id, status, severity, location, title, tags), filtered by run,
+tag (repeatable: all of them) or status. A running review shows the findings at once.
+
+### The agent reviews view
+
+`gA` (also in the panel, `<CR>` on the AI review block, or `:RevueyAIReviews`) lists the AI
+review findings and the coding agent's comments of the scope, grouped by the run that made them,
+newest first, over the diff like the [comments view](#the-comments-view). Each run's heading
+says who ran it (`claude (connected)` for the connected agent, a fresh session with its model,
+an import's reviewer), the skill, when, the verdict, the first line of its summary and its
+counts; under it each finding takes one line: severity, title, location, status and tags.
+
+```
+ AI reviews                  <CR> only this run · cA accept all · cN dismiss all · ct tag all
+ 2 runs · 4 findings: 3 untriaged · 1 accepted · 0 dismissed
+ f filter · t tag filter · ct tag · on a run: cA accept all, cN dismiss all, cD delete
+
+ ▍claude (connected) · skill security  2026-01-01  ● comment
+ ▍ Input from the request is used unchecked in two places.
+ ▍ 2 untriaged · 0 accepted · 0 dismissed
+   critical Unchecked quantity    src/cart.ts:1   untriaged  #security #pass-1
+   minor    Validate at the bou…  src/index.ts:1  untriaged  #security #pass-1
+
+ ▍claude · claude-opus  2026-01-01  ✗ request changes
+ ▍ The cart total moves into its own module. Rounding is the main risk.
+ ▍ 1 untriaged · 1 accepted · 0 dismissed
+   major    Import both helpers…  src/cart.ts:1   untriaged  #claude
+   nit      A short file header…  src/index.ts:1  accepted   #claude
+```
+
+- **Keys.** `<CR>` on a finding shows it in the diff (in the guide when you came from there and
+  it shows the line); on a run's heading it shows only that run (again: every run). `]c` / `[c`
+  move between findings, `]]` / `[[` between runs. The comment keys work on the finding under
+  the cursor (`ca`, `cn`, `cs`, `cr`, `ce`, `cd`, `ci`; `cz` shows it in full, with its
+  explanation and suggested change). On a run (its heading or any of its findings) `cA` accepts
+  and `cN` dismisses every untriaged finding of it the filter shows, and `cD` deletes the run and
+  its findings (accepted ones are your comments and stay; a later run may find the others
+  again); each asks first. `ct` tags the finding, or on a heading every finding of the run.
+  `q`, `<Esc>` or `gA` go back; `cl` switches to the comments view.
+- **Filters.** `f` picks a filter: a tag, a run, a status (untriaged, accepted, dismissed,
+  resolved) or a severity; `t` picks a tag directly, from the tags in use; `F` clears them. The
+  header shows the active filter, and runs with nothing left are left out. The tag filter applies
+  to the comments view too (`t` and `F` work there), which also shows each finding's tags on its
+  line.
+- It redraws when findings change anywhere (a run, an import, a tag from the CLI); the panel
+  shows its counts and keys while it is open.
+
+### Tags
+
+Every AI finding and agent comment can carry tags, shown in the views and on its thread (`#pass-1
+#security`). A finding is tagged with its run's skill, else its reviewer (`#claude`), without
+anything stored, so these stay right; you can still remove them. `ct` on a comment (or a
+finding in either view) opens an input with its tags to edit (`+tag` / `-tag` with several);
+`:RevueyTag security -naming` adds and removes without one. Agents tag with
+`bin/revuey tag <id> <tag>... [--remove]`, on creation with `comment --tag` and
+`import-review --tag`, and filter with `findings --tag`. Tags are lower case letters, digits, `.`,
+`_` and `-`, at most 24 characters (anything else becomes `-`), at most 16 per comment. Each tag
+is merged on its own when two instances (or the CLI and the UI) change a comment at once, so a tag
+added by an agent survives an accept you made at the same moment.
 
 ## Comments
 
@@ -1314,7 +1389,8 @@ back to it, with the cursor where you left it.
   winbar says `Comments` and the scope, and the keys that work on the thread under the cursor.
 
 `gc` shadows Neovim's built-in commenting operator (`gc{motion}`, `gcc`) in review buffers only,
-where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn` shadow `c{motion}` and
+where there is nothing to comment out; likewise `ce`/`cd`/`cr`/`cx`/`cz`/`cl`/`ca`/`cn`/`ct` (and
+`cA`/`cN`/`cD` in the agent reviews view) shadow `c{motion}` and
 `]c`/`[c` the diff-mode change jumps, which do nothing in a review buffer (hunks are `]h`/`[h`,
 unmapped in Neovim). Remap them under `keymaps` (`comment_add`, `comment_edit`, ...; `false`
 disables one).
@@ -1373,7 +1449,7 @@ bin/revuey reply <id> "Fixed."   # reply in the comment's thread (- reads the te
 layer and full-stack reviews that include it); `--scope all` every review of the repo; `--scope
 <branch>` another branch.
 
-Every change to a comment (created, updated, deleted, resolved, replied, sent, acked) is appended as one JSON line to `*.events.jsonl` next to the comments
+Every change to a comment (created, updated, deleted, resolved, replied, sent, acked, tagged) is appended as one JSON line to `*.events.jsonl` next to the comments
 (rotated at 1 MB; a snippet longer than 200 lines is cut in events). Writes to the comments
 file and the feed hold a lock, so any number of Neovims and `reply` calls can write at once. `watch` prints one line per event and flushes it at once, so it works under
 Claude Code's Monitor tool (each stdout line is an event), and it exits cleanly on SIGTERM:
@@ -1654,6 +1730,20 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `gC` | Hide / show the comment threads |
 | `cl` | The [comments view](#the-comments-view): every thread in one list, over the diff (`<CR>` shows one in the diff; the comment keys work on the thread under the cursor; again or `q`: back) |
 | `<CR>` in the comments view | Show the thread under the cursor in the diff (in the guide, when you came from there and it shows the line); `]c`/`[c` move between threads |
+| `ct` | [Tag](#tags) the comment on this line: an input with its tags (AI findings carry their skill or run already; `:RevueyTag tag -tag` adds and removes) |
+
+**AI reviews**
+
+| Key | Action |
+|---|---|
+| `gA` | The [agent reviews view](#the-agent-reviews-view): AI findings and agent comments grouped by run, with filters (`<CR>` shows one in the diff; the comment keys work on the finding under the cursor; again or `q`: back). Also `<CR>` on the panel's AI review block |
+| `<CR>` in the agent reviews view | Show the finding under the cursor in the diff; on a run's heading: only that run (again: every run). `]c`/`[c` move between findings, `]]`/`[[` between runs |
+| `cA` | In the agent reviews view, on a run (its heading or a finding): accept every untriaged finding of it the filter shows (asks first) |
+| `cN` | In the agent reviews view, on a run: dismiss every untriaged finding of it the filter shows (asks first) |
+| `cD` | In the agent reviews view, on a run: delete it and its findings; accepted ones are your comments and stay (asks first) |
+| `f` | In the agent reviews view: filter the findings by tag, run, status (untriaged, accepted, dismissed) or severity |
+| `t` | In the agent reviews view and the comments view: only the findings (comments) with a tag, picked from the tags in use |
+| `F` | In the agent reviews view and the comments view: clear the filters |
 
 **Review and posting**
 
