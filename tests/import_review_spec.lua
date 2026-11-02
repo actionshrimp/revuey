@@ -372,6 +372,74 @@ h.test('the wait ends when the review closes, or when its entry changes in any w
   require('revuey').close()
 end)
 
+h.test('a PR lookup landing during the wait does not end it; stack waits too', function()
+  local link = require('revuey.agent_link')
+  local fv = require('revuey.forge_view')
+  local d = stack_fixture('import-review-wait-pr')
+  local s = h.open_review({ cwd = d, base = '' })
+  switch_untold(d, s, 'stack/ui')
+  local changed = s.link.changed_at
+  local p = start(d, { 'hunks' })
+  local q = start(d, { 'stack', '--json' })
+  until_waiting(p, 'stack/ui')
+  until_waiting(q, 'stack/ui')
+  -- the PR of a layer arrives (forge lookups answer whenever they do): the entry is rewritten
+  -- with it, but that is not the review following the switch
+  local real = fv.pr
+  fv.pr = function(_, name)
+    if name == 'stack/math' then
+      return { number = 12, title = 'Add math', url = 'https://github.com/o/r/pull/12', state = 'OPEN' }
+    end
+  end
+  link.update(s)
+  link.update(s, true)
+  local e = require('revuey.sessions').list({ vim.fn.fnamemodify(s.link.path, ':h:h') })[1]
+  h.eq(12, e and e.stack and e.stack.layers[1].pr and e.stack.layers[1].pr.number, vim.inspect(e))
+  h.eq(changed, s.link.changed_at, 'a PR is not a change of the review')
+  vim.wait(1500, function()
+    return p.done ~= nil or q.done ~= nil
+  end, 50)
+  h.eq(nil, p.done, 'hunks still waits')
+  h.eq(nil, q.done, 'stack still waits')
+  follow('stack/ui')
+  local out = until_done(p)
+  h.ok(out:find('# Hunks of stack/ui vs stack/cart', 1, true), out)
+  local st = vim.json.decode(until_done(q))
+  h.eq(3, st.viewed)
+  h.eq('stack/ui', st.checked_out)
+  h.eq(nil, st.review_checked_out)
+  h.eq(12, st.layers[1].pr.number)
+  fv.pr = real
+  require('revuey').close()
+end)
+
+h.test('stack: a parent amended without restacking: the base the review diffs from, and the note', function()
+  local d = stack_fixture('import-review-stack-diverged')
+  h.git(d, 'switch', '-q', 'stack/math')
+  vim.fn.writefile({ 'amended' }, d .. '/amended.txt')
+  h.git(d, 'add', 'amended.txt')
+  h.git(d, 'commit', '-q', '--amend', '--no-edit')
+  h.git(d, 'switch', '-q', 'stack/cart')
+  local s = h.open_review({ cwd = d, base = '' })
+  h.eq('stack/cart', s.review.branch)
+  local r = vim.system({ BIN, 'stack', '--json' }, { cwd = d, env = ENV, text = true }):wait(20000)
+  h.eq(0, r.code, r.stderr)
+  local st = vim.json.decode(r.stdout)
+  local math_tip = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', 'stack/math' }))
+  h.ok(st.layers[2].parent_rev ~= math_tip, 'diffed from the parent\'s old tip')
+  h.eq(s.review.merge_base, st.layers[2].base)
+  -- the review's files of stack/cart: amended.txt (only in the new stack/math) is not one
+  h.eq(2, st.layers[2].stats.files)
+  local kinds = vim.tbl_map(function(n)
+    return n.kind
+  end, st.notes)
+  h.ok(vim.tbl_contains(kinds, 'not_restacked'), vim.inspect(st.notes))
+  r = vim.system({ BIN, 'stack' }, { cwd = d, env = ENV, text = true }):wait(20000)
+  h.ok(r.stdout:find('git diff ' .. s.review.merge_base:sub(1, 10) .. '..', 1, true), r.stdout)
+  h.ok(r.stdout:find('\nnote: ', 1, true), r.stdout)
+  require('revuey').close()
+end)
+
 h.test('hunks --stat and --path: the file list, and some files\' hunks with the whole review\'s ids and hash', function()
   local d = stack_fixture('import-review-stat')
   require('revuey').close()

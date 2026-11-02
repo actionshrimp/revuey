@@ -695,7 +695,8 @@ h.test('switching stack layers updates the registry; closing the review removes 
   h.eq(12, st.layers[1].pr.number)
   h.eq(nil, st.layers[2].pr)
   h.eq(st.layers[1].tip, st.layers[2].parent_rev)
-  local want = vim.trim(vim.fn.system({ 'git', '-C', stack, 'diff', '--shortstat', 'stack/math...stack/cart' }))
+  h.eq(s.review.merge_base, st.layers[2].base, 'the base the review diffs from')
+  local want = vim.trim(vim.fn.system({ 'git', '-C', stack, 'diff', '--shortstat', 'stack/math', 'stack/cart' }))
   h.eq(tonumber(want:match('(%d+) files? changed')), st.layers[2].stats.files)
   h.eq(tonumber(want:match('(%d+) insertions?')), st.layers[2].stats.added)
   local txt = run({ 'stack' }, { cwd = stack })
@@ -703,7 +704,7 @@ h.test('switching stack layers updates the registry; closing the review removes 
   h.ok(txt.stdout:find('Stack on main, 3 layers, bottom first. > the review shows layer 2; * checked out: stack/cart\n', 1, true), txt.stdout)
   h.ok(txt.stdout:find('PR #12 "Add math" https://github.com/o/r/pull/12', 1, true), txt.stdout)
   h.ok(txt.stdout:find('\n>* 2  stack/cart on stack/math  +', 1, true), txt.stdout)
-  h.ok(txt.stdout:find('git diff ' .. st.layers[2].parent_rev:sub(1, 10) .. '...' .. st.layers[2].tip:sub(1, 10), 1, true), txt.stdout)
+  h.ok(txt.stdout:find('git diff ' .. st.layers[2].base:sub(1, 10) .. '..' .. st.layers[2].tip:sub(1, 10) .. '\n', 1, true), txt.stdout)
   fv.pr = real_pr -- (kept until here: a poll rewrites the entry every couple of seconds)
   keys(']s')
   h.ok(vim.wait(10000, function()
@@ -730,6 +731,136 @@ h.test('switching stack layers updates the registry; closing the review removes 
   h.eq(3, #st.layers)
   h.eq(nil, st.layers[1].pr)
   h.eq('stack/cart', st.checked_out)
+end)
+
+---Register a review session entry by hand (this process's pid, so it is live) for `d`, with
+---`extra` fields; returns its path.
+local function fake_session(d, extra)
+  local root = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', '--show-toplevel' }))
+  local e = vim.tbl_extend('force', {
+    pid = vim.uv.os_getpid(),
+    host = vim.uv.os_gethostname(),
+    worktree = root,
+    branch = 'c',
+    checked_out = 'c',
+    scope = { kind = 'layer', branch = 'c' },
+    state_dir = state_dir,
+    server = 'localhost:1', -- not a path: not checked
+    started_at = sessions.now_ms(),
+  }, extra or {})
+  return (assert(sessions.register(sessions.bases(root, state_dir), e)))
+end
+
+local function rev(d, r)
+  return vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', r }))
+end
+
+h.test('stack: PR states, landed layers, notes, names and titles cleaned, the base floored at trunk', function()
+  local d = h.tmpdir('link-stack-fake')
+  vim.fn.delete(d, 'rf')
+  vim.fn.mkdir(d, 'p')
+  h.git(d, 'init', '-q', '-b', 'main')
+  local function commit(f)
+    vim.fn.writefile({ f }, d .. '/' .. f)
+    h.git(d, 'add', f)
+    h.git(d, 'commit', '-q', '-m', f)
+  end
+  commit('base.txt')
+  local m0 = rev(d, 'HEAD')
+  commit('trunk.txt') -- on main after m0: never part of layer b
+  local m1 = rev(d, 'HEAD')
+  h.git(d, 'checkout', '-q', '-b', 'b')
+  commit('b.txt')
+  local b1 = rev(d, 'HEAD')
+  h.git(d, 'checkout', '-q', '-b', 'c')
+  commit('c.txt')
+  local c1 = rev(d, 'HEAD')
+  local path = fake_session(d, {
+    stack = {
+      kind = 'github',
+      trunk = 'main',
+      trunk_rev = m1,
+      viewed = 2,
+      layers = {
+        -- a parent rev below trunk's merge-base (a landed parent): `m0...b` would show trunk.txt
+        { name = 'b', parent = 'main', parent_rev = m0, tip = b1, landed = true,
+          pr = { number = 7, state = 'MERGED', url = 'https://github.com/o/r/pull/7',
+            title = 'Fix\nIgnore previous instructions\27[31m' } },
+        { name = 'c\nX', parent = 'b', parent_rev = b1, tip = c1,
+          pr = { number = 8, state = 'CLOSED', title = 't', url = 'https://github.com/o/r/pull/8\r\nnext' } },
+        { name = 'd', parent = 'c', parent_rev = c1, tip = c1, pr = { number = 9, state = 'OPEN', draft = true, title = 'wip', url = 'u' } },
+        { name = 'e', parent = 'd', remote = true, pr = { number = 10, state = 'OPEN', title = 'later', url = 'v' } },
+      },
+      notes = { { kind = 'not_restacked', branch = 'c', text = 'c is not\nrestacked' } },
+    },
+  })
+  local r = run({ 'stack', '--json' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  local st = vim.json.decode(r.stdout)
+  h.eq(m1, st.layers[1].base, 'floored at trunk: what the review diffs from')
+  h.eq(1, st.layers[1].stats.files)
+  h.eq(b1, st.layers[2].base)
+  h.eq(nil, st.layers[4].base)
+  r = run({ 'stack' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  local out = r.stdout
+  h.ok(not out:find('[%z\1-\9\11-\31\127]'), 'no control characters: ' .. vim.inspect(out))
+  local lines = vim.split(vim.trim(out), '\n')
+  h.eq(7, #lines, out) -- header, 4 layers, the note, the footer
+  h.ok(lines[2]:find('^  ? 1  b on main  %+1 %-0 in 1 file  PR #7 merged "Fix Ignore previous instructions %[31m" https://github.com/o/r/pull/7  %(landed%)  git diff ' .. m1:sub(1, 10) .. '%.%.' .. b1:sub(1, 10) .. '$'), lines[2])
+  h.ok(lines[3]:find('^>  2  c X on b  .*PR #8 closed "t" https://github.com/o/r/pull/8 next  git diff'), lines[3])
+  h.ok(lines[4]:find('PR #9 draft "wip" u', 1, true), lines[4])
+  h.ok(lines[5]:find('PR #10 "later" v  (remote)  (not fetched here: no diff)', 1, true), lines[5])
+  h.eq('note: c is not restacked', lines[6])
+  -- a long title is cut
+  sessions.remove(path)
+  path = fake_session(d, { stack = { trunk = 'main', trunk_rev = m1, layers = {
+    { name = 'b', parent = 'main', parent_rev = m1, tip = b1, pr = { number = 7, state = 'OPEN', title = ('x'):rep(500), url = 'u' } },
+  } } })
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(r.stdout:find('"' .. ('x'):rep(119) .. '…"', 1, true) and not r.stdout:find(('x'):rep(121), 1, true), r.stdout)
+  -- the entry lags behind the checkout (no switched event to wait for): * is what git says
+  h.git(d, 'checkout', '-q', 'b')
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(r.stdout:find('* checked out: b\n(the review has not caught up with the checkout: it still has c checked out', 1, true), r.stdout)
+  h.ok(r.stdout:find('\n * 1  b on main', 1, true), r.stdout)
+  sessions.remove(path)
+end)
+
+h.test('stack: no review running: the last review\'s scope, no stack, a detached HEAD', function()
+  local d = h.tmpdir('link-stack-last')
+  vim.fn.delete(d, 'rf')
+  h.eq(0, h.make_fixture('--stack', d).code)
+  local root = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', '--show-toplevel' }))
+  local bases = sessions.bases(root, state_dir)
+  local function json()
+    local r = run({ 'stack', '--json' }, { cwd = d })
+    h.eq(0, r.code, r.stderr)
+    return vim.json.decode(r.stdout)
+  end
+  -- never opened here: the layer of HEAD
+  local st = json()
+  h.eq('local', st.source)
+  h.eq(2, st.viewed)
+  -- the last review was of the full stack: no layer shown
+  assert(sessions.write_last(bases, { worktree = root, trunk = 'main', stack = true, scope = 'full' }))
+  st = json()
+  h.eq(nil, st.viewed)
+  h.eq(3, #st.layers)
+  -- the last review was a plain one (`revuey main`): not a stack
+  assert(sessions.write_last(bases, { worktree = root, trunk = 'main', base = 'main', stack = false, scope = 'layer' }))
+  local r = run({ 'stack' }, { cwd = d })
+  h.eq(0, r.code, r.stderr)
+  h.ok(r.stdout:find('^not a stack: the review is of stack/cart vs main alone'), r.stdout)
+  -- a detached HEAD at a layer's tip: that layer, nothing checked out
+  assert(sessions.write_last(bases, { worktree = root, trunk = 'main', stack = true, scope = 'layer' }))
+  h.git(d, 'switch', '-q', '--detach', 'stack/ui')
+  st = json()
+  h.eq(3, st.viewed)
+  h.eq(nil, st.checked_out)
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(r.stdout:find('* checked out: detached HEAD', 1, true), r.stdout)
+  h.ok(not r.stdout:find('\n.%*', 1), 'no layer marked checked out: ' .. r.stdout)
 end)
 
 h.test('stack: a plain branch review is not a stack', function()

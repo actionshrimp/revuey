@@ -662,9 +662,10 @@ are in `reports/Terminal code review tool landscape.md`.
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
      server (v:servername), common_dir, started_at, updated_at, load {base, from (the merge
      base), target, mode, context_lines, max_file_bytes}, review (review_info), stack? {kind, trunk,
-     viewed, layers [{name, parent, parent_rev, tip, is_head, title, landed, remote, pr {number,
-     title, url, state, draft} as last looked up}]} (agent_link.stack_info, for `bin/revuey
-     stack`)}`) atomically after its first
+     trunk_rev, viewed, layers [{name, parent, parent_rev, tip, is_head, title, landed, remote,
+     pr {number, title, url, state, draft} as last looked up}], notes [{kind, branch, text}]}
+     (agent_link.stack_info, for `bin/revuey stack`; left out of the entry's signature and
+     `changed_at`, so a PR lookup landing never ends `caught_up`'s wait)}`) atomically after its first
      render, rewrites it at the end of any render that changed it (scope, layer, branch) and on
      every 2 s poll (`updated_at`), and removes it on cleanup and `VimLeavePre`. An entry is dead
      when its pid is dead or its `server` (a path) is gone. Staleness alone does not kill it (a

@@ -7,6 +7,7 @@
 --   stack [--json] [--session <id>]
 --       the review's stack, bottom first (agent_link.stack_info in the registry entry, else the
 --       local stack detected here): layers with parents, own +/-, PRs, and their diff revs
+--       (the base as review.merge_base_for takes it); waits like hunks after a switch
 --   watch [--messages] [--json] [--session <id>] [--since <event id>|all] [--all] [--scope ...]
 --       attach to the worktree's review session and follow the comment event feed: first the
 --       sent messages not yet acknowledged (catch-up), then new events as they happen, one line
@@ -109,8 +110,10 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey stack [--json] [--session <id>]
       the stack the review is of, bottom first: each layer's branch, parent, +/- of its own
       commits, PR (number, state, title, url, as the review last looked it up) and the
-      `git diff <parent rev>...<tip>` that shows its changes without switching; > marks the
-      layer the review shows, * the branch checked out. "not a stack" for a plain review.
+      `git diff <base>..<tip>` that shows its changes as the review does, without switching;
+      then the stack's notes (not restacked, landed...). > marks the layer the review shows,
+      * the branch checked out. "not a stack" for a plain review. Waits like hunks after a
+      switch, and says when the review still lags behind the checkout.
       With no review running, the local stack `revuey` would open here (no PRs).
   revuey watch --messages [--session <id>] [--name <your name>] [--json] [--replay]
       attach to the review and print each message the user sends you, one line each:
@@ -1179,11 +1182,12 @@ local function last_switch(e)
   return last
 end
 
----A registry entry without what a mere refresh changes.
+---A registry entry without what a mere refresh or a PR lookup changes.
 local function entry_sig(e)
   local c = {}
   for k, v in pairs(e) do
-    if k:sub(1, 1) ~= '_' and k ~= 'updated_at' then
+    -- (the stack's PRs land whenever a lookup answers: not a change of the review)
+    if k:sub(1, 1) ~= '_' and k ~= 'updated_at' and k ~= 'stack' then
       c[k] = v
     end
   end
@@ -1594,13 +1598,29 @@ end
 -- The stack overview
 -- ---------------------------------------------------------------------------
 
----A layer's own +/- (`git diff --shortstat parent_rev...tip`: committed changes only), or nil
----when a rev is not here (an unfetched GitHub layer).
-local function layer_stats(root, l)
+---Text from a branch, PR or note for one output line: no control characters, at most `max`.
+local function clip(v, max)
+  local t = require('revuey.guide').one_line(v)
+  if #t > max then
+    t = vim.fn.strcharpart(t, 0, max - 1) .. '…'
+  end
+  return t
+end
+
+---The old side of a layer's own diff, as the review takes it (stack.target, then
+---review.merge_base_for: merge-base(parent_rev, tip), never below trunk's), or nil when a rev
+---is not here (an unfetched GitHub layer).
+local function layer_base(root, st, l)
   if not (l.parent_rev and l.tip) then
     return nil
   end
-  local res = git.git({ 'diff', '--shortstat', l.parent_rev .. '...' .. l.tip }, root)
+  local floor = st.trunk_rev and l.parent_rev ~= st.trunk_rev and st.trunk_rev or nil
+  return require('revuey.review').merge_base_for(root, { from = l.parent_rev, floor = floor }, l.tip)
+end
+
+---A layer's own +/- (`git diff --shortstat <base> <tip>`: committed changes only).
+local function layer_stats(root, l)
+  local res = l.base and git.git({ 'diff', '--shortstat', l.base, l.tip }, root)
   if not res then
     return nil
   end
@@ -1637,7 +1657,10 @@ local function stack_overview(o, ctx, attached)
   if not (ok and st) then
     return nil
   end
-  local res = { kind = st.kind, trunk = st.trunk, layers = {} }
+  local res = { kind = st.kind, trunk = st.trunk, trunk_rev = st.trunk_rev, layers = {}, notes = {} }
+  for _, n in ipairs(st.notes or {}) do
+    res.notes[#res.notes + 1] = { kind = n.kind, branch = n.branch, text = n.text }
+  end
   for i, l in ipairs(st.layers) do
     res.layers[i] = {
       name = l.name,
@@ -1661,58 +1684,83 @@ end
 
 function M.stack(o)
   local ctx = here(o)
-  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  -- right after a switch, the entry still names the old layer: wait for the review (caught_up)
+  local attached = caught_up(o, ctx, pick_session(o, ctx, live_sessions(o, ctx)))
   local st, source = stack_overview(o, ctx, attached)
-  local checked_out = attached and attached.checked_out or git.current_branch(ctx.root)
+  -- what is checked out now (the entry may lag behind it)
+  local checked_out = git.current_branch(ctx.root)
+  local lag = attached and attached.checked_out ~= checked_out and (attached.checked_out or 'detached HEAD') or nil
   if not st then
     local branch = attached and attached.branch or ctx.branch
     local base = attached and attached.base or git.default_branch(ctx.root)
     if o.json then
       out(vim.json.encode({ branch = branch, base = base, checked_out = checked_out, layers = {} }) .. '\n')
     else
-      out(('not a stack: the review is of %s%s alone, no layers\n'):format(branch, base and (' vs ' .. base) or ''))
+      out(('not a stack: the review is of %s%s alone, no layers\n'):format(clip(branch, 100), base and (' vs ' .. clip(base, 100)) or ''))
     end
     return
   end
   for _, l in ipairs(st.layers) do
+    l.base = layer_base(ctx.root, st, l)
     l.stats = layer_stats(ctx.root, l)
   end
   st.checked_out, st.source = checked_out, source
   st.review = attached and attached.id or nil
+  st.review_checked_out = lag and attached.checked_out or nil
   if o.json then
     out(vim.json.encode(st) .. '\n')
     return
   end
   out(('Stack on %s, %d layers, bottom first. > the review shows %s; * checked out: %s%s\n'):format(
-    st.trunk or '?',
+    clip(st.trunk or '?', 100),
     #st.layers,
     st.viewed and ('layer ' .. st.viewed) or 'the full stack',
-    checked_out or 'detached HEAD',
+    checked_out and clip(checked_out, 100) or 'detached HEAD',
     attached and '' or ' (no review running: as `revuey` would open here; PRs unknown)'
   ))
+  if lag then
+    out(('(the review has not caught up with the checkout: it still has %s checked out, and > is what it shows)\n'):format(clip(lag, 100)))
+  end
   local short = function(rev)
-    return rev and rev:sub(1, 10) or '?'
+    return rev and clip(rev, 40):sub(1, 10) or '?'
   end
   for i, l in ipairs(st.layers) do
     local parts = {
-      ('%s%s%2d  %s on %s'):format(i == st.viewed and '>' or ' ', l.name == checked_out and '*' or ' ', i, l.name, l.parent or '?'),
+      ('%s%s%2d  %s on %s'):format(
+        i == st.viewed and '>' or ' ',
+        checked_out and l.name == checked_out and '*' or ' ',
+        i,
+        clip(l.name, 100),
+        clip(l.parent or '?', 100)
+      ),
     }
     if l.stats then
       parts[#parts + 1] = ('+%d -%d in %d file%s'):format(l.stats.added, l.stats.removed, l.stats.files, l.stats.files == 1 and '' or 's')
     end
-    if l.pr then
-      local state = l.pr.state and l.pr.state ~= 'OPEN' and (' ' .. l.pr.state:lower()) or (l.pr.draft and ' draft' or '')
-      parts[#parts + 1] = ('PR #%s%s "%s" %s'):format(l.pr.number, state, l.pr.title or '', l.pr.url or '')
+    if type(l.pr) == 'table' then
+      local state = type(l.pr.state) == 'string' and l.pr.state ~= 'OPEN' and (' ' .. clip(l.pr.state:lower(), 20)) or (l.pr.draft and ' draft' or '')
+      parts[#parts + 1] = ('PR #%d%s "%s" %s'):format(tonumber(l.pr.number) or 0, state, clip(l.pr.title, 120), clip(l.pr.url, 200))
     elseif l.title then
-      parts[#parts + 1] = '"' .. l.title .. '"'
+      parts[#parts + 1] = '"' .. clip(l.title, 120) .. '"'
     end
     if l.landed then
       parts[#parts + 1] = '(landed)'
     end
-    parts[#parts + 1] = ('git diff %s...%s'):format(short(l.parent_rev), short(l.tip))
+    if l.remote then
+      parts[#parts + 1] = '(remote)'
+    end
+    parts[#parts + 1] = l.base and ('git diff %s..%s'):format(short(l.base), short(l.tip)) or '(not fetched here: no diff)'
     out(table.concat(parts, '  ') .. '\n')
   end
-  out("Each line's `git diff` (add --stat, or -- <path>) is that layer's own committed changes, without switching.\n")
+  local notes = type(st.notes) == 'table' and st.notes or {}
+  for i, n in ipairs(notes) do
+    if i > 5 then
+      out(('note: %d more\n'):format(#notes - 5))
+      break
+    end
+    out('note: ' .. clip(n.text, 300) .. '\n')
+  end
+  out("Each line's `git diff` (add --stat, or -- <path>) is that layer's own committed changes, as the review diffs it, without switching.\n")
 end
 
 -- ---------------------------------------------------------------------------

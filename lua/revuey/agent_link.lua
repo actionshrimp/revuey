@@ -40,16 +40,20 @@ local function checked_out(r)
 end
 
 ---The stack of the review, for `bin/revuey stack`: its layers bottom first, each with its parent,
----the revs its own diff runs between (merge-base(parent_rev, tip)..tip, as review targets do)
----and its PR as the review last looked it up (forge_view.pr: cached only, never fetched), and
----the layer the review shows (nil in full-stack scope). Nil for a review that is not a stack's.
+---the revs its own diff is taken from (`parent_rev`, `tip`; the CLI floors the base at trunk as
+---review.merge_base_for does) and its PR as the review last looked it up (forge_view.pr: cached
+---only, never fetched); the layer the review shows (nil in full-stack scope) and the stack's
+---notes. Nil for a review that is not a stack's.
 function M.stack_info(s)
   local r = s.review
   local st = r.stack
   if not (st and st.layers and r.scope) then
     return nil
   end
-  local layers = {}
+  local layers, notes = {}, {}
+  for _, n in ipairs(st.notes or {}) do
+    notes[#notes + 1] = { kind = n.kind, branch = n.branch, text = n.text }
+  end
   for i, l in ipairs(st.layers) do
     local ok, pr = pcall(require('revuey.forge_view').pr, s, l.name)
     pr = ok and type(pr) == 'table' and pr or nil
@@ -69,7 +73,9 @@ function M.stack_info(s)
     kind = st.kind,
     trunk = st.trunk,
     viewed = r.scope.kind == 'layer' and r.scope.index or nil,
+    trunk_rev = st.trunk_rev,
     layers = layers,
+    notes = notes,
   }
 end
 
@@ -146,8 +152,14 @@ function M.update(s, refresh)
     pcall(sessions.write_last, l.bases, last)
   end
   local e = entry(s)
+  -- the stack (with PRs that land whenever a lookup answers) is not review state: it neither
+  -- bumps `changed_at` nor counts as a change, or it would end `caught_up`'s wait early
+  local st = e.stack
+  e.stack = nil
   local sig = vim.json.encode(e)
-  if not refresh and sig == l.sig and l.path and vim.uv.fs_stat(l.path) then
+  e.stack = st
+  local full = vim.json.encode(e)
+  if not refresh and sig == l.sig and full == l.full_sig and l.path and vim.uv.fs_stat(l.path) then
     return
   end
   -- when the entry last said something new (not a refresh): `bin/revuey` waits for a review
@@ -162,7 +174,7 @@ function M.update(s, refresh)
       live[l.path] = nil
       sessions.remove(l.path)
     end
-    l.path, l.sig = path, sig
+    l.path, l.sig, l.full_sig = path, sig, full
     live[path] = true
   end
 end
