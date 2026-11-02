@@ -67,7 +67,7 @@ Requirements:
 | `bin/revuey [args]` | Shell wrapper taking the same arguments as `:Revuey`: starts `nvim` with your config and the review; `q` quits. It finds the plugin relative to the script (or via `$REVUEY_PLUGIN_DIR`), so nothing needs installing. `$REVUEY_NVIM` picks the nvim binary (`$NVIM` is ignored because inside `:terminal` it is a socket). |
 | `bin/revuey pr <N\|url>` | The same from the shell: `wt switch` runs in your terminal (its output, its approval prompt), then Neovim opens with the review in the worktree. |
 | `bin/revuey comments\|watch\|reply` | [Comments for coding agents](#comments-for-coding-agents), from the shell, without the UI. |
-| `bin/revuey sessions\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
+| `bin/revuey sessions\|stack\|watch --messages\|show\|ack\|inbox\|comment\|install-skill` | [Connect an agent](#connect-an-agent) to a running review. `bin/revuey --help` describes every command. |
 | `bin/revuey hunks\|import-review` | [AI reviews from outside](#ai-reviews-from-another-agent-or-tool): the hunks with their ids, and importing a review in revuey's format. |
 | `bin/revuey findings\|tag` | The review's [runs and findings](#ai-reviews-from-another-agent-or-tool) with their ids, and [tags](#tags) on them. |
 
@@ -1520,14 +1520,20 @@ Then, in a Claude Code session running in your repo:
    dismisses it (collapsed, kept; again restores it). Until you accept it, it cannot be posted;
    [`gP`](#posting-a-review-to-github) can then add it to your pending review on GitHub, to
    finish there, or submit it. The agent never posts anything itself.
-5. **Review passes** (on by default): when Claude connects it reads what the review shows (a
-   layer, a branch or the full stack), and each time you check out another layer, that layer's
-   diff (`bin/revuey hunks`, `--stat` first for a large one); it keeps short notes on likely bugs,
-   risky changes and questions, without editing files or touching the review. It says in chat
-   when they are ready ("Reviewed stack/math (PR #12): 3 notes ready (1 likely bug)"); say "drop
-   them in" and it imports them as AI findings to triage (or as comment drafts, if you ask for
-   that), or ask it about any of them. Your messages always come first. Say "no passes" to turn
-   them off.
+5. **Stack overview and review passes** (on by default): when Claude connects to a review of a
+   stack it first gets the picture of the whole stack (unless it has it from the conversation):
+   `bin/revuey stack` lists the layers in order with their parents, PRs and stats, and Claude
+   skims each layer's own diff (`git diff --stat <parent>...<tip>`, never switching) and tells
+   you the stack in a few lines, one per layer. A plain branch or single-PR review skips this.
+   Then it takes a review pass of what the review shows (a layer, a branch or the full stack),
+   and again each time you check out another layer: that layer's diff (`bin/revuey hunks`,
+   `--stat` first for a large one), read in the context of the rest of the stack, without
+   editing files or touching the review. It gives a short summary of its findings in chat (a
+   few bullets with file:line, most important first, saying where the layer meets the others:
+   "used by layer 3", "layer 2 already handles this"); say "drop them in" and it imports them as
+   AI findings to triage, ask for inline comments and it leaves them as comment drafts, or ask
+   it about any of them. Your messages always come first. Say "no passes" to turn passes and the
+   overview off.
 6. **The guide.** Claude reads the [guide](#ai-guide) the review shows (`bin/revuey guide`) when
    you mention it or ask about a section, so "what does section 2 mean?" works. When you
    generate a guide and choose "Ask claude (connected)", the watch prints a request line and
@@ -1538,6 +1544,8 @@ Then, in a Claude Code session running in your repo:
 
 ```sh
 bin/revuey sessions              # live reviews of this worktree (--all: every worktree), --json
+bin/revuey stack                 # the review's stack, bottom first: branch, parent, PR, +/-,
+                                 # each layer's own `git diff <parent rev>...<tip>` (--json)
 bin/revuey watch --messages      # one line per message; ones no watch printed yet come first
                                  # (catch-up; --replay: every one not handled yet)
 bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
