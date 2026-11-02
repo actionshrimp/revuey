@@ -1522,9 +1522,10 @@ Then, in a Claude Code session running in your repo:
    finish there, or submit it. The agent never posts anything itself.
 5. **Stack overview and review passes** (on by default): when Claude connects to a review of a
    stack it first gets the picture of the whole stack (unless it has it from the conversation):
-   `bin/revuey stack` lists the layers in order with their parents, PRs and stats, and Claude
-   skims each layer's own diff (`git diff --stat <parent>...<tip>`, never switching) and tells
-   you the stack in a few lines, one per layer. A plain branch or single-PR review skips this.
+   `bin/revuey stack` lists the layers in order with their parents, PRs, stats and the stack's
+   notes, and Claude skims each layer (its PR title, `git log` and `git diff --stat` of its own
+   commits, at most a few lines of one file; stat and log only past about 5 layers; never
+   switching) and tells you the stack in a few lines, one per layer. A plain branch or single-PR review skips this.
    Then it takes a review pass of what the review shows (a layer, a branch or the full stack),
    and again each time you check out another layer: that layer's diff (`bin/revuey hunks`,
    `--stat` first for a large one), read in the context of the rest of the stack, without
@@ -1545,7 +1546,7 @@ Then, in a Claude Code session running in your repo:
 ```sh
 bin/revuey sessions              # live reviews of this worktree (--all: every worktree), --json
 bin/revuey stack                 # the review's stack, bottom first: branch, parent, PR, +/-,
-                                 # each layer's own `git diff <parent rev>...<tip>` (--json)
+                                 # each layer's own `git diff <base>..<tip>`, notes (--json)
 bin/revuey watch --messages      # one line per message; ones no watch printed yet come first
                                  # (catch-up; --replay: every one not handled yet)
 bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
