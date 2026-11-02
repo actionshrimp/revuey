@@ -1017,6 +1017,84 @@ h.test('AI review: panel block and an untriaged finding', function()
   screenshot('ai-review')
 end)
 
+-- The agent reviews view (`gA`): two runs of the scope (a fresh session, the connected agent with
+-- a skill and a tag), each with its heading (who, skill, date, verdict, summary, counts) and its
+-- findings on one line (severity, title, location, status, tags), one accepted; the panel's
+-- section and the winbar; then the same narrow.
+h.test('agent reviews view: findings by run, at a normal width and narrow', function()
+  local function fill(panel_w)
+    h.ok(child.lua([=[
+      local panel_w = ...
+      local s = require('revuey.view').session
+      local comments = require('revuey.comments')
+      local ai_review = require('revuey.ai_review')
+      local cv = require('revuey.comments_view')
+      local hunks = require('revuey.review').units(s.review).hunks
+      local store = cv.sync_store(s)
+      local function first_add(hk)
+        for i, l in ipairs(hk.text) do
+          if l:sub(1, 1) == '+' then
+            return i
+          end
+        end
+      end
+      local a, b
+      for _, hk in ipairs(hunks) do
+        if hk.path == 'src/cart.ts' and hk.hunk_idx and not a then
+          a = hk
+        elseif hk.path == 'src/index.ts' and hk.hunk_idx and not b then
+          b = hk
+        end
+      end
+      local function import(doc, author, gen, now, tag_list)
+        return assert(ai_review.import(doc, {
+          review = s.review, hunks = hunks, store = store,
+          events = comments.events_path_for(s.review.state._path), info = comments.review_info(s.review),
+          author = author, generator = gen, record_path = ai_review.record_path(store.path), now = now,
+          tags = tag_list, started_at = now - 90000,
+        }))
+      end
+      import({
+        summary = 'The cart total moves into its own module. Rounding is the main risk.',
+        verdict = 'request_changes',
+        findings = {
+          { hunk = a.id, line = first_add(a), severity = 'major', title = 'Import both helpers from one place', body = 'Two imports of the same module drift apart.' },
+          { hunk = b.id, line = first_add(b), severity = 'nit', title = 'A short file header would help', body = 'What is this file for?' },
+        },
+      }, { kind = 'ai', name = 'claude' }, { provider = 'claude', model = 'claude-opus' }, 1767225600000)
+      import({
+        summary = 'Input from the request is used unchecked in two places.',
+        verdict = 'comment',
+        findings = {
+          { hunk = a.id, line = first_add(a), severity = 'critical', title = 'Unchecked quantity', body = 'A negative quantity makes the total negative.' },
+          { hunk = b.id, line = first_add(b), severity = 'minor', title = 'Validate at the boundary', body = 'One check where the data comes in.' },
+        },
+      }, { kind = 'ai', name = 'claude' }, { provider = 'agent', agent = 'claude', skill = 'security', request = 'req1' }, 1767229200000, { 'pass-1' })
+      for _, c in pairs(store.comments) do
+        if c.ai and c.ai.title == 'A short file header would help' then
+          ai_review.accept(store, c.id)
+        end
+      end
+      comments.save(store)
+      cv.refresh(s)
+      if panel_w ~= vim.NIL then
+        vim.api.nvim_win_set_width(s.panel_win, panel_w)
+      end
+      vim.api.nvim_feedkeys('gA', 'mtx', false)
+      vim.api.nvim_feedkeys(']]', 'mtx', false)
+      vim.cmd('redraw')
+      return s.arlist ~= nil
+    ]=], { panel_w or vim.NIL }), 'agent reviews view did not open')
+  end
+  start(fixture, 'main', 34, 120)
+  fill()
+  screenshot('agent-reviews-view')
+  -- narrow: the tags give way first, then the location; the title keeps its room
+  start(fixture, 'main', 34, 80)
+  fill(30)
+  screenshot('agent-reviews-view-narrow')
+end)
+
 -- Finding the keys: the winbar names the keys of the comment under the cursor (your comment,
 -- added to the review), `g?` lists every key; moving over comments stays within the main-loop
 -- budget (the hint reads the row's cached cover lists).

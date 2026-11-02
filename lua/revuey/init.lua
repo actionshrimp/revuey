@@ -123,6 +123,21 @@ function M.ai_review(bang, arg)
   require('revuey.view').ai_review_command(bang, arg)
 end
 
+---`:RevueyAIReviews`: the agent reviews view of the open review (AI findings and agent comments
+---by run, with filters by tag, run, status and severity).
+function M.ai_reviews()
+  return require('revuey.view').ai_reviews()
+end
+
+---`:RevueyTag[!] [tag|-tag ...]`: tag the comment under the cursor (in the agent reviews view on
+---a run's heading: every finding of the run). `tag` adds, `-tag` removes (`!`: every tag given is
+---removed); no tags: an input with its tags to edit.
+---@param args string[]
+---@param bang? boolean
+function M.tag(args, bang)
+  return require('revuey.view').tag_command(args, bang)
+end
+
 ---`:RevueyComments`: the comments view of the open review (every thread in one list; <CR> shows
 ---one in the diff).
 function M.comments()

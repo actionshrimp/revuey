@@ -29,6 +29,7 @@ M.CONTEXT = 2 -- lines of context either side in context_hash
 M.EVENT_KINDS = {
   created = true, updated = true, deleted = true, resolved = true, replied = true, sent = true, acked = true,
   accepted = true, dismissed = true, -- AI findings, agent comments: triage (dismissed with status saved: restored)
+  tagged = true, -- tags added or removed (tags.lua); `tags`: the comment's tags after it
 }
 -- Not about a comment (M.switch_event): the worktree was switched to another stack layer while an
 -- agent was connected. Delivered like a message by `watch --messages`, never caught up.
@@ -96,6 +97,8 @@ M.REQUEST = 'request'
 ---                                 suggestion?, hunk, line?, end_line?, run? (the run that made
 ---                                 it: {name?, provider?, model?, agent?, skill?, request?}),
 ---                                 author? (once accepted), accepted_at?, dismissed_at?}
+---@field tags? table               tags set or removed (tags.lua): {[tag] = {at, off?}}; the
+---                                 defaults (skill, run) are computed, never stored
 ---@field agent? table              a coding agent's comment the user triaged (`ca`/`cn`):
 ---                                 {author (the agent), accepted_at?, dismissed_at?}; accepted,
 ---                                 `author` is the user's
@@ -797,6 +800,8 @@ function M.merge(a, b, prefer_a)
         out[k] = lose[k]
       end
     end
+    -- tags merge per tag (tags.lua): one added by the CLI survives an accept made meanwhile
+    out.tags = require('revuey.tags').merge(out.tags, lose.tags)
   end
   if not lose.deleted and (lose.thread and #lose.thread > 0) then
     local by = {}
@@ -1541,7 +1546,7 @@ end
 
 local VERB = {
   created = 'comment', updated = 'edit', deleted = 'delete', resolved = 'resolve', replied = 'reply', sent = 'send', acked = 'ack',
-  accepted = 'accept', dismissed = 'dismiss',
+  accepted = 'accept', dismissed = 'dismiss', tagged = 'tag',
 }
 
 ---One-line human summary of an event: `comment src/cart.ts:12-14 (new): first line  #id`.
@@ -1566,6 +1571,9 @@ function M.event_line(ev)
     text = ev.reply.body
     local a = ev.reply.author or {}
     who = ' from ' .. (a.name or a.kind or 'user')
+  end
+  if ev.kind == 'tagged' then
+    text = type(ev.tags) == 'table' and #ev.tags > 0 and require('revuey.tags').text(ev.tags) or '(no tags)'
   end
   local out = ('%s %s (%s)%s: %s'):format(verb, loc, side, who, M.first_line(text))
   if ev.outdated then

@@ -9,7 +9,7 @@ SPECS := tests/guard_spec.lua tests/stack_tree_view_spec.lua tests/forge_post_sp
   tests/forge_description_spec.lua tests/forge_spec.lua tests/lsp_proxy_spec.lua tests/stack_view_spec.lua \
   tests/pr_spec.lua tests/stack_remote_spec.lua tests/agent_comment_spec.lua tests/guide_view_spec.lua \
   tests/e2e_spec.lua tests/lock_spec.lua tests/ai_review_view_spec.lua tests/worktree_edge_spec.lua \
-  tests/comments_cli_spec.lua tests/edit_float_spec.lua tests/bin_spec.lua tests/import_review_spec.lua tests/agent_guide_spec.lua tests/agent_review_spec.lua \
+  tests/comments_cli_spec.lua tests/edit_float_spec.lua tests/bin_spec.lua tests/import_review_spec.lua tests/agent_guide_spec.lua tests/agent_review_spec.lua tests/agent_reviews_spec.lua \
   tests/diagram_spec.lua tests/comments_view_spec.lua tests/syntax_spec.lua tests/key_help_spec.lua \
   tests/folders_spec.lua tests/lsp_ready_spec.lua tests/marks_spec.lua tests/worktree_spec.lua \
   tests/guide_diagram_spec.lua tests/forge_corpus_e2e_spec.lua tests/fold_spec.lua tests/stack_tree_spec.lua \

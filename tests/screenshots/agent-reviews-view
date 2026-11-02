@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  3 r//ai-reviews                                                                                            X
+02| Files                       ○ no agent │ AI reviews   <CR> only this run · cA accept all · cN dismiss all · ct tag all 
+03| AI reviews                  3 untriaged│ 2 runs · 4 findings: 3 untriaged · 1 accepted · 0 dismissed                   
+04|                                        │ f filter · t tag filter · ct tag · on a run: cA accept all, cN dismiss all, … 
+05| AI review                     ● comment│                                                                               
+06| 3 to triage                            │ ▍claude (connected) · skill security  2026-01-01  ● comment                   
+07| by claude (connected) · skill security │ ▍ Input from the request is used unchecked in two places.                     
+08| Input from the request is used         │ ▍ 2 untriaged · 0 accepted · 0 dismissed                                      
+09| unchecked in two places.               │   critical Unchecked quantity    src/cart.ts:1   untriaged  #security #pass-1 
+10| 2 runs · gA by run                     │   minor    Validate at the bou…  src/index.ts:1  untriaged  #security #pass-1 
+11|                                        │                                                                               
+12| feature/cart → main                    │ ▍claude · claude-opus  2026-01-01  ✗ request changes                          
+13| 7 files  +57 −22  ✓ 0/7                │ ▍ The cart total moves into its own module. Rounding is the main risk.        
+14| base ee2e6fcf  head 6b2be8a3           │ ▍ 1 untriaged · 1 accepted · 0 dismissed                                      
+15| working tree  ● uncommitted            │   major    Import both helpers…  src/cart.ts:1   untriaged  #claude           
+16|                                        │   nit      A short file header…  src/index.ts:1  accepted   #claude           
+17| assets:                                │                                                                               
+18|     M  logo.png                     bin│                                                                               
+19| src:                                   │                                                                               
+20|     A  cart.ts                ✎2 +27 −0│                                                                               
+21|     M  index.ts                ✎2 +9 −6│                                                                               
+22|     D  legacy.ts                  +0 −6│                                                                               
+23|     M  math.ts                   +14 −8│                                                                               
+24|     R  text.ts                    +2 −2│                                                                               
+25| src/components:                        │                                                                               
+26|     A  Total.tsx                  +5 −0│                                                                               
+27|                                        │                                                                               
+28| <CR> show  ]c [c finding  ]] [[ run    │                                                                               
+29| ca accept  cn dismiss  ct tag  q back  │                                                                               
+30| cA cN all of the run  cD delete run    │                                                                               
+31| f filter  t tag filter  F clear        │                                                                               
+32| g? all keys                            │                                                                               
+33|revuey://files [-]    16,1           All revuey://feature/cart..main [-]                              1,1            Top
+34|                                                                                                      10,1          All 
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+01|000000000001211111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+02|333333333333333333333333333333333333333343555555555553366663333333333333333366333333333333336633333333333333366333333333
+03|222222222227777777777777777778888888888849999999999999999999999999999999999999999999999999999999999994444444444444444444
+04|77777777777777777777777777777777777777774::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::4
+05|2222222222777777777777777777777;;;;;;;;;44444444444444444444444444444444444444444444444444444444444444444444444444444444
+06|444444444444777777777777777777777777777749999999999999999999999999999999999999::::::::::::<<<<<<<<<<<4444444444444444444
+07|888888888888888888888888888888888888888749994444444444444444444444444444444444444444444444444444444444444444444444444444
+08|888888888888888888888888888888877777777749994444444444444444444444444444444444444444444444444444444444444444444444444444
+09|88888888888888888888888887777777777777774444=========4444444444444444444444<<<<<<<<<<<<<<44>>>>>>>>>???????????????????4
+10|88888888888888888887777777777777777777774444<<<<<<<<<4444444444444444444444<<<<<<<<<<<<<<44>>>>>>>>>???????????????????4
+11|777777777777777777777777777777777777777744444444444444444444444444444444444444444444444444444444444444444444444444444444
+12|22222222222222222222777777777777777777774@@@@@@@@@@@@@@@@@@@@@@AAAAAAAAAAAABBBBBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCCCCCC
+13|7777777777DDDEEEE8888888777777777777777749994444444444444444444444444444444444444444444444444444444444444444444444444444
+14|888888888888888888888888888887777777777749994444444444444444444444444444444444444444444444444444444444444444444444444444
+15|;;;;;;;;;;;;;8888888888888887777777777774444>>>>>>>>>4444444444444444444444<<<<<<<<<<<<<<44>>>>>>>>>?????????44444444444
+16|77777777777777777777777777777777777777774444?????????::::::::::::::::::::44<<<<<<<<<<<<<<44:::::::::?????????44444444444
+17|7;;;;;;;777777777777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+18|GGGHGIJGCCCCCCCCGGGGGGGGGGGGGGGGGGGGG8884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+19|7;;;;777777777777777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+20|777D7DK744444447777777777777777;;;DDDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+21|777D7;K7444444447777777777777777;;;DDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+22|777D7EK7444444444777777777777777777DDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+23|777D7;K744444447777777777777777777DDDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+24|777D7;K7444444477777777777777777777DDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+25|7;;;;;;;;;;;;;;;7777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+26|777D7DK7444444444777777777777777777DDEEE4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+27|77777777777777777777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+28|88888888888888888888888888888888888877774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+29|88888888888888888888888888888888888888774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+30|88888888888888888888888888888888888877774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+31|88888888888888888888888888888888777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+32|88888888888877777777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+33|000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+34|LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL

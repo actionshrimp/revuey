@@ -30,16 +30,16 @@
 29|     M  index.ts                ✎1 +3 −2│  ╰─                                                                           
 30|                                        │                                                                               
 31| <CR> show  ]c [c thread  q back        │ src/index.ts                                                                  
-32| cr reply  ce edit  cx resolve          │  5  draft  │ import { Cart } from "./cart";                                   
+32| cr reply  ce edit  cx resolve          │  5  draft  #claude  │ import { Cart } from "./cart";                          
 33| ci review  ca accept  cn dismiss       │  ╭─ claude (ai) · just now · minor · ca accept · cn dismiss ───────────────── 
 34| cz expand  cs agent  cd delete         │  │ Is Cart used before main() runs?                                           
-35| ]s [s layer  gs full stack             │  ╰─                                                                           
-36| gS check out layer                     │                                                                               
-37| gx PR in browser  <Tab> PR details     │                                                                               
-38| gH GitHub threads (all/open/none)      │                                                                               
-39| gP submit review (1 in review)         │                                                                               
-40| g? all keys                            │                                                                               
-41|~                                       │                                                                               
+35| ct tag  t tag filter  gA by run        │  ╰─                                                                           
+36| ]s [s layer  gs full stack             │                                                                               
+37| gS check out layer                     │                                                                               
+38| gx PR in browser  <Tab> PR details     │                                                                               
+39| gH GitHub threads (all/open/none)      │                                                                               
+40| gP submit review (1 in review)         │                                                                               
+41| g? all keys                            │                                                                               
 42|~                                       │                                                                               
 43|revuey://files [-]    26,1           All revuey://stack/cart..stack/math [-]                          1,1            Top
 44|                                                                                                      5,1           All 
@@ -76,16 +76,16 @@
 29|777C79:7444444447777777777777777999CCDDD444<<444444444444444444444444444444444444444444444444444444444444444444444444444
 30|777777777777777777777777777777777777777744444444444444444444444444444444444444444444444444444444444444444444444444444444
 31|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;777777774=============444444444444444444444444444444444444444444444444444444444444444444
-32|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777777444<44AAAAA4444<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<44444444444444444444444444444444444
+32|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777777444<44AAAAABBBBBBBBB4444<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<44444444444444444444444444
 33|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777444444===========<<<<<<<<<<<<<<=====<<<<<<<<<<<<<<<<<<<<<<<<<4444444444444444444
 34|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;77777777744444444====4444444444444======4444444444444444444444444444444444444444444444444
-35|;;;;;;;;;;;;;;;;;;;;;;;;;;;777777777777744444444444444444444444444444444444444444444444444444444444444444444444444444444
-36|;;;;;;;;;;;;;;;;;;;7777777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-37|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-38|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-39|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-40|;;;;;;;;;;;;77777777777777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-41|KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+35|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777744444444444444444444444444444444444444444444444444444444444444444444444444444444
+36|;;;;;;;;;;;;;;;;;;;;;;;;;;;77777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+37|;;;;;;;;;;;;;;;;;;;7777777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+38|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+39|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+40|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;7777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+41|;;;;;;;;;;;;77777777777777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 42|KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 43|000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 44|LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL

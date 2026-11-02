@@ -147,11 +147,11 @@ end)
 
 h.test('hint: AI findings and agent drafts (untriaged, dismissed, resolved)', function()
   local finding = { author = { kind = 'ai', name = 'claude' }, ai = { severity = 'major', title = 't' } }
-  h.eq('ca accept · cn dismiss · cs ask agent', hint({ mk(finding) }))
-  h.eq('ca accept · cn dismiss · cs ask agent', hint({ mk({ author = { kind = 'agent', name = 'claude' } }) }), 'an agent draft')
-  h.eq('ca accept · cn restore · cs ask agent',
+  h.eq('ca accept · cn dismiss · cs ask agent · ct tag', hint({ mk(finding) }))
+  h.eq('ca accept · cn dismiss · cs ask agent · ct tag', hint({ mk({ author = { kind = 'agent', name = 'claude' } }) }), 'an agent draft')
+  h.eq('ca accept · cn restore · cs ask agent · ct tag',
     hint({ mk({ author = { kind = 'agent', name = 'claude' }, agent = { dismissed_at = 1 }, status = 'dismissed' }) }))
-  h.eq('cx reopen · cs ask agent', hint({ mk(vim.tbl_extend('force', finding, { status = 'resolved' })) }))
+  h.eq('cx reopen · cs ask agent · ct tag', hint({ mk(vim.tbl_extend('force', finding, { status = 'resolved' })) }))
 end)
 
 h.test('hint: a GitHub thread; one not on a shown line; several items on a row', function()
@@ -167,7 +167,7 @@ h.test('hint: a GitHub thread; one not on a shown line; several items on a row',
     end,
   }))
   -- your comment and a finding on one row: every key that works on either, the first item's label
-  h.eq('ce edit · cr reply · ci add to review · cx resolve · cd delete · ca accept · cn dismiss · cs ask agent',
+  h.eq('ce edit · cr reply · ci add to review · cx resolve · cd delete · ca accept · cn dismiss · cs ask agent · ct tag',
     hint({ mk(), mk({ author = { kind = 'ai', name = 'claude' }, ai = { severity = 'nit' } }) }))
   h.eq('', hint({}))
 end)
@@ -175,7 +175,7 @@ end)
 h.test('hint: rebound keys show, disabled ones are left out', function()
   setup({ comment_edit = 'E', comment_delete = false, comment_include = { 'I', 'ci' }, comment_dismiss = false })
   h.eq('E edit · cr reply · I add to review · cx resolve', hint({ mk() }))
-  h.eq('ca accept · cs ask agent', hint({ mk({ author = { kind = 'agent', name = 'claude' } }) }))
+  h.eq('ca accept · cs ask agent · ct tag', hint({ mk({ author = { kind = 'agent', name = 'claude' } }) }))
   setup()
 end)
 
@@ -365,8 +365,8 @@ h.test('moving the cursor over a comment, a finding, an agent draft and a GitHub
   h.eq('ce edit · cr reply · ci remove from review · cx resolve · cd delete', text(s.key_hint.items))
   vim.g.statusline_winid = s.diff_win
   h.ok(vim.api.nvim_eval_statusline(view.winbar(), { winid = s.diff_win, use_winbar = true }).str:find('ci remove from review', 1, true))
-  h.ok(vim.endswith(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 8)), 'ca accept · cn dismiss · cs ask agent '), 'a finding')
-  h.ok(vim.endswith(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 12)), 'ca accept · cn dismiss · cs ask agent '), 'an agent draft')
+  h.ok(vim.endswith(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 8)), 'ca accept · cn dismiss · cs ask agent · ct tag '), 'a finding')
+  h.ok(vim.endswith(winbar_at(s, row_of(s, 'src/cart.ts', 'add', 12)), 'ca accept · cn dismiss · cs ask agent · ct tag '), 'an agent draft')
   wb = winbar_at(s, row_of(s, 'src/cart.ts', 'add', 20))
   h.ok(vim.endswith(wb, 'cr reply · gx open '), 'a GitHub thread\n' .. wb)
   -- a comment longer than comments.max_lines: the render cuts it, so cz is offered; cz expands it

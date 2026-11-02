@@ -14,7 +14,7 @@ local OWN = { { 'comment_edit', 'edit' }, { 'comment_reply', 'reply' }, { 'comme
   { 'comment_resolve', 'resolve' }, { 'comment_expand', 'expand' }, { 'comment_delete', 'delete' } }
 -- an AI finding or an agent's comment, not accepted yet: triage first (cx only reopens)
 local TRIAGE = { { 'comment_accept', 'accept' }, { 'comment_dismiss', 'dismiss' },
-  { 'comment_resolve', 'resolve', resolved = true }, { 'send_comment', 'send' }, { 'comment_expand', 'expand' } }
+  { 'comment_resolve', 'resolve', resolved = true }, { 'send_comment', 'send' }, { 'comment_expand', 'expand' }, { 'comment_tag', 'tag' } }
 local FORGE = { { 'comment_reply', 'reply' }, { 'forge_open', 'open' }, { 'comment_expand', 'expand' } }
 
 ---Hint items for the comments and GitHub threads `ids` (those covering a row, or the thread under

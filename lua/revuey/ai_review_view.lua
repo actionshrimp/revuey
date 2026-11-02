@@ -68,21 +68,27 @@ function M.author()
   return { kind = 'ai', name = (config.options.ai or {}).provider or 'claude' }
 end
 
----The scope's latest review record (cached while the file is unchanged), or nil.
-function M.record(s)
+---The scope's review runs, oldest first (cached while the file is unchanged; {} without any).
+function M.runs(s)
   local path = ai_review.record_path(M.key(s))
   local st = vim.uv.fs_stat(path)
   local c = s.ai_review_cache
   if not st then
     s.ai_review_cache = nil
-    return nil
+    return {}
   end
   local sig = st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size
   if not (c and c.path == path and c.sig == sig) then
-    c = { path = path, sig = sig, rec = ai_review.read_record(path) }
+    c = { path = path, sig = sig, runs = ai_review.read_runs(path) }
     s.ai_review_cache = c
   end
-  return c.rec
+  return c.runs
+end
+
+---The scope's latest review record, or nil.
+function M.record(s)
+  local runs = M.runs(s)
+  return runs[#runs]
 end
 
 ---Who wrote a review record: "claude (connected)" for the connected agent, else its author.
@@ -182,12 +188,13 @@ end
 
 ---The run identity (ai_review.run_of) a new review imports under: a fresh run's, or with
 ---`agent` (a name) the connected agent's, as `import-review --request` records it when the
----agent imports with the `--name` its prompt gives (the request's agent).
-function M.run_for(agent)
+---agent imports with the `--name` its prompt gives (the request's agent); `skill`: the name of
+---the skill it runs with (part of the identity).
+function M.run_for(agent, skill)
   if agent then
-    return ai_review.run_of({ kind = 'ai', name = agent }, { provider = 'agent', agent = agent })
+    return ai_review.run_of({ kind = 'ai', name = agent }, { provider = 'agent', agent = agent, skill = skill })
   end
-  return ai_review.run_of(M.author(), { provider = (config.options.ai or {}).provider or 'claude' })
+  return ai_review.run_of(M.author(), { provider = (config.options.ai or {}).provider or 'claude', skill = skill })
 end
 
 ---Untouched findings the new run would replace (the import's own predicate, ai_review.untouched):
@@ -362,6 +369,7 @@ function M.generate(s, skill_arg, on_change, opts)
         local cur = require('revuey.view').session
         local store = cur and not cur.cleaned and cur.cm and cur.cm.path == key and cur.cm.store or comments.load(key)
         local ok, rec, ierr = pcall(ai_review.import, result.output or result.text or '', {
+          started_at = comments.now_ms() - math.floor((vim.uv.hrtime() - entry.started) / 1e6),
           review = r,
           hunks = hunks,
           store = store,
@@ -451,6 +459,7 @@ local VERDICT_HL = { approve = 'RevueyAiApprove', comment = 'RevueyAiComment', r
 ---runs, the last error, findings left to triage, and the summary. Nothing without a review.
 function M.panel(s, add, add_virt, width)
   s.panel_ai_status_row = nil
+  s.panel_ai_rows = nil
   local key = M.key(s)
   local job, err, rec = M.job(s), M.errors[key], M.record(s)
   if not (job or err or rec) then
@@ -458,6 +467,8 @@ function M.panel(s, add, add_virt, width)
   end
   local title = ' AI review'
   local row = add(title, { { 0, #title, 'RevueyPanelTitle' } })
+  -- `<CR>` on the block's rows opens the agent reviews view
+  s.panel_ai_rows = { [row] = true }
   if rec then
     local v = (ai_review.VERDICT_GLYPH[rec.verdict] or '●') .. ' ' .. (ai_review.VERDICT_LABEL[rec.verdict] or rec.verdict)
     add_virt(row, { { v, VERDICT_HL[rec.verdict] or 'Comment' } })
@@ -488,6 +499,20 @@ function M.panel(s, add, add_virt, width)
       for _, l in ipairs(require('revuey.panel').wrap(rec.summary:gsub('%s+', ' '), width, ' ')) do
         add(l, { { 0, #l, 'Comment' } })
       end
+    end
+    -- how many runs there are, and the key of the view that lists them
+    local n = #M.runs(s)
+    local k = require('revuey.keys').first('ai_reviews')
+    local parts = {}
+    if n > 1 then
+      parts[#parts + 1] = n .. ' runs'
+    end
+    if k then
+      parts[#parts + 1] = k .. (n > 1 and ' by run' or ' findings')
+    end
+    if #parts > 0 then
+      local t = require('revuey.panel').truncate(' ' .. table.concat(parts, ' · '), width)
+      s.panel_ai_rows[add(t, { { 0, #t, 'Comment' } })] = true
     end
   end
   add('')

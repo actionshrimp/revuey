@@ -515,6 +515,10 @@ function M.winbar()
     -- the comments view covers the diff window
     return require('revuey.comments_list').winbar(s, win)
   end
+  if s and s.arlist then
+    -- so does the agent reviews view
+    return require('revuey.ai_reviews_view').winbar(s, win)
+  end
   if s and s.view_mode == 'guide' then
     return M.guide_winbar(s, win)
   end
@@ -1926,6 +1930,8 @@ function M.comment_keymaps(s)
   map(buf, k.comment_expand, with(comments_view.toggle_expand), 'expand / collapse a long comment')
   map(buf, k.comment_toggle, with(comments_view.toggle_visible), 'show / hide comment threads')
   map(buf, k.comment_list, with(require('revuey.comments_list').toggle), 'the comments view: every thread in one list')
+  map(buf, k.ai_reviews, with(require('revuey.ai_reviews_view').toggle), 'the agent reviews view: AI findings and agent comments by run')
+  map(buf, k.comment_tag, with(comments_view.tag), 'tag the comment on this line')
   map(buf, k.comment_accept, with(comments_view.accept), 'accept the AI review finding on this line')
   map(buf, k.comment_dismiss, with(comments_view.dismiss), 'dismiss / restore the AI review finding on this line')
   map(buf, k.forge_threads, with(comments_view.toggle_forge), 'GitHub threads: all / open only / hidden')
@@ -1985,6 +1991,64 @@ function M.comments_list()
   return require('revuey.comments_list').open(M.session)
 end
 
+---`:RevueyAIReviews`: the agent reviews view of the open review.
+function M.ai_reviews()
+  return require('revuey.ai_reviews_view').open(M.session)
+end
+
+---`:RevueyTag[!] [tag|-tag ...]`: tags on the comment under the cursor: in the agent reviews view
+---the finding (on a run's heading every finding of the run), in the comments view the thread, in
+---the diff the comment on the cursor line. No tags: the input (`ct`).
+function M.tag_command(args, bang)
+  local s = M.session
+  if not s then
+    return vim.notify('revuey: no review open (:Revuey first)', vim.log.levels.WARN)
+  end
+  local tags = require('revuey.tags')
+  local add, remove, bad = {}, {}, {}
+  for _, a in ipairs(args or {}) do
+    local sign, rest = a:match('^([+-])(.*)$')
+    local t = tags.clean(rest or a)
+    if not t then
+      bad[#bad + 1] = a
+    elseif sign == '-' or bang then
+      remove[#remove + 1] = t
+    else
+      add[#add + 1] = t
+    end
+  end
+  if #bad > 0 then
+    return vim.notify('revuey: not a tag: ' .. table.concat(bad, ' ') .. ' (letters, digits, . _ -)', vim.log.levels.WARN)
+  end
+  local function apply(ids)
+    if #ids == 0 then
+      return vim.notify('revuey: no comment to tag here', vim.log.levels.INFO)
+    end
+    if #add == 0 and #remove == 0 then
+      return comments_view.ask_tags(s, ids)
+    end
+    local n = comments_view.set_tags(s, ids, { add = add, remove = remove })
+    vim.notify(('revuey: tags changed on %d comment%s'):format(n, n == 1 and '' or 's'), vim.log.levels.INFO)
+  end
+  local ids = require('revuey.ai_reviews_view').tag_targets(s)
+  if ids then
+    return apply(ids)
+  end
+  local at = require('revuey.comments_list').target(s)
+  if at then
+    return apply({ at.id })
+  end
+  if api.nvim_get_current_win() ~= s.diff_win then
+    return vim.notify('revuey: move to a comment in the diff (or the comments view) first', vim.log.levels.INFO)
+  end
+  comments_view.with_comment(s, function(cmt)
+    if cmt.forge then
+      return vim.notify('revuey: GitHub threads take no tags here', vim.log.levels.INFO)
+    end
+    apply({ cmt.id })
+  end, nil, true)
+end
+
 ---`:RevueyCommentsExport [markdown|json] [--all] [register|file]`.
 function M.comments_export(args)
   return comments_view.export(M.session, args)
@@ -2016,7 +2080,7 @@ local function panel_keymaps(s)
       return
     end
     if focus then
-      require('revuey.comments_list').close(s) -- back to the guide below it
+      require('revuey.list_float').close_any(s) -- back to the guide below it
     end
     section_fold(s, si, false)
     goto_row(s, r.start_row, 'top')
@@ -2041,7 +2105,7 @@ local function panel_keymaps(s)
       return
     end
     if focus then
-      require('revuey.comments_list').close(s) -- back to the diff (guide) below it
+      require('revuey.list_float').close_any(s) -- back to the diff (guide) below it
     end
     local row
     if s.view_mode == 'guide' then
@@ -2068,8 +2132,11 @@ local function panel_keymaps(s)
     if si then
       return jump_section(si, true)
     end
+    if s.panel_ai_rows and s.panel_ai_rows[api.nvim_win_get_cursor(0)[1]] then
+      return require('revuey.ai_reviews_view').open(s)
+    end
     jump(true)
-  end, 'open file in diff (a folder: its first file) / select stack layer / guide section')
+  end, 'open file in diff (a folder: its first file) / select stack layer / guide section / the AI review block: the agent reviews view')
   stack_keymaps(buf)
   guide_keymaps(buf)
   -- gS on a layer row checks that layer out (elsewhere: the viewed layer)
@@ -2099,6 +2166,9 @@ local function panel_keymaps(s)
   map(buf, k.comment_list, function()
     require('revuey.comments_list').toggle(s)
   end, 'the comments view: every thread in one list')
+  map(buf, k.ai_reviews, function()
+    require('revuey.ai_reviews_view').toggle(s)
+  end, 'the agent reviews view: AI findings and agent comments by run')
   map(buf, k.forge_open, function()
     require('revuey.forge_view').open(s, api.nvim_win_get_cursor(0)[1])
   end, 'open the pull request in the browser')
@@ -2755,6 +2825,7 @@ cleanup = function(s)
   require('revuey.notes_float').update(s) -- closes it
   require('revuey.edit_float').detach(s) -- closes the edit float (its buffer keeps any changes)
   require('revuey.comments_list').detach(s)
+  require('revuey.ai_reviews_view').detach(s)
   comments_view.detach(s)
   agent_link.detach(s)
   require('revuey.forge_view').detach(s) -- stops a running gh
@@ -3277,7 +3348,9 @@ local function start_ai_review(s, bang, skill_arg, choice)
       arv.generate(s, skill_arg, on_ai_review_change, { model = choice.model, effort = choice.effort })
     end
   end
-  local n = (not bang and not arv.job(s)) and arv.replaceable(s, arv.run_for(name)) or 0
+  -- the skill is part of the run's identity: a run with another skill replaces nothing
+  local skill = skill_arg and arv.resolve_skill(s, skill_arg) or nil
+  local n = (not bang and not arv.job(s)) and arv.replaceable(s, arv.run_for(name, skill and skill.name or nil)) or 0
   if n == 0 then
     return run()
   end

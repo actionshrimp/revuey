@@ -116,6 +116,23 @@ M.defaults = {
     -- to the agent session to follow up, as any comment.
     comment_accept = 'ca',
     comment_dismiss = 'cn',
+    -- tag the comment on this line (AI findings and agent comments are tagged by their skill or
+    -- run already): an input with its tags. Also :RevueyTag.
+    comment_tag = 'ct',
+    -- the agent reviews view over the diff: AI findings and agent comments grouped by run, with
+    -- filters (<CR> shows one in the diff; again or q: back). Also :RevueyAIReviews. `gA` (the
+    -- character code in hex) means nothing in a review buffer.
+    ai_reviews = 'gA',
+    -- in the agent reviews view, on a run (its heading or any of its findings): accept / dismiss
+    -- every untriaged finding of it, or delete the run and its findings (asks first)
+    run_accept = 'cA',
+    run_dismiss = 'cN',
+    run_delete = 'cD',
+    -- in the agent reviews view: pick a filter (tag, run, status, severity), pick the tag
+    -- filter (also in the comments view), clear the filters
+    reviews_filter = 'f',
+    reviews_tag_filter = 't',
+    reviews_clear_filter = 'F',
     -- "add to review": include the comment on this line in the review posted to GitHub (or take
     -- it out); a local flag until you submit (forge_submit). `ci` shadows `ci{motion}` like the
     -- other c* keys.

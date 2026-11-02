@@ -31,15 +31,15 @@
 30|                              │  ╰─                                             
 31| <CR> show  ]c [c thread  q ba│                                                 
 32| cr reply  ce edit  cx resolve│ src/index.ts                                    
-33| ci review  ca accept  cn dism│  5  draft  │ import { Cart } from "./cart";     
+33| ci review  ca accept  cn dism│  5  draft  #claude  │ import { Cart } from "./… 
 34| cz expand  cs agent  cd delet│  ╭─ claude (ai) · just now · minor · ca accept ·
-35| ]s [s layer  gs full stack   │  │ Is Cart used before main() runs?             
-36| gS check out layer           │  ╰─                                             
-37| gx PR in browser  <Tab> PR de│                                                 
-38| gH GitHub threads (all/open/n│                                                 
-39| gP submit review (1 in review│                                                 
-40| g? all keys                  │                                                 
-41|~                             │                                                 
+35| ct tag  t tag filter  gA by r│  │ Is Cart used before main() runs?             
+36| ]s [s layer  gs full stack   │  ╰─                                             
+37| gS check out layer           │                                                 
+38| gx PR in browser  <Tab> PR de│                                                 
+39| gH GitHub threads (all/open/n│                                                 
+40| gP submit review (1 in review│                                                 
+41| g? all keys                  │                                                 
 42|~                             │                                                 
 43|</files [-] 26,1           All <://stack/cart..stack/math [-] 1,1            Top
 44|                                                              5,1           All 
@@ -77,15 +77,15 @@
 30|777777777777777777777777777777444<<444444444444444444444444444444444444444444444
 31|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;44444444444444444444444444444444444444444444444444
 32|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4=============444444444444444444444444444444444444
-33|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;444<44AAAAA4444<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<44444
+33|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;444<44AAAAABBBBBBBBB4444<<<<<<<<<<<<<<<<<<<<<<<<<4
 34|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;444444===========<<<<<<<<<<<<<<=====<<<<<<<<<<<<<<
-35|;;;;;;;;;;;;;;;;;;;;;;;;;;;77744444444====4444444444444======4444444444444444444
-36|;;;;;;;;;;;;;;;;;;;7777777777744444444444444444444444444444444444444444444444444
-37|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+35|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;44444444====4444444444444======4444444444444444444
+36|;;;;;;;;;;;;;;;;;;;;;;;;;;;77744444444444444444444444444444444444444444444444444
+37|;;;;;;;;;;;;;;;;;;;777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 38|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 39|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-40|;;;;;;;;;;;;7777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
-41|KKKKKKKKKKKKKKKKKKKKKKKKKKKKKK4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+40|;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+41|;;;;;;;;;;;;7777777777777777774JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 42|KKKKKKKKKKKKKKKKKKKKKKKKKKKKKK4JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 43|00000000000000000000000000000000000000000000000000000000000000000000000000000000
 44|LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL

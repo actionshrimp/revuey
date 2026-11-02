@@ -76,6 +76,13 @@ local function stop_watch(c)
     end)
     c.timer = nil
   end
+  if c.runs_timer then
+    pcall(function()
+      c.runs_timer:stop()
+      c.runs_timer:close()
+    end)
+    c.runs_timer = nil
+  end
 end
 
 ---Load the store of the session's review scope (once per scope) and watch its file.
@@ -94,10 +101,23 @@ function M.sync_store(s)
   local dir = vim.fs.dirname(path)
   vim.fn.mkdir(dir, 'p')
   local name = vim.fs.basename(path)
+  -- the scope's AI review runs (ai_review.lua) live next to it: a run imported from outside
+  -- redraws the panel's block and the agent reviews view
+  local runs_name = vim.fs.basename(require('revuey.ai_review').record_path(path))
   local ok, w = pcall(vim.uv.new_fs_event)
   if ok and w then
     c.timer = vim.uv.new_timer()
+    c.runs_timer = vim.uv.new_timer()
     local started = pcall(w.start, w, dir, {}, function(err, fname)
+      if not err and fname == runs_name and c.runs_timer then
+        c.runs_timer:stop()
+        c.runs_timer:start(80, 0, vim.schedule_wrap(function()
+          if s.cm == c and c.path == path and not s.cleaned then
+            M.runs_changed(s)
+          end
+        end))
+        return
+      end
       if err or (fname and fname ~= name) then
         return
       end
@@ -153,6 +173,17 @@ function M.reload(s)
     return true
   end
   return false
+end
+
+---The scope's AI review runs changed on disk: redraw the agent reviews view and the panel.
+function M.runs_changed(s)
+  if not s or s.cleaned or not s.layout then
+    return
+  end
+  if s.arlist then
+    require('revuey.ai_reviews_view').render(s)
+  end
+  require('revuey.panel').render(s, { keep_view = true })
 end
 
 function M.detach(s)
@@ -366,6 +397,11 @@ local function thread_lines(s, c, p, width, cut)
   end
   if c.ai and c.status ~= 'accepted' then
     chip(c.ai.severity or 'minor', M.SEVERITY_HL[c.ai.severity] or 'RevueyAiMinor')
+  end
+  -- tags, but not the author's name (its default tag without a skill: the header says it)
+  local tg = not g and require('revuey.tags').text(require('revuey.tags').of(c), c.author and c.author.name and require('revuey.tags').clean(c.author.name)) or ''
+  if tg ~= '' then
+    chip(tg, 'RevueyCommentTag')
   end
   if g then
     -- a GitHub thread's state is in its own chips above
@@ -702,6 +738,9 @@ function M.render(s, o)
   -- the comments view lists what was just placed (live: comments changed, threads arrived)
   if s.clist then
     require('revuey.comments_list').render(s)
+  end
+  if s.arlist then
+    require('revuey.ai_reviews_view').render(s)
   end
 end
 
@@ -1096,6 +1135,8 @@ function M.can(s, cmt, action, o)
   elseif action == 'dismiss' then
     local ok, why = ai_review.can_dismiss(cmt)
     return ok, ok and (cmt.status == 'dismissed' and 'restore' or 'dismiss') or why
+  elseif action == 'tag' then
+    return true, 'tag'
   end
   return false, 'not a comment action'
 end
@@ -1556,6 +1597,119 @@ end
 ---Ask before deleting; tests replace this.
 function M.confirm_delete(msg)
   return vim.fn.confirm(msg, '&Delete\n&Cancel', 2) == 1
+end
+
+---Set the tags of comments `ids` of the store (`list` as shown; with `add`/`remove` instead, only
+---those change), save and emit `tagged` for each that changed. Returns how many changed.
+---@param o {list?:string[], add?:string[], remove?:string[]}
+function M.set_tags(s, ids, o)
+  local tags = require('revuey.tags')
+  local store = cm(s).store
+  pcall(comments.reload, store)
+  local now = comments.now_ms()
+  local changed = {}
+  for _, id in ipairs(ids) do
+    local cur = comments.get(store, id)
+    if cur then
+      local c, ch
+      if o.list then
+        c, ch = tags.replace(cur, o.list, now)
+      else
+        c, ch = cur, false
+        if o.remove and #o.remove > 0 then
+          c, ch = tags.apply(c, o.remove, false, now)
+        end
+        if c and o.add and #o.add > 0 then
+          local ch2
+          c, ch2 = tags.apply(c, o.add, true, now)
+          ch = c and (ch or ch2) or ch2
+        end
+      end
+      if not c then
+        vim.notify('revuey: ' .. tostring(ch), vim.log.levels.WARN)
+      elseif ch then
+        comments.put(store, c, now)
+        changed[#changed + 1] = c
+      end
+    end
+  end
+  if #changed == 0 then
+    return 0
+  end
+  local info = M.review_info(s)
+  local ok, err = pcall(comments.save, store, info)
+  if not ok then
+    vim.notify(tostring(err), vim.log.levels.ERROR)
+    return 0
+  end
+  local events = comments.events_path_for(s.review.state._path)
+  for _, c in ipairs(changed) do
+    comments.append_event(events, comments.event('tagged', c, info, { tags = tags.of(c) }))
+  end
+  M.refresh(s)
+  return #changed
+end
+
+---Ask for the tags of comments `ids` (one input with the tags shown now, edited in place:
+---space separated; a leading `+` adds to each, `-tag` removes), then set them.
+function M.ask_tags(s, ids)
+  local tags = require('revuey.tags')
+  local store = cm(s).store
+  local list = {}
+  for _, id in ipairs(ids) do
+    local c = comments.get(store, id)
+    if c then
+      list[#list + 1] = c
+    end
+  end
+  if #list == 0 then
+    return
+  end
+  local one = #list == 1
+  vim.ui.input({
+    prompt = one and 'Tags (space separated): ' or ('Tags for %d comments (+tag adds, -tag removes): '):format(#list),
+    default = one and table.concat(tags.of(list[1]), ' ') or '',
+  }, function(text)
+    if text == nil or M.session_gone(s) then
+      return
+    end
+    local add, remove, plain = {}, {}, {}
+    for _, w in ipairs(vim.split(text, '[%s,]+', { trimempty = true })) do
+      local sign, rest = w:match('^([+-])(.*)$')
+      local t = tags.clean(rest or w)
+      if t then
+        if sign == '-' then
+          remove[#remove + 1] = t
+        elseif sign == '+' or not one then
+          add[#add + 1] = t
+        else
+          plain[#plain + 1] = t
+        end
+      end
+    end
+    if one and (#add == 0 and #remove == 0) then
+      M.set_tags(s, ids, { list = plain })
+    else
+      vim.list_extend(add, plain)
+      M.set_tags(s, ids, { add = add, remove = remove })
+    end
+  end)
+end
+
+---Is session `s` closed (an answer arriving late)?
+function M.session_gone(s)
+  return not s or s.cleaned
+end
+
+---`ct`: tag the comment on this line (or the one the view names): an input with its tags.
+---@param at? revuey.CommentTarget
+function M.tag(s, at)
+  M.with_comment(s, function(cmt)
+    if cmt.forge then
+      return vim.notify('revuey: GitHub threads take no tags here', vim.log.levels.INFO)
+    end
+    M.ask_tags(s, { cmt.id })
+  end, nil, true, at)
 end
 
 ---`cd`: delete a comment (asks first).

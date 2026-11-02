@@ -1,0 +1,71 @@
+--|---------|---------|---------|---------|---------|---------|---------|---------|
+01| [No Name]  3 r//ai-reviews                                                    X
+02| Files             ○ no agent │ AI reviews   <CR> only this run · cA accept all 
+03| AI reviews        3 untriaged│ 2 runs · 4 findings: 3 untriaged · 1 accepted · 
+04|                              │ f filter · t tag filter · ct tag · on a run: c… 
+05| AI review           ● comment│                                                 
+06| 3 to triage                  │ ▍claude (connected) · s…  2026-01-01  ● comment 
+07| by claude (connected) · skil…│ ▍ Input from the request is used unchecked in … 
+08| Input from the request is    │ ▍ 2 untriaged · 0 accepted · 0 dismissed        
+09| used unchecked in two places.│   critical Unchecked quantity         untriaged 
+10| 2 runs · gA by run           │   minor    Validate at the boundary   untriaged 
+11|                              │                                                 
+12| feature/cart → main          │ ▍claude · claud…  2026-01-01  ✗ request changes 
+13| 7 files  +57 −22  ✓ 0/7      │ ▍ The cart total moves into its own module. Ro… 
+14| base ee2e6fcf  head 6b2be8a3 │ ▍ 1 untriaged · 1 accepted · 0 dismissed        
+15| working tree  ● uncommitted  │   major    Import both helpers from…  untriaged 
+16|                              │   nit      A short file header woul…  accepted  
+17| assets:                      │                                                 
+18|     M  logo.png           bin│                                                 
+19| src:                         │                                                 
+20|     A  cart.ts      ✎2 +27 −0│                                                 
+21|     M  index.ts      ✎2 +9 −6│                                                 
+22|     D  legacy.ts        +0 −6│                                                 
+23|     M  math.ts         +14 −8│                                                 
+24|     R  text.ts          +2 −2│                                                 
+25| src/components:              │                                                 
+26|     A  Total.tsx        +5 −0│                                                 
+27|                              │                                                 
+28| <CR> show  ]c [c finding  ]] │                                                 
+29| ca accept  cn dismiss  ct tag│                                                 
+30| cA cN all of the run  cD dele│                                                 
+31| f filter  t tag filter  F cle│                                                 
+32| g? all keys                  │                                                 
+33|</files [-] 16,1           All <vuey://feature/cart..main [-] 1,1            Top
+34|                                                              10,1          All 
+
+--|---------|---------|---------|---------|---------|---------|---------|---------|
+01|00000000000121111111111111110000000000000000000000000000000000000000000000000000
+02|33333333333333333333333333333343555555555553366663333333333333333366333333333333
+03|22222222222777777778888888888849999999999999999999999999999999999999999999999999
+04|7777777777777777777777777777774::::::::::::::::::::::::::::::::::::::::::::::::4
+05|222222222277777777777;;;;;;;;;44444444444444444444444444444444444444444444444444
+06|44444444444477777777777777777749999999999999999999999999::::::::::::<<<<<<<<<<<4
+07|88888888888888888888888888888849994444444444444444444444444444444444444444444444
+08|88888888888888888888888888777749994444444444444444444444444444444444444444444444
+09|8888888888888888888888888888884444=========444444444444444444444444444>>>>>>>>>4
+10|8888888888888888888777777777774444<<<<<<<<<444444444444444444444444444>>>>>>>>>4
+11|77777777777777777777777777777744444444444444444444444444444444444444444444444444
+12|2222222222222222222277777777774?????????????????@@@@@@@@@@@@AAAAAAAAAAAAAAAAAAAB
+13|7777777777CCCDDDD888888877777749994444444444444444444444444444444444444444444444
+14|88888888888888888888888888888749994444444444444444444444444444444444444444444444
+15|;;;;;;;;;;;;;888888888888888774444>>>>>>>>>444444444444444444444444444>>>>>>>>>4
+16|7777777777777777777777777777774444EEEEEEEEE:::::::::::::::::::::::::44::::::::44
+17|7;;;;;;;77777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+18|GGGHGIJGBBBBBBBBGGGGGGGGGGG8884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+19|7;;;;77777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+20|777C7CK74444444777777;;;CCCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+21|777C7;K744444444777777;;;CCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+22|777C7DK744444444477777777CCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+23|777C7;K74444444777777777CCCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+24|777C7;K744444447777777777CCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+25|7;;;;;;;;;;;;;;;777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+26|777C7CK744444444477777777CCDDD4FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+27|7777777777777777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+28|8888888888888888888888888888884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+29|8888888888888888888888888888884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+30|8888888888888888888888888888884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+31|8888888888888888888888888888884FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+32|8888888888887777777777777777774FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+33|00000000000000000000000000000000000000000000000000000000000000000000000000000000
+34|LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL

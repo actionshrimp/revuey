@@ -6,11 +6,12 @@
 --     findings with bad anchors are dropped and counted;
 --   * import: each finding becomes an AI-authored local comment (comments.lua) whose anchor is
 --     exactly what a selection of the same diff rows would store, so it re-anchors like any
---     comment. Untouched findings of the previous review by the same author are replaced;
---     findings the user already triaged are not imported again;
+--     comment. Untouched findings of the previous run by the same reviewer and skill are
+--     replaced; findings the user already triaged are not imported again;
 --   * triage: accept (the comment becomes the user's own), dismiss / restore; the same for a
 --     coding agent's comments (`bin/revuey comment`), which are drafts for the user too;
---   * the review record (summary, verdict, counts, generator) next to the comments file;
+--   * the scope's runs (each run's summary, verdict, counts, generator) next to the comments
+--     file, and the findings grouped by run (the agent reviews view, `bin/revuey findings`);
 --   * skills: a SKILL.md read by revuey and passed to the model as guidance.
 -- Prompt text and schema live in ai_review_prompt.lua; the CLI call in ai.lua.
 local guide = require('revuey.guide')
@@ -269,31 +270,36 @@ function M.run_of(author, generator)
 end
 
 ---The reviewer identity of a run, for replacing: the connected agent by its name (provider
----`agent`), any other reviewer (a fresh run, an import without a request) by its name. So the
----agent and a fresh run never replace each other's findings, whatever the agent is called.
+---`agent`), any other reviewer (a fresh run, an import without a request) by its name, and the
+---skill it ran with. So the agent and a fresh run never replace each other's findings, whatever
+---the agent is called, and runs with different skills stay side by side.
 function M.run_key(run)
   run = run or {}
+  local skill = '\0' .. tostring(run.skill or '')
   if run.provider == 'agent' then
-    return 'agent\0' .. tostring(run.agent or run.name or '')
+    return 'agent\0' .. tostring(run.agent or run.name or '') .. skill
   end
-  return 'name\0' .. tostring(run.name or '')
+  return 'name\0' .. tostring(run.name or '') .. skill
 end
 
 ---The run of finding `c` (findings imported before `ai.run` existed: their author's name).
-local function finding_run(c)
+function M.finding_run(c)
   if type(c.ai) == 'table' and type(c.ai.run) == 'table' then
     return c.ai.run
   end
-  return { name = c.author and c.author.name or nil }
+  local a = type(c.ai) == 'table' and type(c.ai.author) == 'table' and c.ai.author or c.author
+  return { name = a and a.name or nil }
 end
+local finding_run = M.finding_run
 
----Untouched by the user: untriaged, no reply, never sent to an agent, no unsaved edit. A new
----review by the same reviewer (`who`: a run, M.run_of; compared with M.run_key) replaces these.
+---Untouched by the user: untriaged, no reply, never sent to an agent, no unsaved edit, no tag
+---set or removed since it was made. A new review by the same reviewer (`who`: a run, M.run_of;
+---compared with M.run_key) replaces these.
 function M.untouched(c, who)
   if not M.untriaged(c) or M.run_key(finding_run(c)) ~= M.run_key(who) then
     return false
   end
-  if c.sent_at or c.draft or c.reply_draft then
+  if c.sent_at or c.draft or c.reply_draft or require('revuey.tags').touched(c) then
     return false
   end
   for _, r in ipairs(c.thread or {}) do
@@ -337,6 +343,8 @@ end
 ---@field generator? table        provider, model, session_id, skill, agent, request, duration_ms...
 ---@field record_path string
 ---@field shown? {level?: string, abridged?: table<string, boolean>} what the prompt showed (validate)
+---@field tags? string[]          tags every new finding gets (cleaned: tags.clean_list)
+---@field started_at? integer     when the run started (ms; default: now - generator.duration_ms)
 ---@field now? integer
 
 ---Import a review document: validate it, replace the author's untouched findings of the last
@@ -374,8 +382,8 @@ function M.import(raw, o)
   -- have accepted, dismissed or answered a finding since this store was loaded
   pcall(comments.reload, store)
   local id = comments.new_id(now)
-  -- which run makes these findings (kept on each: the record holds only the scope's latest
-  -- review), and whose untouched findings it replaces
+  -- which run makes these findings (kept on each, and on the run's record), and whose
+  -- untouched findings it replaces
   local run = M.run_of(o.author, o.generator)
   local replaced, triaged = {}, {}
   for cid, c in pairs(store.comments) do
@@ -409,6 +417,9 @@ function M.import(raw, o)
         end_line = f.end_line,
         run = vim.deepcopy(run),
       }
+      if o.tags and #o.tags > 0 then
+        c = require('revuey.tags').apply(c, o.tags, true, now) or c
+      end
       comments.put(store, c, now)
       created[#created + 1] = c
     end
@@ -436,11 +447,15 @@ function M.import(raw, o)
   for _, c in ipairs(created) do
     comments.append_event(o.events, comments.event('created', comments.get(store, c.id) or c, o.info, nil, now))
   end
+  local gen = vim.tbl_extend('keep', o.generator or {}, { generated_at = math.floor(now / 1000) })
   local rec = {
     kind = 'revuey-ai-review',
     version = M.VERSION,
     id = id,
     author = o.author,
+    run = run,
+    started_at = o.started_at or (tonumber(gen.duration_ms) and (now - math.floor(gen.duration_ms))) or nil,
+    finished_at = now,
     summary = doc.summary,
     verdict = doc.verdict,
     findings = #doc.findings,
@@ -451,10 +466,11 @@ function M.import(raw, o)
     warnings = w,
     anchors = anchors,
     review = o.info,
-    generator = vim.tbl_extend('keep', o.generator or {}, { generated_at = math.floor(now / 1000) }),
+    tags = o.tags and #o.tags > 0 and o.tags or nil,
+    generator = gen,
   }
   -- the findings are saved: a record that cannot be written is reported, never undoes them
-  local ok, serr = pcall(M.save_record, o.record_path, rec)
+  local ok, serr = pcall(M.add_run, o.record_path, rec, M.live_runs(store))
   if not ok then
     rec.record_error = tostring(serr)
   end
@@ -583,14 +599,21 @@ function M.toggle_dismiss(store, id, now)
 end
 
 -- ---------------------------------------------------------------------------
--- Review record: <state file>.ai-review.json, next to the comments file (the latest review)
+-- Review runs: <state file>.ai-review.json, next to the comments file. Every run of the scope
+-- (fresh sessions, the connected agent, imports), oldest first, each with its summary, verdict
+-- and counts; its findings point at it (`ai.review` = the run's id). Version 1 held one record
+-- (the latest review): it is read as a list of that one run.
 -- ---------------------------------------------------------------------------
+
+M.RUNS_KIND = 'revuey-ai-reviews'
+M.RUNS_VERSION = 2
+M.MAX_RUNS = 30
 
 function M.record_path(comments_path)
   return (comments_path:gsub('%.comments%.json$', '')) .. '.ai-review.json'
 end
 
----Write atomically (temp file + rename). Errors on failure.
+---Write a JSON value atomically (temp file + rename). Errors on failure.
 function M.save_record(path, rec)
   vim.fn.mkdir(vim.fs.dirname(path), 'p')
   local tmp = ('%s.tmp.%d.%d'):format(path, vim.uv.os_getpid(), math.random(0, 0xffffff))
@@ -611,16 +634,9 @@ function M.save_record(path, rec)
   end
 end
 
----The stored review record, sanitised, or nil.
-function M.read_record(path)
-  local fd = io.open(path, 'r')
-  if not fd then
-    return nil
-  end
-  local text = fd:read('*a')
-  fd:close()
-  local ok, rec = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
-  if not ok or type(rec) ~= 'table' or rec.kind ~= 'revuey-ai-review' then
+---One run record, sanitised (nil when it is not one).
+local function clean_run(rec)
+  if type(rec) ~= 'table' or type(rec.id) ~= 'string' then
     return nil
   end
   rec.summary = guide.clean_text(rec.summary)
@@ -630,7 +646,247 @@ function M.read_record(path)
   for _, k in ipairs({ 'findings', 'imported', 'dropped', 'skipped', 'replaced' }) do
     rec[k] = tonumber(rec[k]) or 0
   end
+  if type(rec.run) ~= 'table' then
+    -- a version 1 record: its run from its author and generator
+    rec.run = M.run_of(rec.author, rec.generator)
+  end
+  rec.finished_at = tonumber(rec.finished_at) or ((tonumber(rec.generator.generated_at) or 0) * 1000)
+  rec.started_at = tonumber(rec.started_at)
+  rec.tags = type(rec.tags) == 'table' and require('revuey.tags').clean_list(rec.tags) or nil
   return rec
+end
+
+---The runs stored at `path`, oldest first ({} without any). A version 1 file is one run, marked
+---`migrated` (findings without `ai.run` belong to it).
+---@return table[] runs
+function M.read_runs(path)
+  local fd = io.open(path, 'r')
+  if not fd then
+    return {}
+  end
+  local text = fd:read('*a')
+  fd:close()
+  local ok, data = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
+  if not ok or type(data) ~= 'table' then
+    return {}
+  end
+  local list = {}
+  if data.kind == 'revuey-ai-review' then
+    local rec = clean_run(data)
+    if rec then
+      rec.migrated = true
+      list[1] = rec
+    end
+  elseif data.kind == M.RUNS_KIND and type(data.runs) == 'table' then
+    for _, r in ipairs(data.runs) do
+      local rec = clean_run(r)
+      if rec then
+        list[#list + 1] = rec
+      end
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.finished_at ~= b.finished_at then
+      return a.finished_at < b.finished_at
+    end
+    return a.id < b.id
+  end)
+  return list
+end
+
+---The latest run at `path`, or nil.
+function M.read_record(path)
+  local list = M.read_runs(path)
+  return list[#list]
+end
+
+---The run ids live comments of `store` point at (`ai.review`), and whether any live finding has
+---no `ai.run` (from before runs: it belongs to a migrated record).
+---@return table<string, true> ids
+function M.live_runs(store)
+  local ids = {}
+  for _, c in pairs(store.comments) do
+    if not c.deleted and type(c.ai) == 'table' then
+      if c.ai.review then
+        ids[c.ai.review] = true
+      end
+      if type(c.ai.run) ~= 'table' then
+        ids['\0legacy'] = true
+      end
+    end
+  end
+  return ids
+end
+
+---Keep what is worth keeping: a run is dropped when a later run of the same identity (run_key)
+---exists and no live finding points at it any more (its findings were all replaced or deleted);
+---then the oldest past MAX_RUNS.
+function M.prune_runs(list, live)
+  local latest = {}
+  for i, r in ipairs(list) do
+    latest[M.run_key(r.run)] = i
+  end
+  local out = {}
+  for i, r in ipairs(list) do
+    local used = live[r.id] or (r.migrated and live['\0legacy'])
+    if used or latest[M.run_key(r.run)] == i then
+      out[#out + 1] = r
+    end
+  end
+  while #out > M.MAX_RUNS do
+    table.remove(out, 1)
+  end
+  return out
+end
+
+local queued = {} ---@type table<string, fun(list: table[]): table[]>[] changes waiting for a busy lock
+
+---Change the runs at `path` under its lock: `fn(list)` returns the new list. In the UI a busy
+---lock queues the change for a retry (every queued change is applied, in order).
+local function change_runs(path, fn)
+  local lock = require('revuey.lock')
+  queued[path] = queued[path] or {}
+  table.insert(queued[path], fn)
+  return lock.save(path, function()
+    return lock.with(path, function()
+      local list = M.read_runs(path)
+      local fns = queued[path] or {}
+      queued[path] = nil
+      for _, f in ipairs(fns) do
+        list = f(list)
+      end
+      for _, r in ipairs(list) do
+        r.migrated = nil
+      end
+      M.save_record(path, { kind = M.RUNS_KIND, version = M.RUNS_VERSION, runs = list })
+    end)
+  end)
+end
+
+---Add run `rec` to the scope's runs (replacing one with its id) and prune (`live`: M.live_runs).
+---Errors on a failed write (the UI defers it on a busy lock).
+function M.add_run(path, rec, live)
+  return change_runs(path, function(list)
+    local out = {}
+    for _, r in ipairs(list) do
+      if r.id ~= rec.id then
+        out[#out + 1] = r
+      end
+    end
+    out[#out + 1] = vim.deepcopy(rec)
+    return M.prune_runs(out, live or {})
+  end)
+end
+
+---Remove run `id` from the scope's runs.
+function M.remove_run(path, id)
+  return change_runs(path, function(list)
+    return vim.tbl_filter(function(r)
+      return r.id ~= id
+    end, list)
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Findings by run: the agent reviews view and `bin/revuey findings`
+-- ---------------------------------------------------------------------------
+
+---Where a finding or agent comment stands: 'untriaged', 'accepted' (also accepted and resolved
+---since), 'dismissed', 'resolved' (resolved before it was triaged).
+function M.triage_status(c)
+  if c.status == 'dismissed' then
+    return 'dismissed'
+  elseif M.accepted_from(c) or c.status == 'accepted' then
+    return 'accepted'
+  elseif c.status == 'resolved' then
+    return 'resolved'
+  end
+  return 'untriaged'
+end
+
+M.STATUSES = { 'untriaged', 'accepted', 'dismissed', 'resolved' }
+
+---Who ran a run, for people: "claude (connected)" for the connected agent, "claude · opus" for a
+---fresh session with its model, an import's reviewer name.
+function M.run_who(run)
+  run = run or {}
+  local clean = require('revuey.requests').clean_name
+  if run.provider == 'agent' then
+    return (clean(run.agent or run.name) or 'agent') .. ' (connected)'
+  end
+  local name = clean(run.name) or clean(run.provider) or 'AI'
+  if run.model and run.model ~= '' then
+    return name .. ' · ' .. guide.one_line(run.model)
+  end
+  return name
+end
+
+---The groups of findings by run, newest run first: {id, run (the record, or one made from the
+---findings), record?, findings, counts}. Findings whose run record is gone are grouped by their
+---`ai.review` under a record made from their `ai.run`; findings from before runs go to the
+---migrated record when there is one; a coding agent's comments are a group per agent.
+---@param runs table[] M.read_runs
+---@param list table[] live comments
+function M.groups(runs, list)
+  local by_id, order = {}, {}
+  local migrated
+  for _, r in ipairs(runs) do
+    by_id[r.id] = { id = r.id, record = r, run = r.run, findings = {}, at = r.finished_at or 0 }
+    if r.migrated then
+      migrated = by_id[r.id]
+    end
+  end
+  for _, c in ipairs(list) do
+    local origin = M.origin(c)
+    local g
+    if origin == 'ai' then
+      local rid = c.ai.review
+      g = rid and by_id[rid]
+      if not g and type(c.ai.run) ~= 'table' and migrated then
+        g = migrated
+      end
+      if not g then
+        local key = rid or ('\0' .. M.run_key(finding_run(c)))
+        g = by_id[key]
+        if not g then
+          g = { id = key, run = finding_run(c), findings = {}, at = 0, orphan = true }
+          by_id[key] = g
+        end
+      end
+    elseif origin == 'agent' then
+      local a = (type(c.agent) == 'table' and c.agent.author) or c.author or {}
+      local key = 'agent:' .. tostring(a.name or 'agent')
+      g = by_id[key]
+      if not g then
+        g = { id = key, run = { name = a.name or 'agent', provider = 'comments' }, findings = {}, at = 0, comments = true }
+        by_id[key] = g
+      end
+    end
+    if g then
+      g.findings[#g.findings + 1] = c
+      g.at = math.max(g.at, c.created_at or 0)
+    end
+  end
+  for _, g in pairs(by_id) do
+    if g.record or #g.findings > 0 then
+      g.counts = { untriaged = 0, accepted = 0, dismissed = 0, resolved = 0 }
+      for _, c in ipairs(g.findings) do
+        local st = M.triage_status(c)
+        g.counts[st] = g.counts[st] + 1
+      end
+      order[#order + 1] = g
+    end
+  end
+  table.sort(order, function(a, b)
+    if (a.comments or false) ~= (b.comments or false) then
+      return not a.comments -- the agent's comments after the reviews
+    end
+    if a.at ~= b.at then
+      return a.at > b.at
+    end
+    return a.id < b.id
+  end)
+  return order
 end
 
 -- ---------------------------------------------------------------------------

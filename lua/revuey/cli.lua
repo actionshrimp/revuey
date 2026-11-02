@@ -124,13 +124,22 @@ For coding agents (no UI; run inside the reviewed worktree):
       Several reviews in this worktree: pick one with --session <id> (see `revuey sessions`).
   revuey show <id>               the message in Markdown: file, lines, code, comment, thread
   revuey reply <id> <text|->     answer in the comment's thread (- reads stdin); marks it answered
-  revuey comment --path <path> --line N [--end M] [--side new|old] [--session <id>] <text|->
-  revuey comment --path <path> --file [--session <id>] <text|->
+  revuey comment --path <path> --line N [--end M] [--side new|old] [--tag <tag>]... [--session <id>] <text|->
+  revuey comment --path <path> --file [--tag <tag>]... [--session <id>] <text|->
       leave a new comment in the review (local only, never posted anywhere): on lines of the
       diff (new: the code after the change, the default; old: deleted lines), which must be
       inside a hunk on that side, or on a whole changed file (--file). Prints the comment id
       and where it went. Same review as watch: the only live one, else --session <id>; with
       none running, the review `revuey` would open here.
+      --tag <tag> (repeatable) tags it on creation.
+  revuey findings [--run <id>] [--tag <tag>]... [--status untriaged|accepted|dismissed|resolved]
+                  [--json] [--session <id>]
+      the AI review findings and agents' comments in the review, by run (newest first): each run's
+      id, who ran it (with which skill), verdict, counts, and each finding's id, status,
+      severity, location, title and tags. Same review as comment.
+  revuey tag <comment-id> <tag>... [--remove] [--session <id>]
+      add tags to a finding or comment (--remove: take them off), to group or label them; tags
+      are lower case letters, digits, . _ - (a finding is tagged by its skill or run already)
   revuey hunks [--json] [--prompt | --stat | --path <path>...] [--session <id>]
       the review's hunks, each under its id (`@@ h7 path @@`) with its lines numbered within
       the hunk (`3|+code`), and the diff hash; --prompt prints the whole prompt revuey's own
@@ -142,13 +151,14 @@ For coding agents (no UI; run inside the reviewed worktree):
   revuey hunks --prompt --request <id> [--session <id>]
       take the user's review request: the instructions (adapted for you, with the text of the
       skill the request names), the diff and its hash; the review shows that you started
-  revuey import-review [--request <id>] [--name <reviewer>] [--session <id>] <file|->
+  revuey import-review [--request <id>] [--name <reviewer>] [--tag <tag>]... [--session <id>] <file|->
       import a review (JSON: summary, verdict, findings anchored to a hunk id and line numbers
       of that hunk; `--schema` prints the JSON schema; an optional "diff" must match the hash
       `hunks` printed, and is required with --request). Each finding becomes an AI comment for
       the user to accept or dismiss (local only, never posted). Findings with bad anchors are
       dropped and counted; untouched findings of the reviewer's previous import are replaced.
-      --request marks the request done and the running review shows the findings.
+      --request marks the request done and the running review shows the findings. Each import
+      is a run (its id is printed); --tag (repeatable) tags every finding of it.
   revuey guide [--json] [--session <id>]
       the guide the review shows now, in Markdown: title, summary, each section's prose, hunk ids
       (as `hunks` prints them), hunk and line notes, who generated it and whether the diff changed
@@ -186,7 +196,12 @@ local VALUE_FLAGS = {
   ['--side'] = 'side',
   ['--name'] = 'name',
   ['--request'] = 'request',
+  ['--tag'] = 'tag',
+  ['--run'] = 'run',
+  ['--status'] = 'status',
 }
+-- value flags that may be repeated: every value is kept, in order (o.<name>s)
+local LIST_FLAGS = { ['--path'] = 'paths', ['--tag'] = 'tags' }
 local BOOL_FLAGS = {
   ['--json'] = 'json',
   ['--all'] = 'all',
@@ -198,6 +213,7 @@ local BOOL_FLAGS = {
   ['--schema'] = 'schema',
   ['--prompt'] = 'prompt',
   ['--stat'] = 'stat',
+  ['--remove'] = 'remove',
 }
 
 ---@return table opts, string[] positional
@@ -220,9 +236,9 @@ function M.parse(args)
         die(a .. ' needs a value\n' .. M.USAGE, 2)
       end
       o[VALUE_FLAGS[a]] = args[i + 1]
-      if a == '--path' then
-        o.paths = o.paths or {}
-        table.insert(o.paths, args[i + 1])
+      if LIST_FLAGS[a] then
+        o[LIST_FLAGS[a]] = o[LIST_FLAGS[a]] or {}
+        table.insert(o[LIST_FLAGS[a]], args[i + 1])
       end
       i = i + 1
     elseif a:match('^%-%-[%w-]+=') then
@@ -231,9 +247,9 @@ function M.parse(args)
         die('unknown option ' .. k .. '\n' .. M.USAGE, 2)
       end
       o[VALUE_FLAGS[k]] = v
-      if k == '--path' then
-        o.paths = o.paths or {}
-        table.insert(o.paths, v)
+      if LIST_FLAGS[k] then
+        o[LIST_FLAGS[k]] = o[LIST_FLAGS[k]] or {}
+        table.insert(o[LIST_FLAGS[k]], v)
       end
     elseif BOOL_FLAGS[a] then
       o[BOOL_FLAGS[a]] = true
@@ -427,6 +443,16 @@ local function save(store)
   if not ok then
     die(tostring(e))
   end
+end
+
+---The `--tag` values, cleaned (tags.lua), or exit 2 on one that cleans to nothing.
+local function option_tags(o)
+  local tags = require('revuey.tags')
+  local list, bad = tags.clean_list(o.tags or {})
+  if #bad > 0 then
+    die(('not a tag: %s (letters, digits, . _ -; at most %d characters)'):format(table.concat(bad, ' '), tags.MAX_LEN), 2)
+  end
+  return list
 end
 
 function M.reply(o, pos)
@@ -1315,6 +1341,14 @@ function M.comment(o, pos)
     die(err)
   end
   local c = comments.new(anchor, text, { author = agent_author() })
+  local tag_list = option_tags(o)
+  if #tag_list > 0 then
+    local tagged, terr = require('revuey.tags').apply(c, tag_list, true, c.created_at)
+    if not tagged then
+      die(terr, 2)
+    end
+    c = tagged
+  end
   local store = comments.load(cpath)
   comments.put(store, c)
   local ok, serr = pcall(comments.save, store, info)
@@ -1323,6 +1357,196 @@ function M.comment(o, pos)
   end
   comments.append_event(epath, comments.event('created', comments.get(store, c.id) or c, info))
   out(('%s\ncommented on %s (%s) in %s\n'):format(c.id, comments.location(c), c.file_level and 'file' or anchor.side, where_text(info, attached)))
+  if #tag_list > 0 then
+    out('tagged ' .. require('revuey.tags').text(tag_list) .. '\n')
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Tags and findings: the AI findings and agent comments of the review, by run (ai_review.lua),
+-- and their tags (tags.lua)
+-- ---------------------------------------------------------------------------
+
+---The comments file of the review `comment` would use: the attached session's (its current
+---scope), else the review `revuey` would open here (loaded).
+local function review_comments_path(o, ctx)
+  local attached = pick_session(o, ctx, live_sessions(o, ctx))
+  if attached and type(attached.comments) == 'string' and attached.comments ~= '' then
+    return attached.comments, attached
+  end
+  local _, _, cpath = comment_review(o, ctx, attached)
+  return cpath, attached
+end
+
+function M.tag(o, pos)
+  local usage = 'usage: revuey tag <comment-id> <tag>... [--remove] [--session <id>]'
+  local id = pos[1]
+  if not id or #pos < 2 then
+    die('tag needs a comment id and at least one tag\n' .. usage, 2)
+  end
+  local tags = require('revuey.tags')
+  local list, bad = tags.clean_list(vim.list_slice(pos, 2))
+  if #bad > 0 then
+    die(('not a tag: %s (letters, digits, . _ -; at most %d characters)'):format(table.concat(bad, ' '), tags.MAX_LEN), 2)
+  end
+  local e, c
+  if o.session then
+    local ctx = here(o)
+    local cpath = review_comments_path(o, ctx)
+    local store = comments.load(cpath)
+    c = comments.get(store, id)
+    if not c then
+      local found = {}
+      for cid, x in pairs(store.comments) do
+        if not x.deleted and cid:find(id, 1, true) then
+          found[#found + 1] = x
+        end
+      end
+      if #found ~= 1 then
+        die(#found == 0 and ('no comment %s in session %s\'s review'):format(id, o.session) or ('comment id %s is ambiguous'):format(id))
+      end
+      c = found[1]
+    end
+    e = { path = cpath, store = store }
+  else
+    e, c = find_comment(o, id)
+  end
+  local now = comments.now_ms()
+  local updated, changed = tags.apply(c, list, not o.remove, now)
+  if not updated then
+    die(changed)
+  end
+  if changed then
+    comments.put(e.store, updated, now)
+    save(e.store)
+    local cur = comments.get(e.store, c.id) or updated
+    comments.append_event(events_path(e.path), comments.event('tagged', cur, e.store.review, { tags = tags.of(cur) }))
+    c = cur
+  end
+  local shown = tags.of(c)
+  out(('%s %s: %s\n'):format(c.id, changed and 'tagged' or 'unchanged', #shown > 0 and tags.text(shown) or '(no tags)'))
+end
+
+---One finding for `findings --json`.
+local function finding_json(c)
+  local ai_review = require('revuey.ai_review')
+  local a = c.anchor or {}
+  return {
+    id = c.id,
+    status = ai_review.triage_status(c),
+    severity = c.ai and c.ai.severity or nil,
+    title = c.ai and c.ai.title or comments.first_line(c.body),
+    path = a.path,
+    side = not c.file_level and a.side or nil,
+    start_line = a.start_line,
+    end_line = a.end_line,
+    file_level = c.file_level or false,
+    tags = require('revuey.tags').of(c),
+    author = c.author,
+    body = c.body,
+  }
+end
+
+function M.findings(o)
+  local ai_review = require('revuey.ai_review')
+  local tags = require('revuey.tags')
+  if o.status and not vim.tbl_contains(ai_review.STATUSES, o.status) then
+    die(('--status is one of %s, not %s'):format(table.concat(ai_review.STATUSES, ', '), o.status), 2)
+  end
+  local tag_list = option_tags(o)
+  local ctx = here(o)
+  local cpath = review_comments_path(o, ctx)
+  local store = comments.load(cpath, { readonly = true })
+  local live = {}
+  for _, c in ipairs(comments.list(store, { include_resolved = true, include_drafts = true })) do
+    if ai_review.origin(c) then
+      live[#live + 1] = c
+    end
+  end
+  local groups = ai_review.groups(ai_review.read_runs(ai_review.record_path(cpath)), live)
+  if o.run then
+    local hits = vim.tbl_filter(function(g)
+      return g.id == o.run or g.id:find(o.run, 1, true) ~= nil
+    end, groups)
+    if #hits == 0 then
+      die(('no run %s in this review (%d run%s)'):format(o.run, #groups, #groups == 1 and '' or 's'))
+    elseif #hits > 1 then
+      die(('run id %s is ambiguous: %s'):format(o.run, table.concat(vim.tbl_map(function(g)
+        return g.id
+      end, hits), ', ')))
+    end
+    groups = hits
+  end
+  local function keep(c)
+    if o.status and ai_review.triage_status(c) ~= o.status then
+      return false
+    end
+    for _, t in ipairs(tag_list) do
+      if not tags.has(c, t) then
+        return false
+      end
+    end
+    return true
+  end
+  local result = {}
+  for _, g in ipairs(groups) do
+    local list = vim.tbl_filter(keep, g.findings)
+    if #list > 0 or (not o.status and #tag_list == 0) then
+      result[#result + 1] = { g = g, list = list }
+    end
+  end
+  if o.json then
+    local runs = {}
+    for _, x in ipairs(result) do
+      local g, rec, run = x.g, x.g.record or {}, x.g.run or {}
+      runs[#runs + 1] = {
+        id = g.id,
+        kind = g.comments and 'comments' or 'review',
+        who = g.comments and ((run.name or 'agent') .. ' (agent comments)') or ai_review.run_who(run),
+        name = run.name, provider = run.provider, agent = run.agent, model = run.model, skill = run.skill, request = run.request,
+        started_at = rec.started_at, finished_at = rec.finished_at,
+        summary = rec.summary, verdict = rec.verdict,
+        counts = g.counts,
+        findings = vim.tbl_map(finding_json, x.list),
+      }
+    end
+    out(vim.json.encode({ comments = cpath, runs = runs }) .. '\n')
+    return
+  end
+  if #result == 0 then
+    out(#groups == 0 and 'no AI review findings or agent comments in this review\n' or 'no finding matches\n')
+    return
+  end
+  local lines = {}
+  for i, x in ipairs(result) do
+    local g, rec, run = x.g, x.g.record, x.g.run or {}
+    if i > 1 then
+      lines[#lines + 1] = ''
+    end
+    local who = g.comments and ((require('revuey.requests').clean_name(run.name) or 'agent') .. ' (agent comments)') or ai_review.run_who(run)
+    local parts = { 'run ' .. g.id, who }
+    if run.skill then
+      parts[#parts + 1] = 'skill ' .. require('revuey.guide').one_line(run.skill)
+    end
+    if rec then
+      parts[#parts + 1] = ai_review.VERDICT_LABEL[rec.verdict] or rec.verdict
+      if rec.finished_at and rec.finished_at > 0 then
+        parts[#parts + 1] = os.date('%Y-%m-%d %H:%M', math.floor(rec.finished_at / 1000))
+      end
+    end
+    local n = g.counts
+    parts[#parts + 1] = ('%d untriaged, %d accepted, %d dismissed'):format(n.untriaged, n.accepted, n.dismissed)
+    lines[#lines + 1] = table.concat(parts, ' · ')
+    if rec and rec.summary ~= '' then
+      lines[#lines + 1] = '  ' .. comments.first_line(rec.summary)
+    end
+    for _, c in ipairs(x.list) do
+      local tg = tags.text(tags.of(c))
+      lines[#lines + 1] = ('  %s  %-9s %-8s %s  %s%s'):format(c.id, ai_review.triage_status(c), c.ai and c.ai.severity or 'comment',
+        comments.location(c), require('revuey.guide').one_line(c.ai and c.ai.title or comments.first_line(c.body)), tg ~= '' and ('  ' .. tg) or '')
+    end
+  end
+  out(table.concat(lines, '\n') .. '\n')
 end
 
 ---The stack of a review loaded from a session's `load` record (which has the diff, not the stack
@@ -1679,6 +1903,7 @@ function M.import_review(o, pos)
   local ai_review = require('revuey.ai_review')
   local requests = require('revuey.requests')
   local guide = require('revuey.guide')
+  local tag_list = option_tags(o)
   local req = o.request and take_request(o, here(o), 'review', 'nothing imported', true) or nil
   local r, hunks, info, cpath, epath, attached = review_hunks(o)
   local source = pos[1] == '-' and 'stdin' or pos[1]
@@ -1714,6 +1939,8 @@ function M.import_review(o, pos)
       author = { kind = 'ai', name = name },
       record_path = ai_review.record_path(cpath),
       generator = generator,
+      tags = tag_list,
+      started_at = req and tonumber(req.acked_at or req.at) or nil,
     })
   end
   local ok, rec, ierr
@@ -1762,6 +1989,8 @@ function M.import_review(o, pos)
   if rec.replaced > 0 then
     out(('%d untriaged finding%s of the previous review replaced\n'):format(rec.replaced, rec.replaced == 1 and '' or 's'))
   end
+  out(('run %s%s: list its findings with `%s findings --run %s`\n'):format(rec.id,
+    #tag_list > 0 and (', tagged ' .. require('revuey.tags').text(tag_list)) or '', bin(), rec.id))
   if rec.record_error then
     err(('revuey: the findings were imported, but the review record (summary, verdict) was not saved: %s\n'):format(rec.record_error))
   end
@@ -2208,6 +2437,8 @@ local COMMANDS = {
   comments = M.comments,
   reply = M.reply,
   comment = M.comment,
+  tag = M.tag,
+  findings = M.findings,
   watch = M.watch,
   sessions = M.sessions,
   show = M.show,

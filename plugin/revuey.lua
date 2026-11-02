@@ -120,6 +120,34 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command('RevueyAIReviews', function()
+  require('revuey').ai_reviews()
+end, { desc = 'The agent reviews view: AI findings and agent comments grouped by run, with filters' })
+
+vim.api.nvim_create_user_command('RevueyTag', function(cmd)
+  require('revuey').tag(cmd.fargs, cmd.bang)
+end, {
+  nargs = '*',
+  bang = true,
+  desc = 'Tag the comment under the cursor (in the agent reviews view, on a run: all its findings): tag... adds, -tag removes, ! removes the tags given; none: an input',
+  complete = function(arg)
+    local s = package.loaded['revuey.view'] and package.loaded['revuey.view'].session
+    local list = {}
+    if s and s.cm and s.cm.store then
+      local all = require('revuey.comments').list(s.cm.store, { include_resolved = true, include_drafts = true })
+      for _, x in ipairs(require('revuey.tags').in_use(all)) do
+        list[#list + 1] = x.tag
+      end
+    end
+    local sign = arg:match('^[+-]') or ''
+    return vim.tbl_map(function(x)
+      return sign .. x
+    end, vim.tbl_filter(function(x)
+      return vim.startswith(sign .. x, arg)
+    end, list))
+  end,
+})
+
 vim.api.nvim_create_user_command('RevueyComments', function()
   require('revuey').comments()
 end, { desc = 'The comments view of the open review: every thread in one list (<CR> shows one)' })

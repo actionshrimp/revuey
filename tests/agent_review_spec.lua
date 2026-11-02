@@ -515,7 +515,8 @@ h.test('the replace confirmation counts what the import replaces: the agent\'s o
   h.ok(connected(), 'connected')
   local agent_n, fresh_n = 0, 0
   for _, c in pairs(findings()) do
-    if require('revuey.ai_review').untouched(c, arv.run_for('claude')) then
+    -- the skill is part of the run's identity: the agent's findings so far are fixture-strict's
+    if require('revuey.ai_review').untouched(c, arv.run_for('claude', 'fixture-strict')) then
       agent_n = agent_n + 1
     end
     if require('revuey.ai_review').untouched(c, arv.run_for()) then
@@ -525,7 +526,7 @@ h.test('the replace confirmation counts what the import replaces: the agent\'s o
   h.ok(agent_n > 0 and fresh_n > 0, ('agent %d, fresh %d'):format(agent_n, fresh_n))
   local before = n_requests()
   answer('Ask claude (connected)', 'Cancel')
-  view.ai_review_command(false)
+  view.ai_review_command(false, 'fixture-strict')
   h.eq(2, #asked)
   h.eq(('Run a new AI review (ask claude, the connected agent)? %d untriaged finding%s of the last one will be replaced'):format(agent_n, agent_n == 1 and '' or 's'), asked[2].prompt)
   h.eq(0, #answers, 'both answers used')
@@ -535,9 +536,19 @@ h.test('the replace confirmation counts what the import replaces: the agent\'s o
   h.eq(('Run a new AI review (claude)? %d untriaged finding%s of the last one will be replaced'):format(fresh_n, fresh_n == 1 and '' or 's'), asked[2].prompt)
   h.eq(0, #answers)
   h.eq(nil, arv.job(s))
+  -- the agent without the skill is another run: it replaces none of them, nothing is asked
+  answer('Ask claude (connected)', 'Cancel')
+  view.ai_review_command(false)
+  h.eq(1, #asked, 'only who reviews')
+  h.eq(before + 1, n_requests())
+  view.ai_review_command(false, 'cancel')
+  h.ok(vim.wait(5000, function()
+    return arv.job(s) == nil
+  end, 20), 'the wait did not end')
+  before = n_requests()
   -- confirmed: the request goes out
   answer('Ask claude (connected)', 'Run a new AI review')
-  view.ai_review_command(false)
+  view.ai_review_command(false, 'fixture-strict')
   h.eq(before + 1, n_requests())
   local req = last_request()
   -- the agent imports under the name its prompt gives: exactly the counted findings go

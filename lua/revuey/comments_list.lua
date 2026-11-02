@@ -28,7 +28,7 @@ local UNCOMMITTED = require('revuey.attribution').UNCOMMITTED
 
 -- Above the stack tree (40, its footer 41), so the view opened from inside the tree shows; below
 -- the comment editor and other floats (50 and up).
-M.ZINDEX = 45
+M.ZINDEX = require('revuey.list_float').ZINDEX
 
 local function key(name)
   return require('revuey.keys').first(name)
@@ -326,7 +326,8 @@ end
 ---line (where, status, why it is not on its line, the code there) and the thread box the diff
 ---draws (comments_view.thread_lines: author, chips, body wrapped to the width, replies).
 ---`o.cut`: where a thread cut short is recorded (the host's own set; `cz` expands it).
----@param o {width:integer, compact?:boolean, indent?:string, cut?:table<string, true>}
+---`o.no_tags`: the tags are left out of the location line (a host that shows them itself).
+---@param o {width:integer, compact?:boolean, indent?:string, cut?:table<string, true>, no_tags?:boolean}
 ---@return table[] lines
 function M.thread_lines(s, e, o)
   local indent = o.indent or '  '
@@ -340,6 +341,13 @@ function M.thread_lines(s, e, o)
     used = used + 3 + width_of(why)
   end
   local c = e.c
+  -- its tags (AI findings and agent comments: the skill or run, and the ones set)
+  local tg = not c.forge and require('revuey.tags').text(require('revuey.tags').of(c)) or ''
+  if tg ~= '' and not o.no_tags then
+    tg = cut(tg, math.max(width - used - 2, 8))
+    head[#head + 1] = { '  ' .. tg, 'RevueyCommentTag' }
+    used = used + 2 + width_of(tg)
+  end
   if o.compact then
     local who = cv().author_label(c.author)
     local first = comments.first_line(c.body):gsub('^%*%*(.-)%*%*$', '%1')
@@ -396,12 +404,25 @@ function M.build(s, o)
   o.cut = o.cut or {}
   local entries = M.entries(s)
   local n = M.counts(entries)
+  -- the agent reviews view's tag filter applies here too (`t` picks it, `F` clears it)
+  local tf = require('revuey.ai_reviews_view').filter(s).tag
+  if tf then
+    local tags = require('revuey.tags')
+    entries = vim.tbl_filter(function(e)
+      return not e.c.forge and tags.has(e.c, tf)
+    end, entries)
+  end
   local out = {}
   local function line(chunks, id)
     out[#out + 1] = { chunks = chunks, id = id }
   end
   local scope = require('revuey.guide_view').scope_title(s.review)
   line({ { ' ' .. counts_text(n), 'RevueyCommentsHeader' } })
+  if tf then
+    local kt, kc = key('reviews_tag_filter'), key('reviews_clear_filter')
+    line({ { ' Only #' .. tf .. ' (' .. #entries .. ')', 'RevueyCommentTag' },
+      { (kt and ('  ' .. kt .. ' another tag') or '') .. (kc and ('  ' .. kc .. ' all') or ''), 'RevueyCommentMeta' } })
+  end
   local fv = require('revuey.forge_view')
   if fv.has_threads(s) then
     local show = s.cm and s.cm.forge_show or 'all'
@@ -418,7 +439,9 @@ function M.build(s, o)
     end
   end
   line({ { '' } })
-  if #entries == 0 then
+  if #entries == 0 and tf then
+    line({ { ' No comment tagged #' .. tf .. '.', 'RevueyCommentMeta' } })
+  elseif #entries == 0 then
     local k = key('comment_add') or 'gc'
     line({ { ' No comments' .. (scope and (' in ' .. scope) or '') .. ' yet: ' .. k .. ' on a line (or a selection) adds one.', 'RevueyCommentMeta' } })
   end
@@ -476,12 +499,13 @@ function M.texts(s, width)
 end
 
 -- ---------------------------------------------------------------------------
--- The view (a float over the diff window)
+-- The view (a float over the diff window: list_float.lua)
 -- ---------------------------------------------------------------------------
 
+local F = require('revuey.list_float')
+
 local function valid(s)
-  local v = s and s.clist
-  return v and api.nvim_win_is_valid(v.win) and api.nvim_buf_is_valid(v.buf) and v or nil
+  return F.valid(s, 'clist')
 end
 
 ---Is the comments view open for session `s`?
@@ -489,110 +513,32 @@ function M.active(s)
   return valid(s) ~= nil
 end
 
----Where the view goes: the diff window's text area (a float relative to a window starts below
----its winbar).
-local function geometry(s)
-  local w, hgt = api.nvim_win_get_width(s.diff_win), api.nvim_win_get_height(s.diff_win)
-  local info = vim.fn.getwininfo(s.diff_win)[1]
-  hgt = hgt - ((info and info.winbar) or 0)
-  return { relative = 'win', win = s.diff_win, row = 0, col = 0, width = w, height = math.max(hgt, 1) }
-end
+local at_cursor = F.at_cursor
 
-local function redraw_winbar(s)
-  if #api.nvim_list_uis() > 0 and s.diff_win and api.nvim_win_is_valid(s.diff_win) then
-    pcall(api.nvim__redraw, { win = s.diff_win, winbar = true })
-  end
-end
-
----The thread under the view's cursor: its id and first and last rows.
-local function at_cursor(v)
-  local row = api.nvim_win_get_cursor(v.win)[1]
-  local id = v.rows[row]
-  if not id then
-    return nil
-  end
-  local r = v.blocks[id]
-  return id, r.first, r.last, row
-end
-
----Draw the list into the view's buffer (every comments render while it is open). The cursor
----stays on the thread it was on, at the same line of it (the next thread when it went).
-function M.render(s)
-  local v = valid(s)
-  if not v or v.rendering then
-    return
-  end
-  v.rendering = true
-  local ok, err = pcall(function()
-    local id, first, _, row = at_cursor(v)
-    local keep = id and { id = id, off = row - first, index = v.order_index and v.order_index[id] }
-    local width = api.nvim_win_get_width(v.win) - 1
+local SPEC
+SPEC = {
+  field = 'clist',
+  last = 'clist_last',
+  name = 'revuey://comments',
+  filetype = 'revuey-comments',
+  augroup = 'revuey.comments.list.',
+  ns = M.ns,
+  build = function(s, width, v)
     local cut = {}
     local lines, n = M.build(s, { width = width, cut = cut })
     v.cut = cut
     v.counts = n
-    local texts, rows, blocks, order, order_index = {}, {}, {}, {}, {}
-    for i, l in ipairs(lines) do
-      local t = {}
-      for _, ch in ipairs(l.chunks) do
-        t[#t + 1] = ch[1]
-      end
-      texts[i] = table.concat(t)
-      if l.id then
-        rows[i] = l.id
-        if l.start then
-          blocks[l.id] = { first = i, last = i }
-          order[#order + 1] = l.id
-          order_index[l.id] = #order
-        end
-        blocks[l.id].last = i
-      end
-    end
-    vim.bo[v.buf].modifiable = true
-    api.nvim_buf_set_lines(v.buf, 0, -1, false, texts)
-    vim.bo[v.buf].modifiable = false
-    api.nvim_buf_clear_namespace(v.buf, M.ns, 0, -1)
-    for i, l in ipairs(lines) do
-      local col = 0
-      for _, ch in ipairs(l.chunks) do
-        local len = #ch[1]
-        local hl = ch[2]
-        if len > 0 and hl then
-          for pri, g in ipairs(type(hl) == 'table' and hl or { hl }) do
-            pcall(api.nvim_buf_set_extmark, v.buf, M.ns, i - 1, col, { end_col = col + len, hl_group = g, priority = 100 + pri })
-          end
-        end
-        col = col + len
-      end
-    end
-    v.rows, v.blocks, v.order, v.order_index = rows, blocks, order, order_index
-    -- the cursor: same thread and line of it, else the thread now at its place, else the first
-    local target
-    if keep then
-      local b = blocks[keep.id]
-      if b then
-        target = math.min(b.first + keep.off, b.last)
-      elseif keep.index and #order > 0 then
-        target = blocks[order[math.min(keep.index, #order)]].first
-      end
-    elseif v.want then
-      local b = blocks[v.want]
-      target = b and b.first
-    end
-    if not target and not keep then
-      target = order[1] and blocks[order[1]].first
-    end
-    v.want = nil
-    if target then
-      pcall(api.nvim_win_set_cursor, v.win, { target, 0 })
-    end
-  end)
-  v.rendering = false
-  v.hint_id = (at_cursor(v))
-  redraw_winbar(s)
-  if not ok then
-    error(err, 0)
-  end
+    return lines
+  end,
+  keymaps = function(s, v)
+    M.keymaps(s, v)
+  end,
+}
+
+---Draw the list into the view's buffer (every comments render while it is open). The cursor
+---stays on the thread it was on, at the same line of it (the next thread when it went).
+function M.render(s)
+  F.render(s, SPEC)
 end
 
 ---Where an action's editor opens: under the thread's last line in the view.
@@ -621,6 +567,11 @@ function M.show(s)
     return
   end
   M.close(s)
+  M.jump(s, id)
+end
+
+---Show comment `id` in the diff (in the guide when it is the view and shows it).
+function M.jump(s, id)
   if (s.view_mode or 'diff') == 'guide' then
     if cv().jump(s, id, true) then
       return
@@ -634,68 +585,14 @@ end
 ---diff: inside a thread `[c` goes to its start first; past the last (before the first) thread
 ---nothing moves.
 function M.next(s, dir)
-  local v = valid(s)
-  if not v or #v.order == 0 then
-    return
-  end
-  local row = api.nvim_win_get_cursor(v.win)[1]
-  local target
-  for _ = 1, vim.v.count1 do
-    local t
-    if dir > 0 then
-      for _, x in ipairs(v.order) do
-        if v.blocks[x].first > row then
-          t = v.blocks[x].first
-          break
-        end
-      end
-    else
-      for i = #v.order, 1, -1 do
-        if v.blocks[v.order[i]].first < row then
-          t = v.blocks[v.order[i]].first
-          break
-        end
-      end
-    end
-    if not t then
-      break
-    end
-    row, target = t, t
-  end
-  if target then
-    api.nvim_win_set_cursor(v.win, { target, 0 })
-  end
+  F.next(s, 'clist', dir)
 end
 
 ---Close the view; the diff (or guide) below is as it was. Focus goes back to the window it was
 ---opened from while that is still there (the panel, the stack tree's float), else to the diff.
----Remembers the thread under the cursor for the next open.
-function M.close(s)
-  local v = s and s.clist
-  if not v then
-    return
-  end
-  if api.nvim_win_is_valid(v.win) and api.nvim_buf_is_valid(v.buf) then
-    s.clist_last = at_cursor(v) or s.clist_last
-  end
-  s.clist = nil
-  if v.group then
-    pcall(api.nvim_del_augroup_by_id, v.group)
-  end
-  if api.nvim_win_is_valid(v.win) then
-    pcall(api.nvim_win_close, v.win, true)
-  end
-  if api.nvim_buf_is_valid(v.buf) then
-    pcall(api.nvim_buf_delete, v.buf, { force = true })
-  end
-  if not s.cleaned then
-    local back = v.from and v.from ~= v.win and api.nvim_win_is_valid(v.from) and v.from or s.diff_win
-    if back and api.nvim_win_is_valid(back) then
-      pcall(api.nvim_set_current_win, back)
-    end
-    require('revuey.panel').render(s)
-    redraw_winbar(s)
-  end
+---Remembers the thread under the cursor for the next open. `quiet`: another list replaces it.
+function M.close(s, quiet)
+  F.close(s, SPEC, quiet)
 end
 
 ---Review cleanup.
@@ -703,16 +600,9 @@ function M.detach(s)
   M.close(s)
 end
 
-local function keymaps(s, v)
+function M.keymaps(s, v)
   local k = config.options.keymaps
-  local function map(lhs, fn, desc)
-    if not lhs then
-      return
-    end
-    for _, l in ipairs(type(lhs) == 'table' and lhs or { lhs }) do
-      vim.keymap.set('n', l, fn, { buffer = v.buf, nowait = true, silent = true, desc = 'revuey: ' .. desc })
-    end
-  end
+  local map = F.mapper(v)
   local function act(fn)
     return function()
       local at = target(s)
@@ -730,6 +620,9 @@ local function keymaps(s, v)
   map(k.comment_list, function()
     M.close(s)
   end, 'comments view: back to the diff')
+  map(k.ai_reviews, function()
+    require('revuey.ai_reviews_view').open(s)
+  end, 'the agent reviews view: findings by run')
   map(k.comment_next, function()
     M.next(s, 1)
   end, 'comments view: next thread')
@@ -746,6 +639,7 @@ local function keymaps(s, v)
   map(k.comment_dismiss, act(C.dismiss), 'dismiss / restore the AI finding or agent comment')
   map(k.send_comment, act(C.send_existing), 'send the comment to the agent')
   map(k.comment_expand, act(C.toggle_expand), 'expand / collapse the thread')
+  map(k.comment_tag, act(C.tag), 'tag the comment')
   map(k.forge_open, act(function(_, at)
     local it = C.by_id(s, at.id)
     if it and it.forge then
@@ -757,110 +651,27 @@ local function keymaps(s, v)
   map(k.forge_threads, function()
     C.toggle_forge(s)
   end, 'GitHub threads: all / open only / hidden')
-  local view = require('revuey.view')
-  map(k.refresh, function()
-    view.refresh({ force = true, notify = true, forge = true })
-  end, 'refresh review')
-  map(k.toggle_stack, view.toggle_full, 'toggle full stack / layer scope')
-  map(k.next_layer, function()
-    view.next_layer(1)
-  end, 'next stack layer')
-  map(k.prev_layer, function()
-    view.next_layer(-1)
-  end, 'previous stack layer')
-  map(k.help, require('revuey.key_help').toggle, 'all revuey keys (a float)')
-  map(k.focus_panel, function()
-    if api.nvim_win_is_valid(s.panel_win) then
-      api.nvim_set_current_win(s.panel_win)
-    end
-  end, 'focus file panel')
+  local arv = require('revuey.ai_reviews_view')
+  map(k.reviews_tag_filter, function()
+    arv.pick_filter(s, 'tag', M.render)
+  end, 'only the comments with a tag')
+  map(k.reviews_clear_filter, function()
+    arv.clear_filter(s)
+  end, 'every comment again (no tag filter)')
+  F.common_keys(s, map)
+end
+
+---The comment action target under the view's cursor (`:RevueyTag` from the view), or nil.
+function M.target(s)
+  local v = valid(s)
+  if v and vim.api.nvim_get_current_win() == v.win then
+    return target(s)
+  end
 end
 
 ---Open the comments view over the diff window (`cl`, `:RevueyComments`); focus it when open.
 function M.open(s)
-  if not s then
-    return vim.notify('revuey: no review open', vim.log.levels.WARN)
-  end
-  local v = valid(s)
-  if v then
-    api.nvim_set_current_win(v.win)
-    return v
-  end
-  if not (s.diff_win and api.nvim_win_is_valid(s.diff_win)) then
-    return
-  end
-  require('revuey.highlights').setup()
-  local from = api.nvim_get_current_win()
-  local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].filetype = 'revuey-comments'
-  pcall(api.nvim_buf_set_name, buf, 'revuey://comments')
-  local win = api.nvim_open_win(buf, true, vim.tbl_extend('force', geometry(s), { style = 'minimal', border = 'none', zindex = M.ZINDEX }))
-  vim.wo[win].wrap = false
-  vim.wo[win].cursorline = true
-  vim.wo[win].scrolloff = 3
-  vim.wo[win].winhighlight = 'NormalFloat:Normal'
-  v = { buf = buf, win = win, from = from, rows = {}, blocks = {}, order = {}, order_index = {}, cut = {}, want = s.clist_last }
-  s.clist = v
-  keymaps(s, v)
-  local group = api.nvim_create_augroup('revuey.comments.list.' .. buf, { clear = true })
-  v.group = group
-  api.nvim_create_autocmd('CursorMoved', {
-    group = group,
-    buffer = buf,
-    callback = function()
-      -- the hint follows the thread under the cursor: redraw only when that changed (a render
-      -- redraws it anyway)
-      local id = at_cursor(v)
-      if id ~= v.hint_id then
-        v.hint_id = id
-        redraw_winbar(s)
-      end
-    end,
-  })
-  -- the diff window resized (the screen, the panel): the view follows it, wrapped again
-  api.nvim_create_autocmd({ 'VimResized', 'WinResized' }, {
-    group = group,
-    callback = function()
-      local cur = valid(s)
-      if cur and cur.buf == buf and api.nvim_win_is_valid(s.diff_win) then
-        local g = geometry(s)
-        local wide = g.width ~= api.nvim_win_get_width(cur.win)
-        api.nvim_win_set_config(cur.win, g)
-        if wide then
-          M.render(s)
-        end
-      end
-    end,
-  })
-  -- the diff window hidden below must never take the keys: entering it (the panel's focus key,
-  -- a closed float) goes to the view
-  api.nvim_create_autocmd('WinEnter', {
-    group = group,
-    callback = function()
-      if api.nvim_get_current_win() == s.diff_win and valid(s) and valid(s).buf == buf then
-        vim.schedule(function()
-          if valid(s) and valid(s).buf == buf and api.nvim_get_current_win() == s.diff_win then
-            api.nvim_set_current_win(win)
-          end
-        end)
-      end
-    end,
-  })
-  api.nvim_create_autocmd({ 'BufWipeout', 'WinClosed' }, {
-    group = group,
-    buffer = buf,
-    callback = function()
-      vim.schedule(function()
-        if s.clist == v then
-          M.close(s)
-        end
-      end)
-    end,
-  })
-  M.render(s)
-  require('revuey.panel').render(s)
-  return v
+  return F.open(s, SPEC)
 end
 
 ---`cl`: open the comments view, or back to the diff (guide) from it.
@@ -920,6 +731,7 @@ M.HELP = {
   ' {comment_reply} reply  {comment_edit} edit  {comment_resolve} resolve',
   ' {comment_include} review  {comment_accept} accept  {comment_dismiss} dismiss',
   ' {comment_expand} expand  {send_comment} agent  {comment_delete} delete',
+  ' {comment_tag} tag  {reviews_tag_filter} tag filter  {ai_reviews} by run',
 }
 
 return M

@@ -181,6 +181,10 @@ function M.setup()
   set('RevueyCommentsHeader', { link = 'Title' }) -- the counts at the top
   set('RevueyCommentsLayer', { link = 'Title' }) -- a layer's heading (full-stack scope)
   set('RevueyCommentsCode', { link = 'Comment' }) -- the code line a thread is on
+  set('RevueyCommentTag', { link = 'Identifier' }) -- a comment's tags (#pass)
+  -- the agent reviews view (ai_reviews_view.lua)
+  set('RevueyReviewsRun', { link = 'Title' }) -- a run's heading
+  set('RevueyReviewsFilter', { link = 'DiagnosticHint' }) -- the active filter
 end
 
 local group = vim.api.nvim_create_augroup('revuey_highlights', { clear = true })

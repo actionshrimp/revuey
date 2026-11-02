@@ -3,7 +3,7 @@
 #   revuey [base] [--stack] [--committed|--worktree]   (same arguments as :Revuey)
 #   revuey pr <number|url>                             (like :Revuey pr: worktrunk sets the
 #                                                      PR's worktree up, then the review opens there)
-#   revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|guide|import-guide|install-skill ...
+#   revuey sessions|watch|show|reply|comment|tag|findings|ack|inbox|comments|hunks|import-review|guide|import-guide|install-skill ...
 #                                                      (for coding agents; see `revuey --help`)
 # Uses your normal Neovim config. The plugin is loaded from $REVUEY_PLUGIN_DIR, or from the
 # directory containing this script's parent (so it works straight from a checkout).
@@ -44,7 +44,7 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 case "${1:-}" in
-  comments|comment|reply|sessions|show|ack|inbox|hunks|import-review|guide|import-guide)
+  comments|comment|tag|findings|reply|sessions|show|ack|inbox|hunks|import-review|guide|import-guide)
     exec "${cli[@]}" "$@"
     ;;
   watch)
@@ -100,7 +100,7 @@ case "${1:-}" in
         echo "revuey: unknown command $1 (and not a branch or commit)"
         echo "usage: revuey [base] [--stack] [--committed|--worktree]"
         echo "       revuey pr <number|url>"
-        echo "       revuey sessions|watch|show|reply|comment|ack|inbox|comments|hunks|import-review|guide|import-guide|install-skill ...  (revuey --help)"
+        echo "       revuey sessions|watch|show|reply|comment|tag|findings|ack|inbox|comments|hunks|import-review|guide|import-guide|install-skill ...  (revuey --help)"
       } >&2
       exit 2
     fi
