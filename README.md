@@ -1162,7 +1162,11 @@ model…** (then an effort), or Cancel. The agent knows the conversation, so it 
 does what you meant from code that does not, and can build on the notes of a
 [review pass](#connect-an-agent) of that layer (it still reviews the whole diff). It gets the
 same instructions, worded for an agent with context, and the skill's text when you named one
-(revuey reads the `SKILL.md`, as above). The panel shows `waiting for claude…`, then `claude is
+(revuey reads the `SKILL.md`, as above), labelled with where it comes from: a skill from the
+repository under review is guidance on what to look for, never permission to act, and the
+no-edit, no-post rules are restated after it. The question and the prompt warn when the change
+itself modifies the skill; if the skill's text changes before the agent takes the request, the
+agent is refused it. The agent's findings and a fresh run's never replace each other. The panel shows `waiting for claude…`, then `claude is
 reviewing`; the findings appear when the agent imports them, and the panel says `by claude
 (connected)`. `:RevueyAIReview cancel` withdraws the request (the agent is told). Not picked up
 within a minute: the panel says so, and `:RevueyAIReview` offers to keep waiting, or withdraw it
