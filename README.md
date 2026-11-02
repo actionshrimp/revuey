@@ -1188,8 +1188,9 @@ Runs are stored per scope next to its comments (`*.ai-review.json`: each run's s
 counts, model, cost, the skill used, who ran it, when). Each finding keeps which run made it
 (`ai.review`, the run's id, and `ai.run` in the comments file: reviewer name, provider, model or
 agent, skill, request id). A run is dropped once a later run by the same reviewer and skill
-replaced (or you deleted) all of its findings, and at most 30 are kept; a file from before runs
-is read as one run, which findings older than `ai.run` belong to. Failures (no `claude`, not logged in, invalid output) are reported
+replaced (or you deleted) all of its findings. Past 30 runs the oldest ones with no findings
+left go; a run whose findings are still there is never dropped. A file from before runs is read
+as one run, which findings older than `ai.run` belong to (it stays marked so). Failures (no `claude`, not logged in, invalid output) are reported
 and shown in the panel, and leave the last review and its findings alone.
 
 ### AI reviews from another agent or tool
@@ -1266,15 +1267,16 @@ counts; under it each finding takes one line: severity, title, location, status 
   move between findings, `]]` / `[[` between runs. The comment keys work on the finding under
   the cursor (`ca`, `cn`, `cs`, `cr`, `ce`, `cd`, `ci`; `cz` shows it in full, with its
   explanation and suggested change). On a run (its heading or any of its findings) `cA` accepts
-  and `cN` dismisses every untriaged finding of it the filter shows, and `cD` deletes the run and
-  its findings (accepted ones are your comments and stay; a later run may find the others
-  again); each asks first. `ct` tags the finding, or on a heading every finding of the run.
+  and `cN` dismisses every untriaged finding of it the filter shows, and `cD` deletes the run:
+  its untriaged findings are deleted (a later run may find them again), dismissed ones are
+  deleted and not added again (as after `cd`), and accepted ones, your comments now, stay in the
+  comments view under no run. Each asks first, saying what will happen. `ct` tags the finding, or on a heading every finding of the run.
   `q`, `<Esc>` or `gA` go back; `cl` switches to the comments view.
 - **Filters.** `f` picks a filter: a tag, a run, a status (untriaged, accepted, dismissed,
   resolved) or a severity; `t` picks a tag directly, from the tags in use; `F` clears them. The
   header shows the active filter, and runs with nothing left are left out. The tag filter applies
-  to the comments view too (`t` and `F` work there), which also shows each finding's tags on its
-  line.
+  to the comments view too (`t` picks it there, `F` clears it; the other filters are this view's,
+  so `f` is not mapped there), which also shows each finding's tags on its line.
 - It redraws when findings change anywhere (a run, an import, a tag from the CLI); the panel
   shows its counts and keys while it is open.
 
@@ -1287,9 +1289,12 @@ finding in either view) opens an input with its tags to edit (`+tag` / `-tag` wi
 `:RevueyTag security -naming` adds and removes without one. Agents tag with
 `bin/revuey tag <id> <tag>... [--remove]`, on creation with `comment --tag` and
 `import-review --tag`, and filter with `findings --tag`. Tags are lower case letters, digits, `.`,
-`_` and `-`, at most 24 characters (anything else becomes `-`), at most 16 per comment. Each tag
-is merged on its own when two instances (or the CLI and the UI) change a comment at once, so a tag
-added by an agent survives an accept you made at the same moment.
+`_` and `-`, at most 24 characters (anything else becomes `-`), at most 16 per comment; the input
+and `:RevueyTag` refuse anything else. Editing the input changes only what you changed in it, so
+a tag an agent added meanwhile stays. Changing tags never counts as a newer version of the
+comment: tags merge on their own, tag by tag, when two instances (or the CLI and the UI) change a
+comment at once, so a tag added by an agent and an accept you made at the same moment both stay.
+A finding you tagged counts as touched: a re-run does not replace it.
 
 ## Comments
 
@@ -1743,7 +1748,7 @@ Diff and guide buffer (the tables are generated from `lua/revuey/keys.lua`, the 
 | `cD` | In the agent reviews view, on a run: delete it and its findings; accepted ones are your comments and stay (asks first) |
 | `f` | In the agent reviews view: filter the findings by tag, run, status (untriaged, accepted, dismissed) or severity |
 | `t` | In the agent reviews view and the comments view: only the findings (comments) with a tag, picked from the tags in use |
-| `F` | In the agent reviews view and the comments view: clear the filters |
+| `F` | In the agent reviews view: clear every filter. In the comments view, where only the tag filter applies (`f` is not mapped there): clear it |
 
 **Review and posting**
 

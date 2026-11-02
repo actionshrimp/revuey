@@ -2267,7 +2267,9 @@ are in `reports/Terminal code review tool landscape.md`.
       generator, the import's `tags`). A version 1 file (one record, `kind = 'revuey-ai-review'`)
       is read as a list of that one run, marked `migrated`: findings without `ai.run` belong to it
       (`groups`), whatever their `ai.review`, and its run comes from its author and generator.
-      The next write turns the file into version 2. `read_record` (the latest run) keeps the
+      The next write turns the file into version 2 and keeps the mark as `legacy = true` on that
+      run (read back as `migrated`), so findings without `ai.run` keep belonging to it after any
+      later run, and pruning counts them as its live findings. `read_record` (the latest run) keeps the
       panel and the comments view's verdict line as they were. Changes go through `change_runs`:
       read, apply, write under the file's lock (`lock.with`); in the UI a busy lock queues the
       change and `lock.save` retries it (every queued change is applied, so two deferred
@@ -2280,7 +2282,9 @@ are in `reports/Terminal code review tool landscape.md`.
       after the finding was made (`tags.touched`: an entry newer than `created_at`; tags given on
       import have `at = created_at`). Retention: on every import `prune_runs` drops a run when a
       later run of the same identity exists and no live comment points at it (all its findings
-      were replaced or deleted), then the oldest past `MAX_RUNS` (30). Dropping was chosen over
+      were replaced or deleted). Past `MAX_RUNS` (30) the oldest runs no live finding points at
+      go (never the newest); a run with live findings is never dropped, even when that leaves more
+      than 30 (each holds findings the user still sees). Dropping was chosen over
       marking runs superseded: a run with nothing left to triage only repeats what its successor
       says, and the file stays small; a run with an accepted or dismissed finding stays, so its
       summary is there while its findings are.
@@ -2288,7 +2292,16 @@ are in `reports/Terminal code review tool landscape.md`.
       per tag ever set, last set or removed at `at`. `comments.merge` merges them per tag (newest
       entry wins, ties the winner's), after the winner is chosen by `updated_at` as before, so a
       tag the CLI adds survives an accept or dismiss the UI saves at the same time, and a removal
-      survives an older add. Defaults are computed (`tags.defaults`): the run's skill, else its
+      survives an older add. A tags-only change is stored with `comments.put_tags`, which keeps
+      `updated_at`: a tag must never win the whole comment, or a CLI that loaded the comment
+      before an accept and saved a tag after it would undo the accept. The cost: the import's
+      replacement tombstone (`replaced = true`, `updated_at + 1`) would beat a tag set meanwhile,
+      so `comments.merge` lets a finding whose tags were touched (`tags.touched`) win over a
+      replacement tombstone: the import never saw that tag (it reloads and checks `untouched`
+      first). The UI's input (`ct`) applies only what the user changed against the tags it showed
+      (added words, words taken out), never a replacement of the reloaded set, so a tag added
+      elsewhere while the input was open stays; a word that is not a tag is refused, as by
+      `:RevueyTag`. Defaults are computed (`tags.defaults`): the run's skill, else its
       name (`ai.run`, else the author before runs), never stored, so they stay right when a skill
       is renamed or a run re-attributed; removing one stores an `off` entry. Agent comments have
       no default. Cleaning (`tags.clean`): lower case, `[a-z0-9._-]`, other runs of characters
@@ -2318,17 +2331,24 @@ are in `reports/Terminal code review tool landscape.md`.
     - **Keys.** The comment keys act on the finding under the cursor through the by-id actions
       (decision 24). On a run (its heading or one of its findings): `cA` / `cN`
       (`run_accept`/`run_dismiss`) accept or dismiss every untriaged finding of the run that the
-      filter shows, one save and an event each; `cD` (`run_delete`) deletes the run's findings
-      that are not accepted (bare tombstones: `ai` cleared, so a later run may find them again,
-      unlike `cd`, which remembers a deleted finding) and its record. All three ask first
+      filter shows, one save and an event each; `cD` (`run_delete`) deletes the run's record, and
+      decides each finding by where it stands once the file was read again (so one accepted
+      elsewhere since the question is kept): untriaged ones are forgotten (bare tombstones, `ai`
+      cleared: a later run may find them again), dismissed and resolved ones are deleted as `cd`
+      deletes (the tombstone keeps title and anchor: never added again, the dismissal is not
+      lost), accepted ones are the user's comments and stay, `detached` (`ai.review` cleared,
+      `ai.detached`/`agent.detached`), so `groups`, `live_runs` and the view leave them out
+      instead of showing a "run record gone" group nothing could clear. The question says how
+      many go each way. All three ask first
       (`ai_reviews_view.confirm`, `vim.fn.confirm`; specs replace it): accepting is not undone,
       and an accidental `cA` on twenty findings would be. `ct` on a heading tags every finding of
       the run. `]]` / `[[` (`next_section`) move between headings, `]c` / `[c` between findings.
     - **Filters** (`s.ar_filter = {tag, run, status, severity}`): `f` picks one with
       `vim.ui.select`, `t` the tag (from the tags in use), `F` clears; `<CR>` on a heading toggles
       the run filter. Runs with nothing left are hidden. The header line shows the active
-      filter. The tag filter applies to the comments view too (one session field; `t` and `F`
-      there), filtering its entries in `build`, so its counts stay the scope's.
+      filter. The tag filter applies to the comments view too (one session field; `t` sets it there
+      and `F` clears only it; `f` is not mapped there, the other filters being about runs),
+      filtering its entries in `build`, so its counts stay the scope's.
     - **Panel.** The AI review block adds `N runs · gA by run` (or `gA findings` with one run);
       while the view is open the panel shows an `AI reviews` section and the view's key lines
       (`ai_reviews_view.HELP`); the winbar shows the keys of the finding or run under the cursor.
