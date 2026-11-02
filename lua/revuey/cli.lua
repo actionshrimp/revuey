@@ -1689,7 +1689,10 @@ function M.stack(o)
   local st, source = stack_overview(o, ctx, attached)
   -- what is checked out now (the entry may lag behind it)
   local checked_out = git.current_branch(ctx.root)
-  local lag = attached and attached.checked_out ~= checked_out and (attached.checked_out or 'detached HEAD') or nil
+  -- the review lags when git had another branch checked out at its last load (an entry without
+  -- the record, from an older revuey, says nothing)
+  local rec = attached and type(attached.git_checked_out) == 'string' and attached.git_checked_out or nil
+  local lag = rec and (rec ~= '' and rec or nil) ~= checked_out and (rec ~= '' and rec or 'detached HEAD') or nil
   if not st then
     local branch = attached and attached.branch or ctx.branch
     local base = attached and attached.base or git.default_branch(ctx.root)
@@ -1706,7 +1709,7 @@ function M.stack(o)
   end
   st.checked_out, st.source = checked_out, source
   st.review = attached and attached.id or nil
-  st.review_checked_out = lag and attached.checked_out or nil
+  st.review_checked_out = lag
   if o.json then
     out(vim.json.encode(st) .. '\n')
     return
@@ -1719,7 +1722,7 @@ function M.stack(o)
     attached and '' or ' (no review running: as `revuey` would open here; PRs unknown)'
   ))
   if lag then
-    out(('(the review has not caught up with the checkout: it still has %s checked out, and > is what it shows)\n'):format(clip(lag, 100)))
+    out(('(the review has not caught up with the checkout: it last loaded with %s checked out, and > is what it showed then)\n'):format(clip(lag, 100)))
   end
   local short = function(rev)
     return rev and clip(rev, 40):sub(1, 10) or '?'

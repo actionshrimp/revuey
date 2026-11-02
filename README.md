@@ -1637,11 +1637,12 @@ imported without a request (the agent asked in chat) shows in the running review
 seconds too.
 
 The review takes a moment to load the new layer after a switch, and the line comes first. So
-`hunks`, `comment` and `import-review` run while the review's newest `switched` event names the
+`hunks`, `comment`, `import-review` and `stack` run while the review's newest `switched` event names the
 branch checked out, is under 10 s old and is newer than the review's last registry change (its
 `changed_at`) wait until that entry changes (or the review closes), saying so on stderr. A branch
 checked out outside revuey sends no event, so they never wait for it: they use what the review
-shows until it refreshes.
+shows until it refreshes (`stack` says so when git has another branch checked out than at the
+review's last load).
 
 How it works: each running review registers itself in
 `$(git rev-parse --git-dir)/revuey/sessions/<nvim pid>.json` (worktree, branch, scope, the

@@ -658,7 +658,7 @@ are in `reports/Terminal code review tool landscape.md`.
    - **Registry.** A base is a directory with `sessions/` and `watchers/`: first the worktree's own
      git dir (`git rev-parse --absolute-git-dir`, so linked worktrees are separate and nothing
      shows in `git status`) + `/revuey`, then the state dir when that is not writable. Each review
-     writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, checked_out, base, mode,
+     writes `sessions/<nvim pid>.json` (`{id, pid, host, worktree, git_dir, branch, checked_out, git_checked_out (git's branch at the last load, '' detached), base, mode,
      scope {kind, branch, layers}, scope_key (state file name), comments, events, state_dir,
      server (v:servername), common_dir, started_at, updated_at, load {base, from (the merge
      base), target, mode, context_lines, max_file_bytes}, review (review_info), stack? {kind, trunk,

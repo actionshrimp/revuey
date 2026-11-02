@@ -94,6 +94,9 @@ local function entry(s)
     -- the branch checked out in the worktree (nil: detached), which may differ from the layer
     -- being viewed; `gS` changes it
     checked_out = checked_out(r),
+    -- what git had checked out when the review last loaded ('' detached), even when no layer is
+    -- HEAD (a GitHub stack opened from the tree): `bin/revuey stack` tells a lagging review by it
+    git_checked_out = r.head_branch or '',
     base = r.base,
     mode = r.mode,
     scope = { kind = info.scope, branch = r.branch, layers = info.layers },

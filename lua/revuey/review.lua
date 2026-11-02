@@ -342,6 +342,9 @@ function M.load(opts)
   return {
     root = root,
     branch = branch,
+    -- the branch git had checked out when this loaded (nil: detached), whether or not it is the
+    -- branch shown (a stack layer or PR may be another)
+    head_branch = target and git.current_branch(root) or (branch ~= 'HEAD' and branch or nil),
     base = base,
     merge_base = mb,
     head = head,

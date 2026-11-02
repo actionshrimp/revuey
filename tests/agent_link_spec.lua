@@ -663,6 +663,7 @@ h.test('switching stack layers updates the registry; closing the review removes 
   end
   local e1 = entry()
   h.eq('stack/cart', e1.branch)
+  h.eq('stack/cart', e1.git_checked_out)
   h.eq('layer', e1.scope.kind)
   -- `bin/revuey stack`: the layers the review shows, bottom first, with their PRs (as the review
   -- looked them up: stubbed here) and each layer's own diff, never switching
@@ -734,7 +735,7 @@ h.test('switching stack layers updates the registry; closing the review removes 
 end)
 
 ---Register a review session entry by hand (this process's pid, so it is live) for `d`, with
----`extra` fields; returns its path.
+---`extra` fields (vim.NIL: left out); returns its path.
 local function fake_session(d, extra)
   local root = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', '--show-toplevel' }))
   local e = vim.tbl_extend('force', {
@@ -743,11 +744,17 @@ local function fake_session(d, extra)
     worktree = root,
     branch = 'c',
     checked_out = 'c',
+    git_checked_out = 'c',
     scope = { kind = 'layer', branch = 'c' },
     state_dir = state_dir,
     server = 'localhost:1', -- not a path: not checked
     started_at = sessions.now_ms(),
   }, extra or {})
+  for k, v in pairs(e) do
+    if v == vim.NIL then
+      e[k] = nil -- (vim.NIL in `extra`: leave the field out)
+    end
+  end
   return (assert(sessions.register(sessions.bases(root, state_dir), e)))
 end
 
@@ -822,8 +829,29 @@ h.test('stack: PR states, landed layers, notes, names and titles cleaned, the ba
   -- the entry lags behind the checkout (no switched event to wait for): * is what git says
   h.git(d, 'checkout', '-q', 'b')
   r = run({ 'stack' }, { cwd = d })
-  h.ok(r.stdout:find('* checked out: b\n(the review has not caught up with the checkout: it still has c checked out', 1, true), r.stdout)
+  h.ok(r.stdout:find('* checked out: b\n(the review has not caught up with the checkout: it last loaded with c checked out', 1, true), r.stdout)
   h.ok(r.stdout:find('\n * 1  b on main', 1, true), r.stdout)
+  h.eq('c', vim.json.decode(run({ 'stack', '--json' }, { cwd = d }).stdout).review_checked_out)
+  sessions.remove(path)
+  -- a GitHub stack opened from the tree with HEAD on a branch outside it: no layer is HEAD, so
+  -- the entry has no checked_out, but git's branch at the last load matches: no note
+  local one = { trunk = 'main', trunk_rev = m1, layers = {
+    { name = 'pr-a', parent = 'main', parent_rev = m1, tip = b1, pr = { number = 7, state = 'OPEN', title = 'a', url = 'u' } },
+  } }
+  path = fake_session(d, { branch = 'pr-a', checked_out = vim.NIL, git_checked_out = 'b', stack = one })
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(r.stdout:find('* checked out: b\n', 1, true) and not r.stdout:find('caught up', 1, true), r.stdout)
+  h.eq(nil, vim.json.decode(run({ 'stack', '--json' }, { cwd = d }).stdout).review_checked_out)
+  sessions.remove(path)
+  -- an entry from an older revuey (no record): no note either
+  path = fake_session(d, { checked_out = vim.NIL, git_checked_out = vim.NIL, stack = one })
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(not r.stdout:find('caught up', 1, true), r.stdout)
+  -- detached at the last load, a branch now: the note names the detached HEAD
+  sessions.remove(path)
+  path = fake_session(d, { checked_out = vim.NIL, git_checked_out = '', stack = one })
+  r = run({ 'stack' }, { cwd = d })
+  h.ok(r.stdout:find('it last loaded with detached HEAD checked out', 1, true), r.stdout)
   sessions.remove(path)
 end)
 
