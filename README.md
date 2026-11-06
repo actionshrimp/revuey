@@ -668,9 +668,10 @@ for authors.
 - **When.** After the PR lookup, in the background (opening a review never waits for GitHub): one
   `gh api graphql` call for the scope's open PRs, more only for long lists (50 threads per page,
   each thread's first 20 comments, then 100 at a time; at most 10 rounds, after which a thread
-  says `… N more on GitHub`). The first page also reads the PR's latest 30 conversation
-  comments, not drawn: they are for a [connected agent](#connect-an-agent) (`bin/revuey
-  threads`). Fetched the first time a scope shows the PR, then kept: scope
+  says `… N more on GitHub`). The first round also reads the PR's discussion, its latest 30
+  conversation comments and 20 reviews' summaries, in an alias of its own (an error there leaves
+  the threads alone), not drawn: they are for a [connected agent](#connect-an-agent)
+  (`bin/revuey threads`). Fetched the first time a scope shows the PR, then kept: scope
   switches and refreshes reuse them, `R` fetches again (as does submitting a review). Failures are quiet as above: threads already
   shown stay, nothing else changes, and the reason is in the log file.
 
@@ -1531,12 +1532,13 @@ Then, in a Claude Code session running in your repo:
    Then it takes a review pass of what the review shows (a layer, a branch or the full stack),
    and again each time you check out another layer: that layer's diff (`bin/revuey hunks`,
    `--stat` first for a large one), read in the context of the rest of the stack, and the PR's
-   existing discussion (`bin/revuey threads`: its review threads and conversation comments as
-   the review fetched them, no extra GitHub call), without editing files or touching the
+   existing discussion (`bin/revuey threads`: its review threads, conversation comments and
+   review summaries as the review fetched them, no extra GitHub call), without editing files or touching the
    review. It gives a short summary of its findings in chat, headed by a rating to help you
    decide: 🟢 green, nothing to report; 🟡 yellow, something discussed or dismissed already that
-   still looks a bit dubious, or only minor new issues; 🔴 red, a new finding nobody raised on
-   the PR. Then a few bullets with file:line, most important first, each marked new or
+   still looks a bit dubious, or only minor new issues (nits, a small missing test); 🔴 red, a
+   new finding that matters (a likely bug or risk) nobody raised on the PR. A thread's word alone
+   never settles a note: it is dropped only when the code bears the discussion out. Then a few bullets with file:line, most important first, each marked new or
    discussed (by whom, how it ended), saying where the layer meets the others: "used by layer
    3", "layer 2 already handles this". The rating stays in chat: it is never a GitHub verdict
    or part of an import. Say "drop them in" and it imports them as AI findings to triage (the
@@ -1556,8 +1558,9 @@ bin/revuey sessions              # live reviews of this worktree (--all: every w
 bin/revuey stack                 # the review's stack, bottom first: branch, parent, PR, +/-,
                                  # each layer's own `git diff <base>..<tip>`, notes (--json)
 bin/revuey threads               # the shown PR's review threads (path:lines, resolved, outdated,
-                                 # each comment) and latest conversation comments, as the running
-                                 # review fetched them (no GitHub call; --all: every PR; --json)
+                                 # each comment; hidden ones collapsed), latest conversation
+                                 # comments and review summaries, as the running review fetched
+                                 # them (no GitHub call; --all: every PR; --json)
 bin/revuey watch --messages      # one line per message; ones no watch printed yet come first
                                  # (catch-up; --replay: every one not handled yet)
 bin/revuey show <id>             # the message in Markdown: file, lines, code, comment, thread
