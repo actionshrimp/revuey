@@ -11,8 +11,9 @@
 --     and removes it on exit. An entry is live while its pid is alive, it was refreshed within
 --     STALE_MS (a crashed review whose pid was reused is not) and its Neovim socket, when it is a
 --     path, exists. Listing removes the others. Beside it, `sessions/<pid>.threads` holds the
---     PR threads and conversation comments the review fetched (agent_link.discussion), rewritten
---     only when they change, for `bin/revuey threads`; it goes with the entry.
+--     PR threads and discussion the review fetched (agent_link.discussion), rewritten when
+--     their content changes (or the file went missing), for `bin/revuey threads`; it goes with
+--     the entry, a dead one's too.
 --   * Each `bin/revuey watch` writes `watchers/<pid>.json` with the session it is attached to
 --     (or none yet: then it counts for every session of its worktree) and a heartbeat it
 --     rewrites every HEARTBEAT_MS. An agent is connected while a watcher's heartbeat is younger

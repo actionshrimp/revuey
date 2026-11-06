@@ -4,8 +4,9 @@
 -- panel header ("● agent connected" / "○ no agent") and on sent comments. Sending itself is in
 -- comments_view.lua (it saves the comment and appends a `sent` event to the feed). A switch of
 -- the worktree to another stack layer is told to a connected agent here (`tell_switch`: a
--- `switched` event in the feed). Beside the entry it publishes the PR threads and conversation
--- comments the review fetched (`discussion`), for `bin/revuey threads`.
+-- `switched` event in the feed). Beside the entry it publishes the PR threads and discussion
+-- (conversation comments, review summaries) the review fetched (`discussion`), for `bin/revuey
+-- threads`, rewritten when their content changes.
 local api = vim.api
 local sessions = require('revuey.sessions')
 local config = require('revuey.config')
@@ -127,15 +128,18 @@ local function discussion_pending(s)
   return not f or not f.ready or f.busy or false
 end
 
----What the threads file says, without the threads: it is rewritten when this changes.
+---What the threads file says, from the content hashes the fetch keeps (forge: the threads'
+---`sig`, the `discussion_sig`), not when it was fetched: the file is rewritten when this changes,
+---so a refetch that brings nothing new rewrites nothing.
 local function discussion_sig(s)
   local fv = require('revuey.forge_view')
   local r = s.review
-  local parts = { r.branch or '', r.scope and r.scope.kind or '', tostring(fv.threads_enabled()), tostring(discussion_pending(s)) }
+  local parts = { r.branch or '', r.scope and r.scope.kind or '', tostring(fv.threads_enabled()) }
   for _, x in ipairs(discussion_prs(s)) do
-    local e = x.cache
-    parts[#parts + 1] = table.concat({ x.pr.url, x.pr.state, x.pr.title, tostring(x.shown), tostring(e and e.at or ''),
-      tostring(e and e.failed or '') }, '\0')
+    local e = x.cache or {}
+    parts[#parts + 1] = table.concat({ x.key, x.pr.url, tostring(x.pr.number), x.pr.state or '', x.pr.title or '', tostring(x.shown),
+      tostring(e.threads ~= nil), e.sig or '', tostring(e.failed ~= nil), tostring(e.truncated == true), e.discussion_sig or '',
+      tostring(e.discussion_failed == true) }, '\0')
   end
   return table.concat(parts, '\n')
 end
@@ -148,13 +152,15 @@ local function cut(body)
   return body, nil
 end
 
----The PR review threads and conversation comments the review fetched (forge.threads_cache, never
----fetched for this): the branch and scope shown, whether a lookup is still running (`pending`),
----and per PR its number, title, url, state, layer, whether the scope shows it, whether its threads
----were fetched (`fetched`; closed and merged PRs' never are), stale (a later fetch failed), cut
----(`truncated`), the threads (path, lines, side, resolved, outdated, comments: author, time,
----body) and the latest conversation comments. Text as GitHub has it, bodies cut at BODY_MAX:
----`bin/revuey threads` cleans it.
+---The PR review threads and discussion the review fetched (forge.threads_cache, never fetched for
+---this): the branch and scope shown, and per PR its number, title, url, state, layer, whether the
+---scope shows it, whether its threads were fetched (`fetched`; closed and merged PRs' never
+---are), stale (a later fetch failed), cut (`truncated`), the threads (path, lines, side,
+---resolved, outdated, comments: author, time, body, `minimized` when GitHub hides it), the
+---latest conversation comments and review summaries (`discussion_stale`: their last read
+---failed; `discussion` false: never read). Text as GitHub has it, bodies cut at BODY_MAX:
+---`bin/revuey threads` cleans it. Whether a lookup still runs is in the registry entry
+---(`threads_pending`), not here.
 function M.discussion(s)
   local fv = require('revuey.forge_view')
   local r = s.review
@@ -162,7 +168,6 @@ function M.discussion(s)
     branch = r.branch,
     scope = r.scope and r.scope.kind or 'branch',
     enabled = fv.threads_enabled() and true or false,
-    pending = discussion_pending(s) or nil,
     prs = {},
   }
   for _, x in ipairs(discussion_prs(s)) do
@@ -178,8 +183,11 @@ function M.discussion(s)
       stale = (e and e.failed) and true or nil,
       truncated = (e and e.truncated) and true or nil,
       threads = {},
+      discussion = (e and e.discussion) and true or false,
+      discussion_stale = (e and e.discussion and e.discussion_failed) and true or nil,
       conversation = {},
-      conversation_total = e and e.conversation_total or nil,
+      conversation_total = e and e.discussion and e.discussion.conversation_total or nil,
+      reviews = {},
     }
     for _, t in ipairs(e and e.threads or {}) do
       local th = {
@@ -205,13 +213,19 @@ function M.discussion(s)
           body = body,
           cut = was_cut,
           pending = c.state == 'PENDING' or nil,
+          minimized = c.minimized,
         }
       end
       p.threads[#p.threads + 1] = th
     end
-    for _, c in ipairs(e and e.conversation or {}) do
+    local disc = e and e.discussion or {}
+    for _, c in ipairs(disc.conversation or {}) do
       local body, was_cut = cut(c.body)
-      p.conversation[#p.conversation + 1] = { author = c.author, created_at = c.created_at, body = body, cut = was_cut }
+      p.conversation[#p.conversation + 1] = { author = c.author, created_at = c.created_at, body = body, cut = was_cut, minimized = c.minimized }
+    end
+    for _, rv in ipairs(disc.reviews or {}) do
+      local body, was_cut = cut(rv.body)
+      p.reviews[#p.reviews + 1] = { author = rv.author, state = rv.state, created_at = rv.submitted_at, body = body, cut = was_cut, minimized = rv.minimized }
     end
     d.prs[#d.prs + 1] = p
   end
@@ -277,6 +291,8 @@ local function entry(s)
     },
     review = info,
     stack = M.stack_info(s),
+    -- the PR lookup or threads fetch still runs (or has not yet): `bin/revuey threads` waits
+    threads_pending = discussion_pending(s) or nil,
   }
 end
 
@@ -313,12 +329,13 @@ function M.update(s, refresh)
     pcall(sessions.write_last, l.bases, last)
   end
   local e = entry(s)
-  -- the stack (with PRs that land whenever a lookup answers) is not review state: it neither
+  -- the stack (with PRs that land whenever a lookup answers) and whether a lookup runs are not
+  -- review state: they neither
   -- bumps `changed_at` nor counts as a change, or it would end `caught_up`'s wait early
-  local st = e.stack
-  e.stack = nil
+  local st, tp = e.stack, e.threads_pending
+  e.stack, e.threads_pending = nil, nil
   local sig = vim.json.encode(e)
-  e.stack = st
+  e.stack, e.threads_pending = st, tp
   local full = vim.json.encode(e)
   if not refresh and sig == l.sig and full == l.full_sig and l.path and vim.uv.fs_stat(l.path) then
     publish_discussion(s)
@@ -330,6 +347,8 @@ function M.update(s, refresh)
     l.changed_at = sessions.now_ms()
   end
   e.changed_at = l.changed_at
+  -- the threads first: an entry that says the lookup is over never comes before them
+  publish_discussion(s)
   local path = sessions.register(l.bases, e)
   if path then
     if l.path and l.path ~= path then

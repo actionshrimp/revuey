@@ -195,20 +195,32 @@ function M.repair_json(text)
   end
 end
 
----Text for a single buffer line (titles, notes): no newlines or control characters.
+---Characters that change how text reads without showing (UTF-8): zero-width ones (U+200B-200F,
+---U+2060-2064, U+FEFF), line and paragraph separators (U+2028-2029) and bidi controls
+---(U+202A-202E, U+2066-206F), removed; C1 controls (U+0080-009F) become `c1`.
+local function strip_invisible(v, c1)
+  v = v:gsub('\194[\128-\159]', c1)
+  v = v:gsub('\226\128[\139-\143\168-\174]', '')
+  v = v:gsub('\226\129[\160-\164\166-\175]', '')
+  v = v:gsub('\239\187\191', '')
+  return v
+end
+
+---Text for a single buffer line (titles, notes): no newlines, control or invisible characters.
 function M.one_line(v)
   if type(v) ~= 'string' then
     return ''
   end
-  return vim.trim((v:gsub('[%c]+', ' '):gsub('  +', ' ')))
+  return vim.trim((strip_invisible(v, ' '):gsub('[%c]+', ' '):gsub('  +', ' ')))
 end
 
----Multi-line markdown (summary, overviews): keeps newlines and tabs, drops other control chars.
+---Multi-line markdown (summary, overviews): keeps newlines and tabs, drops other control and
+---invisible characters.
 function M.clean_text(v)
   if type(v) ~= 'string' then
     return ''
   end
-  return vim.trim((v:gsub('\r\n', '\n'):gsub('[%z\1-\8\11-\31\127]', '')))
+  return vim.trim((strip_invisible(v:gsub('\r\n', '\n'), ''):gsub('[%z\1-\8\11-\31\127]', '')))
 end
 
 ---Stored line notes of one hunk anchor (records on disk may be edited by hand): integer lines,

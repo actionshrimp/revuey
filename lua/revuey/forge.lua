@@ -6,8 +6,9 @@
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
 -- Also the review threads of open PRs (`fetch_threads`: paginated, cached per PR like the PR
--- lookup; placement and display are in forge_threads.lua; the PR's latest conversation comments
--- ride on their first page, for `bin/revuey threads`), and the queries and mutations of
+-- lookup; placement and display are in forge_threads.lua; the PR's discussion, its latest
+-- conversation comments and review summaries, rides on their first round in an alias of its own,
+-- for `bin/revuey threads`), and the queries and mutations of
 -- posting a review (the pending-review flow; forge_post.lua plans, forge_post_view.lua runs it).
 -- `remote_info`, `parse_remote_url`, `base_remote`, `targets`, `run_graphql` and `rest_get`
 -- know nothing about the panel.
@@ -945,12 +946,26 @@ end
 ---@field author string        login ('ghost' for a deleted account)
 ---@field created_at string    ISO time
 ---@field edited_at? string
+---@field minimized? string    hidden on GitHub: its reason (lower case: spam, outdated, ...)
+
+---@class revuey.ForgeReview  a submitted review's summary (only those with a body)
+---@field author string
+---@field state string         APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED
+---@field body string
+---@field submitted_at string
+---@field minimized? string
+
+---@class revuey.ForgeDiscussion  the PR's discussion besides its review threads
+---@field conversation revuey.ForgeIssueComment[]  the latest CONVERSATION, oldest first
+---@field conversation_total integer
+---@field reviews revuey.ForgeReview[]  of the latest REVIEW_SUMMARIES, oldest first
 
 M.THREAD_PAGE = 50 -- threads per page
 M.COMMENT_PAGE = 20 -- comments per thread in the first page (most threads are short)
 M.COMMENT_MORE_PAGE = 100 -- comments per page when a thread has more
 M.THREAD_ROUNDS = 10 -- pagination rounds per fetch (one gh call each) before giving up
 M.CONVERSATION = 30 -- the PR's latest conversation comments, asked with the first threads page
+M.REVIEW_SUMMARIES = 20 -- and its latest reviews (their summaries)
 
 local THREAD_FIELDS = [[
 fragment thread on PullRequestReviewThread {
@@ -960,13 +975,17 @@ fragment thread on PullRequestReviewThread {
 }]]
 local COMMENT_FIELDS = [[
 fragment comment on PullRequestReviewComment {
-  id databaseId url body createdAt lastEditedAt state diffHunk
+  id databaseId url body createdAt lastEditedAt state diffHunk isMinimized minimizedReason
   author { login }
   replyTo { id }
 }]]
-local ISSUE_COMMENT_FIELDS = [[
+local DISCUSSION_FIELDS = [[
 fragment issueComment on IssueComment {
-  id url body createdAt lastEditedAt
+  id url body createdAt lastEditedAt isMinimized minimizedReason
+  author { login }
+}
+fragment reviewSummary on PullRequestReview {
+  state body submittedAt isMinimized minimizedReason
   author { login }
 }]]
 
@@ -982,9 +1001,11 @@ function M.thread_key(pr)
 end
 
 ---One query for several pages: `{kind = 'threads', repo, number, after?}` asks a PR's review
----threads (each with its first comments; the first page also its CONVERSATION latest
----conversation comments, as `conversation`), `{kind = 'comments', thread, after}` the next
----comments of one thread (by node id). Returns the query and alias -> request.
+---threads (each with its first comments), `{kind = 'comments', thread, after}` the next
+---comments of one thread (by node id). A first threads page also asks the PR's discussion (its
+---CONVERSATION latest conversation comments and REVIEW_SUMMARIES latest reviews) under an alias
+---of its own (`dN`, request `{kind = 'discussion', of = <the threads request>}`): an error there
+---nulls that alias only, never the threads. Returns the query and alias -> request.
 ---@return string query, table<string, table> aliases
 function M.build_threads_query(reqs)
   local parts, aliases, threads, convo = { 'query {' }, {}, false, false
@@ -996,14 +1017,14 @@ function M.build_threads_query(reqs)
       threads = true
       local alias = 't' .. i
       aliases[alias] = r
-      -- (after reviewThreads: the conversation is read once, with the first page)
-      local conv = ''
+      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { headRefOid reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } } } }')
+        :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after))
       if not r.after then
         convo = true
-        conv = (' conversation: comments(last: %d) { totalCount nodes { ...issueComment } }'):format(M.CONVERSATION)
+        aliases['d' .. i] = { kind = 'discussion', of = r, p = r.p }
+        parts[#parts + 1] = ('  d%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { conversation: comments(last: %d) { totalCount nodes { ...issueComment } } reviews(last: %d) { nodes { ...reviewSummary } } } }')
+          :format(i, lit(r.owner), lit(r.name), r.number, M.CONVERSATION, M.REVIEW_SUMMARIES)
       end
-      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { headRefOid reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } }%s } }')
-        :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after), conv)
     else
       local alias = 'c' .. i
       aliases[alias] = r
@@ -1018,7 +1039,7 @@ function M.build_threads_query(reqs)
   end
   parts[#parts + 1] = COMMENT_FIELDS
   if convo then
-    parts[#parts + 1] = ISSUE_COMMENT_FIELDS
+    parts[#parts + 1] = DISCUSSION_FIELDS
   end
   return table.concat(parts, '\n'), aliases
 end
@@ -1032,6 +1053,15 @@ local function page(conn)
   if p and p.hasNextPage == true and type(p.endCursor) == 'string' then
     return p.endCursor
   end
+end
+
+---A minimized (hidden) comment's reason, lower case ('hidden' when GitHub gives none), else nil.
+local function minimized(n)
+  if n.isMinimized ~= true then
+    return nil
+  end
+  local why = str(n.minimizedReason)
+  return why and why ~= '' and why:lower() or 'hidden'
 end
 
 ---Map a PullRequestReviewComment node.
@@ -1051,6 +1081,7 @@ function M.normalize_comment(n)
     state = str(n.state) or 'SUBMITTED',
     diff_hunk = str(n.diffHunk),
     reply_to = type(n.replyTo) == 'table' and str(n.replyTo.id) or nil,
+    minimized = minimized(n),
   }
 end
 
@@ -1067,7 +1098,35 @@ function M.normalize_issue_comment(n)
     author = type(n.author) == 'table' and str(n.author.login) or 'ghost',
     created_at = str(n.createdAt) or '',
     edited_at = str(n.lastEditedAt),
+    minimized = minimized(n),
   }
+end
+
+---Map the discussion alias's PullRequest (`conversation`, `reviews`): reviews without a summary
+---(a bare approval, or a review that is only its threads) are left out.
+---@return revuey.ForgeDiscussion?
+function M.normalize_discussion(n)
+  if type(n) ~= 'table' then
+    return nil
+  end
+  local d = { conversation = {}, reviews = {} }
+  for _, c in ipairs(nodes(n.conversation)) do
+    d.conversation[#d.conversation + 1] = M.normalize_issue_comment(c)
+  end
+  d.conversation_total = type(n.conversation) == 'table' and int(n.conversation.totalCount) or #d.conversation
+  for _, r in ipairs(nodes(n.reviews)) do
+    local body = type(r) == 'table' and str(r.body) or nil
+    if body and vim.trim(body) ~= '' then
+      d.reviews[#d.reviews + 1] = {
+        author = type(r.author) == 'table' and str(r.author.login) or 'ghost',
+        state = str(r.state) or '',
+        body = body,
+        submitted_at = str(r.submittedAt) or '',
+        minimized = minimized(r),
+      }
+    end
+  end
+  return d
 end
 
 ---Map a PullRequestReviewThread node (with its first page of comments). The second value is the
@@ -1101,8 +1160,9 @@ function M.normalize_thread(n)
 end
 
 ---Threads of a PR per cache key: { at = ms, threads? = revuey.ForgeThread[], sig?, failed? =
----reason, truncated?, conversation? = revuey.ForgeIssueComment[] (the latest, oldest first),
----conversation_total? }. A failure keeps the last good threads (shown as stale).
+---reason, truncated?, discussion? = revuey.ForgeDiscussion, discussion_sig?, discussion_failed? }.
+---A failure keeps the last good threads (shown as stale), and the last good discussion: its
+---alias fails on its own (discussion_failed), leaving the threads as they came.
 M.threads_cache = {}
 
 ---Cached threads of a PR (oldest first, as GitHub lists them), or nil when never fetched; the
@@ -1117,15 +1177,15 @@ function M.threads_for(pr)
   return e.threads, e.failed ~= nil, e.truncated == true
 end
 
----The PR's latest conversation comments as cached with its threads (oldest first), or nil when
----never read; the second value is how many the PR has.
----@return revuey.ForgeIssueComment[]?, integer?
-function M.conversation_for(pr)
+---The PR's discussion (latest conversation comments and review summaries) as cached with its
+---threads, or nil when never read; the second value is true when its last read failed (stale).
+---@return revuey.ForgeDiscussion?, boolean?
+function M.discussion_for(pr)
   local e = pr and M.threads_cache[M.thread_key(pr)]
-  if not (e and e.conversation) then
+  if not (e and e.discussion) then
     return nil
   end
-  return e.conversation, e.conversation_total or #e.conversation
+  return e.discussion, e.discussion_failed == true
 end
 
 ---The head commit GitHub numbered a PR's cached threads against (`headRefOid` of the threads
@@ -1202,7 +1262,16 @@ function M.fetch_threads(prs, o)
       for alias, r in pairs(aliases) do
         local v = data[alias]
         local p = r.p
-        if r.kind == 'threads' then
+        if r.kind == 'discussion' then
+          -- its own alias: a null here (an error in it) leaves the threads alone
+          local d = type(v) == 'table' and M.normalize_discussion(v.pullRequest) or nil
+          if d then
+            p.discussion = d
+          else
+            p.discussion_failed = true
+            log.write('forge', ('discussion of %s: not read; keeping the last one'):format(p.key))
+          end
+        elseif r.kind == 'threads' then
           local conn = type(v) == 'table' and type(v.pullRequest) == 'table' and type(v.pullRequest.reviewThreads) == 'table'
             and v.pullRequest.reviewThreads
           if not conn then
@@ -1219,14 +1288,6 @@ function M.fetch_threads(prs, o)
               p.head_oid = oid or false
             elseif p.head_oid ~= oid then
               p.head_oid = false
-            end
-            local conv = v.pullRequest.conversation
-            if type(conv) == 'table' and type(conv.nodes) == 'table' then
-              p.conversation = {}
-              for _, n in ipairs(nodes(conv)) do
-                p.conversation[#p.conversation + 1] = M.normalize_issue_comment(n)
-              end
-              p.conversation_total = int(conv.totalCount) or #p.conversation
             end
             for _, n in ipairs(nodes(conn)) do
               local t, cursor = M.normalize_thread(n)
@@ -1284,8 +1345,6 @@ function M.fetch_threads(prs, o)
           truncated = (keep and old.truncated) or (partial and true) or nil,
           -- kept threads keep the head they were numbered against
           head_oid = (keep and old.head_oid) or (partial and p.head_oid) or nil,
-          conversation = (keep and old.conversation) or (partial and p.conversation) or nil,
-          conversation_total = (keep and old.conversation_total) or (partial and p.conversation_total) or nil,
         }
       else
         M.threads_cache[p.key] = {
@@ -1294,10 +1353,18 @@ function M.fetch_threads(prs, o)
           truncated = p.truncated,
           head_oid = p.head_oid,
           sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
-          conversation = p.conversation or (old and old.conversation),
-          conversation_total = p.conversation and p.conversation_total or (old and old.conversation_total),
         }
         M.clear_changed(p.key, M.SIGNALS_THREADS)
+      end
+      -- the discussion: read this time, else the last one (marked stale when its read failed)
+      local e = M.threads_cache[p.key]
+      if p.discussion then
+        e.discussion = p.discussion
+        e.discussion_sig = vim.fn.sha256(vim.json.encode(p.discussion)):sub(1, 16)
+      else
+        e.discussion = old and old.discussion
+        e.discussion_sig = old and old.discussion_sig
+        e.discussion_failed = true -- asked on every first round: not read this time
       end
     end
   end

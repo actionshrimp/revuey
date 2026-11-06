@@ -231,6 +231,10 @@ function M.update(s, force)
     done()
   end, function(err)
     log.write('forge', 'lookup error: ' .. tostring(err))
+    -- over all the same: nothing is still coming (agent_link's `threads_pending`)
+    if f.gen == gen then
+      f.ready = true
+    end
     done()
   end)
 end

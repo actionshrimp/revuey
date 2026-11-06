@@ -10,9 +10,10 @@
 --       (the base as review.merge_base_for takes it); waits like hunks after a switch
 --   threads [--json] [--all] [--session <id>]
 --       the review threads (path:lines, resolved, outdated, each comment's author, time and body)
---       and latest conversation comments of the PR the review shows, as the running review
---       fetched them (agent_link.discussion beside its registry entry; never a GitHub call),
---       cleaned and cut; --all: every PR it has threads of
+--       and latest conversation comments and review summaries of the PR the review shows, as
+--       the running review fetched them (agent_link.discussion beside its registry entry; never
+--       a GitHub call), cleaned and cut, hidden comments collapsed; --all: every PR it has
+--       threads of; waits for its lookup (the entry's threads_pending), 10 s in all
 --   watch [--messages] [--json] [--session <id>] [--since <event id>|all] [--all] [--scope ...]
 --       attach to the worktree's review session and follow the comment event feed: first the
 --       sent messages not yet acknowledged (catch-up), then new events as they happen, one line
@@ -122,10 +123,12 @@ For coding agents (no UI; run inside the reviewed worktree):
       With no review running, the local stack `revuey` would open here (no PRs).
   revuey threads [--json] [--all] [--session <id>]
       the GitHub review threads of the PR the review shows (path:lines, open or resolved and by
-      whom, outdated, each comment's author, time and body) and its latest conversation
-      comments, as the running review last fetched them: no GitHub call (R in revuey fetches
-      again). Bodies are cleaned and cut. --all: every PR the review has threads of (other
-      layers'). Waits for the review's PR lookup (10 s at most). Nothing without a running review.
+      whom, outdated, each comment's author, time and body), its latest conversation comments
+      and review summaries, as the running review last fetched them: no GitHub call (R in
+      revuey fetches again). Bodies are cleaned and cut; comments GitHub hides show as
+      "(hidden by GitHub: <reason>)". --all: every PR the review has threads of (other
+      layers'). Waits for the review's PR lookup (10 s at most in all). Nothing without a
+      running review.
   revuey watch --messages [--session <id>] [--name <your name>] [--json] [--replay]
       attach to the review and print each message the user sends you, one line each:
         revuey message <id> <path>:<lines> (<side>) [<branch>]: <first line>  (revuey show <id> ...)
@@ -1197,8 +1200,9 @@ end
 local function entry_sig(e)
   local c = {}
   for k, v in pairs(e) do
-    -- (the stack's PRs land whenever a lookup answers: not a change of the review)
-    if k:sub(1, 1) ~= '_' and k ~= 'updated_at' and k ~= 'stack' then
+    -- (the stack's PRs land whenever a lookup answers, and the lookup runs and ends: not a
+    -- change of the review)
+    if k:sub(1, 1) ~= '_' and k ~= 'updated_at' and k ~= 'stack' and k ~= 'threads_pending' then
       c[k] = v
     end
   end
@@ -1612,7 +1616,7 @@ end
 ---Text from a branch, PR or note for one output line: no control characters, at most `max`.
 local function clip(v, max)
   local t = require('revuey.guide').one_line(v)
-  if #t > max then
+  if vim.fn.strchars(t) > max then
     t = vim.fn.strcharpart(t, 0, max - 1) .. '…'
   end
   return t
@@ -1778,7 +1782,7 @@ function M.stack(o)
 end
 
 -- ---------------------------------------------------------------------------
--- The PR discussion: review threads and conversation comments the review fetched
+-- The PR discussion: review threads, conversation comments and review summaries the review fetched
 -- ---------------------------------------------------------------------------
 
 M.THREAD_BODY_MAX = 1500 -- characters of a comment's body printed
@@ -1802,15 +1806,25 @@ local function when(iso)
   return d and (d .. ' ' .. hm) or t
 end
 
----A comment of the threads file, cleaned for output.
+---A comment (or review summary) of the threads file, cleaned for output. A comment GitHub hides
+---(minimized) keeps its reason and loses its body.
 local function clean_comment(c)
   c = type(c) == 'table' and c or {}
-  local body, cut = clean_body(c.body, c.cut == true)
-  return { author = clip(c.author or 'ghost', 60), created_at = clip(c.created_at, 40), body = body, cut = cut, pending = c.pending == true or nil }
+  local out = { author = clip(c.author or 'ghost', 60), created_at = clip(c.created_at, 40), pending = c.pending == true or nil }
+  if type(c.state) == 'string' then
+    out.state = clip(c.state, 30)
+  end
+  if c.minimized then
+    out.hidden = clip(type(c.minimized) == 'string' and c.minimized or 'hidden', 40)
+  else
+    out.body, out.cut = clean_body(c.body, c.cut == true)
+  end
+  return out
 end
 
 ---A PR of the threads file (agent_link.discussion), cleaned: one-line fields cut, bodies cleaned
----and cut, comments of a long thread cut to the first and the latest.
+---and cut, comments of a long thread cut to the first and the latest (`more`: left out in
+---between; `not_fetched`: later ones GitHub has that the review did not read).
 local function clean_discussion_pr(p)
   local ft = require('revuey.forge_threads')
   local n = function(v)
@@ -1826,9 +1840,12 @@ local function clean_discussion_pr(p)
     fetched = p.fetched == true,
     stale = p.stale == true or nil,
     truncated = p.truncated == true or nil,
+    discussion = p.discussion ~= false,
+    discussion_stale = p.discussion_stale == true or nil,
     threads = {},
     conversation = {},
     conversation_total = n(p.conversation_total),
+    reviews = {},
   }
   for _, t in ipairs(type(p.threads) == 'table' and p.threads or {}) do
     if type(t) == 'table' then
@@ -1852,27 +1869,30 @@ local function clean_discussion_pr(p)
           th.comments[#th.comments + 1] = clean_comment(c)
         end
       end
-      -- comments not printed: cut here, or never read (GitHub has more than the review fetched)
-      th.more = math.max(0, (n(t.total) or #list) - #th.comments)
+      th.more = #list - #th.comments
+      th.not_fetched = math.max(0, (n(t.total) or #list) - #list)
       out.threads[#out.threads + 1] = th
     end
   end
   for _, c in ipairs(type(p.conversation) == 'table' and p.conversation or {}) do
     out.conversation[#out.conversation + 1] = clean_comment(c)
   end
+  for _, c in ipairs(type(p.reviews) == 'table' and p.reviews or {}) do
+    out.reviews[#out.reviews + 1] = clean_comment(c)
+  end
   out.conversation_total = out.conversation_total or #out.conversation
   return out
 end
 
----The threads the attached review published (sessions.read_threads), once its lookup is done:
----waits up to REVUEY_THREADS_WAIT_MS (10 s) while it runs (or has not started), for the scope
----the entry names. Returns the data (nil: none) and whether it is still pending.
-local function read_discussion(o, ctx, attached)
-  local deadline = sessions.now_ms() + (tonumber(os.getenv('REVUEY_THREADS_WAIT_MS')) or 10000)
+---The threads the attached review published (sessions.read_threads), once its lookup is done
+---(the entry's `threads_pending`) for the branch the entry names: waits while it runs, until
+---`deadline`. Returns the data (nil: none), whether it is still pending, and true when the
+---review closed meanwhile.
+local function read_discussion(o, ctx, attached, deadline)
   local said = false
   while true do
     local d = sessions.read_threads(attached._path)
-    local ready = type(d) == 'table' and (d.enabled == false or (not d.pending and d.branch == attached.branch))
+    local ready = type(d) == 'table' and (d.enabled == false or (not attached.threads_pending and d.branch == attached.branch))
     if ready or sessions.now_ms() >= deadline then
       return type(d) == 'table' and d or nil, not ready
     end
@@ -1881,11 +1901,16 @@ local function read_discussion(o, ctx, attached)
       said = true
     end
     vim.wait(100)
+    local now
     for _, e in ipairs(live_sessions(o, ctx)) do
       if e.id == attached.id then
-        attached = e
+        now = e
       end
     end
+    if not now then
+      return nil, false, true
+    end
+    attached = now
   end
 end
 
@@ -1893,18 +1918,33 @@ local function indent_body(body)
   return (body:gsub('\n', '\n    '))
 end
 
+local REVIEW_STATE = { APPROVED = 'approved', CHANGES_REQUESTED = 'requested changes', COMMENTED = 'commented', DISMISSED = 'dismissed' }
+
+---"alice 2026-01-02 03:04: body", or the hidden reason instead of the body.
+local function comment_line(c, extra)
+  local text = c.hidden and ('(hidden by GitHub: ' .. c.hidden .. ')') or indent_body(c.body or '')
+  return ('  %s %s%s: %s\n'):format(c.author, when(c.created_at), extra or '', text)
+end
+
+local NO_REVIEW = 'no review running here: no PR threads to show (they come from what a running revuey fetched; open revuey here first)\n'
+
 function M.threads(o)
   local ctx = here(o)
+  -- the whole wait (after a switch, then for the lookup) is at most REVUEY_THREADS_WAIT_MS
+  local deadline = sessions.now_ms() + (tonumber(os.getenv('REVUEY_THREADS_WAIT_MS')) or 10000)
   local attached = caught_up(o, ctx, pick_session(o, ctx, live_sessions(o, ctx)))
-  if not attached then
+  local d, pending, closed
+  if attached then
+    d, pending, closed = read_discussion(o, ctx, attached, deadline)
+  end
+  if not attached or closed then
     if o.json then
       out(vim.json.encode({ review = vim.NIL, prs = {} }) .. '\n')
     else
-      out('no review running here: no PR threads to show (they come from what a running revuey fetched; open revuey here first)\n')
+      out(NO_REVIEW)
     end
     return
   end
-  local d, pending = read_discussion(o, ctx, attached)
   d = d or { prs = {} }
   local prs = {}
   for _, p in ipairs(type(d.prs) == 'table' and d.prs or {}) do
@@ -1934,6 +1974,9 @@ function M.threads(o)
   if #prs == 0 then
     out(('no PR threads for %s: the review knows no PR for what it shows%s\n'):format(label, o.all and '' or ' (--all: every PR it fetched threads for)'))
   end
+  local function plural(k, word)
+    return ('%d %s%s'):format(k, word, k == 1 and '' or 's')
+  end
   for i, p in ipairs(prs) do
     if i > 1 then
       out('\n')
@@ -1941,18 +1984,21 @@ function M.threads(o)
     local state = (p.state ~= 'OPEN' and p.state ~= '') and (' ' .. p.state:lower()) or ''
     local head = ('PR #%d%s "%s" %s%s'):format(p.number, state, p.title, p.url, p.layer and (' (' .. p.layer .. ')') or '')
     if not p.fetched then
-      out(head .. ': threads not read (the review reads them for open PRs only)\n')
+      out(head .. ': neither its threads nor its conversation were read (the review reads them for open PRs only)\n')
     else
       local resolved, outdated = 0, 0
       for _, t in ipairs(p.threads) do
         resolved = resolved + (t.resolved and 1 or 0)
         outdated = outdated + (t.outdated and 1 or 0)
       end
-      out(('%s: %d review thread%s (%d resolved, %d outdated), %d conversation comment%s\n'):format(
-        head, #p.threads, #p.threads == 1 and '' or 's', resolved, outdated,
-        p.conversation_total, p.conversation_total == 1 and '' or 's'))
+      local disc = p.discussion and (', %s, %s'):format(plural(p.conversation_total, 'conversation comment'), #p.reviews == 1 and '1 review summary' or (#p.reviews .. ' review summaries'))
+        or ', conversation not read'
+      out(('%s: %s (%d resolved, %d outdated)%s\n'):format(head, plural(#p.threads, 'review thread'), resolved, outdated, disc))
       if p.stale then
-        out("(the review's last fetch failed: these are from the one before)\n")
+        out("(the review's last fetch failed: these threads are from the one before)\n")
+      end
+      if p.discussion_stale then
+        out("(the conversation could not be read the last time: this is the one before)\n")
       end
       if p.truncated then
         out('(cut: the PR has more threads than the review reads)\n')
@@ -1976,19 +2022,25 @@ function M.threads(o)
         out(('thread %d  %s  %s\n'):format(j, where, table.concat(marks, ', ')))
         for k, c in ipairs(t.comments) do
           if k == 2 and t.more > 0 then
-            out(('  (%d more comment%s)\n'):format(t.more, t.more == 1 and '' or 's'))
+            out(('  (%s left out here)\n'):format(plural(t.more, 'comment')))
           end
-          out(('  %s %s%s: %s\n'):format(c.author, when(c.created_at), c.pending and ' (pending, yours)' or '', indent_body(c.body)))
+          out(comment_line(c, c.pending and ' (pending, yours)' or nil))
         end
-        if #t.comments == 1 and t.more > 0 then
-          out(('  (%d more comment%s)\n'):format(t.more, t.more == 1 and '' or 's'))
+        if t.not_fetched > 0 then
+          out(('  (%s not fetched)\n'):format(plural(t.not_fetched, 'later comment')))
+        end
+      end
+      if #p.reviews > 0 then
+        out('review summaries:\n')
+        for _, c in ipairs(p.reviews) do
+          out(comment_line(c, ' ' .. (REVIEW_STATE[c.state] or (c.state or ''):lower())))
         end
       end
       if #p.conversation > 0 then
         local earlier = p.conversation_total - #p.conversation
         out(('conversation%s:\n'):format(earlier > 0 and (' (the latest %d; %d earlier)'):format(#p.conversation, earlier) or ''))
         for _, c in ipairs(p.conversation) do
-          out(('  %s %s: %s\n'):format(c.author, when(c.created_at), indent_body(c.body)))
+          out(comment_line(c))
         end
       end
     end

@@ -37,10 +37,13 @@ h.test('build_threads_query: threads per PR and comments per thread, cursors, fr
   h.ok(q:find('c3: node(id: "PRRT_1") { ... on PullRequestReviewThread { comments(first: 100, after: "20") {', 1, true), q)
   h.eq(13, aliases.t2.number)
   h.eq('PRRT_1', aliases.c3.thread)
-  -- the PR's latest conversation comments ride on its first page only
-  h.ok(q:find('t1: [^\n]* conversation: comments%(last: 30%) { totalCount nodes { %.%.%.issueComment } } } }\n'), q)
-  h.ok(not q:find('t2: [^\n]*conversation'), q)
-  h.ok(q:find('fragment issueComment on IssueComment', 1, true), q)
+  -- the PR's discussion rides on its first page only, in an alias of its own (an error there
+  -- nulls that alias, never the threads)
+  h.ok(q:find('\n  d1: repository(owner: "acme", name: "shop") { pullRequest(number: 12) { conversation: comments(last: 30) { totalCount nodes { ...issueComment } } reviews(last: 20) { nodes { ...reviewSummary } } } }\n', 1, true), q)
+  h.ok(not q:find('t1: [^\n]*conversation') and not q:find('d2:', 1, true), q)
+  h.eq({ 'discussion', aliases.t1 }, { aliases.d1.kind, aliases.d1.of })
+  h.ok(q:find('fragment issueComment on IssueComment', 1, true) and q:find('fragment reviewSummary on PullRequestReview', 1, true), q)
+  h.ok(select(2, q:gsub('isMinimized minimizedReason', '')) == 3, 'hidden comments, review summaries and thread comments marked')
   for _, field in ipairs({ 'isResolved', 'isOutdated', 'path', 'line', 'startLine', 'originalLine', 'originalStartLine',
     'diffSide', 'startDiffSide', 'subjectType', 'resolvedBy', 'totalCount', 'hasNextPage', 'endCursor', 'databaseId',
     'url', 'body', 'createdAt', 'lastEditedAt', 'state', 'diffHunk', 'author { login }', 'replyTo' }) do
@@ -587,30 +590,46 @@ h.test('threads of the viewed layer\'s PR: inline, collapsed when resolved or ou
   view.close()
 end)
 
-h.test('bin/revuey threads: what the review fetched (threads and conversation), with no GitHub call of its own', function()
+---Run bin/revuey in `d` (no GitHub: it must never call gh).
+local function cli(d, args, extra)
+  local env = vim.tbl_extend('force', { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath, PATH = vim.env.PATH,
+    REVUEY_FAKE_GH_LOG = vim.env.REVUEY_FAKE_GH_LOG, REVUEY_FAKE_NVIM = vim.v.progpath }, extra or {})
+  local r = vim.system(vim.list_extend({ h.root .. '/bin/revuey' }, args), { cwd = d, env = env, text = true }):wait(20000)
+  h.eq(0, r.code, r.stderr)
+  return r.stdout, r.stderr
+end
+
+local CONVERSATION = { ['acme/shop#12'] = {
+  { id = 'IC_1', url = 'https://github.com/acme/shop/pull/12#issuecomment-1', body = 'Nice.\r\nOne \27[1mthing: totals.',
+    createdAt = '2026-01-05T06:07:08Z', lastEditedAt = vim.NIL, author = { login = 'erin' }, isMinimized = false },
+  { id = 'IC_2', url = 'u', body = 'spam spam', createdAt = '2026-01-05T07:00:00Z', lastEditedAt = vim.NIL,
+    author = { login = 'spammer' }, isMinimized = true, minimizedReason = 'SPAM' },
+} }
+local REVIEWS = { ['acme/shop#12'] = {
+  { state = 'APPROVED', body = '', submittedAt = '2026-01-04T00:00:00Z', author = { login = 'dan' }, isMinimized = false },
+  { state = 'CHANGES_REQUESTED', body = 'Totals must round once.', submittedAt = '2026-01-06T00:00:00Z', author = { login = 'carol' }, isMinimized = false },
+} }
+
+local function with_discussion(threads)
+  threads = vim.deepcopy(threads)
+  threads._conversation, threads._reviews = vim.deepcopy(CONVERSATION), vim.deepcopy(REVIEWS)
+  return threads
+end
+
+h.test('bin/revuey threads: what the review fetched (threads, conversation, review summaries), with no GitHub call of its own', function()
   reset()
   local calls = h.tmpdir('ft-gh-cli') .. '/calls.ndjson'
-  local threads = vim.deepcopy(THREADS)
-  threads._conversation = { ['acme/shop#12'] = {
-    { id = 'IC_1', url = 'https://github.com/acme/shop/pull/12#issuecomment-1', body = 'Nice.\r\nOne \27[1mthing: totals.',
-      createdAt = '2026-01-05T06:07:08Z', lastEditedAt = vim.NIL, author = { login = 'erin' } },
-  } }
-  h.use_fake_gh(calls, PRS, nil, threads)
+  h.use_fake_gh(calls, PRS, nil, with_discussion(THREADS))
   local d = stack_fixture('ft-cli')
   local s = open(d)
   idle(s)
+  h.eq(2, #h.read_calls(calls), 'the discussion rides on the threads call')
   local e = forge.threads_cache['github.com/acme/shop#12']
-  h.eq(1, e and e.conversation and #e.conversation, vim.inspect(e and e.conversation))
-  require('revuey.agent_link').update(s, true)
+  h.eq({ 2, 1, 'spam' }, { #e.discussion.conversation, #e.discussion.reviews, e.discussion.conversation[2].minimized }, vim.inspect(e.discussion))
+  local link = require('revuey.agent_link')
+  link.update(s, true)
   local n = #h.read_calls(calls)
-  local env = { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath, PATH = vim.env.PATH,
-    REVUEY_FAKE_GH_LOG = calls, REVUEY_FAKE_NVIM = vim.v.progpath }
-  local function cli(args)
-    local r = vim.system(vim.list_extend({ h.root .. '/bin/revuey' }, args), { cwd = d, env = env, text = true }):wait(20000)
-    h.eq(0, r.code, r.stderr)
-    return r.stdout
-  end
-  local j = vim.json.decode(cli({ 'threads', '--json' }))
+  local j = vim.json.decode((cli(d, { 'threads', '--json' })))
   h.eq(1, #j.prs)
   local p = j.prs[1]
   h.eq({ 12, 'stack/cart', true, 5 }, { p.number, p.layer, p.shown, #p.threads })
@@ -627,12 +646,148 @@ h.test('bin/revuey threads: what the review fetched (threads and conversation), 
   h.eq('old', by['Why does oldTotal go?'].side)
   h.eq(nil, by['Needs tests.'].start_line, 'a file thread has no lines')
   h.eq({ 'erin', 'Nice.\nOne [1mthing: totals.' }, { p.conversation[1].author, p.conversation[1].body })
-  local txt = cli({ 'threads' })
-  h.ok(txt:find('^PR #12 "PR 12" https://github.com/acme/shop/pull/12 %(stack/cart%): 5 review threads %(1 resolved, 1 outdated%), 1 conversation comment\n'), txt)
-  h.ok(txt:find('\nconversation:\n  erin 2026-01-05 06:07: Nice.\n    One [1mthing: totals.\n', 1, true), txt)
+  h.eq({ 'spam', nil }, { p.conversation[2].hidden, p.conversation[2].body })
+  h.eq(1, #p.reviews, 'a review without a summary is left out')
+  h.eq({ 'carol', 'CHANGES_REQUESTED', 'Totals must round once.' }, { p.reviews[1].author, p.reviews[1].state, p.reviews[1].body })
+  local txt = cli(d, { 'threads' })
+  h.ok(txt:find('^PR #12 "PR 12" https://github.com/acme/shop/pull/12 %(stack/cart%): 5 review threads %(1 resolved, 1 outdated%), 2 conversation comments, 1 review summary\n'), txt)
+  h.ok(txt:find('\nreview summaries:\n  carol 2026-01-06 00:00 requested changes: Totals must round once.\n', 1, true), txt)
+  h.ok(txt:find('\nconversation:\n  erin 2026-01-05 06:07: Nice.\n    One [1mthing: totals.\n  spammer 2026-01-05 07:00: (hidden by GitHub: spam)\n', 1, true), txt)
+  h.ok(not txt:find('spam spam', 1, true), txt)
   h.eq(n, #h.read_calls(calls), 'the CLI never called gh')
   view.close()
-  h.ok(cli({ 'threads' }):find('^no review running here'))
+  h.ok(cli(d, { 'threads' }):find('^no review running here'))
+end)
+
+h.test('threads file: rewritten only when what it says changes, not on a poll or a refetch that brings nothing new', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-file') .. '/calls.ndjson'
+  local threads = with_discussion(THREADS)
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local d = stack_fixture('ft-file')
+  local s = open(d)
+  idle(s)
+  local link = require('revuey.agent_link')
+  local sessions = require('revuey.sessions')
+  link.update(s, true)
+  local real_write, writes = sessions.write_threads, 0
+  sessions.write_threads = function(...)
+    writes = writes + 1
+    return real_write(...)
+  end
+  link.update(s, true)
+  link.update(s, true)
+  h.eq(0, writes, 'polls')
+  local _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  link.update(s, true)
+  h.eq(0, writes, 'a refetch of the same threads and discussion')
+  -- a new conversation comment on GitHub: one rewrite
+  table.insert(threads._conversation['acme/shop#12'], { id = 'IC_3', url = 'u', body = 'Ping?', createdAt = '2026-01-07T00:00:00Z',
+    lastEditedAt = vim.NIL, author = { login = 'frank' }, isMinimized = false })
+  vim.fn.writefile({ vim.json.encode(threads) }, vim.env.REVUEY_FAKE_GH_THREADS)
+  keys(s, 'R')
+  idle(s)
+  restore()
+  link.update(s, true)
+  link.update(s, true)
+  h.eq(1, writes, 'a real change')
+  sessions.write_threads = real_write
+  h.ok(cli(d, { 'threads' }):find('frank 2026-01-07 00:00: Ping?', 1, true))
+  view.close()
+end)
+
+h.test('discussion: its own alias failing leaves the threads drawn; a failed refetch keeps the last one', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-disc-err') .. '/calls.ndjson'
+  local threads = with_discussion(THREADS)
+  threads._discussion_errors = { 'acme/shop#12' }
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local d = stack_fixture('ft-disc-err')
+  local s = open(d)
+  idle(s)
+  local pr12 = forge.get(s.forge.targets['stack/cart'])
+  h.eq(5, #(forge.threads_for(pr12) or {}), 'threads read')
+  h.eq(nil, forge.discussion_for(pr12))
+  h.ok(vlines(s, row_of(s, 'src/cart.ts', 'add', 18)):find('Should the total be', 1, true), 'threads drawn')
+  require('revuey.agent_link').update(s, true)
+  h.ok(cli(d, { 'threads' }):find('5 review threads (1 resolved, 1 outdated), conversation not read\n', 1, true))
+  view.close()
+  -- read once, then a refetch that fails (the whole call): the threads and the discussion stay
+  reset()
+  calls = h.tmpdir('ft-gh-disc-keep') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, with_discussion(THREADS))
+  s = open(d)
+  idle(s)
+  pr12 = forge.get(s.forge.targets['stack/cart'])
+  h.eq(2, #forge.discussion_for(pr12).conversation)
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = 'fail'
+  local _, restore = h.capture_notify()
+  keys(s, 'R')
+  idle(s)
+  restore()
+  vim.env.REVUEY_FAKE_GH_THREADS_SCENARIO = nil
+  local disc, stale = forge.discussion_for(pr12)
+  h.eq({ 2, true }, { disc and #disc.conversation, stale })
+  require('revuey.agent_link').update(s, true)
+  local txt = cli(d, { 'threads' })
+  h.ok(txt:find('(the conversation could not be read the last time: this is the one before)', 1, true), txt)
+  h.ok(txt:find('erin 2026-01-05 06:07: Nice.', 1, true), txt)
+  view.close()
+end)
+
+h.test('discussion: read with the first of several pages of threads, and kept through the rest', function()
+  reset()
+  forge.THREAD_PAGE, forge.COMMENT_PAGE = 2, 1
+  local list = {}
+  for i = 1, 5 do
+    list[i] = t({ id = 'TQ' .. i, line = 18, comments = { c('u' .. i, 'thread ' .. i, { hunk = cart_hunk(18) }), c('r', 'reply ' .. i) } })
+  end
+  local calls = h.tmpdir('ft-gh-disc-pages') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, with_discussion({ ['acme/shop#12'] = list }))
+  local d = stack_fixture('ft-disc-pages')
+  local s = open(d)
+  idle(s)
+  h.ok(thread_calls(calls) >= 3, 'several rounds')
+  local discs = 0
+  for _, x in ipairs(h.read_calls(calls)) do
+    discs = discs + select(2, (x.argv[5] or ''):gsub('conversation: comments', ''))
+  end
+  h.eq(1, discs, 'asked once, with the first page')
+  local pr12 = forge.get(s.forge.targets['stack/cart'])
+  h.eq(5, #forge.threads_for(pr12))
+  local disc, stale = forge.discussion_for(pr12)
+  h.eq({ 2, 1, false }, { #disc.conversation, #disc.reviews, stale })
+  view.close()
+  reset()
+end)
+
+h.test('a lookup that errors is over: bin/revuey threads does not wait for it', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-lookup-err') .. '/calls.ndjson'
+  h.use_fake_gh(calls, PRS, nil, THREADS)
+  local real = forge.remote_info
+  forge.remote_info = function()
+    error('boom')
+  end
+  local d = stack_fixture('ft-lookup-err')
+  local s = open(d)
+  assert(vim.wait(10000, function()
+    return s.forge and s.forge.ready and not s.forge.busy
+  end, 10), 'the lookup did not end')
+  forge.remote_info = real
+  require('revuey.agent_link').update(s, true)
+  local sessions = require('revuey.sessions')
+  local root = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', '--show-toplevel' }))
+  local e = sessions.list(sessions.bases(root, state_dir), { worktree = root })[1]
+  h.eq(nil, e.threads_pending)
+  local t0 = vim.uv.hrtime()
+  local out, err = cli(d, { 'threads' })
+  h.ok(not err:find('waiting', 1, true), err)
+  h.ok((vim.uv.hrtime() - t0) / 1e6 < 5000, 'no wait')
+  h.ok(out:find('^no PR threads for stack/cart'), out)
+  view.close()
 end)
 
 h.test('gH cycles all / open only / none; ]c reaches threads; the list shows them; gx opens one', function()

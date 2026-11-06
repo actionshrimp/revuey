@@ -596,9 +596,11 @@ end
 -- query's `first`/`after` (cursors are indices). `REVUEY_FAKE_GH_THREADS_SCENARIO` = fail |
 -- errors | fail_after (only queries for later pages fail) applies to thread queries only (the
 -- PR lookup still answers). `_heads` = { ["owner/name#N"] = oid } is the PR's headRefOid there (`_heads_later`: on
--- pages after the first, a push mid-fetch). `_conversation` = { ["owner/name#N"] = IssueComment
--- nodes, oldest first }: the PR's conversation, the last `conversation: comments(last: N)` of
--- them on a first page that asks for it.
+-- pages after the first, a push mid-fetch). The discussion alias (`dN: repository { pullRequest
+-- { conversation: comments(last: N) reviews(last: M) } }`) answers the last N of `_conversation`
+-- and the last M of `_reviews` (`{ ["owner/name#N"] = IssueComment / PullRequestReview nodes,
+-- oldest first }`); a PR in `_discussion_errors` gets a null alias and a GraphQL error (exit 1,
+-- partial data), its threads answered as usual.
 if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ', 1, true)) then
   local tscen = os.getenv('REVUEY_FAKE_GH_THREADS_SCENARIO') or ''
   if tscen == 'fail' then
@@ -664,15 +666,28 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
       end
       local head = (after and (all._heads_later or {})[key]) or (all._heads or {})[key]
       data[alias] = { pullRequest = { headRefOid = head or vim.NIL, reviewThreads = { pageInfo = info, nodes = out } } }
-      local last = not after and tonumber(query:match(alias .. ': repository[^\n]-conversation: comments%(last: (%d+)%)') or '')
-      if last then
-        local conv = (all._conversation or {})[key] or {}
-        local nodes_ = {}
-        for i = math.max(1, #conv - last + 1), #conv do
-          nodes_[#nodes_ + 1] = conv[i]
-        end
-        data[alias].pullRequest.conversation = { totalCount = #conv, nodes = nodes_ }
-      end
+
+    end
+  end
+  local function last_of(list, n)
+    local out = {}
+    for i = math.max(1, #list - n + 1), #list do
+      out[#out + 1] = list[i]
+    end
+    return out
+  end
+  local dpat = '(d%d+): repository%(owner: (%b""), name: (%b"")%) { pullRequest%(number: (%d+)%) { conversation: comments%(last: (%d+)%).-reviews%(last: (%d+)%)'
+  for alias, owner, name, number, nconv, nrev in query:gmatch(dpat) do
+    local key = vim.json.decode(owner) .. '/' .. vim.json.decode(name) .. '#' .. number
+    if vim.tbl_contains(all._discussion_errors or {}, key) then
+      data[alias] = vim.NIL
+      errors[#errors + 1] = { type = 'INTERNAL', path = { alias, 'pullRequest', 'reviews' }, message = 'Something went wrong while executing your query.' }
+    else
+      local conv = (all._conversation or {})[key] or {}
+      data[alias] = { pullRequest = {
+        conversation = { totalCount = #conv, nodes = last_of(conv, tonumber(nconv)) },
+        reviews = { nodes = last_of((all._reviews or {})[key] or {}, tonumber(nrev)) },
+      } }
     end
   end
   local cpat = '(c%d+): node%(id: (%b"")%) { %.%.%. on PullRequestReviewThread { comments%(first: (%d+)([^)]*)%)'
