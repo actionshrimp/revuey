@@ -195,13 +195,15 @@ function M.repair_json(text)
   end
 end
 
----Characters that change how text reads without showing (UTF-8): zero-width ones (U+200B-200F,
----U+2060-2064, U+FEFF), line and paragraph separators (U+2028-2029) and bidi controls
----(U+202A-202E, U+2066-206F), removed; C1 controls (U+0080-009F) become `c1`.
+---Characters that change how text reads without showing (UTF-8), removed: the zero-width space
+---(U+200B), word joiner and invisible operators (U+2060-2064), the BOM (U+FEFF), line and
+---paragraph separators (U+2028-2029), bidi embeddings and overrides (U+202A-202E) and isolates
+---(U+2066-2069); C1 controls (U+0080-009F) become `c1`. Real text keeps ZWNJ and ZWJ (U+200C-200D:
+---Persian, emoji sequences, Indic conjuncts) and LRM/RLM (U+200E-200F: Hebrew, Arabic).
 local function strip_invisible(v, c1)
   v = v:gsub('\194[\128-\159]', c1)
-  v = v:gsub('\226\128[\139-\143\168-\174]', '')
-  v = v:gsub('\226\129[\160-\164\166-\175]', '')
+  v = v:gsub('\226\128[\139\168-\174]', '')
+  v = v:gsub('\226\129[\160-\164\166-\169]', '')
   v = v:gsub('\239\187\191', '')
   return v
 end

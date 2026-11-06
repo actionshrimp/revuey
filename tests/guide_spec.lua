@@ -123,6 +123,25 @@ h.test('model strings are sanitised: one-line titles and notes, no control chara
   h.eq('Untitled section', res.sections[1].title)
 end)
 
+h.test('cleaners keep real text (emoji sequences, ZWNJ, RLM) and drop bidi overrides and invisible characters', function()
+  local keep = {
+    '👨\u{200D}👩\u{200D}👧 family', -- ZWJ emoji sequence
+    '🧑\u{200D}💻 at work',
+    'می\u{200C}خواهم', -- Persian with a ZWNJ
+    'שלום\u{200F} (RLM) and \u{200E}LRM', -- Hebrew with RLM and an LRM
+    'क्\u{200D}ष', -- an Indic conjunct with a ZWJ
+  }
+  for _, t in ipairs(keep) do
+    h.eq(t, guide.one_line(t))
+    h.eq(t, guide.clean_text(t))
+  end
+  local drop = 'a\u{202E}b\u{202A}c\u{2066}d\u{2069}e\u{200B}f\u{2060}g\u{FEFF}h\u{2028}i'
+  h.eq('abcdefghi', guide.one_line(drop))
+  h.eq('abcdefghi', guide.clean_text(drop))
+  h.eq('x y', guide.one_line('x\u{0085}y'))
+  h.eq('xy', guide.clean_text('x\u{009B}y'))
+end)
+
 h.test('line-ending-only changes change the hash', function()
   local lf = { { path = 'x.ts', hunks = { { '@@ -1,1 +1,1 @@', '-a', '+b' } } } }
   local crlf = { { path = 'x.ts', hunks = { { '@@ -1,1 +1,1 @@', '-a', '+b\r' } } } }

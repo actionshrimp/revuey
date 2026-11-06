@@ -698,6 +698,54 @@ h.test('threads file: rewritten only when what it says changes, not on a poll or
   view.close()
 end)
 
+h.test('threads file: written before the entry that says the lookup is over, never after it', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-order') .. '/calls.ndjson'
+  local threads = with_discussion(THREADS)
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local d = stack_fixture('ft-order')
+  local s = open(d)
+  idle(s)
+  local link = require('revuey.agent_link')
+  local sessions = require('revuey.sessions')
+  -- no polls: only the updates below write
+  s.link.timer:stop()
+  link.update(s, true)
+  local normal = function(x)
+    return vim.json.decode(vim.json.encode(x))
+  end
+  -- each time the entry is written saying the lookup is over, the threads file must already say
+  -- what the review has
+  local real_register, checked, stale = sessions.register, 0, nil
+  sessions.register = function(bases, e)
+    if not e.threads_pending and s.link.path then
+      checked = checked + 1
+      local on_disk = sessions.read_threads(s.link.path)
+      if not vim.deep_equal(on_disk, normal(link.discussion(s))) then
+        stale = stale or vim.inspect(on_disk and on_disk.prs and on_disk.prs[1] and on_disk.prs[1].conversation)
+      end
+    end
+    return real_register(bases, e)
+  end
+  local ok, err = pcall(function()
+    -- new on GitHub: a conversation comment; R fetches it, then one update writes both
+    table.insert(threads._conversation['acme/shop#12'], { id = 'IC_9', url = 'u', body = 'Any news?', createdAt = '2026-01-08T00:00:00Z',
+      lastEditedAt = vim.NIL, author = { login = 'gina' }, isMinimized = false })
+    vim.fn.writefile({ vim.json.encode(threads) }, vim.env.REVUEY_FAKE_GH_THREADS)
+    local _, restore = h.capture_notify()
+    keys(s, 'R')
+    idle(s)
+    restore()
+    link.update(s, true)
+  end)
+  sessions.register = real_register
+  assert(ok, err)
+  h.ok(checked > 0, 'an entry saying the lookup is over was written')
+  h.eq(nil, stale, 'the entry said the lookup was over while the threads file was still old')
+  h.ok(cli(d, { 'threads' }):find('gina 2026-01-08 00:00: Any news?', 1, true))
+  view.close()
+end)
+
 h.test('discussion: its own alias failing leaves the threads drawn; a failed refetch keeps the last one', function()
   reset()
   local calls = h.tmpdir('ft-gh-disc-err') .. '/calls.ndjson'
@@ -767,16 +815,26 @@ h.test('a lookup that errors is over: bin/revuey threads does not wait for it', 
   reset()
   local calls = h.tmpdir('ft-gh-lookup-err') .. '/calls.ndjson'
   h.use_fake_gh(calls, PRS, nil, THREADS)
+  local d = stack_fixture('ft-lookup-err')
   local real = forge.remote_info
   forge.remote_info = function()
     error('boom')
   end
-  local d = stack_fixture('ft-lookup-err')
-  local s = open(d)
-  assert(vim.wait(10000, function()
-    return s.forge and s.forge.ready and not s.forge.busy
-  end, 10), 'the lookup did not end')
+  -- (restored whatever happens: a failure here must not break the specs after it)
+  local ok, s = pcall(function()
+    local x = open(d)
+    assert(vim.wait(10000, function()
+      return x.forge and x.forge.ready and not x.forge.busy
+    end, 10), 'the lookup did not end')
+    return x
+  end)
   forge.remote_info = real
+  if not ok then
+    if view.session then
+      pcall(view.close)
+    end
+    error(s, 0)
+  end
   require('revuey.agent_link').update(s, true)
   local sessions = require('revuey.sessions')
   local root = vim.trim(vim.fn.system({ 'git', '-C', d, 'rev-parse', '--show-toplevel' }))

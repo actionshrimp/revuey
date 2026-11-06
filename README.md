@@ -1528,23 +1528,25 @@ Then, in a Claude Code session running in your repo:
    `bin/revuey stack` lists the layers in order with their parents, PRs, stats and the stack's
    notes, and Claude skims each layer (its PR title, `git log` and `git diff --stat` of its own
    commits, at most a few lines of one file; stat and log only past about 5 layers; never
-   switching) and tells you the stack in a few lines, one per layer. A plain branch or single-PR review skips this.
+   switching) and tells you the stack in a few lines, one per layer. A plain branch or single-PR
+   review skips this.
    Then it takes a review pass of what the review shows (a layer, a branch or the full stack),
    and again each time you check out another layer: that layer's diff (`bin/revuey hunks`,
    `--stat` first for a large one), read in the context of the rest of the stack, and the PR's
    existing discussion (`bin/revuey threads`: its review threads, conversation comments and
-   review summaries as the review fetched them, no extra GitHub call), without editing files or touching the
-   review. It gives a short summary of its findings in chat, headed by a rating to help you
-   decide: 🟢 green, nothing to report; 🟡 yellow, something discussed or dismissed already that
-   still looks a bit dubious, or only minor new issues (nits, a small missing test); 🔴 red, a
-   new finding that matters (a likely bug or risk) nobody raised on the PR. A thread's word alone
-   never settles a note: it is dropped only when the code bears the discussion out. Then a few bullets with file:line, most important first, each marked new or
+   review summaries as the review fetched them, no extra GitHub call), without editing files or
+   touching the review. It gives a short summary of its findings in chat, headed by a rating to
+   help you decide: 🟢 green, nothing to report; 🟡 yellow, something discussed or dismissed
+   already that still looks a bit dubious, or only minor new issues (nits, a small missing
+   test); 🔴 red, a new finding that matters (a likely bug or risk) nobody raised on the PR. A
+   thread's word alone never settles a note: it is dropped only when the code bears the
+   discussion out. Then a few bullets with file:line, most important first, each marked new or
    discussed (by whom, how it ended), saying where the layer meets the others: "used by layer
-   3", "layer 2 already handles this". The rating stays in chat: it is never a GitHub verdict
-   or part of an import. Say "drop them in" and it imports them as AI findings to triage (the
-   run's verdict follows the findings' severity, never `approve` with a red note), ask for
-   inline comments and it leaves them as comment drafts, or ask it about any of them. Your
-   messages always come first. Say "no passes" to turn passes and the overview off.
+   3", "layer 2 already handles this". The rating stays in chat: it is never a GitHub verdict or
+   part of an import. Say "drop them in" and it imports them as AI findings to triage (the run's
+   verdict follows the findings' severity, never `approve` with a red note), ask for inline
+   comments and it leaves them as comment drafts, or ask it about any of them. Your messages
+   always come first. Say "no passes" to turn passes and the overview off.
 6. **The guide.** Claude reads the [guide](#ai-guide) the review shows (`bin/revuey guide`) when
    you mention it or ask about a section, so "what does section 2 mean?" works. When you
    generate a guide and choose "Ask claude (connected)", the watch prints a request line and
