@@ -596,7 +596,9 @@ end
 -- query's `first`/`after` (cursors are indices). `REVUEY_FAKE_GH_THREADS_SCENARIO` = fail |
 -- errors | fail_after (only queries for later pages fail) applies to thread queries only (the
 -- PR lookup still answers). `_heads` = { ["owner/name#N"] = oid } is the PR's headRefOid there (`_heads_later`: on
--- pages after the first, a push mid-fetch).
+-- pages after the first, a push mid-fetch). `_conversation` = { ["owner/name#N"] = IssueComment
+-- nodes, oldest first }: the PR's conversation, the last `conversation: comments(last: N)` of
+-- them on a first page that asks for it.
 if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ', 1, true)) then
   local tscen = os.getenv('REVUEY_FAKE_GH_THREADS_SCENARIO') or ''
   if tscen == 'fail' then
@@ -662,6 +664,15 @@ if query and (query:find('reviewThreads(', 1, true) or query:find(': node(id: ',
       end
       local head = (after and (all._heads_later or {})[key]) or (all._heads or {})[key]
       data[alias] = { pullRequest = { headRefOid = head or vim.NIL, reviewThreads = { pageInfo = info, nodes = out } } }
+      local last = not after and tonumber(query:match(alias .. ': repository[^\n]-conversation: comments%(last: (%d+)%)') or '')
+      if last then
+        local conv = (all._conversation or {})[key] or {}
+        local nodes_ = {}
+        for i = math.max(1, #conv - last + 1), #conv do
+          nodes_[#nodes_ + 1] = conv[i]
+        end
+        data[alias].pullRequest.conversation = { totalCount = #conv, nodes = nodes_ }
+      end
     end
   end
   local cpat = '(c%d+): node%(id: (%b"")%) { %.%.%. on PullRequestReviewThread { comments%(first: (%d+)([^)]*)%)'

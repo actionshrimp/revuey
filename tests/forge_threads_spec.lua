@@ -37,6 +37,10 @@ h.test('build_threads_query: threads per PR and comments per thread, cursors, fr
   h.ok(q:find('c3: node(id: "PRRT_1") { ... on PullRequestReviewThread { comments(first: 100, after: "20") {', 1, true), q)
   h.eq(13, aliases.t2.number)
   h.eq('PRRT_1', aliases.c3.thread)
+  -- the PR's latest conversation comments ride on its first page only
+  h.ok(q:find('t1: [^\n]* conversation: comments%(last: 30%) { totalCount nodes { %.%.%.issueComment } } } }\n'), q)
+  h.ok(not q:find('t2: [^\n]*conversation'), q)
+  h.ok(q:find('fragment issueComment on IssueComment', 1, true), q)
   for _, field in ipairs({ 'isResolved', 'isOutdated', 'path', 'line', 'startLine', 'originalLine', 'originalStartLine',
     'diffSide', 'startDiffSide', 'subjectType', 'resolvedBy', 'totalCount', 'hasNextPage', 'endCursor', 'databaseId',
     'url', 'body', 'createdAt', 'lastEditedAt', 'state', 'diffHunk', 'author { login }', 'replyTo' }) do
@@ -46,6 +50,7 @@ h.test('build_threads_query: threads per PR and comments per thread, cursors, fr
   -- only comment pages: GraphQL refuses an unused fragment
   local q2 = forge.build_threads_query({ { kind = 'comments', thread = 'PRRT_1', after = '1' } })
   h.ok(not q2:find('fragment thread', 1, true), q2)
+  h.ok(not q2:find('fragment issueComment', 1, true), q2)
   h.ok(q2:find('fragment comment on PullRequestReviewComment', 1, true), q2)
 end)
 
@@ -580,6 +585,54 @@ h.test('threads of the viewed layer\'s PR: inline, collapsed when resolved or ou
   h.ok(p:find('threads: 4 open, 1 resolved, 1 outdated', 1, true), p)
   h.ok(p:find('gH GitHub threads', 1, true), p)
   view.close()
+end)
+
+h.test('bin/revuey threads: what the review fetched (threads and conversation), with no GitHub call of its own', function()
+  reset()
+  local calls = h.tmpdir('ft-gh-cli') .. '/calls.ndjson'
+  local threads = vim.deepcopy(THREADS)
+  threads._conversation = { ['acme/shop#12'] = {
+    { id = 'IC_1', url = 'https://github.com/acme/shop/pull/12#issuecomment-1', body = 'Nice.\r\nOne \27[1mthing: totals.',
+      createdAt = '2026-01-05T06:07:08Z', lastEditedAt = vim.NIL, author = { login = 'erin' } },
+  } }
+  h.use_fake_gh(calls, PRS, nil, threads)
+  local d = stack_fixture('ft-cli')
+  local s = open(d)
+  idle(s)
+  local e = forge.threads_cache['github.com/acme/shop#12']
+  h.eq(1, e and e.conversation and #e.conversation, vim.inspect(e and e.conversation))
+  require('revuey.agent_link').update(s, true)
+  local n = #h.read_calls(calls)
+  local env = { REVUEY_STATE_DIR = state_dir, REVUEY_NVIM = vim.v.progpath, PATH = vim.env.PATH,
+    REVUEY_FAKE_GH_LOG = calls, REVUEY_FAKE_NVIM = vim.v.progpath }
+  local function cli(args)
+    local r = vim.system(vim.list_extend({ h.root .. '/bin/revuey' }, args), { cwd = d, env = env, text = true }):wait(20000)
+    h.eq(0, r.code, r.stderr)
+    return r.stdout
+  end
+  local j = vim.json.decode(cli({ 'threads', '--json' }))
+  h.eq(1, #j.prs)
+  local p = j.prs[1]
+  h.eq({ 12, 'stack/cart', true, 5 }, { p.number, p.layer, p.shown, #p.threads })
+  local by = {}
+  for _, t in ipairs(p.threads) do
+    by[t.comments[1].body] = t
+  end
+  local round = by['Should the total be rounded?']
+  h.eq({ 'src/cart.ts', 18, 18, 'new', false, false, 'alice' }, { round.path, round.start_line, round.end_line, round.side, round.resolved, round.outdated, round.comments[2].author })
+  local add = by['Return a copy instead?']
+  h.eq({ true, 'alice', 12, 13, 3 }, { add.resolved, add.resolved_by, add.start_line, add.end_line, #add.comments })
+  local old = by['Use a Money type here.']
+  h.eq({ true, 5 }, { old.outdated, old.start_line })
+  h.eq('old', by['Why does oldTotal go?'].side)
+  h.eq(nil, by['Needs tests.'].start_line, 'a file thread has no lines')
+  h.eq({ 'erin', 'Nice.\nOne [1mthing: totals.' }, { p.conversation[1].author, p.conversation[1].body })
+  local txt = cli({ 'threads' })
+  h.ok(txt:find('^PR #12 "PR 12" https://github.com/acme/shop/pull/12 %(stack/cart%): 5 review threads %(1 resolved, 1 outdated%), 1 conversation comment\n'), txt)
+  h.ok(txt:find('\nconversation:\n  erin 2026-01-05 06:07: Nice.\n    One [1mthing: totals.\n', 1, true), txt)
+  h.eq(n, #h.read_calls(calls), 'the CLI never called gh')
+  view.close()
+  h.ok(cli({ 'threads' }):find('^no review running here'))
 end)
 
 h.test('gH cycles all / open only / none; ]c reaches threads; the list shows them; gx opens one', function()

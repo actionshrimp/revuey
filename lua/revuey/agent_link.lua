@@ -4,7 +4,8 @@
 -- panel header ("● agent connected" / "○ no agent") and on sent comments. Sending itself is in
 -- comments_view.lua (it saves the comment and appends a `sent` event to the feed). A switch of
 -- the worktree to another stack layer is told to a connected agent here (`tell_switch`: a
--- `switched` event in the feed).
+-- `switched` event in the feed). Beside the entry it publishes the PR threads and conversation
+-- comments the review fetched (`discussion`), for `bin/revuey threads`.
 local api = vim.api
 local sessions = require('revuey.sessions')
 local config = require('revuey.config')
@@ -77,6 +78,163 @@ function M.stack_info(s)
     layers = layers,
     notes = notes,
   }
+end
+
+-- ---------------------------------------------------------------------------
+-- The PR discussion, for `bin/revuey threads`
+-- ---------------------------------------------------------------------------
+
+M.BODY_MAX = 8000 -- characters of a comment kept in the threads file (the CLI cuts further)
+
+---The review's PRs (stack order; the plain review's alone) that are shown (forge_view.scope_prs)
+---or have threads cached: `{key, pr, cache, shown}`.
+local function discussion_prs(s)
+  local fv = require('revuey.forge_view')
+  local forge = require('revuey.forge')
+  local f, r = s.forge, s.review
+  if not (f and f.targets) then
+    return {}
+  end
+  local shown = {}
+  for _, pr in ipairs(fv.scope_prs(s, true)) do
+    shown[pr.url] = true
+  end
+  local keys = {}
+  if r.stack and r.stack.layers then
+    for _, l in ipairs(r.stack.layers) do
+      keys[#keys + 1] = l.name
+    end
+  else
+    keys[1] = ''
+  end
+  local out, seen = {}, {}
+  for _, k in ipairs(keys) do
+    local pr = f.targets[k] and forge.get(f.targets[k])
+    if pr and not seen[pr.url] then
+      seen[pr.url] = true
+      local e = forge.threads_cache[forge.thread_key(pr)]
+      if shown[pr.url] or e then
+        out[#out + 1] = { key = k, pr = pr, cache = e, shown = shown[pr.url] or false }
+      end
+    end
+  end
+  return out
+end
+
+---Is the review still looking its PRs or threads up (or has not yet)?
+local function discussion_pending(s)
+  local f = s.forge
+  return not f or not f.ready or f.busy or false
+end
+
+---What the threads file says, without the threads: it is rewritten when this changes.
+local function discussion_sig(s)
+  local fv = require('revuey.forge_view')
+  local r = s.review
+  local parts = { r.branch or '', r.scope and r.scope.kind or '', tostring(fv.threads_enabled()), tostring(discussion_pending(s)) }
+  for _, x in ipairs(discussion_prs(s)) do
+    local e = x.cache
+    parts[#parts + 1] = table.concat({ x.pr.url, x.pr.state, x.pr.title, tostring(x.shown), tostring(e and e.at or ''),
+      tostring(e and e.failed or '') }, '\0')
+  end
+  return table.concat(parts, '\n')
+end
+
+local function cut(body)
+  body = type(body) == 'string' and body or ''
+  if vim.fn.strchars(body) > M.BODY_MAX then
+    return vim.fn.strcharpart(body, 0, M.BODY_MAX), true
+  end
+  return body, nil
+end
+
+---The PR review threads and conversation comments the review fetched (forge.threads_cache, never
+---fetched for this): the branch and scope shown, whether a lookup is still running (`pending`),
+---and per PR its number, title, url, state, layer, whether the scope shows it, whether its threads
+---were fetched (`fetched`; closed and merged PRs' never are), stale (a later fetch failed), cut
+---(`truncated`), the threads (path, lines, side, resolved, outdated, comments: author, time,
+---body) and the latest conversation comments. Text as GitHub has it, bodies cut at BODY_MAX:
+---`bin/revuey threads` cleans it.
+function M.discussion(s)
+  local fv = require('revuey.forge_view')
+  local r = s.review
+  local d = {
+    branch = r.branch,
+    scope = r.scope and r.scope.kind or 'branch',
+    enabled = fv.threads_enabled() and true or false,
+    pending = discussion_pending(s) or nil,
+    prs = {},
+  }
+  for _, x in ipairs(discussion_prs(s)) do
+    local pr, e = x.pr, x.cache
+    local p = {
+      layer = x.key ~= '' and x.key or nil,
+      number = pr.number,
+      title = pr.title,
+      url = pr.url,
+      state = pr.state,
+      shown = x.shown,
+      fetched = e ~= nil and e.threads ~= nil,
+      stale = (e and e.failed) and true or nil,
+      truncated = (e and e.truncated) and true or nil,
+      threads = {},
+      conversation = {},
+      conversation_total = e and e.conversation_total or nil,
+    }
+    for _, t in ipairs(e and e.threads or {}) do
+      local th = {
+        path = t.path,
+        line = t.line,
+        start_line = t.start_line,
+        original_line = t.original_line,
+        original_start_line = t.original_start_line,
+        side = t.side,
+        start_side = t.start_side,
+        subject = t.subject,
+        resolved = t.resolved,
+        resolved_by = t.resolved_by,
+        outdated = t.outdated,
+        total = t.total,
+        comments = {},
+      }
+      for _, c in ipairs(t.comments or {}) do
+        local body, was_cut = cut(c.body)
+        th.comments[#th.comments + 1] = {
+          author = c.author,
+          created_at = c.created_at,
+          body = body,
+          cut = was_cut,
+          pending = c.state == 'PENDING' or nil,
+        }
+      end
+      p.threads[#p.threads + 1] = th
+    end
+    for _, c in ipairs(e and e.conversation or {}) do
+      local body, was_cut = cut(c.body)
+      p.conversation[#p.conversation + 1] = { author = c.author, created_at = c.created_at, body = body, cut = was_cut }
+    end
+    d.prs[#d.prs + 1] = p
+  end
+  return d
+end
+
+---Rewrite the threads file beside the registry entry when what it says changed (or the entry
+---moved). A failure is logged and tried again on the next poll.
+local function publish_discussion(s)
+  local l = s.link
+  if not l.path then
+    return
+  end
+  local sig = discussion_sig(s)
+  if sig == l.threads_sig and l.threads_for == l.path and vim.uv.fs_stat(sessions.threads_path(l.path)) then
+    return
+  end
+  local ok, res, werr = pcall(sessions.write_threads, l.path, M.discussion(s))
+  if ok and res then
+    l.threads_sig, l.threads_for = sig, l.path
+  else
+    log.write('agent', 'could not write the PR threads for bin/revuey threads: ' .. tostring(ok and werr or res))
+  end
 end
 
 ---Registry entry for the session's current review scope.
@@ -163,6 +321,7 @@ function M.update(s, refresh)
   e.stack = st
   local full = vim.json.encode(e)
   if not refresh and sig == l.sig and full == l.full_sig and l.path and vim.uv.fs_stat(l.path) then
+    publish_discussion(s)
     return
   end
   -- when the entry last said something new (not a refresh): `bin/revuey` waits for a review
@@ -179,6 +338,7 @@ function M.update(s, refresh)
     end
     l.path, l.sig, l.full_sig = path, sig, full
     live[path] = true
+    publish_discussion(s)
   end
 end
 

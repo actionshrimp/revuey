@@ -10,7 +10,9 @@
 --     the scope changes, refreshes its `updated_at` every couple of seconds (agent_link's poll),
 --     and removes it on exit. An entry is live while its pid is alive, it was refreshed within
 --     STALE_MS (a crashed review whose pid was reused is not) and its Neovim socket, when it is a
---     path, exists. Listing removes the others.
+--     path, exists. Listing removes the others. Beside it, `sessions/<pid>.threads` holds the
+--     PR threads and conversation comments the review fetched (agent_link.discussion), rewritten
+--     only when they change, for `bin/revuey threads`; it goes with the entry.
 --   * Each `bin/revuey watch` writes `watchers/<pid>.json` with the session it is attached to
 --     (or none yet: then it counts for every session of its worktree) and a heartbeat it
 --     rewrites every HEARTBEAT_MS. An agent is connected while a watcher's heartbeat is younger
@@ -211,9 +213,28 @@ function M.register(bases, entry)
   return put(bases, 'sessions', entry)
 end
 
+---The file a session entry at `path` publishes its PR threads in (agent_link.discussion,
+---`bin/revuey threads`): beside it, never matched as an entry (not `.json`).
+function M.threads_path(path)
+  return (path:gsub('%.json$', '')) .. '.threads'
+end
+
+---Write the PR threads of the session entry at `path` (only when they changed: agent_link).
+---@return boolean? ok, string? err
+function M.write_threads(path, data)
+  return write_atomic(M.threads_path(path), vim.json.encode(data))
+end
+
+---The PR threads published beside the session entry at `path`, or nil.
+function M.read_threads(path)
+  return path and read_json(M.threads_path(path)) or nil
+end
+
+---Remove a session entry (and the threads published beside it).
 function M.remove(path)
   if path then
     os.remove(path)
+    os.remove(M.threads_path(path))
   end
 end
 
@@ -229,7 +250,7 @@ local function scan(bases, kind, keep)
           local path = vim.fs.joinpath(dir, name)
           local e = read_json(path)
           if not e or not keep(e) then
-            os.remove(path)
+            M.remove(path)
           else
             e._path = path
             e._base = base

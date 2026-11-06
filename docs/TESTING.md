@@ -45,6 +45,7 @@ is available.
   answers review-thread queries (thread nodes per `owner/name#N`, cut into pages by the query's
   `first`/`after`, PRs that resolve to null) with a failure scenario of their own
   (`REVUEY_FAKE_GH_THREADS_SCENARIO`), so a working PR lookup can be combined with failing threads.
+  A first page asking for the PR's conversation gets the last comments of `_conversation`.
   It answers the change check's signal query (`fragment check`) from the same PRs and threads
   files, so a test changes a PR's signals by rewriting them between checks
   (`REVUEY_FAKE_GH_CHECK_SCENARIO=fail` fails checks only, `REVUEY_FAKE_GH_CHECK_DELAY` slows

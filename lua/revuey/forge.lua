@@ -6,7 +6,8 @@
 -- limits) are never shown: the lookup yields nothing and the reason goes to revuey.log.
 --
 -- Also the review threads of open PRs (`fetch_threads`: paginated, cached per PR like the PR
--- lookup; placement and display are in forge_threads.lua), and the queries and mutations of
+-- lookup; placement and display are in forge_threads.lua; the PR's latest conversation comments
+-- ride on their first page, for `bin/revuey threads`), and the queries and mutations of
 -- posting a review (the pending-review flow; forge_post.lua plans, forge_post_view.lua runs it).
 -- `remote_info`, `parse_remote_url`, `base_remote`, `targets`, `run_graphql` and `rest_get`
 -- know nothing about the panel.
@@ -937,10 +938,19 @@ end
 ---@field comments revuey.ForgeComment[]  oldest first
 ---@field total integer        comments GitHub has (more than `comments` only when truncated)
 
+---@class revuey.ForgeIssueComment  one top-level comment of the PR's conversation
+---@field id string
+---@field url string
+---@field body string
+---@field author string        login ('ghost' for a deleted account)
+---@field created_at string    ISO time
+---@field edited_at? string
+
 M.THREAD_PAGE = 50 -- threads per page
 M.COMMENT_PAGE = 20 -- comments per thread in the first page (most threads are short)
 M.COMMENT_MORE_PAGE = 100 -- comments per page when a thread has more
 M.THREAD_ROUNDS = 10 -- pagination rounds per fetch (one gh call each) before giving up
+M.CONVERSATION = 30 -- the PR's latest conversation comments, asked with the first threads page
 
 local THREAD_FIELDS = [[
 fragment thread on PullRequestReviewThread {
@@ -953,6 +963,11 @@ fragment comment on PullRequestReviewComment {
   id databaseId url body createdAt lastEditedAt state diffHunk
   author { login }
   replyTo { id }
+}]]
+local ISSUE_COMMENT_FIELDS = [[
+fragment issueComment on IssueComment {
+  id url body createdAt lastEditedAt
+  author { login }
 }]]
 
 ---"host/owner/name" (a PR's `repo`) -> host, owner, name.
@@ -967,11 +982,12 @@ function M.thread_key(pr)
 end
 
 ---One query for several pages: `{kind = 'threads', repo, number, after?}` asks a PR's review
----threads (each with its first comments), `{kind = 'comments', thread, after}` the next comments
----of one thread (by node id). Returns the query and alias -> request.
+---threads (each with its first comments; the first page also its CONVERSATION latest
+---conversation comments, as `conversation`), `{kind = 'comments', thread, after}` the next
+---comments of one thread (by node id). Returns the query and alias -> request.
 ---@return string query, table<string, table> aliases
 function M.build_threads_query(reqs)
-  local parts, aliases, threads = { 'query {' }, {}, false
+  local parts, aliases, threads, convo = { 'query {' }, {}, false, false
   local function after(c)
     return c and (', after: ' .. lit(c)) or ''
   end
@@ -980,8 +996,14 @@ function M.build_threads_query(reqs)
       threads = true
       local alias = 't' .. i
       aliases[alias] = r
-      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { headRefOid reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } } } }')
-        :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after))
+      -- (after reviewThreads: the conversation is read once, with the first page)
+      local conv = ''
+      if not r.after then
+        convo = true
+        conv = (' conversation: comments(last: %d) { totalCount nodes { ...issueComment } }'):format(M.CONVERSATION)
+      end
+      parts[#parts + 1] = ('  %s: repository(owner: %s, name: %s) { pullRequest(number: %d) { headRefOid reviewThreads(first: %d%s) { pageInfo { hasNextPage endCursor } nodes { ...thread } }%s } }')
+        :format(alias, lit(r.owner), lit(r.name), r.number, M.THREAD_PAGE, after(r.after), conv)
     else
       local alias = 'c' .. i
       aliases[alias] = r
@@ -995,6 +1017,9 @@ function M.build_threads_query(reqs)
     parts[#parts + 1] = THREAD_FIELDS:format(M.COMMENT_PAGE)
   end
   parts[#parts + 1] = COMMENT_FIELDS
+  if convo then
+    parts[#parts + 1] = ISSUE_COMMENT_FIELDS
+  end
   return table.concat(parts, '\n'), aliases
 end
 
@@ -1029,6 +1054,22 @@ function M.normalize_comment(n)
   }
 end
 
+---Map an IssueComment node (the PR's conversation).
+---@return revuey.ForgeIssueComment?
+function M.normalize_issue_comment(n)
+  if type(n) ~= 'table' or type(n.id) ~= 'string' then
+    return nil
+  end
+  return {
+    id = n.id,
+    url = str(n.url) or '',
+    body = str(n.body) or '',
+    author = type(n.author) == 'table' and str(n.author.login) or 'ghost',
+    created_at = str(n.createdAt) or '',
+    edited_at = str(n.lastEditedAt),
+  }
+end
+
 ---Map a PullRequestReviewThread node (with its first page of comments). The second value is the
 ---cursor of the thread's next comments, when it has more.
 ---@return revuey.ForgeThread?, string?
@@ -1060,7 +1101,8 @@ function M.normalize_thread(n)
 end
 
 ---Threads of a PR per cache key: { at = ms, threads? = revuey.ForgeThread[], sig?, failed? =
----reason, truncated? }. A failure keeps the last good threads (shown as stale).
+---reason, truncated?, conversation? = revuey.ForgeIssueComment[] (the latest, oldest first),
+---conversation_total? }. A failure keeps the last good threads (shown as stale).
 M.threads_cache = {}
 
 ---Cached threads of a PR (oldest first, as GitHub lists them), or nil when never fetched; the
@@ -1073,6 +1115,17 @@ function M.threads_for(pr)
     return nil
   end
   return e.threads, e.failed ~= nil, e.truncated == true
+end
+
+---The PR's latest conversation comments as cached with its threads (oldest first), or nil when
+---never read; the second value is how many the PR has.
+---@return revuey.ForgeIssueComment[]?, integer?
+function M.conversation_for(pr)
+  local e = pr and M.threads_cache[M.thread_key(pr)]
+  if not (e and e.conversation) then
+    return nil
+  end
+  return e.conversation, e.conversation_total or #e.conversation
 end
 
 ---The head commit GitHub numbered a PR's cached threads against (`headRefOid` of the threads
@@ -1167,6 +1220,14 @@ function M.fetch_threads(prs, o)
             elseif p.head_oid ~= oid then
               p.head_oid = false
             end
+            local conv = v.pullRequest.conversation
+            if type(conv) == 'table' and type(conv.nodes) == 'table' then
+              p.conversation = {}
+              for _, n in ipairs(nodes(conv)) do
+                p.conversation[#p.conversation + 1] = M.normalize_issue_comment(n)
+              end
+              p.conversation_total = int(conv.totalCount) or #p.conversation
+            end
             for _, n in ipairs(nodes(conn)) do
               local t, cursor = M.normalize_thread(n)
               if t then
@@ -1223,6 +1284,8 @@ function M.fetch_threads(prs, o)
           truncated = (keep and old.truncated) or (partial and true) or nil,
           -- kept threads keep the head they were numbered against
           head_oid = (keep and old.head_oid) or (partial and p.head_oid) or nil,
+          conversation = (keep and old.conversation) or (partial and p.conversation) or nil,
+          conversation_total = (keep and old.conversation_total) or (partial and p.conversation_total) or nil,
         }
       else
         M.threads_cache[p.key] = {
@@ -1231,6 +1294,8 @@ function M.fetch_threads(prs, o)
           truncated = p.truncated,
           head_oid = p.head_oid,
           sig = vim.fn.sha256(vim.json.encode(p.threads)):sub(1, 16),
+          conversation = p.conversation or (old and old.conversation),
+          conversation_total = p.conversation and p.conversation_total or (old and old.conversation_total),
         }
         M.clear_changed(p.key, M.SIGNALS_THREADS)
       end
